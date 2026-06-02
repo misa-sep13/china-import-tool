@@ -8,7 +8,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="中国輸入管理ツール", version="0.1.0")
 
 import os
-ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000,https://misa-sep13.github.io").split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,3 +25,4 @@ app.include_router(settings.router, prefix="/api")
 @app.get("/")
 def root():
     return {"message": "中国輸入管理ツール API"}
+
