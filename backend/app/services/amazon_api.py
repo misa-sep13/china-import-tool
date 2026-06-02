@@ -1,17 +1,19 @@
 from typing import Dict, List
 from app.core.config import settings
 
+def get_sp_api_credentials():
+    return {
+        "refresh_token": settings.SP_API_REFRESH_TOKEN,
+        "lwa_app_id": settings.SP_API_LWA_APP_ID,
+        "lwa_client_secret": settings.SP_API_LWA_CLIENT_SECRET,
+        "aws_access_key": settings.SP_API_AWS_ACCESS_KEY,
+        "aws_secret_key": settings.SP_API_AWS_SECRET_KEY,
+        "role_arn": settings.SP_API_ROLE_ARN,
+    }
+
 def get_sp_api_client():
-    from sp_api.api import Inventories, Sales
-    from sp_api.base import Marketplaces, Credentials
-    creds = Credentials(
-        refresh_token=settings.SP_API_REFRESH_TOKEN,
-        lwa_app_id=settings.SP_API_LWA_APP_ID,
-        lwa_client_secret=settings.SP_API_LWA_CLIENT_SECRET,
-        aws_access_key=settings.SP_API_AWS_ACCESS_KEY,
-        aws_secret_key=settings.SP_API_AWS_SECRET_KEY,
-        role_arn=settings.SP_API_ROLE_ARN,
-    )
+    from sp_api.base import Marketplaces
+    creds = get_sp_api_credentials()
     marketplace = getattr(Marketplaces, settings.SP_API_MARKETPLACE)
     return creds, marketplace
 
@@ -20,7 +22,7 @@ def fetch_inventory() -> Dict[str, dict]:
     from sp_api.api import Inventories
     from sp_api.base import Marketplaces
     creds, marketplace = get_sp_api_client()
-    inv = Inventories(credentials=creds, marketplace=marketplace)
+    inv = Inventories(credentials=creds, marketplace=marketplace, refresh_token=creds["refresh_token"])
 
     result = {}
     next_token = None
@@ -56,7 +58,7 @@ def fetch_sales(days: int, asin_list: List[str]) -> Dict[str, float]:
     from sp_api.base import Marketplaces
     from datetime import datetime, timedelta, timezone
     creds, marketplace = get_sp_api_client()
-    sales_api = SalesV1(credentials=creds, marketplace=marketplace)
+    sales_api = SalesV1(credentials=creds, marketplace=marketplace, refresh_token=creds["refresh_token"])
 
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)

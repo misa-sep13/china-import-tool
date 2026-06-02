@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import Base, engine
-from app.api.routes import products, orders, settings
+from app.api.routes import products, orders, settings, fba
 
 Base.metadata.create_all(bind=engine)
 
@@ -21,8 +21,10 @@ app.add_middleware(
 app.include_router(products.router, prefix="/api")
 app.include_router(orders.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
+app.include_router(fba.router, prefix="/api")
 
 @app.get("/")
 def root():
     return {"message": "中国輸入管理ツール API"}
+
 

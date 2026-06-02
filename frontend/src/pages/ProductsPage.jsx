@@ -32,6 +32,23 @@ export default function ProductsPage() {
     onSuccess: () => qc.invalidateQueries(['products']),
   })
 
+  const [importing, setImporting] = useState(false)
+
+  const importFromFba = async () => {
+    if (!confirm('SP-APIのFBA在庫から商品を自動インポートします。よろしいですか？')) return
+    setImporting(true)
+    try {
+      const res = await api.post('/fba/import')
+      const { added, skipped } = res.data
+      alert(`インポート完了！\n追加: ${added}件\nスキップ(既存): ${skipped}件`)
+      qc.invalidateQueries(['products'])
+    } catch (e) {
+      alert('インポート失敗: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const openNew = () => { setEditing(null); setForm(EMPTY); setError(''); setModal(true) }
   const openEdit = (p) => {
     setEditing(p)
@@ -56,6 +73,9 @@ export default function ProductsPage() {
       <h1>🏷️ 商品マスタ</h1>
       <div className="top-actions">
         <button className="btn btn-primary" onClick={openNew}>＋ 商品を追加</button>
+        <button className="btn btn-secondary" onClick={importFromFba} disabled={importing}>
+          {importing ? 'インポート中...' : '📦 FBAから自動インポート'}
+        </button>
         <span style={{ color: '#888', fontSize: 13 }}>{products.length}件登録済み</span>
       </div>
 
