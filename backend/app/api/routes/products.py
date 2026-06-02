@@ -1,0 +1,72 @@
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import List, Optional
+from pydantic import BaseModel
+from app.core.database import get_db
+from app.models.product import Product
+
+router = APIRouter(prefix="/products", tags=["products"])
+
+class ProductCreate(BaseModel):
+    sku: str
+    fnsku: Optional[str] = ""
+    asin: Optional[str] = ""
+    name: Optional[str] = ""
+    amazon_url: Optional[str] = ""
+    buy_url: Optional[str] = ""
+    photo_url: Optional[str] = ""
+    color: Optional[str] = ""
+    size: Optional[str] = ""
+    price: Optional[float] = 0
+    repack: Optional[str] = ""
+    note: Optional[str] = ""
+    set_size: Optional[int] = 1
+    extra_stock: Optional[int] = 0
+
+class ProductUpdate(ProductCreate):
+    sku: Optional[str] = None
+
+class ProductOut(ProductCreate):
+    id: int
+    no: Optional[int] = None
+    order_qty: int = 0
+    is_active: bool = True
+
+    class Config:
+        from_attributes = True
+
+@router.get("/", response_model=List[ProductOut])
+def list_products(db: Session = Depends(get_db)):
+    return db.query(Product).filter(Product.is_active == True).order_by(Product.no).all()
+
+@router.post("/", response_model=ProductOut)
+def create_product(data: ProductCreate, db: Session = Depends(get_db)):
+    existing = db.query(Product).filter(Product.sku == data.sku).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="SKUが既に存在します")
+    max_no = db.query(Product).count()
+    p = Product(**data.model_dump(), no=max_no + 1)
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    return p
+
+@router.put("/{product_id}", response_model=ProductOut)
+def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(get_db)):
+    p = db.query(Product).filter(Product.id == product_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="商品が見つかりません")
+    for k, v in data.model_dump(exclude_none=True).items():
+        setattr(p, k, v)
+    db.commit()
+    db.refresh(p)
+    return p
+
+@router.delete("/{product_id}")
+def delete_product(product_id: int, db: Session = Depends(get_db)):
+    p = db.query(Product).filter(Product.id == product_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="商品が見つかりません")
+    p.is_active = False
+    db.commit()
+    return {"ok": True}

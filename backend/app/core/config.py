@@ -1,0 +1,21 @@
+from pydantic_settings import BaseSettings
+from typing import Optional
+
+class Settings(BaseSettings):
+    APP_NAME: str = "中国輸入管理ツール"
+    DATABASE_URL: str = "sqlite:///./china_import.db"
+    SECRET_KEY: str = "change-me-in-production"
+
+    # Amazon SP-API
+    SP_API_REFRESH_TOKEN: Optional[str] = None
+    SP_API_LWA_APP_ID: Optional[str] = None
+    SP_API_LWA_CLIENT_SECRET: Optional[str] = None
+    SP_API_AWS_ACCESS_KEY: Optional[str] = None
+    SP_API_AWS_SECRET_KEY: Optional[str] = None
+    SP_API_ROLE_ARN: Optional[str] = None
+    SP_API_MARKETPLACE: str = "JP"
+
+    class Config:
+        env_file = ".env"
+
+settings = Settings()
