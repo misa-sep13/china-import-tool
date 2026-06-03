@@ -1,0 +1,28 @@
+# 環境変数・認証情報
+backend/.env
+frontend/.env
+frontend.env
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.pyc
+
+# Node
+node_modules/
+dist/
+.DS_Store
+
+# SQLite
+*.db
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
+*.swp
