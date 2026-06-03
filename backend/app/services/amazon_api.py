@@ -1,38 +1,75 @@
 from typing import Dict, List
+import urllib.parse
+import urllib.request
+import json
+import time
 from app.core.config import settings
 
-def get_sp_api_credentials():
-    return {
-        "refresh_token": settings.SP_API_REFRESH_TOKEN,
-        "lwa_app_id": settings.SP_API_LWA_APP_ID,
-        "lwa_client_secret": settings.SP_API_LWA_CLIENT_SECRET,
-        "aws_access_key": settings.SP_API_AWS_ACCESS_KEY,
-        "aws_secret_key": settings.SP_API_AWS_SECRET_KEY,
-        "role_arn": settings.SP_API_ROLE_ARN,
-    }
+_token_cache = {"token": None, "expires_at": 0}
 
-def get_sp_api_client():
-    from sp_api.base import Marketplaces
-    creds = get_sp_api_credentials()
-    marketplace = getattr(Marketplaces, settings.SP_API_MARKETPLACE)
-    return creds, marketplace
+def _get_access_token() -> str:
+    if _token_cache["token"] and time.time() < _token_cache["expires_at"]:
+        return _token_cache["token"]
+
+    data = urllib.parse.urlencode({
+        "grant_type": "refresh_token",
+        "refresh_token": settings.SP_API_REFRESH_TOKEN,
+        "client_id": settings.SP_API_LWA_APP_ID,
+        "client_secret": settings.SP_API_LWA_CLIENT_SECRET,
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://api.amazon.com/auth/o2/token",
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"}
+    )
+    with urllib.request.urlopen(req) as res:
+        result = json.loads(res.read())
+
+    _token_cache["token"] = result["access_token"]
+    _token_cache["expires_at"] = time.time() + result["expires_in"] - 60
+    return _token_cache["token"]
+
+def _call_sp_api(path: str) -> dict:
+    token = _get_access_token()
+    base_url = "https://sellingpartnerapi-fe.amazon.com"
+    req = urllib.request.Request(
+        base_url + path,
+        method="GET",
+        headers={
+            "x-amz-access-token": token,
+            "Content-Type": "application/json",
+        }
+    )
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req) as res:
+                return json.loads(res.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                time.sleep((attempt + 1) * 2)
+                continue
+            body = e.read().decode()
+            raise Exception(f"HTTP {e.code}: {body}")
+    raise Exception("SP-API rate limited after retries: " + path)
 
 def fetch_inventory() -> Dict[str, dict]:
-    """FBA在庫データを取得。{fnsku: {available, inbound, ...}}"""
-    from sp_api.api import Inventories
-    from sp_api.base import Marketplaces
-    creds, marketplace = get_sp_api_client()
-    inv = Inventories(credentials=creds, marketplace=marketplace, refresh_token=creds["refresh_token"])
-
+    mp = "A1VC38T7YXB528"
     result = {}
     next_token = None
+
     while True:
-        kwargs = {"details": True, "granularityType": "Marketplace",
-                  "granularityId": "A1VC38T7YXB528"}
-        if next_token:
-            kwargs["nextToken"] = next_token
-        res = inv.get_inventory_summary_marketplace(**kwargs)
-        for item in res.payload.get("inventorySummaries", []):
+        params = urllib.parse.urlencode({
+            "granularityType": "Marketplace",
+            "granularityId": mp,
+            "marketplaceIds": mp,
+            "details": "true",
+            **({"nextToken": next_token} if next_token else {}),
+        })
+        data = _call_sp_api(f"/fba/inventory/v1/summaries?{params}")
+
+        for item in data.get("payload", {}).get("inventorySummaries", []):
             fnsku = item.get("fnSku", "")
             asin = item.get("asin", "")
             details = item.get("inventoryDetails", {})
@@ -47,34 +84,32 @@ def fetch_inventory() -> Dict[str, dict]:
                 ),
                 "processing": details.get("reservedQuantity", {}).get("totalReservedQuantity", 0),
             }
-        next_token = res.payload.get("nextToken")
+
+        next_token = data.get("pagination", {}).get("nextToken")
         if not next_token:
             break
+
     return result
 
 def fetch_sales(days: int, asin_list: List[str]) -> Dict[str, float]:
-    """ASINごとの日販（指定日数の平均）を返す。{asin: daily_avg}"""
-    from sp_api.api import SalesV1
-    from sp_api.base import Marketplaces
     from datetime import datetime, timedelta, timezone
-    creds, marketplace = get_sp_api_client()
-    sales_api = SalesV1(credentials=creds, marketplace=marketplace, refresh_token=creds["refresh_token"])
-
+    mp = "A1VC38T7YXB528"
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
 
     result = {}
-    # SP-APIは一度に1ASINずつ or バッチで取得
     for asin in asin_list:
         try:
-            res = sales_api.get_order_metrics(
-                marketplaceIds=[marketplace.marketplace_id],
-                interval=f"{start.strftime('%Y-%m-%dT%H:%M:%SZ')}/{end.strftime('%Y-%m-%dT%H:%M:%SZ')}",
-                granularity="Total",
-                asin=asin,
-            )
-            units = sum(m.get("unitCount", 0) for m in res.payload)
+            params = urllib.parse.urlencode({
+                "marketplaceIds": mp,
+                "interval": f"{start.strftime('%Y-%m-%dT%H:%M:%SZ')}/{end.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+                "granularity": "Total",
+                "asin": asin,
+            })
+            data = _call_sp_api(f"/sales/v1/orderMetrics?{params}")
+            units = sum(m.get("unitCount", 0) for m in data.get("payload", []))
             result[asin] = round(units / days, 4)
         except Exception:
             result[asin] = 0.0
+
     return result
