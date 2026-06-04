@@ -92,6 +92,7 @@ export default function ProductsPage() {
                 <tr>
                   <th>SKU</th>
                   <th>FNSKU</th>
+                  <th>ASIN</th>
                   <th>商品名</th>
                   <th>色</th>
                   <th>サイズ</th>
@@ -106,6 +107,7 @@ export default function ProductsPage() {
                   <tr key={p.id}>
                     <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{p.sku}</td>
                     <td style={{ fontFamily: 'monospace', fontSize: 12, color: '#888' }}>{p.fnsku}</td>
+                    <td style={{ fontFamily: 'monospace', fontSize: 12, color: '#888' }}>{p.asin}</td>
                     <td style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</td>
                     <td>{p.color}</td>
                     <td>{p.size}</td>
