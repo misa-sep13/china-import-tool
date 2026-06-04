@@ -57,9 +57,13 @@ def import_from_fba(db: Session = Depends(get_db)):
         if existing:
             skipped += 1
             continue
+        sku = fnsku or asin
+        if db.query(Product).filter(Product.sku == sku).first():
+            skipped += 1
+            continue
         max_no = db.query(Product).count()
         p = Product(
-            sku=asin or fnsku,
+            sku=sku,
             fnsku=fnsku,
             asin=asin,
             name="",

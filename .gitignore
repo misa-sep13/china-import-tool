@@ -4,9 +4,12 @@ frontend/.env
 frontend.env
 .env
 *.env
+env.txt
+backend/get_refresh_token.py
 
 # Python
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *.pyo
 *.pyd
@@ -21,6 +24,7 @@ dist/
 # SQLite
 *.db
 *.sqlite3
+backend/china_import.db
 
 # IDE
 .idea/
