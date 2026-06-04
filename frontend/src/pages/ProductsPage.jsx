@@ -105,7 +105,7 @@ export default function ProductsPage() {
               <tbody>
                 {products.map(p => (
                   <tr key={p.id}>
-                    <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{p.sku}</td>
+                    <td style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.sku}</td>
                     <td style={{ fontFamily: 'monospace', fontSize: 12, color: '#888' }}>{p.fnsku}</td>
                     <td style={{ fontFamily: 'monospace', fontSize: 12, color: '#888' }}>{p.asin}</td>
                     <td style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</td>
