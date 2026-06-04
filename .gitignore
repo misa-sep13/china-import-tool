@@ -30,3 +30,6 @@ backend/china_import.db
 .idea/
 .vscode/
 *.swp
+
+# Claude Code
+.claude/

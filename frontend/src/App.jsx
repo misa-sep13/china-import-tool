@@ -2,6 +2,7 @@ import { Routes, Route, NavLink } from 'react-router-dom'
 import OrderPage from './pages/OrderPage'
 import ProductsPage from './pages/ProductsPage'
 import SettingsPage from './pages/SettingsPage'
+import InvoicePage from './pages/InvoicePage'
 import './App.css'
 
 function App() {
@@ -15,6 +16,9 @@ function App() {
         <NavLink to="/products" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🏷️ 商品マスタ
         </NavLink>
+        <NavLink to="/invoices" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          📄 仕入管理
+        </NavLink>
         <NavLink to="/settings" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           ⚙️ 設定
         </NavLink>
@@ -23,6 +27,7 @@ function App() {
         <Routes>
           <Route path="/" element={<OrderPage />} />
           <Route path="/products" element={<ProductsPage />} />
+          <Route path="/invoices" element={<InvoicePage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>
