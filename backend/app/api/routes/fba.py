@@ -19,7 +19,8 @@ def import_from_fba(db: Session = Depends(get_db)):
     seen_skus = set()
     for fnsku, item in inventory.items():
         asin = item.get("asin", "")
-        sku = asin or fnsku
+        sku = item.get("sku") or asin or fnsku
+        name = item.get("name", "")
         if sku in seen_skus:
             skipped += 1
             continue
@@ -30,13 +31,41 @@ def import_from_fba(db: Session = Depends(get_db)):
             skipped += 1
             continue
         max_no = db.query(Product).count() + added
-        p = Product(sku=sku, fnsku=fnsku, asin=asin, name="", no=max_no + 1)
+        p = Product(sku=sku, fnsku=fnsku, asin=asin, name=name, no=max_no + 1)
         db.add(p)
         seen_skus.add(sku)
         added += 1
 
     db.commit()
+
     return {"added": added, "skipped": skipped}
+
+
+@router.post("/sync")
+def sync_from_fba(db: Session = Depends(get_db)):
+    try:
+        from app.services.amazon_api import fetch_inventory
+        inventory = fetch_inventory()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SP-APIエラー: {str(e)}")
+
+    updated = 0
+    for fnsku, item in inventory.items():
+        asin = item.get("asin", "")
+        sku = item.get("sku") or asin or fnsku
+        name = item.get("name", "")
+        existing = db.query(Product).filter(
+            (Product.fnsku == fnsku) | (Product.asin == asin)
+        ).first()
+        if existing:
+            if sku:
+                existing.sku = sku
+            if name:
+                existing.name = name
+            updated += 1
+
+    db.commit()
+    return {"updated": updated}
 
 
 @router.post("/fetch-names")

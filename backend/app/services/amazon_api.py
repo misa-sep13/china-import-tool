@@ -74,6 +74,8 @@ def fetch_inventory() -> Dict[str, dict]:
             result[fnsku] = {
                 "fnsku": fnsku,
                 "asin": asin,
+                "sku": item.get("sellerSku", ""),
+                "name": item.get("productName", ""),
                 "available": item.get("fulfillableQuantity", 0),
                 "inbound": item.get("inboundWorkingQuantity", 0) + item.get("inboundShippedQuantity", 0) + item.get("inboundReceivingQuantity", 0),
                 "processing": item.get("reservedQuantity", 0),
