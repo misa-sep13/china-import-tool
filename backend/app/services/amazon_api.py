@@ -64,7 +64,6 @@ def fetch_inventory() -> Dict[str, dict]:
             "granularityType": "Marketplace",
             "granularityId": mp,
             "marketplaceIds": mp,
-            "details": "true",
             **({"nextToken": next_token} if next_token else {}),
         })
         data = _call_sp_api(f"/fba/inventory/v1/summaries?{params}")
@@ -72,17 +71,12 @@ def fetch_inventory() -> Dict[str, dict]:
         for item in data.get("payload", {}).get("inventorySummaries", []):
             fnsku = item.get("fnSku", "")
             asin = item.get("asin", "")
-            details = item.get("inventoryDetails", {})
             result[fnsku] = {
                 "fnsku": fnsku,
                 "asin": asin,
                 "available": item.get("fulfillableQuantity", 0),
-                "inbound": (
-                    details.get("inboundWorkingQuantity", 0) +
-                    details.get("inboundShippedQuantity", 0) +
-                    details.get("inboundReceivingQuantity", 0)
-                ),
-                "processing": details.get("reservedQuantity", {}).get("totalReservedQuantity", 0),
+                "inbound": item.get("inboundWorkingQuantity", 0) + item.get("inboundShippedQuantity", 0) + item.get("inboundReceivingQuantity", 0),
+                "processing": item.get("reservedQuantity", 0),
             }
 
         next_token = data.get("pagination", {}).get("nextToken")
