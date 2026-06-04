@@ -110,7 +110,7 @@ def fetch_sales(days: int, asin_list: List[str]) -> Dict[str, float]:
         try:
             params = urllib.parse.urlencode({
                 "marketplaceIds": mp,
-                "interval": f"{start.strftime('%Y-%m-%dT%H:%M:%SZ')}/{end.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+                "interval": f"{start.strftime('%Y-%m-%dT%H:%M:%SZ')}--{end.strftime('%Y-%m-%dT%H:%M:%SZ')}",
                 "granularity": "Total",
                 "asin": asin,
             })
