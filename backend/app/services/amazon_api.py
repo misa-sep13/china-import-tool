@@ -85,6 +85,18 @@ def fetch_inventory() -> Dict[str, dict]:
 
     return result
 
+def fetch_item_name(asin: str) -> str:
+    mp = "A1VC38T7YXB528"
+    try:
+        params = urllib.parse.urlencode({"marketplaceIds": mp})
+        data = _call_sp_api(f"/catalog/2022-04-01/items/{asin}?{params}")
+        summaries = data.get("summaries", [])
+        if summaries:
+            return summaries[0].get("itemName", "")
+    except Exception:
+        pass
+    return ""
+
 def fetch_sales(days: int, asin_list: List[str]) -> Dict[str, float]:
     from datetime import datetime, timedelta, timezone
     mp = "A1VC38T7YXB528"
