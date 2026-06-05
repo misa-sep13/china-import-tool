@@ -57,12 +57,19 @@ def preview_orders(db: Session = Depends(get_db)):
     from app.core.config import settings as app_settings
     if app_settings.SP_API_REFRESH_TOKEN:
         from app.services.amazon_api import fetch_inventory, fetch_sales
-        inventory = fetch_inventory()
+        from concurrent.futures import ThreadPoolExecutor
         asin_list = [p.asin for p in products if p.asin]
-        sales_7  = fetch_sales(7, asin_list)
-        sales_15 = fetch_sales(15, asin_list)
-        sales_30 = fetch_sales(30, asin_list)
-        sales_60 = fetch_sales(60, asin_list)
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            f_inv    = ex.submit(fetch_inventory)
+            f_s7     = ex.submit(fetch_sales, 7,  asin_list)
+            f_s15    = ex.submit(fetch_sales, 15, asin_list)
+            f_s30    = ex.submit(fetch_sales, 30, asin_list)
+            f_s60    = ex.submit(fetch_sales, 60, asin_list)
+        inventory = f_inv.result()
+        sales_7   = f_s7.result()
+        sales_15  = f_s15.result()
+        sales_30  = f_s30.result()
+        sales_60  = f_s60.result()
     else:
         inventory = {}
         sales_7 = sales_15 = sales_30 = sales_60 = {}

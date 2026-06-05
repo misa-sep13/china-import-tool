@@ -3,6 +3,7 @@ import urllib.parse
 import urllib.request
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.core.config import settings
 
 _token_cache = {"token": None, "expires_at": 0}
@@ -44,7 +45,7 @@ def _call_sp_api(path: str) -> dict:
     )
     for attempt in range(3):
         try:
-            with urllib.request.urlopen(req) as res:
+            with urllib.request.urlopen(req, timeout=15) as res:
                 return json.loads(res.read())
         except urllib.error.HTTPError as e:
             if e.code == 429:
@@ -99,25 +100,29 @@ def fetch_item_name(asin: str) -> str:
         pass
     return ""
 
-def fetch_sales(days: int, asin_list: List[str]) -> Dict[str, float]:
+def _fetch_sales_one(asin: str, days: int) -> tuple:
     from datetime import datetime, timedelta, timezone
     mp = "A1VC38T7YXB528"
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
+    try:
+        params = urllib.parse.urlencode({
+            "marketplaceIds": mp,
+            "interval": f"{start.strftime('%Y-%m-%dT%H:%M:%SZ')}--{end.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+            "granularity": "Total",
+            "asin": asin,
+        })
+        data = _call_sp_api(f"/sales/v1/orderMetrics?{params}")
+        units = sum(m.get("unitCount", 0) for m in data.get("payload", []))
+        return asin, round(units / days, 4)
+    except Exception:
+        return asin, 0.0
 
-    result = {}
-    for asin in asin_list:
-        try:
-            params = urllib.parse.urlencode({
-                "marketplaceIds": mp,
-                "interval": f"{start.strftime('%Y-%m-%dT%H:%M:%SZ')}--{end.strftime('%Y-%m-%dT%H:%M:%SZ')}",
-                "granularity": "Total",
-                "asin": asin,
-            })
-            data = _call_sp_api(f"/sales/v1/orderMetrics?{params}")
-            units = sum(m.get("unitCount", 0) for m in data.get("payload", []))
-            result[asin] = round(units / days, 4)
-        except Exception:
-            result[asin] = 0.0
-
+def fetch_sales(days: int, asin_list: List[str]) -> Dict[str, float]:
+    result = {asin: 0.0 for asin in asin_list}
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        futures = {ex.submit(_fetch_sales_one, asin, days): asin for asin in asin_list}
+        for f in as_completed(futures):
+            asin, val = f.result()
+            result[asin] = val
     return result
