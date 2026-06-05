@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import Base, engine
 from app.api.routes import products, orders, settings, fba, invoices
 from app.models import invoice as invoice_models
+from app.models import order_history as order_history_models
 
 Base.metadata.create_all(bind=engine)
 

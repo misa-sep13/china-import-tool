@@ -7,6 +7,7 @@ import io
 from app.core.database import get_db
 from app.models.product import Product
 from app.models.settings import OrderSettings
+from app.models.order_history import OrderHistory
 from app.services.calc import CalcSettings, calc_order_qty
 from app.services.excel_export import build_taotaro_excel
 
@@ -66,19 +67,29 @@ def preview_orders(db: Session = Depends(get_db)):
         inventory = {}
         sales_7 = sales_15 = sales_30 = sales_60 = {}
 
+    # 発注済み（未削除）の数量をSKUごとに集計
+    from sqlalchemy import func as sqlfunc
+    ordered_qty_by_sku = dict(
+        db.query(OrderHistory.sku, sqlfunc.sum(OrderHistory.qty))
+        .filter(OrderHistory.is_deleted == False)
+        .group_by(OrderHistory.sku)
+        .all()
+    )
+
     result = []
     for p in products:
         inv = inventory.get(p.fnsku, {})
         available   = inv.get("available", 0)
         inbound     = inv.get("inbound", 0)
         processing  = inv.get("processing", 0)
+        ordered     = ordered_qty_by_sku.get(p.sku, 0)
         s7  = sales_7.get(p.asin, 0)
         s15 = sales_15.get(p.asin, 0)
         s30 = sales_30.get(p.asin, 0)
         s60 = sales_60.get(p.asin, 0)
 
         calc = calc_order_qty(
-            available=available, inbound=inbound, processing=processing,
+            available=available, inbound=inbound + ordered, processing=processing,
             extra_stock=p.extra_stock or 0,
             sales_7=s7, sales_15=s15, sales_30=s30, sales_60=s60,
             set_size=p.set_size or 1, s=s
@@ -103,6 +114,7 @@ def preview_orders(db: Session = Depends(get_db)):
             "set_size": p.set_size or 1,
             "available": available,
             "inbound": inbound,
+            "ordered": ordered,
             "sales_7": s7,
             "sales_15": s15,
             "sales_30": s30,
@@ -117,8 +129,8 @@ def preview_orders(db: Session = Depends(get_db)):
     return result
 
 @router.post("/export")
-def export_excel(req: ExportRequest):
-    """発注リストをTAO太郎形式のExcelとしてダウンロード"""
+def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
+    """発注リストをTAO太郎形式のExcelとしてダウンロードし、発注履歴に保存"""
     if not req.items:
         raise HTTPException(status_code=400, detail="発注リストが空です")
 
@@ -139,10 +151,29 @@ def export_excel(req: ExportRequest):
             "repack": item.repack,
             "note": item.note,
             "set_size": item.set_size,
+            "asin": item.asin,
+            "fnsku": item.fnsku,
         })
 
     if not items_data:
         raise HTTPException(status_code=400, detail="発注数が0の商品しかありません")
+
+    # 発注履歴に保存
+    for item in items_data:
+        db.add(OrderHistory(
+            sku=item["sku"],
+            name=item["name"],
+            color=item["color"],
+            size=item["size"],
+            qty=item["qty"],
+            price=item["price"],
+            buy_url=item["buy_url"],
+            photo_url=item["photo_url"],
+            asin=item["asin"],
+            fnsku=item["fnsku"],
+            note=item["note"],
+        ))
+    db.commit()
 
     from datetime import date
     excel_bytes = build_taotaro_excel(items_data)
@@ -153,6 +184,39 @@ def export_excel(req: ExportRequest):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+@router.get("/history")
+def get_order_history(db: Session = Depends(get_db)):
+    """発注済みリストを取得（未削除・新しい順）"""
+    rows = db.query(OrderHistory).filter(OrderHistory.is_deleted == False).order_by(OrderHistory.ordered_at.desc()).all()
+    return [
+        {
+            "id": r.id,
+            "ordered_at": r.ordered_at.isoformat() if r.ordered_at else None,
+            "sku": r.sku,
+            "name": r.name,
+            "color": r.color,
+            "size": r.size,
+            "qty": r.qty,
+            "price": r.price,
+            "buy_url": r.buy_url,
+            "photo_url": r.photo_url,
+            "asin": r.asin,
+            "fnsku": r.fnsku,
+            "note": r.note,
+        }
+        for r in rows
+    ]
+
+@router.delete("/history/{history_id}")
+def delete_order_history(history_id: int, db: Session = Depends(get_db)):
+    """発注済みレコードを削除（FBA納品プラン作成後に呼ぶ）"""
+    row = db.query(OrderHistory).filter(OrderHistory.id == history_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="レコードが見つかりません")
+    row.is_deleted = True
+    db.commit()
+    return {"ok": True}
 
 def _build_calc_settings(row: Optional[OrderSettings]) -> CalcSettings:
     if not row:

@@ -13,6 +13,8 @@ export default function ProductsPage() {
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(EMPTY)
   const [error, setError] = useState('')
+  const [inlineEdit, setInlineEdit] = useState(null) // { id, value }
+
 
   const { data: products = [], isLoading } = useQuery({
     queryKey: ['products'],
@@ -39,8 +41,8 @@ export default function ProductsPage() {
     setImporting(true)
     try {
       const res = await api.post('/fba/import')
-      const { added, skipped } = res.data
-      alert(`インポート完了！\n追加: ${added}件\nスキップ(既存): ${skipped}件`)
+      const { added, skipped, fixed = 0 } = res.data
+      alert(`インポート完了！\n追加: ${added}件\nFNSKU修正: ${fixed}件\nスキップ(既存): ${skipped}件`)
       qc.invalidateQueries(['products'])
     } catch (e) {
       alert('インポート失敗: ' + (e.response?.data?.detail || e.message))
@@ -65,6 +67,17 @@ export default function ProductsPage() {
   }
 
   const f = (k) => ({ value: form[k], onChange: e => setForm(p => ({ ...p, [k]: e.target.value })) })
+
+  const saveInlineName = useMutation({
+    mutationFn: ({ id, name }) => api.put(`/products/${id}`, { name }),
+    onSuccess: () => { qc.invalidateQueries(['products']); setInlineEdit(null) },
+    onError: () => alert('商品名の保存に失敗しました'),
+  })
+
+  const handleInlineKeyDown = (e, id) => {
+    if (e.key === 'Enter') saveInlineName.mutate({ id, name: inlineEdit.value })
+    if (e.key === 'Escape') setInlineEdit(null)
+  }
 
   if (isLoading) return <div className="loading">読み込み中...</div>
 
@@ -108,7 +121,41 @@ export default function ProductsPage() {
                     <td style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.sku}</td>
                     <td style={{ fontFamily: 'monospace', fontSize: 12, color: '#888' }}>{p.fnsku}</td>
                     <td style={{ fontFamily: 'monospace', fontSize: 12, color: '#888' }}>{p.asin}</td>
-                    <td style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</td>
+                    <td style={{ maxWidth: 200 }}>
+                      {inlineEdit?.id === p.id ? (
+                        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                          <input
+                            autoFocus
+                            value={inlineEdit.value}
+                            onChange={e => setInlineEdit(v => ({ ...v, value: e.target.value }))}
+                            onKeyDown={e => handleInlineKeyDown(e, p.id)}
+                            style={{ fontSize: 13, padding: '2px 6px', border: '1px solid #3b82f6', borderRadius: 4, width: 140 }}
+                          />
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => saveInlineName.mutate({ id: p.id, name: inlineEdit.value })}
+                            disabled={saveInlineName.isPending}
+                          >✓</button>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => setInlineEdit(null)}
+                          >✕</button>
+                        </div>
+                      ) : (
+                        <span
+                          onClick={() => setInlineEdit({ id: p.id, value: p.name || '' })}
+                          title="クリックして商品名を編集"
+                          style={{
+                            display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            cursor: 'pointer', padding: '2px 4px', borderRadius: 4,
+                            color: p.name ? 'inherit' : '#aaa',
+                            background: p.name ? 'transparent' : '#fef9c3',
+                          }}
+                        >
+                          {p.name || '(未入力 — クリックで編集)'}
+                        </span>
+                      )}
+                    </td>
                     <td>{p.color}</td>
                     <td>{p.size}</td>
                     <td style={{ textAlign: 'right' }}>{p.price}</td>

@@ -16,20 +16,35 @@ def import_from_fba(db: Session = Depends(get_db)):
 
     added = 0
     skipped = 0
+    fixed = 0
     seen_skus = set()
     for fnsku, item in inventory.items():
         asin = item.get("asin", "")
         sku = item.get("sku") or asin or fnsku
         name = item.get("name", "")
+
         if sku in seen_skus:
             skipped += 1
             continue
-        existing = db.query(Product).filter(
-            (Product.fnsku == fnsku) | (Product.asin == asin) | (Product.sku == sku)
-        ).first()
-        if existing:
-            skipped += 1
+
+        # SKUで既存商品を検索し、FNSKUが違う場合は修正
+        by_sku = db.query(Product).filter(Product.sku == sku).first()
+        if by_sku:
+            if by_sku.fnsku != fnsku:
+                by_sku.fnsku = fnsku
+                fixed += 1
+            else:
+                skipped += 1
+            seen_skus.add(sku)
             continue
+
+        # FNSKUで既存商品があればスキップ
+        if db.query(Product).filter(Product.fnsku == fnsku).first():
+            skipped += 1
+            seen_skus.add(sku)
+            continue
+
+        # 新規追加
         max_no = db.query(Product).count() + added
         p = Product(sku=sku, fnsku=fnsku, asin=asin, name=name, no=max_no + 1)
         db.add(p)
@@ -38,7 +53,7 @@ def import_from_fba(db: Session = Depends(get_db)):
 
     db.commit()
 
-    return {"added": added, "skipped": skipped}
+    return {"added": added, "skipped": skipped, "fixed": fixed}
 
 
 @router.post("/sync")

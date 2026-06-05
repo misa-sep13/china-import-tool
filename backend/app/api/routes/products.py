@@ -49,31 +49,39 @@ def import_from_fba(db: Session = Depends(get_db)):
 
     added = 0
     skipped = 0
+    fixed = 0
     for fnsku, item in inventory.items():
         asin = item.get("asin", "")
-        existing = db.query(Product).filter(
-            (Product.fnsku == fnsku) | (Product.asin == asin)
-        ).first()
-        if existing:
+        api_sku = item.get("sku", "")
+
+        # SKUで既存商品を検索してFNSKUを修正
+        if api_sku:
+            by_sku = db.query(Product).filter(Product.sku == api_sku).first()
+            if by_sku:
+                if by_sku.fnsku != fnsku:
+                    by_sku.fnsku = fnsku
+                    fixed += 1
+                else:
+                    skipped += 1
+                continue
+
+        # FNSKUで既存商品があればスキップ
+        if db.query(Product).filter(Product.fnsku == fnsku).first():
             skipped += 1
             continue
-        sku = fnsku or asin
+
+        # 新規追加（SKUはSP-APIのSKUを使用）
+        sku = api_sku or fnsku
         if db.query(Product).filter(Product.sku == sku).first():
             skipped += 1
             continue
         max_no = db.query(Product).count()
-        p = Product(
-            sku=sku,
-            fnsku=fnsku,
-            asin=asin,
-            name="",
-            no=max_no + 1,
-        )
+        p = Product(sku=sku, fnsku=fnsku, asin=asin, name="", no=max_no + 1)
         db.add(p)
         added += 1
 
     db.commit()
-    return {"added": added, "skipped": skipped}
+    return {"added": added, "skipped": skipped, "fixed": fixed}
 
 @router.post("/", response_model=ProductOut)
 def create_product(data: ProductCreate, db: Session = Depends(get_db)):
