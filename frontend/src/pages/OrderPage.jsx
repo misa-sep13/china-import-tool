@@ -213,13 +213,15 @@ export default function OrderPage() {
                 <table>
                   <thead>
                     <tr>
-                      <th style={{ width: 36 }}>
-                        <input type="checkbox"
-                          checked={currentSelected.size === items.length}
-                          onChange={toggleAll}
-                        />
+                      <th>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <input type="checkbox"
+                            checked={currentSelected.size === items.length}
+                            onChange={toggleAll}
+                          />
+                          <span>SKU</span>
+                        </div>
                       </th>
-                      <th>SKU</th>
                       <th>商品名</th>
                       <th>色/サイズ</th>
                       <th>残日数</th>
@@ -234,13 +236,15 @@ export default function OrderPage() {
                   <tbody>
                     {items.map((item) => (
                       <tr key={item.product_id} style={{ opacity: currentSelected.has(item._idx) ? 1 : 0.4 }}>
-                        <td style={{ textAlign: 'center' }}>
-                          <input type="checkbox"
-                            checked={currentSelected.has(item._idx)}
-                            onChange={() => toggleSelect(item._idx)}
-                          />
+                        <td style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <input type="checkbox"
+                              checked={currentSelected.has(item._idx)}
+                              onChange={() => toggleSelect(item._idx)}
+                            />
+                            <span>{item.sku}</span>
+                          </div>
                         </td>
-                        <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{item.sku}</td>
                         <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {item.name}
                         </td>
