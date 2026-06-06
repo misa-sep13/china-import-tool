@@ -26,6 +26,7 @@ export default function ProductsPage() {
   const [error, setError] = useState('')
   const [inlineEdit, setInlineEdit] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [hoveredImg, setHoveredImg] = useState(null) // { url, x, y }
 
   const { data: products = [], isLoading } = useQuery({
     queryKey: ['products'],
@@ -128,6 +129,22 @@ export default function ProductsPage() {
 
   return (
     <div>
+      {hoveredImg && (
+        <div style={{
+          position: 'fixed',
+          left: hoveredImg.x + 16,
+          top: hoveredImg.y + 16,
+          zIndex: 9999,
+          pointerEvents: 'none',
+          background: '#fff',
+          border: '1px solid #ddd',
+          borderRadius: 8,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+          padding: 6,
+        }}>
+          <img src={hoveredImg.url} alt="" style={{ width: 180, height: 180, objectFit: 'contain', display: 'block' }} />
+        </div>
+      )}
       <h1>🏷️ 商品マスタ</h1>
       <div className="top-actions">
         <button className="btn btn-primary" onClick={openNew}>＋ 商品を追加</button>
@@ -197,6 +214,9 @@ export default function ProductsPage() {
                         ) : (
                           <span
                             onClick={() => setInlineEdit({ id: p.id, value: p.name || '' })}
+                            onMouseEnter={p.photo_url ? (e) => setHoveredImg({ url: p.photo_url, x: e.clientX, y: e.clientY }) : undefined}
+                            onMouseMove={p.photo_url ? (e) => setHoveredImg(v => v ? { ...v, x: e.clientX, y: e.clientY } : null) : undefined}
+                            onMouseLeave={p.photo_url ? () => setHoveredImg(null) : undefined}
                             title="クリックして商品名を編集"
                             style={{
                               display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
