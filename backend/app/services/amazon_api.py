@@ -198,11 +198,13 @@ def _fetch_price_and_fee_one(sku: str) -> tuple:
 
     # 出品価格取得
     try:
-        params = urllib.parse.urlencode({"marketplaceIds": mp, "itemCondition": "New"})
-        data = _call_sp_api(f"/products/pricing/v0/listings/{urllib.parse.quote(sku, safe='')}/price?{params}")
-        offers = data.get("payload", {}).get("Product", {}).get("Offers", [])
-        if offers:
-            selling_price = offers[0].get("BuyingPrice", {}).get("ListingPrice", {}).get("Amount")
+        params = urllib.parse.urlencode({"MarketplaceId": mp, "Skus": sku})
+        data = _call_sp_api(f"/products/pricing/v0/price?ItemType=Sku&{params}")
+        items = data.get("payload", [])
+        if items and items[0].get("status") == "Success":
+            offers = items[0].get("Product", {}).get("Offers", [])
+            if offers:
+                selling_price = offers[0].get("BuyingPrice", {}).get("ListingPrice", {}).get("Amount")
     except Exception:
         pass
 
