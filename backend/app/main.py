@@ -11,29 +11,38 @@ Base.metadata.create_all(bind=engine)
 # カラム追加マイグレーション（既存DBへの安全な追加）
 def _migrate():
     from sqlalchemy import text, inspect
-    with engine.connect() as conn:
-        migrations = [
-            ("products",      "selling_price",       "ALTER TABLE products ADD COLUMN selling_price FLOAT"),
-            ("products",      "fba_fee",             "ALTER TABLE products ADD COLUMN fba_fee FLOAT"),
-            ("products",      "amazon_fee_rate",     "ALTER TABLE products ADD COLUMN amazon_fee_rate FLOAT DEFAULT 0.1"),
-            ("products",      "fees_updated_at",     "ALTER TABLE products ADD COLUMN fees_updated_at TIMESTAMP"),
-            ("products",      "price_auto_adjust",   "ALTER TABLE products ADD COLUMN price_auto_adjust BOOLEAN DEFAULT 1"),
-            ("products",      "price_max",           "ALTER TABLE products ADD COLUMN price_max FLOAT"),
-            ("order_settings","exchange_rate",        "ALTER TABLE order_settings ADD COLUMN exchange_rate FLOAT DEFAULT 21.0"),
-            ("order_settings","price_adjust_enabled", "ALTER TABLE order_settings ADD COLUMN price_adjust_enabled BOOLEAN DEFAULT 0"),
-            ("order_settings","price_drop_threshold", "ALTER TABLE order_settings ADD COLUMN price_drop_threshold FLOAT DEFAULT 0.20"),
-            ("order_settings","price_change_pct",     "ALTER TABLE order_settings ADD COLUMN price_change_pct FLOAT DEFAULT 0.03"),
-            ("order_settings","min_profit_rate",      "ALTER TABLE order_settings ADD COLUMN min_profit_rate FLOAT DEFAULT 0.10"),
-        ]
-        inspector = inspect(engine)
-        for table, col, sql in migrations:
+    import logging
+    logger = logging.getLogger("migrate")
+
+    migrations = [
+        ("products",      "selling_price",       "ALTER TABLE products ADD COLUMN selling_price FLOAT"),
+        ("products",      "fba_fee",             "ALTER TABLE products ADD COLUMN fba_fee FLOAT"),
+        ("products",      "amazon_fee_rate",     "ALTER TABLE products ADD COLUMN amazon_fee_rate FLOAT DEFAULT 0.1"),
+        ("products",      "fees_updated_at",     "ALTER TABLE products ADD COLUMN fees_updated_at TIMESTAMP"),
+        ("products",      "price_auto_adjust",   "ALTER TABLE products ADD COLUMN price_auto_adjust BOOLEAN DEFAULT TRUE"),
+        ("products",      "price_max",           "ALTER TABLE products ADD COLUMN price_max FLOAT"),
+        ("order_settings","exchange_rate",        "ALTER TABLE order_settings ADD COLUMN exchange_rate FLOAT DEFAULT 21.0"),
+        ("order_settings","price_adjust_enabled", "ALTER TABLE order_settings ADD COLUMN price_adjust_enabled BOOLEAN DEFAULT FALSE"),
+        ("order_settings","price_drop_threshold", "ALTER TABLE order_settings ADD COLUMN price_drop_threshold FLOAT DEFAULT 0.20"),
+        ("order_settings","price_change_pct",     "ALTER TABLE order_settings ADD COLUMN price_change_pct FLOAT DEFAULT 0.03"),
+        ("order_settings","min_profit_rate",      "ALTER TABLE order_settings ADD COLUMN min_profit_rate FLOAT DEFAULT 0.10"),
+    ]
+
+    # inspectはコネクションの外で実行（PostgreSQL対応）
+    inspector = inspect(engine)
+    for table, col, sql in migrations:
+        try:
             existing = [c["name"] for c in inspector.get_columns(table)]
-            if col not in existing:
-                try:
+        except Exception as e:
+            logger.warning(f"migrate: get_columns failed for {table}: {e}")
+            existing = []
+        if col not in existing:
+            try:
+                with engine.begin() as conn:
                     conn.execute(text(sql))
-                    conn.commit()
-                except Exception:
-                    pass
+                logger.info(f"migrate: added {table}.{col}")
+            except Exception as e:
+                logger.warning(f"migrate: {table}.{col} -> {e}")
 
 _migrate()
 
