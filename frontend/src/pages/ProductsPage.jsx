@@ -142,7 +142,7 @@ export default function ProductsPage() {
           boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
           padding: 6,
         }}>
-          <img src={hoveredImg.url} alt="" style={{ width: 180, height: 180, objectFit: 'contain', display: 'block' }} />
+          <img src={hoveredImg.url} alt="" referrerPolicy="no-referrer" style={{ width: 180, height: 180, objectFit: 'contain', display: 'block' }} />
         </div>
       )}
       <h1>🏷️ 商品マスタ</h1>
