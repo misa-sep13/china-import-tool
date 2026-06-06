@@ -167,6 +167,7 @@ export default function ProductsPage() {
                   <th style={{ textAlign: 'right' }}>Amazon手数料率</th>
                   <th style={{ textAlign: 'right' }}>利益額</th>
                   <th style={{ textAlign: 'right' }}>利益率</th>
+                  <th>備考</th>
                   <th></th>
                 </tr>
               </thead>
@@ -225,6 +226,10 @@ export default function ProductsPage() {
                       </td>
                       <td style={{ textAlign: 'right', fontWeight: 600, color: profit ? (parseFloat(profit.rate) >= 20 ? '#16a34a' : parseFloat(profit.rate) >= 10 ? '#ca8a04' : '#dc2626') : '#bbb' }}>
                         {profit ? `${profit.rate}%` : '-'}
+                      </td>
+                      <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: '#666' }}
+                          title={p.note}>
+                        {p.note || ''}
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: 6 }}>
