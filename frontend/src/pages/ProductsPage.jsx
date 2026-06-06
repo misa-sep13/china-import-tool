@@ -4,8 +4,8 @@ import api from '../api/client'
 
 const EMPTY = {
   sku: '', fnsku: '', asin: '', name: '', buy_url: '', photo_url: '',
-  color: '', size: '', price: '', repack: '', note: '', set_size: 1, extra_stock: 0,
-  amazon_fee_rate: 0.1,
+  color: '', size: '', spec: '', customer_memo: '', price: '', repack: '', note: '',
+  set_size: 1, extra_stock: 0, amazon_fee_rate: 0.1,
 }
 
 function calcProfit(p, exchangeRate) {
@@ -160,7 +160,8 @@ export default function ProductsPage() {
                 <tr>
                   <th>SKU</th>
                   <th>商品名</th>
-                  <th>色/サイズ</th>
+                  <th>仕様</th>
+                  <th>お客様専用メモ</th>
                   <th style={{ textAlign: 'right' }}>仕入(元)</th>
                   <th style={{ textAlign: 'right' }}>販売価格(円)</th>
                   <th style={{ textAlign: 'right' }}>FBA手数料</th>
@@ -208,8 +209,11 @@ export default function ProductsPage() {
                           </span>
                         )}
                       </td>
-                      <td style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>
-                        {[p.color, p.size].filter(Boolean).join(' / ')}
+                      <td style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }} title={p.spec}>
+                        {p.spec || <span style={{ color: '#bbb' }}>-</span>}
+                      </td>
+                      <td style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: '#666' }} title={p.customer_memo}>
+                        {p.customer_memo || <span style={{ color: '#bbb' }}>-</span>}
                       </td>
                       <td style={{ textAlign: 'right' }}>{p.price ? `¥${(p.price * exchangeRate).toFixed(0)}` : '-'}</td>
                       <td style={{ textAlign: 'right' }}>
@@ -273,14 +277,6 @@ export default function ProductsPage() {
                   <input {...f('name')} />
                 </div>
                 <div className="form-group">
-                  <label>色</label>
-                  <input {...f('color')} />
-                </div>
-                <div className="form-group">
-                  <label>サイズ/規格</label>
-                  <input {...f('size')} />
-                </div>
-                <div className="form-group">
                   <label>仕入単価(元)</label>
                   <input type="number" step="0.01" {...f('price')} />
                 </div>
@@ -312,6 +308,14 @@ export default function ProductsPage() {
                 <div className="form-group">
                   <label>リパック</label>
                   <input {...f('repack')} />
+                </div>
+                <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                  <label>仕様（Excel出力用・色/サイズをまとめた表記）</label>
+                  <input {...f('spec')} placeholder="例: 燕麦色、S 建议75-95斤" />
+                </div>
+                <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                  <label>お客様専用メモ（Excel出力用）</label>
+                  <textarea {...f('customer_memo')} rows={2} style={{ resize: 'vertical' }} />
                 </div>
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
                   <label>備考</label>

@@ -20,6 +20,8 @@ class ProductCreate(BaseModel):
     size: Optional[str] = ""
     price: Optional[float] = 0
     repack: Optional[str] = ""
+    spec: Optional[str] = ""
+    customer_memo: Optional[str] = ""
     note: Optional[str] = ""
     set_size: Optional[int] = 1
     extra_stock: Optional[int] = 0
@@ -37,6 +39,8 @@ class ProductUpdate(BaseModel):
     size: Optional[str] = None
     price: Optional[float] = None
     repack: Optional[str] = None
+    spec: Optional[str] = None
+    customer_memo: Optional[str] = None
     note: Optional[str] = None
     set_size: Optional[int] = None
     extra_stock: Optional[int] = None

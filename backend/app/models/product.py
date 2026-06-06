@@ -18,6 +18,8 @@ class Product(Base):
     size = Column(String)
     price = Column(Float, default=0)        # 仕入れ単価（元）
     repack = Column(String)                 # リパック要否
+    spec = Column(String)                   # 仕様（Excel用・色/サイズをまとめた表示用）
+    customer_memo = Column(Text)            # お客様専用メモ（Excel出力用）
     note = Column(Text)
     set_size = Column(Integer, default=1)   # 1セットあたりのピース数
     extra_stock = Column(Integer, default=0)  # 別個数在庫

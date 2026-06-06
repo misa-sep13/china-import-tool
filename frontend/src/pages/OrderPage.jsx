@@ -26,14 +26,14 @@ export default function OrderPage() {
     }
   }
 
-  const startFetch = async () => {
+  const startFetch = async (force = false) => {
     setJobStatus('running')
     setError('')
     setRawItems([])
     setSelected(null)
     setQtyOverrides({})
     try {
-      const res = await api.post('/orders/preview/start')
+      const res = await api.post(`/orders/preview/start?force=${force}`)
       const id = res.data.job_id
       setJobId(id)
       pollRef.current = setInterval(async () => {
@@ -122,7 +122,7 @@ export default function OrderPage() {
       const url = window.URL.createObjectURL(new Blob([res.data]))
       const a = document.createElement('a')
       a.href = url
-      a.download = `taotaro_order_${new Date().toISOString().slice(0,10)}.xlsx`
+      a.download = `${new Date().toISOString().slice(0,10).replace(/-/g,'')}_order.xlsx`
       a.click()
       window.URL.revokeObjectURL(url)
       qc.invalidateQueries(['orderHistory'])
@@ -137,7 +137,7 @@ export default function OrderPage() {
 
   const handleRefetch = () => {
     stopPolling()
-    startFetch()
+    startFetch(true)  // 再計算ボタンはキャッシュを強制クリア
   }
 
   const daysBadge = (days) => {

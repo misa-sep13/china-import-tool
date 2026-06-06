@@ -30,6 +30,8 @@ class OrderItem(BaseModel):
     photo_url: str
     color: str
     size: str
+    spec: str = ""
+    customer_memo: str = ""
     price: float
     repack: str
     note: str
@@ -121,6 +123,8 @@ def _run_preview_job(job_id: str):
                 "photo_url": p.photo_url or "",
                 "color": p.color or "",
                 "size": p.size or "",
+                "spec": p.spec or "",
+                "customer_memo": p.customer_memo or "",
                 "price": p.price or 0,
                 "repack": p.repack or "",
                 "note": p.note or "",
@@ -153,8 +157,11 @@ def _run_preview_job(job_id: str):
 
 
 @router.post("/preview/start")
-def start_preview(background_tasks: BackgroundTasks):
-    """SP-APIデータ取得をバックグラウンドで開始し、job_idを返す"""
+def start_preview(background_tasks: BackgroundTasks, force: bool = False):
+    """SP-APIデータ取得をバックグラウンドで開始し、job_idを返す。force=TrueでキャッシュをクリアしてからAPIを叩く"""
+    if force:
+        from app.services.amazon_api import _cache
+        _cache.clear()
     job_id = str(uuid.uuid4())
     background_tasks.add_task(_run_preview_job, job_id)
     return {"job_id": job_id}
@@ -238,6 +245,8 @@ def preview_orders(db: Session = Depends(get_db)):
             "photo_url": p.photo_url or "",
             "color": p.color or "",
             "size": p.size or "",
+            "spec": p.spec or "",
+            "customer_memo": p.customer_memo or "",
             "price": p.price or 0,
             "repack": p.repack or "",
             "note": p.note or "",
@@ -278,6 +287,8 @@ def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
             "photo_url": item.photo_url,
             "color": item.color,
             "size": item.size,
+            "spec": item.spec,
+            "customer_memo": item.customer_memo,
             "qty": item.qty,
             "price": item.price,
             "repack": item.repack,
@@ -308,7 +319,7 @@ def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
 
     from datetime import date
     excel_bytes = build_taotaro_excel(items_data)
-    filename = f"taotaro_order_{date.today().strftime('%Y%m%d')}.xlsx"
+    filename = f"{date.today().strftime('%Y%m%d')}_order.xlsx"
 
     return StreamingResponse(
         io.BytesIO(excel_bytes),
