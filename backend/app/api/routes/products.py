@@ -25,8 +25,24 @@ class ProductCreate(BaseModel):
     extra_stock: Optional[int] = 0
     amazon_fee_rate: Optional[float] = 0.1
 
-class ProductUpdate(ProductCreate):
+class ProductUpdate(BaseModel):
     sku: Optional[str] = None
+    fnsku: Optional[str] = None
+    asin: Optional[str] = None
+    name: Optional[str] = None
+    amazon_url: Optional[str] = None
+    buy_url: Optional[str] = None
+    photo_url: Optional[str] = None
+    color: Optional[str] = None
+    size: Optional[str] = None
+    price: Optional[float] = None
+    repack: Optional[str] = None
+    note: Optional[str] = None
+    set_size: Optional[int] = None
+    extra_stock: Optional[int] = None
+    amazon_fee_rate: Optional[float] = None
+    selling_price: Optional[float] = None
+    fba_fee: Optional[float] = None
 
 class ProductOut(ProductCreate):
     id: int
