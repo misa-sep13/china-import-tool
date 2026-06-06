@@ -188,3 +188,69 @@ def fetch_all_sales(asin_list: List[str]) -> tuple:
         cached_results[d] = period_results[d]
 
     return (cached_results[7], cached_results[15], cached_results[30], cached_results[60])
+
+
+def _fetch_price_and_fee_one(sku: str) -> tuple:
+    """1SKUの出品価格とFBA手数料を取得。戻り値: (sku, selling_price, fba_fee)"""
+    mp = "A1VC38T7YXB528"
+    selling_price = None
+    fba_fee = None
+
+    # 出品価格取得
+    try:
+        params = urllib.parse.urlencode({"marketplaceIds": mp, "itemCondition": "New"})
+        data = _call_sp_api(f"/products/pricing/v0/listings/{urllib.parse.quote(sku, safe='')}/price?{params}")
+        offers = data.get("payload", {}).get("Product", {}).get("Offers", [])
+        if offers:
+            selling_price = offers[0].get("BuyingPrice", {}).get("ListingPrice", {}).get("Amount")
+    except Exception:
+        pass
+
+    # FBA手数料取得（出品価格が取れた場合のみ）
+    if selling_price:
+        try:
+            body = json.dumps({
+                "FeesEstimateRequest": {
+                    "MarketplaceId": mp,
+                    "IsAmazonFulfilled": True,
+                    "PriceToEstimateFees": {
+                        "ListingPrice": {"CurrencyCode": "JPY", "Amount": selling_price},
+                        "Shipping": {"CurrencyCode": "JPY", "Amount": 0},
+                    },
+                    "Identifier": sku,
+                }
+            }).encode()
+            token = _get_access_token()
+            req = urllib.request.Request(
+                f"https://sellingpartnerapi-fe.amazon.com/products/fees/v0/listings/{urllib.parse.quote(sku, safe='')}/feesEstimate",
+                data=body,
+                method="POST",
+                headers={
+                    "x-amz-access-token": token,
+                    "Content-Type": "application/json",
+                }
+            )
+            with urllib.request.urlopen(req, timeout=15) as res:
+                fee_data = json.loads(res.read())
+            total_fee = (fee_data.get("payload", {})
+                         .get("FeesEstimateResult", {})
+                         .get("FeesEstimate", {})
+                         .get("TotalFeesEstimate", {})
+                         .get("Amount"))
+            if total_fee is not None:
+                fba_fee = float(total_fee)
+        except Exception:
+            pass
+
+    return sku, selling_price, fba_fee
+
+
+def fetch_prices_and_fees(sku_list: List[str]) -> Dict[str, dict]:
+    """全SKUの出品価格・FBA手数料を並列取得。戻り値: {sku: {selling_price, fba_fee}}"""
+    result = {}
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        futures = {ex.submit(_fetch_price_and_fee_one, sku): sku for sku in sku_list}
+        for f in as_completed(futures):
+            sku, selling_price, fba_fee = f.result()
+            result[sku] = {"selling_price": selling_price, "fba_fee": fba_fee}
+    return result

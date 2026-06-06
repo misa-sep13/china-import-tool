@@ -1,0 +1,19 @@
+name: Weekly Refresh Fees
+
+on:
+  schedule:
+    # 毎週月曜 9:00 JST（= 0:00 UTC）
+    - cron: '0 0 * * 1'
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger refresh-fees API
+        run: |
+          curl -X POST "${{ secrets.BACKEND_URL }}/api/products/refresh-fees" \
+            -H "Content-Type: application/json" \
+            --max-time 300 \
+            --retry 2 \
+            -f

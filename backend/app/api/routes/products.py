@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
+from datetime import datetime, timezone
 from app.core.database import get_db
 from app.models.product import Product
 
@@ -22,6 +23,7 @@ class ProductCreate(BaseModel):
     note: Optional[str] = ""
     set_size: Optional[int] = 1
     extra_stock: Optional[int] = 0
+    amazon_fee_rate: Optional[float] = 0.1
 
 class ProductUpdate(ProductCreate):
     sku: Optional[str] = None
@@ -31,6 +33,9 @@ class ProductOut(ProductCreate):
     no: Optional[int] = None
     order_qty: int = 0
     is_active: bool = True
+    selling_price: Optional[float] = None
+    fba_fee: Optional[float] = None
+    fees_updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -105,6 +110,38 @@ def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(g
     db.commit()
     db.refresh(p)
     return p
+
+@router.post("/refresh-fees")
+def refresh_fees(db: Session = Depends(get_db)):
+    """全商品の販売価格・FBA手数料をSP-APIから取得してDBに保存"""
+    from app.core.config import settings as app_settings
+    if not app_settings.SP_API_REFRESH_TOKEN:
+        raise HTTPException(status_code=400, detail="SP-API未設定")
+
+    products = db.query(Product).filter(Product.is_active == True, Product.sku != None).all()
+    sku_list = [p.sku for p in products if p.sku]
+    if not sku_list:
+        return {"updated": 0}
+
+    from app.services.amazon_api import fetch_prices_and_fees
+    fees_map = fetch_prices_and_fees(sku_list)
+
+    now = datetime.now(timezone.utc)
+    updated = 0
+    for p in products:
+        info = fees_map.get(p.sku)
+        if not info:
+            continue
+        if info["selling_price"] is not None:
+            p.selling_price = info["selling_price"]
+        if info["fba_fee"] is not None:
+            p.fba_fee = info["fba_fee"]
+        p.fees_updated_at = now
+        updated += 1
+
+    db.commit()
+    return {"updated": updated}
+
 
 @router.delete("/{product_id}")
 def delete_product(product_id: int, db: Session = Depends(get_db)):

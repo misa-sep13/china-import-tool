@@ -24,6 +24,7 @@ class SettingsSchema(BaseModel):
     sale_enabled: bool = False
     sale_start: Optional[date] = None
     sale_end: Optional[date] = None
+    exchange_rate: float = 21.0
 
     class Config:
         from_attributes = True

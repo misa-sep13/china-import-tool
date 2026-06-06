@@ -22,6 +22,11 @@ class Product(Base):
     set_size = Column(Integer, default=1)   # 1セットあたりのピース数
     extra_stock = Column(Integer, default=0)  # 別個数在庫
     order_qty = Column(Integer, default=0)  # 手動発注数
+    # 利益計算用
+    selling_price = Column(Float, nullable=True)       # 販売価格（円）
+    fba_fee = Column(Float, nullable=True)             # FBA手数料（円）
+    amazon_fee_rate = Column(Float, default=0.1)       # Amazon手数料率（例: 0.10 = 10%）
+    fees_updated_at = Column(DateTime(timezone=True), nullable=True)  # 最終取得日時
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

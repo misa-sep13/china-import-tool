@@ -7,6 +7,29 @@ from app.models import order_history as order_history_models
 
 Base.metadata.create_all(bind=engine)
 
+# カラム追加マイグレーション（既存DBへの安全な追加）
+def _migrate():
+    from sqlalchemy import text, inspect
+    with engine.connect() as conn:
+        migrations = [
+            ("products",      "selling_price",   "ALTER TABLE products ADD COLUMN selling_price FLOAT"),
+            ("products",      "fba_fee",         "ALTER TABLE products ADD COLUMN fba_fee FLOAT"),
+            ("products",      "amazon_fee_rate", "ALTER TABLE products ADD COLUMN amazon_fee_rate FLOAT DEFAULT 0.1"),
+            ("products",      "fees_updated_at", "ALTER TABLE products ADD COLUMN fees_updated_at TIMESTAMP"),
+            ("order_settings","exchange_rate",   "ALTER TABLE order_settings ADD COLUMN exchange_rate FLOAT DEFAULT 21.0"),
+        ]
+        inspector = inspect(engine)
+        for table, col, sql in migrations:
+            existing = [c["name"] for c in inspector.get_columns(table)]
+            if col not in existing:
+                try:
+                    conn.execute(text(sql))
+                    conn.commit()
+                except Exception:
+                    pass
+
+_migrate()
+
 app = FastAPI(title="中国輸入管理ツール", version="0.1.0")
 
 import os

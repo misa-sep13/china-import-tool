@@ -20,3 +20,4 @@ class OrderSettings(Base):
     sale_enabled = Column(Boolean, default=False)
     sale_start = Column(Date, nullable=True)
     sale_end = Column(Date, nullable=True)
+    exchange_rate = Column(Float, default=21.0)  # 円/元
