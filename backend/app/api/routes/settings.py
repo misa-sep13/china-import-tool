@@ -25,6 +25,10 @@ class SettingsSchema(BaseModel):
     sale_start: Optional[date] = None
     sale_end: Optional[date] = None
     exchange_rate: float = 21.0
+    price_adjust_enabled: bool = False
+    price_drop_threshold: float = 0.20
+    price_change_pct: float = 0.03
+    min_profit_rate: float = 0.10
 
     class Config:
         from_attributes = True

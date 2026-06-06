@@ -40,6 +40,48 @@ export default function SettingsPage() {
       <h1>⚙️ 設定</h1>
       <form onSubmit={handleSubmit}>
         <div className="card">
+          <h2>価格自動調整</h2>
+          <div className="form-grid">
+            <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label style={{ marginBottom: 0 }}>
+                <input type="checkbox" {...fb('price_adjust_enabled')} style={{ width: 'auto', marginRight: 6 }} />
+                価格自動調整を有効にする（毎週月曜に提案生成）
+              </label>
+            </div>
+            <div className="form-group">
+              <label>値下げ判定: 前期比何%減で値下げ提案</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" step="1" min={1} max={99}
+                  value={Math.round((form.price_drop_threshold ?? 0.20) * 100)}
+                  onChange={e => setForm(p => ({ ...p, price_drop_threshold: Number(e.target.value) / 100 }))}
+                  style={{ width: 70 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>%</span>
+              </div>
+            </div>
+            <div className="form-group">
+              <label>価格変更幅（現在価格の何%、10円単位）</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" step="1" min={1} max={20}
+                  value={Math.round((form.price_change_pct ?? 0.03) * 100)}
+                  onChange={e => setForm(p => ({ ...p, price_change_pct: Number(e.target.value) / 100 }))}
+                  style={{ width: 70 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>%</span>
+              </div>
+            </div>
+            <div className="form-group">
+              <label>価格下限: 最低利益率</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" step="1" min={0} max={50}
+                  value={Math.round((form.min_profit_rate ?? 0.10) * 100)}
+                  onChange={e => setForm(p => ({ ...p, min_profit_rate: Number(e.target.value) / 100 }))}
+                  style={{ width: 70 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
           <h2>利益計算</h2>
           <div className="form-grid">
             <div className="form-group">

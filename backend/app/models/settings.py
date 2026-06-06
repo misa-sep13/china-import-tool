@@ -20,4 +20,8 @@ class OrderSettings(Base):
     sale_enabled = Column(Boolean, default=False)
     sale_start = Column(Date, nullable=True)
     sale_end = Column(Date, nullable=True)
-    exchange_rate = Column(Float, default=21.0)  # 円/元
+    exchange_rate = Column(Float, default=21.0)          # 円/元
+    price_adjust_enabled = Column(Boolean, default=False) # 価格自動調整ON/OFF
+    price_drop_threshold = Column(Float, default=0.20)    # 値下げ判定: 前期比20%減
+    price_change_pct = Column(Float, default=0.03)        # 変更幅3%
+    min_profit_rate = Column(Float, default=0.10)         # 下限利益率10%

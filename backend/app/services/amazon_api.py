@@ -245,6 +245,68 @@ def _fetch_price_and_fee_one(sku: str) -> tuple:
     return sku, selling_price, fba_fee
 
 
+def fetch_sales_period(days: int, offset_days: int, asin_list: List[str]) -> Dict[str, float]:
+    """offset_days前〜(offset_days+days)前の期間の日販を取得"""
+    from datetime import datetime, timedelta, timezone
+    mp = "A1VC38T7YXB528"
+
+    def _fetch_one(asin: str) -> tuple:
+        end = datetime.now(timezone.utc) - timedelta(days=offset_days)
+        start = end - timedelta(days=days)
+        try:
+            params = urllib.parse.urlencode({
+                "marketplaceIds": mp,
+                "interval": f"{start.strftime('%Y-%m-%dT%H:%M:%SZ')}--{end.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+                "granularity": "Total",
+                "asin": asin,
+            })
+            data = _call_sp_api(f"/sales/v1/orderMetrics?{params}")
+            units = sum(m.get("unitCount", 0) for m in data.get("payload", []))
+            return asin, round(units / days, 4)
+        except Exception:
+            return asin, 0.0
+
+    result = {asin: 0.0 for asin in asin_list}
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futures = {ex.submit(_fetch_one, asin): asin for asin in asin_list}
+        for f in as_completed(futures):
+            asin, val = f.result()
+            result[asin] = val
+    return result
+
+
+def update_listing_price(sku: str, price: float) -> bool:
+    """SP-API Listings Items APIで出品価格を更新。成功でTrue"""
+    mp = "A1VC38T7YXB528"
+    token = _get_access_token()
+    body = json.dumps({
+        "productType": "PRODUCT",
+        "patches": [
+            {
+                "op": "replace",
+                "path": "/attributes/list_price",
+                "value": [{"currency_code": "JPY", "value": round(price)}],
+            }
+        ],
+    }).encode()
+    req = urllib.request.Request(
+        f"https://sellingpartnerapi-fe.amazon.com/listings/2022-04-01/items/{urllib.parse.quote(sku, safe='')}",
+        data=body,
+        method="PATCH",
+        headers={
+            "x-amz-access-token": token,
+            "Content-Type": "application/json",
+            "marketplaceIds": mp,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as res:
+            result = json.loads(res.read())
+        return result.get("status") == "ACCEPTED"
+    except Exception:
+        return False
+
+
 def fetch_prices_and_fees(sku_list: List[str]) -> Dict[str, dict]:
     """全SKUの出品価格・FBA手数料を並列取得。戻り値: {sku: {selling_price, fba_fee}}"""
     result = {}

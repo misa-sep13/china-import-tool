@@ -17,3 +17,11 @@ jobs:
             --max-time 300 \
             --retry 2 \
             -f
+
+      - name: Trigger price adjustment suggestions
+        run: |
+          curl -X POST "${{ secrets.BACKEND_URL }}/api/price-adjustments/suggest" \
+            -H "Content-Type: application/json" \
+            --max-time 300 \
+            --retry 2 \
+            -f || true

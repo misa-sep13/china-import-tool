@@ -3,6 +3,7 @@ import OrderPage from './pages/OrderPage'
 import ProductsPage from './pages/ProductsPage'
 import SettingsPage from './pages/SettingsPage'
 import InvoicePage from './pages/InvoicePage'
+import PriceAdjustPage from './pages/PriceAdjustPage'
 import './App.css'
 
 function App() {
@@ -19,6 +20,9 @@ function App() {
         <NavLink to="/invoices" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📄 仕入管理
         </NavLink>
+        <NavLink to="/price-adjust" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          💹 価格調整
+        </NavLink>
         <NavLink to="/settings" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           ⚙️ 設定
         </NavLink>
@@ -28,6 +32,7 @@ function App() {
           <Route path="/" element={<OrderPage />} />
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/invoices" element={<InvoicePage />} />
+          <Route path="/price-adjust" element={<PriceAdjustPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>
