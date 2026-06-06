@@ -40,6 +40,19 @@ export default function SettingsPage() {
       <h1>⚙️ 設定</h1>
       <form onSubmit={handleSubmit}>
         <div className="card">
+          <h2>利益計算</h2>
+          <div className="form-grid">
+            <div className="form-group">
+              <label>為替レート（円/元）</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" step="0.1" min={1} {...f('exchange_rate', 'number')} style={{ width: 100 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>円 / 1元</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
           <h2>発注トリガー・目標在庫日数</h2>
           <div className="form-grid">
             <div className="form-group">
