@@ -213,15 +213,14 @@ export default function OrderPage() {
                 <table>
                   <thead>
                     <tr>
-                      <th style={{ whiteSpace: 'nowrap' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-start' }}>
-                          <input type="checkbox"
-                            checked={currentSelected.size === items.length}
-                            onChange={toggleAll}
-                          />
-                          <span>SKU</span>
-                        </div>
+                      <th style={{ width: 36, cursor: 'pointer' }} onClick={toggleAll}>
+                        <input type="checkbox"
+                          checked={currentSelected.size === items.length}
+                          onChange={toggleAll}
+                          onClick={e => e.stopPropagation()}
+                        />
                       </th>
+                      <th>SKU</th>
                       <th>商品名</th>
                       <th>色/サイズ</th>
                       <th>残日数</th>
@@ -236,15 +235,17 @@ export default function OrderPage() {
                   <tbody>
                     {items.map((item) => (
                       <tr key={item.product_id} style={{ opacity: currentSelected.has(item._idx) ? 1 : 0.4 }}>
-                        <td style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-start' }}>
-                            <input type="checkbox"
-                              checked={currentSelected.has(item._idx)}
-                              onChange={() => toggleSelect(item._idx)}
-                            />
-                            <span>{item.sku}</span>
-                          </div>
+                        <td
+                          style={{ textAlign: 'center', cursor: 'pointer' }}
+                          onClick={() => toggleSelect(item._idx)}
+                        >
+                          <input type="checkbox"
+                            checked={currentSelected.has(item._idx)}
+                            onChange={() => toggleSelect(item._idx)}
+                            onClick={e => e.stopPropagation()}
+                          />
                         </td>
+                        <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{item.sku}</td>
                         <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {item.name}
                         </td>
