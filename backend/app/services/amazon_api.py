@@ -8,6 +8,19 @@ from app.core.config import settings
 
 _token_cache = {"token": None, "expires_at": 0}
 
+# サーバー側キャッシュ（5分）
+_cache: Dict[str, dict] = {}
+_CACHE_TTL = 300  # seconds
+
+def _cache_get(key: str):
+    entry = _cache.get(key)
+    if entry and time.time() < entry["expires_at"]:
+        return entry["value"]
+    return None
+
+def _cache_set(key: str, value):
+    _cache[key] = {"value": value, "expires_at": time.time() + _CACHE_TTL}
+
 def _get_access_token() -> str:
     if _token_cache["token"] and time.time() < _token_cache["expires_at"]:
         return _token_cache["token"]
@@ -56,6 +69,10 @@ def _call_sp_api(path: str) -> dict:
     raise Exception("SP-API rate limited after retries: " + path)
 
 def fetch_inventory() -> Dict[str, dict]:
+    cached = _cache_get("inventory")
+    if cached is not None:
+        return cached
+
     mp = "A1VC38T7YXB528"
     result = {}
     next_token = None
@@ -86,6 +103,7 @@ def fetch_inventory() -> Dict[str, dict]:
         if not next_token:
             break
 
+    _cache_set("inventory", result)
     return result
 
 def fetch_item_name(asin: str) -> str:
@@ -119,10 +137,54 @@ def _fetch_sales_one(asin: str, days: int) -> tuple:
         return asin, 0.0
 
 def fetch_sales(days: int, asin_list: List[str]) -> Dict[str, float]:
+    cache_key = f"sales_{days}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     result = {asin: 0.0 for asin in asin_list}
-    with ThreadPoolExecutor(max_workers=5) as ex:
+    # max_workers=10: レートリミットを避けつつ並列化
+    with ThreadPoolExecutor(max_workers=10) as ex:
         futures = {ex.submit(_fetch_sales_one, asin, days): asin for asin in asin_list}
         for f in as_completed(futures):
             asin, val = f.result()
             result[asin] = val
+
+    _cache_set(cache_key, result)
     return result
+
+
+def fetch_all_sales(asin_list: List[str]) -> tuple:
+    """7/15/30/60日の売上を全ASIN×全期間で並列一括取得"""
+    periods = [7, 15, 30, 60]
+    all_keys = [(a, d) for a in asin_list for d in periods]
+
+    # キャッシュチェック
+    cached_results = {}
+    missing_periods = set()
+    for d in periods:
+        cached = _cache_get(f"sales_{d}")
+        if cached is not None:
+            cached_results[d] = cached
+        else:
+            missing_periods.add(d)
+
+    if not missing_periods:
+        return (cached_results[7], cached_results[15], cached_results[30], cached_results[60])
+
+    # 未キャッシュの期間だけ取得
+    period_results = {d: {a: 0.0 for a in asin_list} for d in missing_periods}
+    tasks = [(a, d) for a in asin_list for d in missing_periods]
+
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futures = {ex.submit(_fetch_sales_one, a, d): (a, d) for a, d in tasks}
+        for f in as_completed(futures):
+            asin, val = f.result()
+            a, d = futures[f]
+            period_results[d][a] = val
+
+    for d in missing_periods:
+        _cache_set(f"sales_{d}", period_results[d])
+        cached_results[d] = period_results[d]
+
+    return (cached_results[7], cached_results[15], cached_results[30], cached_results[60])

@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
 import io
-from app.core.database import get_db
+import uuid
+import time
+import threading
+from app.core.database import get_db, SessionLocal
 from app.models.product import Product
 from app.models.settings import OrderSettings
 from app.models.order_history import OrderHistory
@@ -12,6 +15,10 @@ from app.services.calc import CalcSettings, calc_order_qty
 from app.services.excel_export import build_taotaro_excel
 
 router = APIRouter(prefix="/orders", tags=["orders"])
+
+# バックグラウンドジョブ管理（メモリ内）
+_jobs: dict = {}
+_jobs_lock = threading.Lock()
 
 class OrderItem(BaseModel):
     product_id: int
@@ -43,9 +50,134 @@ class OrderItem(BaseModel):
 class ExportRequest(BaseModel):
     items: List[OrderItem]
 
+
+def _run_preview_job(job_id: str):
+    """バックグラウンドでSP-APIデータを取得して推奨発注数を計算"""
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "running", "result": None, "error": None, "started_at": time.time()}
+
+    db = SessionLocal()
+    try:
+        products = db.query(Product).filter(Product.is_active == True).all()
+        if not products:
+            with _jobs_lock:
+                _jobs[job_id]["status"] = "done"
+                _jobs[job_id]["result"] = []
+            return
+
+        settings_row = db.query(OrderSettings).first()
+        s = _build_calc_settings(settings_row)
+
+        from app.core.config import settings as app_settings
+        if app_settings.SP_API_REFRESH_TOKEN:
+            from app.services.amazon_api import fetch_inventory, fetch_all_sales
+            from concurrent.futures import ThreadPoolExecutor
+            asin_list = [p.asin for p in products if p.asin]
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                f_inv   = ex.submit(fetch_inventory)
+                f_sales = ex.submit(fetch_all_sales, asin_list)
+            inventory = f_inv.result()
+            sales_7, sales_15, sales_30, sales_60 = f_sales.result()
+        else:
+            inventory = {}
+            sales_7 = sales_15 = sales_30 = sales_60 = {}
+
+        from sqlalchemy import func as sqlfunc
+        ordered_qty_by_sku = dict(
+            db.query(OrderHistory.sku, sqlfunc.sum(OrderHistory.qty))
+            .filter(OrderHistory.is_deleted == False)
+            .group_by(OrderHistory.sku)
+            .all()
+        )
+
+        result = []
+        for p in products:
+            inv = inventory.get(p.fnsku, {})
+            available   = inv.get("available", 0)
+            inbound     = inv.get("inbound", 0)
+            processing  = inv.get("processing", 0)
+            ordered     = ordered_qty_by_sku.get(p.sku, 0)
+            s7  = sales_7.get(p.asin, 0)
+            s15 = sales_15.get(p.asin, 0)
+            s30 = sales_30.get(p.asin, 0)
+            s60 = sales_60.get(p.asin, 0)
+
+            calc = calc_order_qty(
+                available=available, inbound=inbound + ordered, processing=processing,
+                extra_stock=p.extra_stock or 0,
+                sales_7=s7, sales_15=s15, sales_30=s30, sales_60=s60,
+                set_size=p.set_size or 1, s=s
+            )
+            if calc.qty == 0:
+                continue
+
+            result.append({
+                "product_id": p.id,
+                "sku": p.sku or "",
+                "name": p.name or "",
+                "asin": p.asin or "",
+                "fnsku": p.fnsku or "",
+                "buy_url": p.buy_url or "",
+                "photo_url": p.photo_url or "",
+                "color": p.color or "",
+                "size": p.size or "",
+                "price": p.price or 0,
+                "repack": p.repack or "",
+                "note": p.note or "",
+                "amazon_url": p.amazon_url or (f"https://www.amazon.co.jp/dp/{p.asin}" if p.asin else ""),
+                "set_size": p.set_size or 1,
+                "available": available,
+                "inbound": inbound,
+                "ordered": ordered,
+                "sales_7": s7,
+                "sales_15": s15,
+                "sales_30": s30,
+                "sales_60": s60,
+                "days_left": calc.days_left,
+                "daily": calc.daily,
+                "stock": calc.stock,
+                "recommended_qty": calc.qty,
+                "qty": calc.qty,
+            })
+
+        with _jobs_lock:
+            _jobs[job_id]["status"] = "done"
+            _jobs[job_id]["result"] = result
+
+    except Exception as e:
+        with _jobs_lock:
+            _jobs[job_id]["status"] = "error"
+            _jobs[job_id]["error"] = str(e)
+    finally:
+        db.close()
+
+
+@router.post("/preview/start")
+def start_preview(background_tasks: BackgroundTasks):
+    """SP-APIデータ取得をバックグラウンドで開始し、job_idを返す"""
+    job_id = str(uuid.uuid4())
+    background_tasks.add_task(_run_preview_job, job_id)
+    return {"job_id": job_id}
+
+
+@router.get("/preview/status/{job_id}")
+def get_preview_status(job_id: str):
+    """ジョブの状態と結果を返す"""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+    return {
+        "status": job["status"],   # "running" | "done" | "error"
+        "result": job["result"],
+        "error": job["error"],
+        "elapsed": round(time.time() - job["started_at"], 1),
+    }
+
+
 @router.get("/preview")
 def preview_orders(db: Session = Depends(get_db)):
-    """SP-APIからデータ取得して推奨発注数を計算して返す"""
+    """後方互換：同期でSP-APIデータ取得（キャッシュ済みなら高速）"""
     products = db.query(Product).filter(Product.is_active == True).all()
     if not products:
         return []
@@ -53,28 +185,20 @@ def preview_orders(db: Session = Depends(get_db)):
     settings_row = db.query(OrderSettings).first()
     s = _build_calc_settings(settings_row)
 
-    # SP-API取得（未設定時はモックデータで動作確認）
     from app.core.config import settings as app_settings
     if app_settings.SP_API_REFRESH_TOKEN:
-        from app.services.amazon_api import fetch_inventory, fetch_sales
+        from app.services.amazon_api import fetch_inventory, fetch_all_sales
         from concurrent.futures import ThreadPoolExecutor
         asin_list = [p.asin for p in products if p.asin]
-        with ThreadPoolExecutor(max_workers=5) as ex:
-            f_inv    = ex.submit(fetch_inventory)
-            f_s7     = ex.submit(fetch_sales, 7,  asin_list)
-            f_s15    = ex.submit(fetch_sales, 15, asin_list)
-            f_s30    = ex.submit(fetch_sales, 30, asin_list)
-            f_s60    = ex.submit(fetch_sales, 60, asin_list)
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            f_inv   = ex.submit(fetch_inventory)
+            f_sales = ex.submit(fetch_all_sales, asin_list)
         inventory = f_inv.result()
-        sales_7   = f_s7.result()
-        sales_15  = f_s15.result()
-        sales_30  = f_s30.result()
-        sales_60  = f_s60.result()
+        sales_7, sales_15, sales_30, sales_60 = f_sales.result()
     else:
         inventory = {}
         sales_7 = sales_15 = sales_30 = sales_60 = {}
 
-    # 発注済み（未削除）の数量をSKUごとに集計
     from sqlalchemy import func as sqlfunc
     ordered_qty_by_sku = dict(
         db.query(OrderHistory.sku, sqlfunc.sum(OrderHistory.qty))
@@ -135,6 +259,7 @@ def preview_orders(db: Session = Depends(get_db)):
 
     return result
 
+
 @router.post("/export")
 def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
     """発注リストをTAO太郎形式のExcelとしてダウンロードし、発注履歴に保存"""
@@ -165,7 +290,6 @@ def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
     if not items_data:
         raise HTTPException(status_code=400, detail="発注数が0の商品しかありません")
 
-    # 発注履歴に保存
     for item in items_data:
         db.add(OrderHistory(
             sku=item["sku"],
@@ -192,6 +316,7 @@ def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
+
 @router.get("/history")
 def get_order_history(db: Session = Depends(get_db)):
     """発注済みリストを取得（未削除・新しい順）"""
@@ -215,6 +340,7 @@ def get_order_history(db: Session = Depends(get_db)):
         for r in rows
     ]
 
+
 @router.delete("/history/{history_id}")
 def delete_order_history(history_id: int, db: Session = Depends(get_db)):
     """発注済みレコードを削除（FBA納品プラン作成後に呼ぶ）"""
@@ -224,6 +350,7 @@ def delete_order_history(history_id: int, db: Session = Depends(get_db)):
     row.is_deleted = True
     db.commit()
     return {"ok": True}
+
 
 def _build_calc_settings(row: Optional[OrderSettings]) -> CalcSettings:
     if not row:

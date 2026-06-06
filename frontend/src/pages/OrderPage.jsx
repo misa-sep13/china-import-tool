@@ -1,20 +1,71 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 
+const POLL_INTERVAL = 3000 // 3秒ごとにポーリング
+
 export default function OrderPage() {
   const qc = useQueryClient()
-  const [tab, setTab] = useState('order') // 'order' | 'history'
-  const [selected, setSelected] = useState(null) // null = 未初期化
+  const [tab, setTab] = useState('order')
+  const [selected, setSelected] = useState(null)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
-  const [qtyOverrides, setQtyOverrides] = useState({}) // product_id -> qty
+  const [qtyOverrides, setQtyOverrides] = useState({})
 
-  const { data: rawItems = [], isLoading, isFetching, refetch: refetchPreview } = useQuery({
-    queryKey: ['orderPreview'],
-    queryFn: () => api.get('/orders/preview').then(r => r.data),
-    staleTime: 5 * 60 * 1000,
-  })
+  // バックグラウンドジョブ管理
+  const [jobId, setJobId] = useState(null)
+  const [jobStatus, setJobStatus] = useState('idle') // idle | running | done | error
+  const [jobElapsed, setJobElapsed] = useState(0)
+  const [rawItems, setRawItems] = useState([])
+  const pollRef = useRef(null)
+
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }
+
+  const startFetch = async () => {
+    setJobStatus('running')
+    setError('')
+    setRawItems([])
+    setSelected(null)
+    setQtyOverrides({})
+    try {
+      const res = await api.post('/orders/preview/start')
+      const id = res.data.job_id
+      setJobId(id)
+      pollRef.current = setInterval(async () => {
+        try {
+          const status = await api.get(`/orders/preview/status/${id}`)
+          setJobElapsed(status.data.elapsed)
+          if (status.data.status === 'done') {
+            stopPolling()
+            setRawItems(status.data.result || [])
+            setJobStatus('done')
+          } else if (status.data.status === 'error') {
+            stopPolling()
+            setError(status.data.error || 'SP-APIデータ取得に失敗しました')
+            setJobStatus('error')
+          }
+        } catch {
+          stopPolling()
+          setError('ステータス取得に失敗しました')
+          setJobStatus('error')
+        }
+      }, POLL_INTERVAL)
+    } catch {
+      setJobStatus('error')
+      setError('データ取得の開始に失敗しました')
+    }
+  }
+
+  // マウント時に自動取得開始
+  useEffect(() => {
+    startFetch()
+    return () => stopPolling()
+  }, [])
 
   useEffect(() => {
     if (rawItems.length > 0 && selected === null) {
@@ -22,7 +73,6 @@ export default function OrderPage() {
     }
   }, [rawItems])
 
-  // qtyOverridesを適用したアイテムリスト
   const items = rawItems.map((item, i) => ({
     ...item,
     qty: qtyOverrides[item.product_id] ?? item.qty,
@@ -76,14 +126,18 @@ export default function OrderPage() {
       a.click()
       window.URL.revokeObjectURL(url)
       qc.invalidateQueries(['orderHistory'])
-      qc.invalidateQueries(['orderPreview'])
       setQtyOverrides({})
       setSelected(null)
-    } catch (e) {
+    } catch {
       setError('Excelの出力に失敗しました')
     } finally {
       setExporting(false)
     }
+  }
+
+  const handleRefetch = () => {
+    stopPolling()
+    startFetch()
   }
 
   const daysBadge = (days) => {
@@ -94,6 +148,7 @@ export default function OrderPage() {
 
   const selectedItems = items.filter((item, i) => currentSelected.has(i) && item.qty > 0)
   const totalYuan = selectedItems.reduce((s, i) => s + i.qty * i.price, 0)
+  const isLoading = jobStatus === 'running' || jobStatus === 'idle'
 
   return (
     <div>
@@ -106,7 +161,7 @@ export default function OrderPage() {
         >発注推奨リスト</button>
         <button
           className={`btn ${tab === 'history' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => { setTab('history'); refetchHistory() }}
+          onClick={() => setTab('history')}
         >発注済みリスト</button>
       </div>
 
@@ -118,8 +173,8 @@ export default function OrderPage() {
               チェックを入れた商品だけExcelに出力されます。出力すると発注済みリストに記録されます。
             </p>
             <div className="top-actions">
-              <button className="btn btn-secondary" onClick={() => { refetchPreview(); setQtyOverrides({}); setSelected(null) }} disabled={isFetching}>
-                {isFetching ? '取得中...' : '🔄 再計算'}
+              <button className="btn btn-secondary" onClick={handleRefetch} disabled={isLoading}>
+                {isLoading ? '取得中...' : '🔄 再計算'}
               </button>
               {items.length > 0 && (
                 <button className="btn btn-success" onClick={handleExport} disabled={exporting}>
@@ -131,12 +186,27 @@ export default function OrderPage() {
           </div>
 
           {isLoading && (
-            <div className="card" style={{ textAlign: 'center', color: '#888', padding: 40 }}>
-              SP-APIからデータを取得中...
+            <div className="card" style={{ textAlign: 'center', color: '#555', padding: 40 }}>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
+              <p style={{ fontWeight: 600, marginBottom: 8 }}>SP-APIからデータを取得中...</p>
+              <p style={{ fontSize: 13, color: '#888' }}>
+                Amazon SP-APIから全商品の在庫・売上データを取得しています。<br />
+                商品数によっては2〜3分かかる場合があります。
+              </p>
+              {jobElapsed > 0 && (
+                <p style={{ fontSize: 13, color: '#aaa', marginTop: 8 }}>経過時間: {jobElapsed}秒</p>
+              )}
             </div>
           )}
 
-          {!isLoading && items.length > 0 && (
+          {jobStatus === 'error' && !isLoading && (
+            <div className="card" style={{ textAlign: 'center', color: '#c00', padding: 40 }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>⚠️</div>
+              <p>データ取得に失敗しました。再計算ボタンで再試行してください。</p>
+            </div>
+          )}
+
+          {!isLoading && jobStatus === 'done' && items.length > 0 && (
             <div className="card">
               <h2>発注推奨リスト（{items.length}件）</h2>
               <div style={{ overflowX: 'auto' }}>
@@ -145,7 +215,7 @@ export default function OrderPage() {
                     <tr>
                       <th style={{ width: 36 }}>
                         <input type="checkbox"
-                          checked={selected.size === items.length}
+                          checked={currentSelected.size === items.length}
                           onChange={toggleAll}
                         />
                       </th>
@@ -162,7 +232,7 @@ export default function OrderPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((item, idx) => (
+                    {items.map((item) => (
                       <tr key={item.product_id} style={{ opacity: currentSelected.has(item._idx) ? 1 : 0.4 }}>
                         <td style={{ textAlign: 'center' }}>
                           <input type="checkbox"
@@ -210,7 +280,7 @@ export default function OrderPage() {
             </div>
           )}
 
-          {!isLoading && items.length === 0 && (
+          {!isLoading && jobStatus === 'done' && items.length === 0 && (
             <div className="card empty-state">
               <div style={{ fontSize: 40 }}>✅</div>
               <p>現在、発注が必要な商品はありません。</p>
