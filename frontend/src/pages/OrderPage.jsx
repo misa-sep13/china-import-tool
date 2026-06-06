@@ -213,8 +213,8 @@ export default function OrderPage() {
                 <table>
                   <thead>
                     <tr>
-                      <th>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <th style={{ whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-start' }}>
                           <input type="checkbox"
                             checked={currentSelected.size === items.length}
                             onChange={toggleAll}
@@ -236,8 +236,8 @@ export default function OrderPage() {
                   <tbody>
                     {items.map((item) => (
                       <tr key={item.product_id} style={{ opacity: currentSelected.has(item._idx) ? 1 : 0.4 }}>
-                        <td style={{ fontFamily: 'monospace', fontSize: 12 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <td style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-start' }}>
                             <input type="checkbox"
                               checked={currentSelected.has(item._idx)}
                               onChange={() => toggleSelect(item._idx)}
