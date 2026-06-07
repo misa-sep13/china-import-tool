@@ -144,15 +144,17 @@ def fetch_catalog_info(asin_list: List[str]) -> Dict[str, dict]:
                         break
                 if image_url:
                     break
-            # レビュー評価
+            # summariesからparentAsinも取得
             rating = None
             rating_count = None
+            parent_asin = None
             for summary in data.get("summaries", []):
                 if summary.get("marketplaceId") == mp:
                     rating = summary.get("averageCustomerReview")
                     rating_count = summary.get("numberOfCustomerReviews")
+                    parent_asin = summary.get("parentAsin")
                     break
-            return asin, {"image_url": image_url, "rating": rating, "rating_count": rating_count}
+            return asin, {"image_url": image_url, "rating": rating, "rating_count": rating_count, "parent_asin": parent_asin}
         except Exception:
             return asin, {"image_url": None, "rating": None, "rating_count": None}
 

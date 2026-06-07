@@ -58,6 +58,13 @@ def _run_analytics_job(job_id: str, days: int):
         exchange_rate = getattr(settings_row, 'exchange_rate', 21.0) or 21.0
         amazon_fee_rate = 0.1  # デフォルト10%
 
+        # 子ASIN→親ASINのマッピングを構築（Tool4Sellerはparentasin単位）
+        child_to_parent = {}
+        for asin, cat_data in catalog_info.items():
+            pa = cat_data.get("parent_asin")
+            if pa:
+                child_to_parent[asin] = pa
+
         items = []
         total_revenue = 0
         total_units = 0
@@ -68,8 +75,9 @@ def _run_analytics_job(job_id: str, days: int):
             available  = inv.get("available", 0)
             inbound    = inv.get("inbound", 0)
             cat = catalog_info.get(p.asin, {})
-            # Tool4Sellerの評価を優先（SP-APIでは取得不可のため）
-            t4s_rating = t4s_ratings.get(p.asin)
+            # Tool4Sellerの評価を優先（parentAsin経由でマッチング）
+            parent_asin = child_to_parent.get(p.asin) or p.asin
+            t4s_rating = t4s_ratings.get(parent_asin) or t4s_ratings.get(p.asin)
             sd = sales_detail.get(p.asin, {"units": 0, "revenue": 0, "avg_price": 0})
             units   = sd["units"]
             revenue = sd["revenue"]

@@ -217,7 +217,7 @@ export default function AnalyticsPage() {
                     </td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {item.rating != null
-                        ? <span style={{ fontWeight: 600 }}>{'★'} {item.rating}<br /><span style={{ fontSize: 11, color: '#888' }}>({fmt(item.rating_count)})</span></span>
+                        ? <span style={{ fontWeight: 600 }}>★ {item.rating}{item.rating_count != null && <><br /><span style={{ fontSize: 11, color: '#888' }}>({fmt(item.rating_count)})</span></>}</span>
                         : <span style={{ color: '#aaa', fontSize: 12 }}>未追跡</span>
                       }
                     </td>
