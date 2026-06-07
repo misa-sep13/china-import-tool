@@ -121,9 +121,10 @@ export default function AnalyticsPage() {
     <div>
       <h1>📈 商品分析</h1>
 
-      {/* コントロール */}
-      <div className="card">
-        <div className="top-actions" style={{ alignItems: 'center' }}>
+      {/* コントロール＋サマリー */}
+      <div className="card" style={{ padding: '16px 24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {/* 期間ボタン */}
           <div style={{ display: 'flex', gap: 6 }}>
             {PERIODS.map(p => (
               <button
@@ -138,38 +139,40 @@ export default function AnalyticsPage() {
           <button className="btn btn-secondary" onClick={() => startFetch(period, true)} disabled={isLoading}>
             {isLoading ? '取得中...' : '🔄 再計算'}
           </button>
+          {/* サマリー数値（横並び） */}
+          {summary && (
+            <>
+              <div style={{ width: 1, height: 36, background: '#e5e7eb', margin: '0 8px' }} />
+              <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 11, color: '#888' }}>売上合計</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.2 }}>{yen(summary.revenue)}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: '#888' }}>総販売数</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.2 }}>{fmt(summary.units)} 個</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: '#888' }}>粗利益</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.2, color: summary.profit >= 0 ? '#16a34a' : '#dc2626' }}>
+                    {yen(summary.profit)}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: '#888' }}>粗利益率</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.2, color: profitColor(summary.profit_rate) }}>
+                    {fmtRate(summary.profit_rate)}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
-        <div style={{ fontSize: 12, color: '#666', marginTop: 6 }}>
+        <div style={{ fontSize: 12, color: '#888', marginTop: 8 }}>
           集計期間: {periodLabel(period)}
         </div>
         {error && <p className="error-msg">{error}</p>}
       </div>
-
-      {/* サマリー */}
-      {summary && (
-        <div className="card" style={{ display: 'flex', gap: 32, flexWrap: 'wrap', padding: '16px 24px' }}>
-          <div>
-            <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>売上合計</div>
-            <div style={{ fontSize: 22, fontWeight: 700 }}>{yen(summary.revenue)}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>総販売数</div>
-            <div style={{ fontSize: 22, fontWeight: 700 }}>{fmt(summary.units)} 個</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>粗利益</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: summary.profit >= 0 ? '#16a34a' : '#dc2626' }}>
-              {yen(summary.profit)}
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>粗利益率</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: profitColor(summary.profit_rate) }}>
-              {fmtRate(summary.profit_rate)}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ローディング */}
       {isLoading && (
@@ -185,7 +188,7 @@ export default function AnalyticsPage() {
       {!isLoading && jobStatus === 'done' && (
         <div className="card">
           <h2>商品別分析（{items.length}件 / {period}日間）</h2>
-          <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 420px)', WebkitOverflowScrolling: 'touch' }}>
+          <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 310px)', WebkitOverflowScrolling: 'touch' }}>
             <table style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
               <thead>
                 <tr>
