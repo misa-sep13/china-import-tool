@@ -28,7 +28,7 @@ def _run_analytics_job(job_id: str, days: int):
 
         asin_list = [p.asin for p in products if p.asin]
 
-        from app.services.tool4seller import fetch_ratings
+        from app.services.tool4seller import fetch_product_data
 
         if app_settings.SP_API_REFRESH_TOKEN:
             from app.services.amazon_api import fetch_inventory, fetch_sales_detail, fetch_catalog_info
@@ -36,22 +36,22 @@ def _run_analytics_job(job_id: str, days: int):
                 f_inv     = ex.submit(fetch_inventory)
                 f_sales   = ex.submit(fetch_sales_detail, asin_list, days)
                 f_catalog = ex.submit(fetch_catalog_info, asin_list)
-                f_ratings = ex.submit(fetch_ratings, asin_list)
+                f_t4s     = ex.submit(fetch_product_data, asin_list, days)
             inventory    = f_inv.result()
             sales_detail = f_sales.result()
             catalog_info = f_catalog.result()
             try:
-                t4s_ratings = f_ratings.result()
+                t4s_data = f_t4s.result()
             except Exception:
-                t4s_ratings = {}
+                t4s_data = {}
         else:
             inventory = {}
             sales_detail = {}
             catalog_info = {}
             try:
-                t4s_ratings = fetch_ratings(asin_list)
+                t4s_data = fetch_product_data(asin_list, days)
             except Exception:
-                t4s_ratings = {}
+                t4s_data = {}
 
         # 為替レート
         settings_row = db.query(OrderSettings).first()
@@ -75,9 +75,11 @@ def _run_analytics_job(job_id: str, days: int):
             available  = inv.get("available", 0)
             inbound    = inv.get("inbound", 0)
             cat = catalog_info.get(p.asin, {})
-            # Tool4Sellerの評価を優先（parentAsin経由でマッチング）
+            # Tool4Sellerデータ（parentAsin経由でマッチング）
             parent_asin = child_to_parent.get(p.asin) or p.asin
-            t4s_rating = t4s_ratings.get(parent_asin) or t4s_ratings.get(p.asin)
+            t4s = t4s_data.get(parent_asin) or t4s_data.get(p.asin) or {}
+            t4s_rating    = t4s.get("rating")
+            vine_revenue  = t4s.get("promotion") or 0
             sd = sales_detail.get(p.asin, {"units": 0, "revenue": 0, "avg_price": 0})
             units   = sd["units"]
             revenue = sd["revenue"]
@@ -110,6 +112,7 @@ def _run_analytics_job(job_id: str, days: int):
                 "units":        units,
                 "revenue":      revenue,
                 "avg_price":    avg_price,
+                "vine_revenue": vine_revenue,
                 # コスト
                 "fba_fee":      fba_fee,
                 "amazon_fee":   amazon_fee,

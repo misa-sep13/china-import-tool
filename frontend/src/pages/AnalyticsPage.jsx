@@ -3,6 +3,7 @@ import api from '../api/client'
 
 const POLL_INTERVAL = 3000
 const PERIODS = [
+  { label: '1日', value: 1 },
   { label: '7日', value: 7 },
   { label: '30日', value: 30 },
   { label: '60日', value: 60 },
@@ -175,6 +176,7 @@ export default function AnalyticsPage() {
                   <th style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>評価</th>
                   {th('units', '販売数')}
                   {th('revenue', '売上')}
+                  {th('vine_revenue', 'VINE売上')}
                   {th('avg_price', '平均単価')}
                   {th('fba_fee', 'FBA手数料')}
                   {th('amazon_fee', 'Amazon手数料')}
@@ -223,6 +225,9 @@ export default function AnalyticsPage() {
                     </td>
                     <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(item.units)}</td>
                     <td style={{ textAlign: 'right', fontWeight: 600 }}>{yen(item.revenue)}</td>
+                    <td style={{ textAlign: 'right', color: item.vine_revenue > 0 ? '#7c3aed' : '#bbb' }}>
+                      {item.vine_revenue > 0 ? yen(item.vine_revenue) : '-'}
+                    </td>
                     <td style={{ textAlign: 'right' }}>{yen(item.avg_price)}</td>
                     <td style={{ textAlign: 'right', color: '#555' }}>{yen(item.fba_fee)}</td>
                     <td style={{ textAlign: 'right', color: '#555' }}>{yen(item.amazon_fee)}</td>

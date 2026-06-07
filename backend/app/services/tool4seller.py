@@ -84,17 +84,18 @@ def _call_t4s(path: str, body: dict) -> dict:
         return json.loads(res.read())
 
 
-def fetch_ratings(asin_list: list) -> Dict[str, Optional[float]]:
-    """ASIN→ratingのマップを返す。取得できなければNone"""
-    cache_key = "ratings"
+def fetch_product_data(asin_list: list, days: int = 30) -> Dict[str, dict]:
+    """parentASIN→{rating, promotion}のマップを返す。
+    ratingは評価（常に最新30日で取得）、promotionは期間内のVINE等プロモーション売上。
+    """
+    cache_key = f"t4s_product_data_{days}"
     entry = _rating_cache.get(cache_key)
     if entry and time.time() < entry["expires_at"]:
         return entry["value"]
 
     try:
-        # 過去30日を対象に全商品の評価を取得
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=30)
+        start_date = end_date - timedelta(days=days)
 
         result = {}
         current_page = 1
@@ -120,9 +121,12 @@ def fetch_ratings(asin_list: list) -> Dict[str, Optional[float]]:
 
             for item in items:
                 asin = item.get("parentAsin")
-                rating = item.get("rating")
                 if asin:
-                    result[asin] = rating
+                    result[asin] = {
+                        "rating":    item.get("rating"),
+                        "promotion": item.get("promotion") or 0,
+                        "orders":    item.get("orders") or 0,
+                    }
 
             total_page = content.get("totalPage", 1)
             if current_page >= total_page:
@@ -133,4 +137,10 @@ def fetch_ratings(asin_list: list) -> Dict[str, Optional[float]]:
         return result
 
     except Exception as e:
-        raise Exception(f"Tool4Seller 評価取得失敗: {e}")
+        raise Exception(f"Tool4Seller データ取得失敗: {e}")
+
+
+def fetch_ratings(asin_list: list) -> Dict[str, Optional[float]]:
+    """後方互換: fetch_product_dataのratingのみ返す"""
+    data = fetch_product_data(asin_list, days=30)
+    return {asin: v["rating"] for asin, v in data.items()}
