@@ -156,6 +156,126 @@ def _run_preview_job(job_id: str):
         db.close()
 
 
+def _run_stock_job(job_id: str):
+    """全在庫一覧用バックグラウンドジョブ（推奨発注数マイナス含む全商品）"""
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "running", "result": None, "error": None, "started_at": time.time()}
+
+    db = SessionLocal()
+    try:
+        products = db.query(Product).filter(Product.is_active == True).all()
+        if not products:
+            with _jobs_lock:
+                _jobs[job_id]["status"] = "done"
+                _jobs[job_id]["result"] = []
+            return
+
+        settings_row = db.query(OrderSettings).first()
+        s = _build_calc_settings(settings_row)
+
+        from app.core.config import settings as app_settings
+        if app_settings.SP_API_REFRESH_TOKEN:
+            from app.services.amazon_api import fetch_inventory, fetch_all_sales
+            from concurrent.futures import ThreadPoolExecutor
+            asin_list = [p.asin for p in products if p.asin]
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                f_inv   = ex.submit(fetch_inventory)
+                f_sales = ex.submit(fetch_all_sales, asin_list)
+            inventory = f_inv.result()
+            sales_7, sales_15, sales_30, sales_60 = f_sales.result()
+        else:
+            inventory = {}
+            sales_7 = sales_15 = sales_30 = sales_60 = {}
+
+        from sqlalchemy import func as sqlfunc
+        ordered_qty_by_sku = dict(
+            db.query(OrderHistory.sku, sqlfunc.sum(OrderHistory.qty))
+            .filter(OrderHistory.is_deleted == False)
+            .group_by(OrderHistory.sku)
+            .all()
+        )
+
+        result = []
+        for p in products:
+            inv = inventory.get(p.fnsku, {})
+            available  = inv.get("available", 0)
+            inbound    = inv.get("inbound", 0)
+            processing = inv.get("processing", 0)
+            ordered    = ordered_qty_by_sku.get(p.sku, 0)
+            s7  = sales_7.get(p.asin, 0)
+            s15 = sales_15.get(p.asin, 0)
+            s30 = sales_30.get(p.asin, 0)
+            s60 = sales_60.get(p.asin, 0)
+
+            calc = calc_order_qty(
+                available=available, inbound=inbound + ordered, processing=processing,
+                extra_stock=p.extra_stock or 0,
+                sales_7=s7, sales_15=s15, sales_30=s30, sales_60=s60,
+                set_size=p.set_size or 1, s=s
+            )
+
+            # 全商品を表示。在庫充足の場合はneeded_piecesをマイナスで計算
+            from app.services.calc import target_days, weighted_daily
+            daily = weighted_daily(s7, s15, s30, s60, s)
+            tgt = target_days(s)
+            stock = available + inbound + ordered + processing + (p.extra_stock or 0)
+            needed_pieces = round(tgt * daily - stock) if daily > 0 else 0
+
+            result.append({
+                "product_id": p.id,
+                "sku": p.sku or "",
+                "name": p.name or "",
+                "asin": p.asin or "",
+                "fnsku": p.fnsku or "",
+                "buy_url": p.buy_url or "",
+                "photo_url": p.photo_url or "",
+                "color": p.color or "",
+                "size": p.size or "",
+                "spec": p.spec or "",
+                "customer_memo": p.customer_memo or "",
+                "price": p.price or 0,
+                "repack": p.repack or "",
+                "note": p.note or "",
+                "amazon_url": p.amazon_url or (f"https://www.amazon.co.jp/dp/{p.asin}" if p.asin else ""),
+                "set_size": p.set_size or 1,
+                "available": available,
+                "inbound": inbound,
+                "ordered": ordered,
+                "sales_7": s7,
+                "sales_15": s15,
+                "sales_30": s30,
+                "sales_60": s60,
+                "days_left": calc.days_left,
+                "daily": round(daily, 2),
+                "stock": stock,
+                "recommended_qty": calc.qty,       # セット単位（0以上）
+                "recommended_pieces": needed_pieces, # ピース単位（マイナスあり）
+                "qty": max(0, calc.qty),
+            })
+
+        with _jobs_lock:
+            _jobs[job_id]["status"] = "done"
+            _jobs[job_id]["result"] = result
+
+    except Exception as e:
+        with _jobs_lock:
+            _jobs[job_id]["status"] = "error"
+            _jobs[job_id]["error"] = str(e)
+    finally:
+        db.close()
+
+
+@router.post("/stock/start")
+def start_stock(background_tasks: BackgroundTasks, force: bool = False):
+    """全在庫一覧取得をバックグラウンドで開始"""
+    if force:
+        from app.services.amazon_api import _cache
+        _cache.clear()
+    job_id = str(uuid.uuid4())
+    background_tasks.add_task(_run_stock_job, job_id)
+    return {"job_id": job_id}
+
+
 @router.post("/preview/start")
 def start_preview(background_tasks: BackgroundTasks, force: bool = False):
     """SP-APIデータ取得をバックグラウンドで開始し、job_idを返す。force=TrueでキャッシュをクリアしてからAPIを叩く"""

@@ -4,6 +4,7 @@ import ProductsPage from './pages/ProductsPage'
 import SettingsPage from './pages/SettingsPage'
 import InvoicePage from './pages/InvoicePage'
 import PriceAdjustPage from './pages/PriceAdjustPage'
+import StockPage from './pages/StockPage'
 import './App.css'
 
 function App() {
@@ -13,6 +14,9 @@ function App() {
         <div className="sidebar-title">🇨🇳 中国輸入管理</div>
         <NavLink to="/" end className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📦 発注管理
+        </NavLink>
+        <NavLink to="/stock" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          📊 全在庫一覧
         </NavLink>
         <NavLink to="/products" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🏷️ 商品マスタ
@@ -30,6 +34,7 @@ function App() {
       <main className="main-content">
         <Routes>
           <Route path="/" element={<OrderPage />} />
+          <Route path="/stock" element={<StockPage />} />
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/invoices" element={<InvoicePage />} />
           <Route path="/price-adjust" element={<PriceAdjustPage />} />
