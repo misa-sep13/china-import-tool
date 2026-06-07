@@ -5,6 +5,7 @@ import SettingsPage from './pages/SettingsPage'
 import InvoicePage from './pages/InvoicePage'
 import PriceAdjustPage from './pages/PriceAdjustPage'
 import StockPage from './pages/StockPage'
+import AnalyticsPage from './pages/AnalyticsPage'
 import './App.css'
 
 function App() {
@@ -17,6 +18,9 @@ function App() {
         </NavLink>
         <NavLink to="/stock" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📊 全在庫一覧
+        </NavLink>
+        <NavLink to="/analytics" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          📈 商品分析
         </NavLink>
         <NavLink to="/products" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🏷️ 商品マスタ
@@ -35,6 +39,7 @@ function App() {
         <Routes>
           <Route path="/" element={<OrderPage />} />
           <Route path="/stock" element={<StockPage />} />
+          <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/invoices" element={<InvoicePage />} />
           <Route path="/price-adjust" element={<PriceAdjustPage />} />

@@ -174,6 +174,46 @@ def fetch_all_sales(asin_list: List[str]) -> tuple:
     return (cached_results[7], cached_results[15], cached_results[30], cached_results[60])
 
 
+def fetch_sales_detail(asin_list: List[str], days: int = 30) -> Dict[str, dict]:
+    """販売数・売上金額を取得（商品分析用）。戻り値: {asin: {units, revenue, avg_price}}"""
+    from datetime import datetime, timedelta, timezone
+    cache_key = f"sales_detail_{days}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    end_dt = datetime.now(timezone.utc)
+    start_dt = end_dt - timedelta(days=days)
+    mp = "A1VC38T7YXB528"
+
+    def _fetch_one(asin: str) -> tuple:
+        try:
+            params = urllib.parse.urlencode({
+                "marketplaceIds": mp,
+                "interval": f"{start_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}--{end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+                "granularity": "Total",
+                "asin": asin,
+            })
+            data = _call_sp_api(f"/sales/v1/orderMetrics?{params}")
+            payload = data.get("payload", [])
+            units = sum(m.get("unitCount", 0) for m in payload)
+            revenue = sum(m.get("orderedProductSales", {}).get("amount", 0) for m in payload)
+            avg_price = round(revenue / units, 0) if units > 0 else 0
+            return asin, {"units": units, "revenue": round(revenue, 0), "avg_price": avg_price}
+        except Exception:
+            return asin, {"units": 0, "revenue": 0, "avg_price": 0}
+
+    result = {}
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futures = {ex.submit(_fetch_one, asin): asin for asin in asin_list}
+        for f in as_completed(futures):
+            asin, val = f.result()
+            result[asin] = val
+
+    _cache_set(cache_key, result)
+    return result
+
+
 def _fetch_price_and_fee_one(sku: str) -> tuple:
     """1SKUの出品価格とFBA手数料を取得。戻り値: (sku, selling_price, fba_fee)"""
     mp = "A1VC38T7YXB528"
