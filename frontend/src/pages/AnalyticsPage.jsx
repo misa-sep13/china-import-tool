@@ -178,7 +178,7 @@ export default function AnalyticsPage() {
           <h2>商品別分析（{items.length}件 / {period}日間）</h2>
           <div style={{ overflowX: 'auto' }}>
             <table>
-              <thead>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#fff' }}>
                 <tr>
                   <th style={{ minWidth: 60 }}>画像</th>
                   <th style={{ textAlign: 'left', minWidth: 200 }}>商品名</th>
