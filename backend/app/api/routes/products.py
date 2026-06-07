@@ -209,7 +209,7 @@ def export_t4s_cost(db: Session = Depends(get_db)):
 
     # 行3以降: 商品データ
     for row_idx, p in enumerate(products, 3):
-        cost_jpy = round((p.price or 0) * exchange_rate)
+        cost_jpy = round(p.price or 0)
         ws.cell(row=row_idx, column=1, value=SELLER_ACCOUNT)
         ws.cell(row=row_idx, column=2, value=SHOP_NAME)
         ws.cell(row=row_idx, column=3, value=SELLER_ID)

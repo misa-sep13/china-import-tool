@@ -8,12 +8,11 @@ const EMPTY = {
   set_size: 1, extra_stock: 0, amazon_fee_rate: 0.1,
 }
 
-function calcProfit(p, exchangeRate) {
+function calcProfit(p) {
   if (!p.selling_price || !p.price) return null
-  const costJpy = p.price * exchangeRate
   const amazonFee = p.selling_price * (p.amazon_fee_rate ?? 0.1)
   const fbaFee = p.fba_fee ?? 0
-  const profit = p.selling_price - costJpy - amazonFee - fbaFee
+  const profit = p.selling_price - p.price - amazonFee - fbaFee
   const rate = profit / p.selling_price
   return { profit: Math.round(profit), rate: (rate * 100).toFixed(1) }
 }
@@ -184,7 +183,7 @@ export default function ProductsPage() {
                   <th>商品名</th>
                   <th>仕様</th>
                   <th>お客様専用メモ</th>
-                  <th style={{ textAlign: 'right' }}>仕入(元)</th>
+                  <th style={{ textAlign: 'right' }}>仕入原価(円)</th>
                   <th style={{ textAlign: 'right' }}>販売価格(円)</th>
                   <th style={{ textAlign: 'right' }}>FBA手数料</th>
                   <th style={{ textAlign: 'right' }}>Amazon手数料率</th>
@@ -196,7 +195,7 @@ export default function ProductsPage() {
               </thead>
               <tbody>
                 {products.map(p => {
-                  const profit = calcProfit(p, exchangeRate)
+                  const profit = calcProfit(p)
                   return (
                     <tr key={p.id}>
                       <td style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap' }}>{p.sku}</td>
@@ -240,7 +239,7 @@ export default function ProductsPage() {
                       <td style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: '#666' }} title={p.customer_memo}>
                         {p.customer_memo || <span style={{ color: '#bbb' }}>-</span>}
                       </td>
-                      <td style={{ textAlign: 'right' }}>{p.price ? `¥${(p.price * exchangeRate).toFixed(0)}` : '-'}</td>
+                      <td style={{ textAlign: 'right' }}>{p.price ? `¥${Math.round(p.price).toLocaleString()}` : '-'}</td>
                       <td style={{ textAlign: 'right' }}>
                         {p.selling_price ? `¥${p.selling_price.toLocaleString()}` : <span style={{ color: '#bbb' }}>未取得</span>}
                       </td>
@@ -302,7 +301,7 @@ export default function ProductsPage() {
                   <input {...f('name')} />
                 </div>
                 <div className="form-group">
-                  <label>仕入単価(元)</label>
+                  <label>仕入原価(円)※インボイスから自動計算</label>
                   <input type="number" step="0.01" {...f('price')} />
                 </div>
                 <div className="form-group">
