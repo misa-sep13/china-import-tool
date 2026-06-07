@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     SP_API_ROLE_ARN: Optional[str] = None
     SP_API_MARKETPLACE: str = "JP"
 
+    # Tool4Seller
+    TOOL4SELLER_EMAIL: Optional[str] = None
+    TOOL4SELLER_PASSWORD: Optional[str] = None
+    TOOL4SELLER_SHOP_ID: Optional[str] = None
+
     class Config:
         env_file = ".env"
 

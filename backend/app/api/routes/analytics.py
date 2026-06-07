@@ -28,19 +28,30 @@ def _run_analytics_job(job_id: str, days: int):
 
         asin_list = [p.asin for p in products if p.asin]
 
+        from app.services.tool4seller import fetch_ratings
+
         if app_settings.SP_API_REFRESH_TOKEN:
             from app.services.amazon_api import fetch_inventory, fetch_sales_detail, fetch_catalog_info
-            with ThreadPoolExecutor(max_workers=3) as ex:
+            with ThreadPoolExecutor(max_workers=4) as ex:
                 f_inv     = ex.submit(fetch_inventory)
                 f_sales   = ex.submit(fetch_sales_detail, asin_list, days)
                 f_catalog = ex.submit(fetch_catalog_info, asin_list)
+                f_ratings = ex.submit(fetch_ratings, asin_list)
             inventory    = f_inv.result()
             sales_detail = f_sales.result()
             catalog_info = f_catalog.result()
+            try:
+                t4s_ratings = f_ratings.result()
+            except Exception:
+                t4s_ratings = {}
         else:
             inventory = {}
             sales_detail = {}
             catalog_info = {}
+            try:
+                t4s_ratings = fetch_ratings(asin_list)
+            except Exception:
+                t4s_ratings = {}
 
         # 為替レート
         settings_row = db.query(OrderSettings).first()
@@ -57,6 +68,8 @@ def _run_analytics_job(job_id: str, days: int):
             available  = inv.get("available", 0)
             inbound    = inv.get("inbound", 0)
             cat = catalog_info.get(p.asin, {})
+            # Tool4Sellerの評価を優先（SP-APIでは取得不可のため）
+            t4s_rating = t4s_ratings.get(p.asin)
             sd = sales_detail.get(p.asin, {"units": 0, "revenue": 0, "avg_price": 0})
             units   = sd["units"]
             revenue = sd["revenue"]
@@ -80,7 +93,7 @@ def _run_analytics_job(job_id: str, days: int):
                 "sku":          p.sku or "",
                 "name":         p.name or "",
                 "photo_url":    cat.get("image_url") or p.photo_url or "",
-                "rating":       cat.get("rating"),
+                "rating":       t4s_rating if t4s_rating is not None else cat.get("rating"),
                 "rating_count": cat.get("rating_count"),
                 "amazon_url":   p.amazon_url or (f"https://www.amazon.co.jp/dp/{p.asin}" if p.asin else ""),
                 "color":        p.color or "",
