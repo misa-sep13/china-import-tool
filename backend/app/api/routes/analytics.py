@@ -95,10 +95,27 @@ def _run_analytics_job(job_id: str, days: int):
             profit       = round(revenue - total_cost, 0)
             profit_rate  = round(profit / revenue * 100, 1) if revenue > 0 else 0
 
-            # 新商品発注数: (売れた数 - VINE数) ÷ 販売日数 × 必要日数
+            # 発注数計算
             vine_orders = t4s.get("orders") or 0 if vine_revenue > 0 else 0
             net_units = max(units - (vine_orders if exclude_vine else 0), 0)
-            new_order_qty = round(net_units / days * required_days) if days > 0 else 0
+
+            # 商品登録日から経過日数を計算
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            if p.created_at:
+                created = p.created_at if p.created_at.tzinfo else p.created_at.replace(tzinfo=timezone.utc)
+                elapsed_days = max((now - created).days, 1)
+            else:
+                elapsed_days = 9999
+
+            if elapsed_days < 90:
+                # 新商品: 経過日数ベースで計算
+                new_order_qty = round(net_units / elapsed_days * required_days)
+                is_new_product = True
+            else:
+                # 既存商品: 選択期間ベースで計算
+                new_order_qty = round(net_units / days * required_days) if days > 0 else 0
+                is_new_product = False
 
             total_revenue += revenue
             total_units   += units
@@ -122,6 +139,8 @@ def _run_analytics_job(job_id: str, days: int):
                 "vine_revenue":   vine_revenue,
                 "vine_orders":   vine_orders,
                 "new_order_qty": new_order_qty,
+                "is_new_product": is_new_product,
+                "elapsed_days":  elapsed_days if elapsed_days < 9999 else None,
                 # コスト
                 "fba_fee":      fba_fee,
                 "amazon_fee":   amazon_fee,

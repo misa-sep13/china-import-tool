@@ -236,6 +236,7 @@ export default function AnalyticsPage() {
                     <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(item.units)}</td>
                     <td style={{ textAlign: 'right', fontWeight: 700, color: item.new_order_qty > 0 ? '#2563eb' : '#bbb' }}>
                       {item.new_order_qty > 0 ? fmt(item.new_order_qty) : '-'}
+                      {item.is_new_product && <span style={{ fontSize: 10, background: '#f59e0b', color: '#fff', borderRadius: 3, padding: '1px 4px', marginLeft: 4 }}>NEW</span>}
                     </td>
                     <td style={{ textAlign: 'right', fontWeight: 600 }}>{yen(item.revenue)}</td>
                     <td style={{ textAlign: 'right', color: item.vine_revenue > 0 ? '#7c3aed' : '#bbb' }}>
