@@ -87,17 +87,21 @@ def _run_analytics_job(job_id: str, days: int):
             revenue = sd["revenue"]
             avg_price = sd["avg_price"] or (p.selling_price or 0)
 
-            # 手数料計算
-            fba_fee      = (p.fba_fee or 0) * units
-            amazon_fee   = round(revenue * (p.amazon_fee_rate or amazon_fee_rate), 0)
-            cost_jpy     = round((p.price or 0) * exchange_rate * units, 0)
-            total_cost   = fba_fee + amazon_fee + cost_jpy
-            profit       = round(revenue - total_cost, 0)
-            profit_rate  = round(profit / revenue * 100, 1) if revenue > 0 else 0
-
-            # 発注数計算
+            # VINE除外後の通常販売数・売上
             vine_orders = t4s.get("orders") or 0 if vine_revenue > 0 else 0
-            net_units = max(units - (vine_orders if exclude_vine else 0), 0)
+            normal_units   = max(units - vine_orders, 0)
+            normal_revenue = max(revenue - vine_revenue, 0)
+
+            # 手数料計算（VINE分を除外）
+            fba_fee      = (p.fba_fee or 0) * normal_units
+            amazon_fee   = round(normal_revenue * (p.amazon_fee_rate or amazon_fee_rate), 0)
+            cost_jpy     = round((p.price or 0) * exchange_rate * normal_units, 0)
+            total_cost   = fba_fee + amazon_fee + cost_jpy
+            profit       = round(normal_revenue - total_cost, 0)
+            profit_rate  = round(profit / normal_revenue * 100, 1) if normal_revenue > 0 else 0
+
+            # 発注数計算（vine_ordersは上で計算済み）
+            net_units = normal_units if exclude_vine else units
 
             # 商品登録日から経過日数を計算
             from datetime import datetime, timezone
@@ -117,8 +121,8 @@ def _run_analytics_job(job_id: str, days: int):
                 new_order_qty = round(net_units / days * required_days) if days > 0 else 0
                 is_new_product = False
 
-            total_revenue += revenue
-            total_units   += units
+            total_revenue += normal_revenue
+            total_units   += normal_units
             total_profit  += profit
 
             items.append({
@@ -132,10 +136,12 @@ def _run_analytics_job(job_id: str, days: int):
                 "amazon_url":   p.amazon_url or (f"https://www.amazon.co.jp/dp/{p.asin}" if p.asin else ""),
                 "color":        p.color or "",
                 "size":         p.size or "",
-                # 売上
-                "units":        units,
-                "revenue":      revenue,
+                # 売上（VINE除外後）
+                "units":        normal_units,
+                "revenue":      normal_revenue,
                 "avg_price":    avg_price,
+                "total_units":  units,       # VINE含む総販売数
+                "total_revenue": revenue,    # VINE含む総売上
                 "vine_revenue":   vine_revenue,
                 "vine_orders":   vine_orders,
                 "new_order_qty": new_order_qty,
