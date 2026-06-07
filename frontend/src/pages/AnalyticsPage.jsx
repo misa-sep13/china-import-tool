@@ -93,7 +93,7 @@ export default function AnalyticsPage() {
 
   const sortIcon = (key) => sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : ''
   const th = (key, label) => (
-    <th style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', background: sortKey === key ? '#f0f4ff' : undefined, textAlign: 'right' }}
+    <th style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', background: sortKey === key ? '#f0f4ff' : '#fff', textAlign: 'right', position: 'sticky', top: 0, zIndex: 10 }}
       onClick={() => handleSort(key)}>
       {label}{sortIcon(key)}
     </th>
@@ -178,11 +178,11 @@ export default function AnalyticsPage() {
           <h2>商品別分析（{items.length}件 / {period}日間）</h2>
           <div style={{ overflowX: 'auto' }}>
             <table>
-              <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#fff' }}>
+              <thead>
                 <tr>
-                  <th style={{ minWidth: 60 }}>画像</th>
-                  <th style={{ textAlign: 'left', minWidth: 200 }}>商品名</th>
-                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>評価</th>
+                  <th style={{ minWidth: 60, position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>画像</th>
+                  <th style={{ textAlign: 'left', minWidth: 200, position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>商品名</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>評価</th>
                   {th('units', '販売数')}
                   {th('new_order_qty', '推奨発注数')}
                   {th('revenue', '売上')}
@@ -193,17 +193,17 @@ export default function AnalyticsPage() {
                   {th('cost_jpy', '仕入原価')}
                   {th('profit', '粗利益')}
                   {th('profit_rate', '粗利益率')}
-                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>広告費※</th>
-                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>ACOS※</th>
-                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>ROAS※</th>
-                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>TACOS※</th>
-                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>インプレッション※</th>
-                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>クリック数※</th>
-                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>CTR※</th>
-                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>広告注文数※</th>
-                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>広告CVR※</th>
-                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>広告売上※</th>
-                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>広告売上率※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa', position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>広告費※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa', position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>ACOS※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa', position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>ROAS※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa', position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>TACOS※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa', position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>インプレッション※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa', position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>クリック数※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa', position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>CTR※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa', position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>広告注文数※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa', position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>広告CVR※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa', position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>広告売上※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa', position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>広告売上率※</th>
                   {th('available', 'FBA在庫')}
                   {th('inbound', '納品中')}
                 </tr>
