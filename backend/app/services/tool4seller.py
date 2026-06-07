@@ -109,7 +109,7 @@ def fetch_product_data(asin_list: list, days: int = 30) -> Dict[str, dict]:
         resp = _call_t4s("/profitInfo/multi/list", {
             "pageSize": page_size,
             "currentPage": current_page,
-            "type": "parentAsin",
+            "type": "asin",
             "topSort": True,
             "startDate": start_date.strftime("%Y-%m-%d"),
             "endDate": end_date.strftime("%Y-%m-%d"),
@@ -124,7 +124,7 @@ def fetch_product_data(asin_list: list, days: int = 30) -> Dict[str, dict]:
         items = content.get("result", [])
 
         for item in items:
-            asin = item.get("parentAsin")
+            asin = item.get("asin") or item.get("parentAsin")
             if asin:
                 result[asin] = {
                     "rating":    item.get("rating"),
