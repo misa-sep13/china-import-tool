@@ -183,6 +183,14 @@ export default function AnalyticsPage() {
                   <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>広告費※</th>
                   <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>ACOS※</th>
                   <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>ROAS※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>TACOS※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>インプレッション※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>クリック数※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>CTR※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>広告注文数※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>広告CVR※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>広告売上※</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap', color: '#aaa' }}>広告売上率※</th>
                   {th('available', 'FBA在庫')}
                   {th('inbound', '納品中')}
                 </tr>
@@ -221,6 +229,14 @@ export default function AnalyticsPage() {
                     <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
                     <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
                     <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
+                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
+                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
+                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
+                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
+                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
+                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
+                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
+                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
                     <td style={{ textAlign: 'right' }}>{fmt(item.available)}</td>
                     <td style={{ textAlign: 'right', color: item.inbound > 0 ? '#2563eb' : '#bbb' }}>
                       {item.inbound > 0 ? fmt(item.inbound) : '-'}
@@ -230,7 +246,7 @@ export default function AnalyticsPage() {
               </tbody>
             </table>
           </div>
-          <p style={{ fontSize: 12, color: '#aaa', marginTop: 12 }}>※ 広告費・ACOS・ROASはAmazon Ads API連携後に表示されます</p>
+          <p style={{ fontSize: 12, color: '#aaa', marginTop: 12 }}>※ 広告関連指標はAmazon Ads API連携後に表示されます</p>
         </div>
       )}
     </div>
