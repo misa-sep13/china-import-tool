@@ -21,6 +21,8 @@ def _migrate():
         ("products",      "fees_updated_at",     "ALTER TABLE products ADD COLUMN fees_updated_at TIMESTAMP"),
         ("products",      "price_auto_adjust",   "ALTER TABLE products ADD COLUMN price_auto_adjust BOOLEAN DEFAULT TRUE"),
         ("products",      "price_max",           "ALTER TABLE products ADD COLUMN price_max FLOAT"),
+        ("products",      "spec",                "ALTER TABLE products ADD COLUMN spec VARCHAR"),
+        ("products",      "customer_memo",       "ALTER TABLE products ADD COLUMN customer_memo TEXT"),
         ("order_settings","exchange_rate",        "ALTER TABLE order_settings ADD COLUMN exchange_rate FLOAT DEFAULT 21.0"),
         ("order_settings","price_adjust_enabled", "ALTER TABLE order_settings ADD COLUMN price_adjust_enabled BOOLEAN DEFAULT FALSE"),
         ("order_settings","price_drop_threshold", "ALTER TABLE order_settings ADD COLUMN price_drop_threshold FLOAT DEFAULT 0.20"),
