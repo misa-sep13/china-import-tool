@@ -11,6 +11,12 @@ const PERIODS = [
 ]
 
 const fmt = (n) => n == null ? '-' : Number(n).toLocaleString('ja-JP')
+const fmtDate = (d) => `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`
+const periodLabel = (days) => {
+  const end = new Date(); end.setDate(end.getDate() - 1)
+  const start = new Date(end); start.setDate(start.getDate() - (days - 1))
+  return `${fmtDate(start)} 〜 ${fmtDate(end)}`
+}
 const fmtRate = (n) => n == null ? '-' : `${n}%`
 const yen = (n) => n == null ? '-' : `¥${Number(n).toLocaleString('ja-JP')}`
 
@@ -123,6 +129,9 @@ export default function AnalyticsPage() {
           <button className="btn btn-secondary" onClick={() => startFetch(period, true)} disabled={isLoading}>
             {isLoading ? '取得中...' : '🔄 再計算'}
           </button>
+        </div>
+        <div style={{ fontSize: 12, color: '#666', marginTop: 6 }}>
+          集計期間: {periodLabel(period)}
         </div>
         {error && <p className="error-msg">{error}</p>}
       </div>
