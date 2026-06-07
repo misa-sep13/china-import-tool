@@ -172,6 +172,7 @@ export default function AnalyticsPage() {
                 <tr>
                   <th style={{ minWidth: 60 }}>画像</th>
                   <th style={{ textAlign: 'left', minWidth: 200 }}>商品名</th>
+                  <th style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>評価</th>
                   {th('units', '販売数')}
                   {th('revenue', '売上')}
                   {th('avg_price', '平均単価')}
@@ -213,6 +214,12 @@ export default function AnalyticsPage() {
                       {(item.color || item.size) && (
                         <span style={{ fontSize: 11, color: '#888', marginLeft: 6 }}>{[item.color, item.size].filter(Boolean).join('/')}</span>
                       )}
+                    </td>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {item.rating != null
+                        ? <span style={{ fontWeight: 600 }}>{'★'} {item.rating}<br /><span style={{ fontSize: 11, color: '#888' }}>({fmt(item.rating_count)})</span></span>
+                        : <span style={{ color: '#aaa', fontSize: 12 }}>未追跡</span>
+                      }
                     </td>
                     <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(item.units)}</td>
                     <td style={{ textAlign: 'right', fontWeight: 600 }}>{yen(item.revenue)}</td>

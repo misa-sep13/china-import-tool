@@ -29,15 +29,18 @@ def _run_analytics_job(job_id: str, days: int):
         asin_list = [p.asin for p in products if p.asin]
 
         if app_settings.SP_API_REFRESH_TOKEN:
-            from app.services.amazon_api import fetch_inventory, fetch_sales_detail
-            with ThreadPoolExecutor(max_workers=2) as ex:
-                f_inv   = ex.submit(fetch_inventory)
-                f_sales = ex.submit(fetch_sales_detail, asin_list, days)
-            inventory   = f_inv.result()
+            from app.services.amazon_api import fetch_inventory, fetch_sales_detail, fetch_catalog_info
+            with ThreadPoolExecutor(max_workers=3) as ex:
+                f_inv     = ex.submit(fetch_inventory)
+                f_sales   = ex.submit(fetch_sales_detail, asin_list, days)
+                f_catalog = ex.submit(fetch_catalog_info, asin_list)
+            inventory    = f_inv.result()
             sales_detail = f_sales.result()
+            catalog_info = f_catalog.result()
         else:
             inventory = {}
             sales_detail = {}
+            catalog_info = {}
 
         # 為替レート
         settings_row = db.query(OrderSettings).first()
@@ -53,6 +56,7 @@ def _run_analytics_job(job_id: str, days: int):
             inv = inventory.get(p.fnsku, {})
             available  = inv.get("available", 0)
             inbound    = inv.get("inbound", 0)
+            cat = catalog_info.get(p.asin, {})
             sd = sales_detail.get(p.asin, {"units": 0, "revenue": 0, "avg_price": 0})
             units   = sd["units"]
             revenue = sd["revenue"]
@@ -75,7 +79,9 @@ def _run_analytics_job(job_id: str, days: int):
                 "asin":         p.asin or "",
                 "sku":          p.sku or "",
                 "name":         p.name or "",
-                "photo_url":    p.photo_url or "",
+                "photo_url":    cat.get("image_url") or p.photo_url or "",
+                "rating":       cat.get("rating"),
+                "rating_count": cat.get("rating_count"),
                 "amazon_url":   p.amazon_url or (f"https://www.amazon.co.jp/dp/{p.asin}" if p.asin else ""),
                 "color":        p.color or "",
                 "size":         p.size or "",

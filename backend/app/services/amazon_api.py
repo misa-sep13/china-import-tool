@@ -118,6 +118,54 @@ def fetch_item_name(asin: str) -> str:
         pass
     return ""
 
+
+def fetch_catalog_info(asin_list: List[str]) -> Dict[str, dict]:
+    """商品画像（1枚目）とレビュー評価をASINごとに取得"""
+    cache_key = "catalog_info"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    mp = "A1VC38T7YXB528"
+
+    def _fetch_one(asin: str) -> tuple:
+        try:
+            params = urllib.parse.urlencode({
+                "marketplaceIds": mp,
+                "includedData": "images,summaries",
+            })
+            data = _call_sp_api(f"/catalog/2022-04-01/items/{asin}?{params}")
+            # 画像（1枚目のMAIN画像）
+            image_url = None
+            for img_set in data.get("images", []):
+                for img in img_set.get("images", []):
+                    if img.get("variant") == "MAIN":
+                        image_url = img.get("link")
+                        break
+                if image_url:
+                    break
+            # レビュー評価
+            rating = None
+            rating_count = None
+            for summary in data.get("summaries", []):
+                if summary.get("marketplaceId") == mp:
+                    rating = summary.get("averageCustomerReview")
+                    rating_count = summary.get("numberOfCustomerReviews")
+                    break
+            return asin, {"image_url": image_url, "rating": rating, "rating_count": rating_count}
+        except Exception:
+            return asin, {"image_url": None, "rating": None, "rating_count": None}
+
+    result = {}
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        futures = {ex.submit(_fetch_one, asin): asin for asin in asin_list}
+        for f in as_completed(futures):
+            asin, val = f.result()
+            result[asin] = val
+
+    _cache_set(cache_key, result)
+    return result
+
 def _fetch_sales_one(asin: str, days: int, end_dt) -> tuple:
     from datetime import timedelta
     mp = "A1VC38T7YXB528"
