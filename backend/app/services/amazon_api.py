@@ -10,7 +10,8 @@ _token_cache = {"token": None, "expires_at": 0}
 
 # サーバー側キャッシュ（5分）
 _cache: Dict[str, dict] = {}
-_CACHE_TTL = 300  # seconds
+_CACHE_TTL = 300        # 売上データ: 5分
+_CACHE_TTL_LONG = 86400 # 画像・在庫など: 1日
 
 def _cache_get(key: str):
     entry = _cache.get(key)
@@ -165,7 +166,7 @@ def fetch_catalog_info(asin_list: List[str]) -> Dict[str, dict]:
             asin, val = f.result()
             result[asin] = val
 
-    _cache_set(cache_key, result)
+    _cache[cache_key] = {"value": result, "expires_at": time.time() + _CACHE_TTL_LONG}
     return result
 
 def _fetch_sales_one(asin: str, days: int, end_dt) -> tuple:

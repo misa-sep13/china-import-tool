@@ -159,9 +159,11 @@ def _run_analytics_job(job_id: str, days: int):
 def start_analytics(background_tasks: BackgroundTasks, days: int = 30, force: bool = False):
     if force:
         from app.services.amazon_api import _cache
-        keys = [k for k in _cache if k.startswith("sales_detail")]
+        keys = [k for k in _cache if k.startswith("sales_detail") or k == "catalog_info"]
         for k in keys:
             _cache.pop(k, None)
+        from app.services.tool4seller import _data_cache
+        _data_cache.clear()
     job_id = str(uuid.uuid4())
     background_tasks.add_task(_run_analytics_job, job_id, days)
     return {"job_id": job_id}
