@@ -118,15 +118,14 @@ def fetch_item_name(asin: str) -> str:
         pass
     return ""
 
-def _fetch_sales_one(asin: str, days: int) -> tuple:
-    from datetime import datetime, timedelta, timezone
+def _fetch_sales_one(asin: str, days: int, end_dt) -> tuple:
+    from datetime import timedelta
     mp = "A1VC38T7YXB528"
-    end = datetime.now(timezone.utc)
-    start = end - timedelta(days=days)
+    start = end_dt - timedelta(days=days)
     try:
         params = urllib.parse.urlencode({
             "marketplaceIds": mp,
-            "interval": f"{start.strftime('%Y-%m-%dT%H:%M:%SZ')}--{end.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+            "interval": f"{start.strftime('%Y-%m-%dT%H:%M:%SZ')}--{end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}",
             "granularity": "Total",
             "asin": asin,
         })
@@ -136,28 +135,11 @@ def _fetch_sales_one(asin: str, days: int) -> tuple:
     except Exception:
         return asin, 0.0
 
-def fetch_sales(days: int, asin_list: List[str]) -> Dict[str, float]:
-    cache_key = f"sales_{days}"
-    cached = _cache_get(cache_key)
-    if cached is not None:
-        return cached
-
-    result = {asin: 0.0 for asin in asin_list}
-    # max_workers=10: レートリミットを避けつつ並列化
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        futures = {ex.submit(_fetch_sales_one, asin, days): asin for asin in asin_list}
-        for f in as_completed(futures):
-            asin, val = f.result()
-            result[asin] = val
-
-    _cache_set(cache_key, result)
-    return result
-
 
 def fetch_all_sales(asin_list: List[str]) -> tuple:
-    """7/15/30/60日の売上を全ASIN×全期間で並列一括取得"""
+    """7/15/30/60日の売上を全ASIN×全期間で並列一括取得。now()を1回固定して集計期間のブレをなくす"""
+    from datetime import datetime, timezone
     periods = [7, 15, 30, 60]
-    all_keys = [(a, d) for a in asin_list for d in periods]
 
     # キャッシュチェック
     cached_results = {}
@@ -172,12 +154,14 @@ def fetch_all_sales(asin_list: List[str]) -> tuple:
     if not missing_periods:
         return (cached_results[7], cached_results[15], cached_results[30], cached_results[60])
 
-    # 未キャッシュの期間だけ取得
+    # now()を1回だけ取得して全タスクで共有（期間のブレをなくす）
+    end_dt = datetime.now(timezone.utc)
+
     period_results = {d: {a: 0.0 for a in asin_list} for d in missing_periods}
     tasks = [(a, d) for a in asin_list for d in missing_periods]
 
     with ThreadPoolExecutor(max_workers=10) as ex:
-        futures = {ex.submit(_fetch_sales_one, a, d): (a, d) for a, d in tasks}
+        futures = {ex.submit(_fetch_sales_one, a, d, end_dt): (a, d) for a, d in tasks}
         for f in as_completed(futures):
             asin, val = f.result()
             a, d = futures[f]
