@@ -2,7 +2,7 @@
 import urllib.request
 import json
 import time
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 from datetime import datetime, timedelta
 
 from app.core.config import settings
@@ -18,7 +18,7 @@ def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
-def _login() -> tuple[str, str]:
+def _login() -> Tuple[str, str]:
     if _token_cache["token"] and time.time() < _token_cache["expires_at"]:
         return _token_cache["token"], _token_cache["shop_id"]
 
