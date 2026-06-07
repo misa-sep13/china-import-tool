@@ -16,7 +16,6 @@ export default function StockPage() {
   const [error, setError] = useState('')
   const [sortKey, setSortKey] = useState('days_left')
   const [sortAsc, setSortAsc] = useState(true)
-  const [filterText, setFilterText] = useState('')
   const pollRef = useRef(null)
 
   const stopPolling = () => {
@@ -69,18 +68,7 @@ export default function StockPage() {
     _idx: i,
   }))
 
-  const filtered = items.filter(item => {
-    if (!filterText) return true
-    const q = filterText.toLowerCase()
-    return (
-      (item.sku || '').toLowerCase().includes(q) ||
-      (item.name || '').toLowerCase().includes(q) ||
-      (item.color || '').toLowerCase().includes(q) ||
-      (item.size || '').toLowerCase().includes(q)
-    )
-  })
-
-  const sorted = [...filtered].sort((a, b) => {
+  const sorted = [...items].sort((a, b) => {
     let va = a[sortKey], vb = b[sortKey]
     if (typeof va === 'string') va = va.toLowerCase()
     if (typeof vb === 'string') vb = vb.toLowerCase()
@@ -142,6 +130,7 @@ export default function StockPage() {
   }
 
   const selectedItems = sorted.filter(item => currentSelected.has(item._idx) && item.qty > 0)
+  const checkedCount = sorted.filter(item => currentSelected.has(item._idx)).length
   const isLoading = jobStatus === 'running' || jobStatus === 'idle'
 
   const daysBadge = (days) => {
@@ -169,26 +158,13 @@ export default function StockPage() {
       <h1>📊 全在庫一覧</h1>
 
       <div className="card">
-        <p style={{ marginBottom: 14, color: '#555', fontSize: 13 }}>
-          全商品の在庫・売上・推奨発注数を一覧表示します。<br />
-          推奨発注数がマイナスの商品は在庫過多です。チェックして発注Excelを出力できます。
-        </p>
         <div className="top-actions">
           <button className="btn btn-secondary" onClick={() => { stopPolling(); startFetch(true) }} disabled={isLoading}>
             {isLoading ? '取得中...' : '🔄 再計算'}
           </button>
-          <input
-            type="text"
-            placeholder="SKU / 商品名 / 色 / サイズで絞り込み"
-            value={filterText}
-            onChange={e => setFilterText(e.target.value)}
-            style={{ padding: '6px 10px', border: '1px solid #ddd', borderRadius: 6, fontSize: 13, minWidth: 240 }}
-          />
-          {currentSelected.size > 0 && (
-            <button className="btn btn-success" onClick={handleExport} disabled={exporting}>
-              {exporting ? '生成中...' : `📥 Excelダウンロード（${selectedItems.length}件）`}
-            </button>
-          )}
+          <button className="btn btn-success" onClick={handleExport} disabled={exporting || checkedCount === 0}>
+            {exporting ? '生成中...' : `📥 Excelダウンロード（${checkedCount}件）`}
+          </button>
         </div>
         {error && <p className="error-msg">{error}</p>}
       </div>
@@ -211,7 +187,7 @@ export default function StockPage() {
 
       {!isLoading && jobStatus === 'done' && (
         <div className="card">
-          <h2>全在庫（{sorted.length}件{filterText ? `／全${items.length}件` : ''}）</h2>
+          <h2>全在庫（{sorted.length}件）</h2>
           <div style={{ overflowX: 'auto' }}>
             <table>
               <thead>
