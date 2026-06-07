@@ -161,6 +161,28 @@ export default function SettingsPage() {
         </div>
 
         <div className="card">
+          <h2>新商品 発注数計算</h2>
+          <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
+            計算式: (販売数 − VINE数) ÷ 販売日数 × 必要日数
+          </p>
+          <div className="form-grid">
+            <div className="form-group">
+              <label>必要日数（目標在庫日数）</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" min={1} max={365} {...f('new_product_required_days', 'number')} style={{ width: 80 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>日</span>
+              </div>
+            </div>
+            <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label style={{ marginBottom: 0 }}>
+                <input type="checkbox" {...fb('new_product_exclude_vine')} style={{ width: 'auto', marginRight: 6 }} />
+                VINE注文を販売数から除外する
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
           <h2>セール期間設定</h2>
           <div className="form-grid">
             <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

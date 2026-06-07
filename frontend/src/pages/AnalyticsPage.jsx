@@ -184,6 +184,7 @@ export default function AnalyticsPage() {
                   <th style={{ textAlign: 'left', minWidth: 200 }}>商品名</th>
                   <th style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>評価</th>
                   {th('units', '販売数')}
+                  {th('new_order_qty', '推奨発注数')}
                   {th('revenue', '売上')}
                   {th('vine_revenue', 'VINE売上')}
                   {th('avg_price', '平均単価')}
@@ -233,6 +234,9 @@ export default function AnalyticsPage() {
                       }
                     </td>
                     <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(item.units)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700, color: item.new_order_qty > 0 ? '#2563eb' : '#bbb' }}>
+                      {item.new_order_qty > 0 ? fmt(item.new_order_qty) : '-'}
+                    </td>
                     <td style={{ textAlign: 'right', fontWeight: 600 }}>{yen(item.revenue)}</td>
                     <td style={{ textAlign: 'right', color: item.vine_revenue > 0 ? '#7c3aed' : '#bbb' }}>
                       {item.vine_revenue > 0 ? yen(item.vine_revenue) : '-'}

@@ -53,10 +53,12 @@ def _run_analytics_job(job_id: str, days: int):
             except Exception:
                 t4s_data = {}
 
-        # 為替レート
+        # 設定値取得
         settings_row = db.query(OrderSettings).first()
         exchange_rate = getattr(settings_row, 'exchange_rate', 21.0) or 21.0
-        amazon_fee_rate = 0.1  # デフォルト10%
+        amazon_fee_rate = 0.1
+        required_days = getattr(settings_row, 'new_product_required_days', 30) or 30
+        exclude_vine = getattr(settings_row, 'new_product_exclude_vine', True)
 
         # 子ASIN→親ASINのマッピングを構築（Tool4Sellerはparentasin単位）
         child_to_parent = {}
@@ -93,6 +95,11 @@ def _run_analytics_job(job_id: str, days: int):
             profit       = round(revenue - total_cost, 0)
             profit_rate  = round(profit / revenue * 100, 1) if revenue > 0 else 0
 
+            # 新商品発注数: (売れた数 - VINE数) ÷ 販売日数 × 必要日数
+            vine_orders = t4s.get("orders") or 0 if vine_revenue > 0 else 0
+            net_units = max(units - (vine_orders if exclude_vine else 0), 0)
+            new_order_qty = round(net_units / days * required_days) if days > 0 else 0
+
             total_revenue += revenue
             total_units   += units
             total_profit  += profit
@@ -112,7 +119,9 @@ def _run_analytics_job(job_id: str, days: int):
                 "units":        units,
                 "revenue":      revenue,
                 "avg_price":    avg_price,
-                "vine_revenue": vine_revenue,
+                "vine_revenue":   vine_revenue,
+                "vine_orders":   vine_orders,
+                "new_order_qty": new_order_qty,
                 # コスト
                 "fba_fee":      fba_fee,
                 "amazon_fee":   amazon_fee,

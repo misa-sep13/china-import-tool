@@ -28,6 +28,8 @@ def _migrate():
         ("order_settings","price_drop_threshold", "ALTER TABLE order_settings ADD COLUMN price_drop_threshold FLOAT DEFAULT 0.20"),
         ("order_settings","price_change_pct",     "ALTER TABLE order_settings ADD COLUMN price_change_pct FLOAT DEFAULT 0.03"),
         ("order_settings","min_profit_rate",      "ALTER TABLE order_settings ADD COLUMN min_profit_rate FLOAT DEFAULT 0.10"),
+        ("order_settings","new_product_required_days", "ALTER TABLE order_settings ADD COLUMN new_product_required_days INTEGER DEFAULT 30"),
+        ("order_settings","new_product_exclude_vine",  "ALTER TABLE order_settings ADD COLUMN new_product_exclude_vine BOOLEAN DEFAULT TRUE"),
     ]
 
     # inspectはコネクションの外で実行（PostgreSQL対応）
