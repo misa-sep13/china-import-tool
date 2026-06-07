@@ -171,3 +171,62 @@ def delete_product(product_id: int, db: Session = Depends(get_db)):
     p.is_active = False
     db.commit()
     return {"ok": True}
+
+
+@router.get("/export/t4s-cost")
+def export_t4s_cost(db: Session = Depends(get_db)):
+    """Tool4Seller コスト一括入力用Excelを生成してダウンロード"""
+    from fastapi.responses import StreamingResponse
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    import io
+    from app.models.settings import OrderSettings
+
+    settings_row = db.query(OrderSettings).first()
+    exchange_rate = getattr(settings_row, 'exchange_rate', 21.0) or 21.0
+
+    products = db.query(Product).filter(Product.is_active == True).order_by(Product.no).all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+
+    # 行1: タイトル
+    ws.cell(row=1, column=1, value="Cost_Template")
+
+    # 行2: ヘッダー
+    headers = ["セラーアカウント", "店舗名", "セラーID", "マーケットプレイスID",
+               "商品名", "子ASIN", "SKU", "仕入れ単価", "物流単価", "通貨"]
+    for i, h in enumerate(headers, 1):
+        cell = ws.cell(row=2, column=i, value=h)
+        cell.font = Font(bold=True)
+
+    # 固定値（ThreeSky+ Japan店舗）
+    SELLER_ACCOUNT = "ThreeSky+"
+    SHOP_NAME = "Japan"
+    SELLER_ID = "A29K12KTHSASJ0"
+    MARKETPLACE_ID = "A1VC38T7YXB528"
+
+    # 行3以降: 商品データ
+    for row_idx, p in enumerate(products, 3):
+        cost_jpy = round((p.price or 0) * exchange_rate)
+        ws.cell(row=row_idx, column=1, value=SELLER_ACCOUNT)
+        ws.cell(row=row_idx, column=2, value=SHOP_NAME)
+        ws.cell(row=row_idx, column=3, value=SELLER_ID)
+        ws.cell(row=row_idx, column=4, value=MARKETPLACE_ID)
+        ws.cell(row=row_idx, column=5, value=p.name or "")
+        ws.cell(row=row_idx, column=6, value=p.asin or "")
+        ws.cell(row=row_idx, column=7, value=p.sku or "")
+        ws.cell(row=row_idx, column=8, value=cost_jpy)
+        ws.cell(row=row_idx, column=9, value=0)
+        ws.cell(row=row_idx, column=10, value="JPY")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=t4s_cost.xlsx"}
+    )

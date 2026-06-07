@@ -154,6 +154,11 @@ export default function ProductsPage() {
         <button className="btn btn-secondary" onClick={handleRefreshFees} disabled={refreshing}>
           {refreshing ? '取得中...' : '💰 価格・手数料を更新'}
         </button>
+        <a
+          href={`${api.defaults.baseURL}/products/export/t4s-cost`}
+          download="t4s_cost.xlsx"
+          className="btn btn-secondary"
+        >📥 T4S原価テンプレート</a>
         <span style={{ color: '#888', fontSize: 13 }}>
           {products.length}件登録済み
           {lastUpdated && (
