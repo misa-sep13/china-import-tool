@@ -176,7 +176,7 @@ export default function AnalyticsPage() {
       {!isLoading && jobStatus === 'done' && (
         <div className="card">
           <h2>商品別分析（{items.length}件 / {period}日間）</h2>
-          <div style={{ overflowX: 'auto' }}>
+          <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 320px)' }}>
             <table>
               <thead>
                 <tr>
