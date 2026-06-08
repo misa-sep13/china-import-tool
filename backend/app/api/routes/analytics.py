@@ -31,15 +31,17 @@ def _run_analytics_job(job_id: str, days: int):
         from app.services.tool4seller import fetch_product_data
 
         if app_settings.SP_API_REFRESH_TOKEN:
-            from app.services.amazon_api import fetch_inventory, fetch_sales_detail, fetch_catalog_info
-            with ThreadPoolExecutor(max_workers=4) as ex:
-                f_inv     = ex.submit(fetch_inventory)
-                f_sales   = ex.submit(fetch_sales_detail, asin_list, days)
-                f_catalog = ex.submit(fetch_catalog_info, asin_list)
-                f_t4s     = ex.submit(fetch_product_data, asin_list, days)
+            from app.services.amazon_api import fetch_inventory, fetch_sales_detail, fetch_catalog_info, fetch_all_sales
+            with ThreadPoolExecutor(max_workers=5) as ex:
+                f_inv       = ex.submit(fetch_inventory)
+                f_sales     = ex.submit(fetch_sales_detail, asin_list, days)
+                f_all_sales = ex.submit(fetch_all_sales, asin_list)
+                f_catalog   = ex.submit(fetch_catalog_info, asin_list)
+                f_t4s       = ex.submit(fetch_product_data, asin_list, days)
             inventory    = f_inv.result()
             sales_detail = f_sales.result()
             catalog_info = f_catalog.result()
+            all_sales_7, all_sales_15, all_sales_30, all_sales_60, all_sales_90 = f_all_sales.result()
             try:
                 t4s_data = f_t4s.result()
             except Exception:
@@ -48,6 +50,7 @@ def _run_analytics_job(job_id: str, days: int):
             inventory = {}
             sales_detail = {}
             catalog_info = {}
+            all_sales_7 = all_sales_15 = all_sales_30 = all_sales_60 = all_sales_90 = {}
             try:
                 t4s_data = fetch_product_data(asin_list, days)
             except Exception:
@@ -57,8 +60,21 @@ def _run_analytics_job(job_id: str, days: int):
         settings_row = db.query(OrderSettings).first()
         exchange_rate = getattr(settings_row, 'exchange_rate', 21.0) or 21.0
         amazon_fee_rate = 0.1
-        required_days = getattr(settings_row, 'new_product_required_days', 30) or 30
         exclude_vine = getattr(settings_row, 'new_product_exclude_vine', True)
+
+        # 発注計算設定（発注管理と同じロジック）
+        from app.services.calc import CalcSettings, calc_order_qty
+        from app.api.routes.orders import _build_calc_settings
+        from app.models.order_history import OrderHistory
+        from sqlalchemy import func as sqlfunc
+        calc_settings = _build_calc_settings(settings_row)
+
+        ordered_qty_by_sku = dict(
+            db.query(OrderHistory.sku, sqlfunc.sum(OrderHistory.qty))
+            .filter(OrderHistory.is_deleted == False)
+            .group_by(OrderHistory.sku)
+            .all()
+        )
 
         # 子ASIN→親ASINのマッピングを構築（Tool4Sellerはparentasin単位）
         child_to_parent = {}
@@ -95,31 +111,29 @@ def _run_analytics_job(job_id: str, days: int):
             # 手数料計算（VINE分を除外）
             fba_fee      = (p.fba_fee or 0) * normal_units
             amazon_fee   = round(normal_revenue * (p.amazon_fee_rate or amazon_fee_rate), 0)
-            cost_jpy     = round((p.price or 0) * exchange_rate * normal_units, 0)
+            cost_jpy     = round((p.price or 0) * normal_units, 0)
             total_cost   = fba_fee + amazon_fee + cost_jpy
             profit       = round(normal_revenue - total_cost, 0)
             profit_rate  = round(profit / normal_revenue * 100, 1) if normal_revenue > 0 else 0
 
-            # 発注数計算（vine_ordersは上で計算済み）
-            net_units = normal_units if exclude_vine else units
+            # 発注数計算（発注管理と同じロジック）
+            ordered = ordered_qty_by_sku.get(p.sku, 0)
+            processing = inventory.get(p.fnsku, {}).get("processing", 0)
+            s7  = all_sales_7.get(p.asin, 0)
+            s15 = all_sales_15.get(p.asin, 0)
+            s30 = all_sales_30.get(p.asin, 0)
+            s60 = all_sales_60.get(p.asin, 0)
+            s90 = all_sales_90.get(p.asin, 0)
 
-            # 商品登録日から経過日数を計算
-            from datetime import datetime, timezone
-            now = datetime.now(timezone.utc)
-            if p.created_at:
-                created = p.created_at if p.created_at.tzinfo else p.created_at.replace(tzinfo=timezone.utc)
-                elapsed_days = max((now - created).days, 1)
-            else:
-                elapsed_days = 9999
-
-            if elapsed_days < 90:
-                # 新商品: 経過日数ベースで計算
-                new_order_qty = round(net_units / elapsed_days * required_days)
-                is_new_product = True
-            else:
-                # 既存商品: 選択期間ベースで計算
-                new_order_qty = round(net_units / days * required_days) if days > 0 else 0
-                is_new_product = False
+            calc = calc_order_qty(
+                available=available, inbound=inbound + ordered, processing=processing,
+                extra_stock=p.extra_stock or 0,
+                sales_7=s7, sales_15=s15, sales_30=s30, sales_60=s60,
+                set_size=p.set_size or 1, s=calc_settings, sales_90=s90,
+            )
+            new_order_qty = calc.qty_pieces  # ピース単位で表示
+            is_new_product = False
+            elapsed_days = None
 
             total_revenue += normal_revenue
             total_units   += normal_units
