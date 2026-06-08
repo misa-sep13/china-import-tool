@@ -160,7 +160,7 @@ def _run_analytics_job(job_id: str, days: int):
                 "vine_orders":   vine_orders,
                 "new_order_qty": new_order_qty,
                 "is_new_product": is_new_product,
-                "elapsed_days":  elapsed_days if elapsed_days < 9999 else None,
+                "elapsed_days":  elapsed_days if elapsed_days is not None and elapsed_days < 9999 else None,
                 # コスト
                 "fba_fee":      fba_fee,
                 "amazon_fee":   amazon_fee,
