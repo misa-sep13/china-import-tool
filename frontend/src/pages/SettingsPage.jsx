@@ -97,11 +97,11 @@ export default function SettingsPage() {
         <div className="card">
           <h2>発注計算（リードタイム）</h2>
           <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
-            発注〜FBA着まで：ラクマート着15日＋配送依頼10日＋FBA着20日＋余裕在庫日数＝合計
+            発注〜FBA着まで：代行会社着15日＋配送依頼10日＋FBA着20日＋余裕在庫日数＝合計
           </p>
           <div className="form-grid">
             <div className="form-group">
-              <label>リードタイム合計日数（発注〜FBA着＋余裕）</label>
+              <label style={{ whiteSpace: 'nowrap' }}>リードタイム合計日数</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <input type="number" min={1} {...f('lead_days', 'number')} style={{ width: 80 }} />
                 <span style={{ color: '#888', fontSize: 13 }}>日（推奨: 93）</span>
