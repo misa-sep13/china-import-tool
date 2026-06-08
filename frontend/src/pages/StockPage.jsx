@@ -23,6 +23,7 @@ export default function StockPage() {
   }
 
   const startFetch = async (force = false) => {
+    if (force) sessionStorage.removeItem('stock_items')
     setJobStatus('running')
     setError('')
     setRawItems([])
@@ -38,7 +39,9 @@ export default function StockPage() {
           setJobElapsed(status.data.elapsed)
           if (status.data.status === 'done') {
             stopPolling()
-            setRawItems(status.data.result || [])
+            const items = status.data.result || []
+            setRawItems(items)
+            sessionStorage.setItem('stock_items', JSON.stringify(items))
             setJobStatus('done')
           } else if (status.data.status === 'error') {
             stopPolling()
@@ -58,6 +61,14 @@ export default function StockPage() {
   }
 
   useEffect(() => {
+    const cached = sessionStorage.getItem('stock_items')
+    if (cached) {
+      try {
+        setRawItems(JSON.parse(cached))
+        setJobStatus('done')
+        return () => {}
+      } catch {}
+    }
     startFetch()
     return () => stopPolling()
   }, [])
