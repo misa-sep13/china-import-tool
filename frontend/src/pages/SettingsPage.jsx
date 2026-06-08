@@ -168,11 +168,14 @@ export default function SettingsPage() {
             計算式: (販売数 − VINE数) ÷ 販売日数 × リードタイム（93日）
           </p>
           <div className="form-grid">
-            <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <label style={{ marginBottom: 0 }}>
+            <div className="form-group">
+              <label style={{ marginBottom: 4 }}>
                 <input type="checkbox" {...fb('new_product_exclude_vine')} style={{ width: 'auto', marginRight: 6 }} />
                 VINE注文を販売数から除外する
               </label>
+              <p style={{ fontSize: 12, color: '#888', margin: 0, paddingLeft: 22 }}>
+                VINEの売上・経費（FBA手数料・Amazon手数料・仕入原価）も利益計算から除外されます
+              </p>
             </div>
           </div>
         </div>
