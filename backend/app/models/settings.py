@@ -25,5 +25,4 @@ class OrderSettings(Base):
     price_drop_threshold = Column(Float, default=0.20)    # 値下げ判定: 前期比20%減
     price_change_pct = Column(Float, default=0.03)        # 変更幅3%
     min_profit_rate = Column(Float, default=0.10)         # 下限利益率10%
-    new_product_required_days = Column(Integer, default=30)  # 新商品 必要在庫日数
     new_product_exclude_vine = Column(Boolean, default=True) # VINEを販売数から除外

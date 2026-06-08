@@ -32,7 +32,6 @@ class SettingsSchema(BaseModel):
     price_drop_threshold: float = 0.20
     price_change_pct: float = 0.03
     min_profit_rate: float = 0.10
-    new_product_required_days: int = 30
     new_product_exclude_vine: bool = True
 
     class Config:

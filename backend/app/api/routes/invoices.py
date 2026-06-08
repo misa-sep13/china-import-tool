@@ -12,6 +12,7 @@ router = APIRouter(prefix="/invoices", tags=["invoices"])
 
 class InvoiceItemIn(BaseModel):
     sku: str
+    asin: str = ""
     name_cn: str = ""
     name_jp: str = ""
     qty: int
@@ -51,9 +52,14 @@ async def parse_excel(file: UploadFile = File(...)):
 
     # 商品行を解析（ヘッダー行を探す）
     header_row = None
+    col_asin = None  # ASIN列インデックス
     for i, row in enumerate(ws.iter_rows(min_row=1, max_row=20, values_only=True), 1):
         if row[0] == "10) Name of Commodity":
             header_row = i + 1  # 次の行がデータ開始
+            # ヘッダー行からASIN列を探す
+            for ci, cell in enumerate(row):
+                if cell and "ASIN" in str(cell).upper():
+                    col_asin = ci
             break
 
     if not header_row:
@@ -73,8 +79,10 @@ async def parse_excel(file: UploadFile = File(...)):
         if row[0] and str(row[0]).startswith("MADE IN"):
             break
         if row[0] is None and row[6] and row[7]:
+            asin_val = str(row[col_asin] or "") if col_asin is not None and col_asin < len(row) else ""
             items.append({
                 "sku": str(int(row[12])) if row[12] else "",
+                "asin": asin_val,
                 "name_cn": str(row[1] or ""),
                 "name_jp": str(row[2] or ""),
                 "qty": int(row[6]) if row[6] else 0,
@@ -155,8 +163,10 @@ def save_invoice(data: InvoiceIn, db: Session = Depends(get_db)):
         freight_alloc = (item_total_cny / total_cny * total_freight_cny) if total_cny > 0 else 0
         cost_per_unit_jpy = ((item_total_cny + freight_alloc) / item.qty * data.exchange_rate) if item.qty > 0 else 0
 
-        # 商品マスタとSKUで紐付け
+        # 商品マスタとSKU→ASINの順で紐付け
         product = db.query(Product).filter(Product.sku == item.sku).first()
+        if not product and item.asin:
+            product = db.query(Product).filter(Product.asin == item.asin).first()
         product_id = product.id if product else None
 
         inv_item = InvoiceItem(
