@@ -196,9 +196,10 @@ def _run_analytics_job(job_id: str, days: int):
             _jobs[job_id]["result"] = {"summary": summary, "items": items}
 
     except Exception as e:
+        import traceback
         with _jobs_lock:
             _jobs[job_id]["status"] = "error"
-            _jobs[job_id]["error"] = str(e)
+            _jobs[job_id]["error"] = f"{str(e)}\n{traceback.format_exc()}"
     finally:
         db.close()
 
