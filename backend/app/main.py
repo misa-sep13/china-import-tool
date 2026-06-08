@@ -6,13 +6,12 @@ from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
 from app.models import price_log as price_log_models
 
-Base.metadata.create_all(bind=engine)
-
-# カラム追加マイグレーション（既存DBへの安全な追加）
 def _migrate():
     from sqlalchemy import text, inspect
     import logging
     logger = logging.getLogger("migrate")
+
+    Base.metadata.create_all(bind=engine)
 
     migrations = [
         ("products",      "selling_price",       "ALTER TABLE products ADD COLUMN selling_price FLOAT"),
@@ -35,7 +34,6 @@ def _migrate():
         ("order_settings","sale_extra_days", "ALTER TABLE order_settings ADD COLUMN sale_extra_days INTEGER DEFAULT 0"),
     ]
 
-    # inspectはコネクションの外で実行（PostgreSQL対応）
     inspector = inspect(engine)
     for table, col, sql in migrations:
         try:
@@ -51,9 +49,14 @@ def _migrate():
             except Exception as e:
                 logger.warning(f"migrate: {table}.{col} -> {e}")
 
-_migrate()
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="中国輸入管理ツール", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app):
+    _migrate()
+    yield
+
+app = FastAPI(title="中国輸入管理ツール", version="0.1.0", lifespan=lifespan)
 
 import os
 ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000,https://misa-sep13.github.io").split(",")
