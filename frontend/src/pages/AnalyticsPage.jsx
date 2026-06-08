@@ -36,6 +36,7 @@ export default function AnalyticsPage() {
   }
 
   const startFetch = async (d = period, force = false) => {
+    if (force) sessionStorage.removeItem(`analytics_${d}`)
     stopPolling()
     setJobStatus('running')
     setError('')
@@ -50,8 +51,10 @@ export default function AnalyticsPage() {
           setJobElapsed(st.data.elapsed)
           if (st.data.status === 'done') {
             stopPolling()
-            setSummary(st.data.result?.summary || {})
-            setItems(st.data.result?.items || [])
+            const result = st.data.result || {}
+            setSummary(result.summary || {})
+            setItems(result.items || [])
+            sessionStorage.setItem(`analytics_${d}`, JSON.stringify(result))
             setJobStatus('done')
           } else if (st.data.status === 'error') {
             stopPolling()
@@ -71,6 +74,16 @@ export default function AnalyticsPage() {
   }
 
   useEffect(() => {
+    const cached = sessionStorage.getItem(`analytics_${period}`)
+    if (cached) {
+      try {
+        const result = JSON.parse(cached)
+        setSummary(result.summary || {})
+        setItems(result.items || [])
+        setJobStatus('done')
+        return () => {}
+      } catch {}
+    }
     startFetch(period)
     return () => stopPolling()
   }, [])

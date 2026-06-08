@@ -27,6 +27,7 @@ export default function OrderPage() {
   }
 
   const startFetch = async (force = false) => {
+    if (force) sessionStorage.removeItem('order_items')
     setJobStatus('running')
     setError('')
     setRawItems([])
@@ -42,7 +43,9 @@ export default function OrderPage() {
           setJobElapsed(status.data.elapsed)
           if (status.data.status === 'done') {
             stopPolling()
-            setRawItems(status.data.result || [])
+            const items = status.data.result || []
+            setRawItems(items)
+            sessionStorage.setItem('order_items', JSON.stringify(items))
             setJobStatus('done')
           } else if (status.data.status === 'error') {
             stopPolling()
@@ -61,8 +64,16 @@ export default function OrderPage() {
     }
   }
 
-  // マウント時に自動取得開始
+  // マウント時：sessionStorageにキャッシュがあれば即表示、なければ取得
   useEffect(() => {
+    const cached = sessionStorage.getItem('order_items')
+    if (cached) {
+      try {
+        setRawItems(JSON.parse(cached))
+        setJobStatus('done')
+        return () => {}
+      } catch {}
+    }
     startFetch()
     return () => stopPolling()
   }, [])
