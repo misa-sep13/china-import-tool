@@ -12,10 +12,12 @@ class SettingsSchema(BaseModel):
     threshold_days: int = 75
     target_days_normal: int = 75
     target_days_sale: int = 90
+    lead_days: int = 93
     weight_d7: float = 0.05
-    weight_d15: float = 0.10
-    weight_d30: float = 0.30
-    weight_d60: float = 0.55
+    weight_d15: float = 0.15
+    weight_d30: float = 0.25
+    weight_d60: float = 0.25
+    weight_d90: float = 0.30
     growth_ratio_threshold: float = 1.3
     growth_multiplier: float = 1.0
     decline_ratio_threshold: float = 0.7
@@ -24,6 +26,7 @@ class SettingsSchema(BaseModel):
     sale_enabled: bool = False
     sale_start: Optional[date] = None
     sale_end: Optional[date] = None
+    sale_extra_days: int = 0
     exchange_rate: float = 21.0
     price_adjust_enabled: bool = False
     price_drop_threshold: float = 0.20

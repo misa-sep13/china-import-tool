@@ -30,6 +30,9 @@ def _migrate():
         ("order_settings","min_profit_rate",      "ALTER TABLE order_settings ADD COLUMN min_profit_rate FLOAT DEFAULT 0.10"),
         ("order_settings","new_product_required_days", "ALTER TABLE order_settings ADD COLUMN new_product_required_days INTEGER DEFAULT 30"),
         ("order_settings","new_product_exclude_vine",  "ALTER TABLE order_settings ADD COLUMN new_product_exclude_vine BOOLEAN DEFAULT TRUE"),
+        ("order_settings","lead_days",       "ALTER TABLE order_settings ADD COLUMN lead_days INTEGER DEFAULT 93"),
+        ("order_settings","weight_d90",      "ALTER TABLE order_settings ADD COLUMN weight_d90 FLOAT DEFAULT 0.30"),
+        ("order_settings","sale_extra_days", "ALTER TABLE order_settings ADD COLUMN sale_extra_days INTEGER DEFAULT 0"),
     ]
 
     # inspectはコネクションの外で実行（PostgreSQL対応）

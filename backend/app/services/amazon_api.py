@@ -188,9 +188,9 @@ def _fetch_sales_one(asin: str, days: int, end_dt) -> tuple:
 
 
 def fetch_all_sales(asin_list: List[str]) -> tuple:
-    """7/15/30/60日の売上を全ASIN×全期間で並列一括取得。now()を1回固定して集計期間のブレをなくす"""
+    """7/15/30/60/90日の売上を全ASIN×全期間で並列一括取得。now()を1回固定して集計期間のブレをなくす"""
     from datetime import datetime, timezone
-    periods = [7, 15, 30, 60]
+    periods = [7, 15, 30, 60, 90]
 
     # キャッシュチェック
     cached_results = {}
@@ -203,7 +203,7 @@ def fetch_all_sales(asin_list: List[str]) -> tuple:
             missing_periods.add(d)
 
     if not missing_periods:
-        return (cached_results[7], cached_results[15], cached_results[30], cached_results[60])
+        return (cached_results[7], cached_results[15], cached_results[30], cached_results[60], cached_results[90])
 
     # now()を1回だけ取得して全タスクで共有（期間のブレをなくす）
     end_dt = datetime.now(timezone.utc)
@@ -222,7 +222,7 @@ def fetch_all_sales(asin_list: List[str]) -> tuple:
         _cache_set(f"sales_{d}", period_results[d])
         cached_results[d] = period_results[d]
 
-    return (cached_results[7], cached_results[15], cached_results[30], cached_results[60])
+    return (cached_results[7], cached_results[15], cached_results[30], cached_results[60], cached_results[90])
 
 
 def fetch_sales_detail(asin_list: List[str], days: int = 30) -> Dict[str, dict]:

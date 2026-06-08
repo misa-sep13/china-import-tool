@@ -79,10 +79,10 @@ def _run_preview_job(job_id: str):
                 f_inv   = ex.submit(fetch_inventory)
                 f_sales = ex.submit(fetch_all_sales, asin_list)
             inventory = f_inv.result()
-            sales_7, sales_15, sales_30, sales_60 = f_sales.result()
+            sales_7, sales_15, sales_30, sales_60, sales_90 = f_sales.result()
         else:
             inventory = {}
-            sales_7 = sales_15 = sales_30 = sales_60 = {}
+            sales_7 = sales_15 = sales_30 = sales_60 = sales_90 = {}
 
         from sqlalchemy import func as sqlfunc
         ordered_qty_by_sku = dict(
@@ -103,12 +103,13 @@ def _run_preview_job(job_id: str):
             s15 = sales_15.get(p.asin, 0)
             s30 = sales_30.get(p.asin, 0)
             s60 = sales_60.get(p.asin, 0)
+            s90 = sales_90.get(p.asin, 0)
 
             calc = calc_order_qty(
                 available=available, inbound=inbound + ordered, processing=processing,
                 extra_stock=p.extra_stock or 0,
                 sales_7=s7, sales_15=s15, sales_30=s30, sales_60=s60,
-                set_size=p.set_size or 1, s=s
+                set_size=p.set_size or 1, s=s, sales_90=s90,
             )
             if calc.qty == 0:
                 continue
@@ -137,6 +138,7 @@ def _run_preview_job(job_id: str):
                 "sales_15": s15,
                 "sales_30": s30,
                 "sales_60": s60,
+                "sales_90": s90,
                 "days_left": calc.days_left,
                 "daily": calc.daily,
                 "stock": calc.stock,
@@ -182,10 +184,10 @@ def _run_stock_job(job_id: str):
                 f_inv   = ex.submit(fetch_inventory)
                 f_sales = ex.submit(fetch_all_sales, asin_list)
             inventory = f_inv.result()
-            sales_7, sales_15, sales_30, sales_60 = f_sales.result()
+            sales_7, sales_15, sales_30, sales_60, sales_90 = f_sales.result()
         else:
             inventory = {}
-            sales_7 = sales_15 = sales_30 = sales_60 = {}
+            sales_7 = sales_15 = sales_30 = sales_60 = sales_90 = {}
 
         from sqlalchemy import func as sqlfunc
         ordered_qty_by_sku = dict(
@@ -206,20 +208,20 @@ def _run_stock_job(job_id: str):
             s15 = sales_15.get(p.asin, 0)
             s30 = sales_30.get(p.asin, 0)
             s60 = sales_60.get(p.asin, 0)
+            s90 = sales_90.get(p.asin, 0)
 
             calc = calc_order_qty(
                 available=available, inbound=inbound + ordered, processing=processing,
                 extra_stock=p.extra_stock or 0,
                 sales_7=s7, sales_15=s15, sales_30=s30, sales_60=s60,
-                set_size=p.set_size or 1, s=s
+                set_size=p.set_size or 1, s=s, sales_90=s90,
             )
 
             # 全商品を表示。在庫充足の場合はneeded_piecesをマイナスで計算
-            from app.services.calc import target_days, weighted_daily
-            daily = weighted_daily(s7, s15, s30, s60, s)
-            tgt = target_days(s)
+            from app.services.calc import weighted_daily
+            daily = weighted_daily(s7, s15, s30, s60, s90, s)
             stock = available + inbound + ordered + processing + (p.extra_stock or 0)
-            needed_pieces = round(tgt * daily - stock) if daily > 0 else 0
+            needed_pieces = round(daily * calc.growth * s.lead_days - stock) if daily > 0 else 0
 
             result.append({
                 "product_id": p.id,
@@ -245,11 +247,12 @@ def _run_stock_job(job_id: str):
                 "sales_15": s15,
                 "sales_30": s30,
                 "sales_60": s60,
+                "sales_90": s90,
                 "days_left": calc.days_left,
                 "daily": round(daily, 2),
                 "stock": stock,
-                "recommended_qty": calc.qty,       # セット単位（0以上）
-                "recommended_pieces": needed_pieces, # ピース単位（マイナスあり）
+                "recommended_qty": calc.qty,
+                "recommended_pieces": needed_pieces,
                 "qty": max(0, calc.qty),
             })
 
@@ -321,10 +324,10 @@ def preview_orders(db: Session = Depends(get_db)):
             f_inv   = ex.submit(fetch_inventory)
             f_sales = ex.submit(fetch_all_sales, asin_list)
         inventory = f_inv.result()
-        sales_7, sales_15, sales_30, sales_60 = f_sales.result()
+        sales_7, sales_15, sales_30, sales_60, sales_90 = f_sales.result()
     else:
         inventory = {}
-        sales_7 = sales_15 = sales_30 = sales_60 = {}
+        sales_7 = sales_15 = sales_30 = sales_60 = sales_90 = {}
 
     from sqlalchemy import func as sqlfunc
     ordered_qty_by_sku = dict(
@@ -345,12 +348,13 @@ def preview_orders(db: Session = Depends(get_db)):
         s15 = sales_15.get(p.asin, 0)
         s30 = sales_30.get(p.asin, 0)
         s60 = sales_60.get(p.asin, 0)
+        s90 = sales_90.get(p.asin, 0)
 
         calc = calc_order_qty(
             available=available, inbound=inbound + ordered, processing=processing,
             extra_stock=p.extra_stock or 0,
             sales_7=s7, sales_15=s15, sales_30=s30, sales_60=s60,
-            set_size=p.set_size or 1, s=s
+            set_size=p.set_size or 1, s=s, sales_90=s90,
         )
         if calc.qty == 0:
             continue
@@ -379,6 +383,7 @@ def preview_orders(db: Session = Depends(get_db)):
             "sales_15": s15,
             "sales_30": s30,
             "sales_60": s60,
+            "sales_90": s90,
             "days_left": calc.days_left,
             "daily": calc.daily,
             "stock": calc.stock,
@@ -487,19 +492,23 @@ def _build_calc_settings(row: Optional[OrderSettings]) -> CalcSettings:
     if not row:
         return CalcSettings()
     return CalcSettings(
-        threshold_days=row.threshold_days,
-        target_days_normal=row.target_days_normal,
-        target_days_sale=row.target_days_sale,
+        lead_days=getattr(row, 'lead_days', 93) or 93,
         weight_d7=row.weight_d7,
         weight_d15=row.weight_d15,
         weight_d30=row.weight_d30,
         weight_d60=row.weight_d60,
+        weight_d90=getattr(row, 'weight_d90', 0.30) or 0.30,
         growth_ratio_threshold=row.growth_ratio_threshold,
-        growth_multiplier=row.growth_multiplier,
+        growth_multiplier=min(row.growth_multiplier, 1.0),
         decline_ratio_threshold=row.decline_ratio_threshold,
-        decline_multiplier=row.decline_multiplier,
+        decline_multiplier=max(row.decline_multiplier, 0.5),
         min_order_qty=row.min_order_qty,
         sale_enabled=row.sale_enabled,
         sale_start=row.sale_start,
         sale_end=row.sale_end,
+        sale_extra_days=getattr(row, 'sale_extra_days', 0) or 0,
+        # 後方互換
+        threshold_days=row.threshold_days,
+        target_days_normal=row.target_days_normal,
+        target_days_sale=row.target_days_sale,
     )

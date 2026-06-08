@@ -95,19 +95,17 @@ export default function SettingsPage() {
         </div>
 
         <div className="card">
-          <h2>発注トリガー・目標在庫日数</h2>
+          <h2>発注計算（リードタイム）</h2>
+          <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
+            発注〜FBA着まで：ラクマート着15日＋配送依頼10日＋FBA着20日＋余裕在庫日数＝合計
+          </p>
           <div className="form-grid">
             <div className="form-group">
-              <label>発注トリガー残日数</label>
-              <input type="number" min={1} {...f('threshold_days', 'number')} />
-            </div>
-            <div className="form-group">
-              <label>通常時 目標在庫日数</label>
-              <input type="number" min={1} {...f('target_days_normal', 'number')} />
-            </div>
-            <div className="form-group">
-              <label>セール時 目標在庫日数</label>
-              <input type="number" min={1} {...f('target_days_sale', 'number')} />
+              <label>リードタイム合計日数（発注〜FBA着＋余裕）</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" min={1} {...f('lead_days', 'number')} style={{ width: 80 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>日（推奨: 93）</span>
+              </div>
             </div>
             <div className="form-group">
               <label>最小発注数量</label>
@@ -134,6 +132,10 @@ export default function SettingsPage() {
             <div className="form-group">
               <label>60日の重み</label>
               <input type="number" step="0.01" min={0} max={1} {...f('weight_d60', 'number')} />
+            </div>
+            <div className="form-group">
+              <label>90日の重み</label>
+              <input type="number" step="0.01" min={0} max={1} {...f('weight_d90', 'number')} />
             </div>
           </div>
         </div>
@@ -198,6 +200,13 @@ export default function SettingsPage() {
             <div className="form-group">
               <label>セール終了日</label>
               <input type="date" {...f('sale_end')} disabled={!form.sale_enabled} />
+            </div>
+            <div className="form-group">
+              <label>セール期間の上乗せ日数</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" min={0} {...f('sale_extra_days', 'number')} style={{ width: 80 }} disabled={!form.sale_enabled} />
+                <span style={{ color: '#888', fontSize: 13 }}>日</span>
+              </div>
             </div>
           </div>
         </div>
