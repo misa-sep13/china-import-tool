@@ -49,23 +49,27 @@ def is_in_sale(s: CalcSettings) -> bool:
 def weighted_daily(sales_7, sales_15, sales_30, sales_60, sales_90, s: CalcSettings) -> float:
     """5期間の加重平均日販を返す。各値は「その期間の日販」"""
     return (
-        sales_7  * s.weight_d7  +
-        sales_15 * s.weight_d15 +
-        sales_30 * s.weight_d30 +
-        sales_60 * s.weight_d60 +
-        sales_90 * s.weight_d90
+        (sales_7  or 0) * (s.weight_d7  or 0.05) +
+        (sales_15 or 0) * (s.weight_d15 or 0.15) +
+        (sales_30 or 0) * (s.weight_d30 or 0.25) +
+        (sales_60 or 0) * (s.weight_d60 or 0.25) +
+        (sales_90 or 0) * (s.weight_d90 or 0.30)
     )
 
 def growth_mult(sales_7, sales_15, sales_90, s: CalcSettings) -> float:
     """直近(7日・15日平均) vs 90日 の比率で補正係数を返す（0.5〜1.0）"""
-    if sales_90 <= 0:
+    if (sales_90 or 0) <= 0:
         return 1.0
-    recent = (sales_7 + sales_15) / 2
+    recent = ((sales_7 or 0) + (sales_15 or 0)) / 2
     ratio = recent / sales_90
-    if ratio >= s.growth_ratio_threshold:
-        return min(s.growth_multiplier, 1.0)
-    if ratio <= s.decline_ratio_threshold:
-        return max(s.decline_multiplier, 0.5)
+    growth_threshold = s.growth_ratio_threshold or 1.3
+    decline_threshold = s.decline_ratio_threshold or 0.7
+    growth_mult_val = min(s.growth_multiplier or 1.0, 1.0)
+    decline_mult_val = max(s.decline_multiplier or 0.5, 0.5)
+    if ratio >= growth_threshold:
+        return growth_mult_val
+    if ratio <= decline_threshold:
+        return decline_mult_val
     return 1.0
 
 def calc_order_qty(
