@@ -207,6 +207,7 @@ export default function AnalyticsPage() {
                 <tr>
                   <th style={{ ...thStyleLeft, minWidth: 60 }}>画像</th>
                   <th style={{ ...thStyleLeft, textAlign: 'left', minWidth: 200 }}>商品名</th>
+                  {th('available', 'FBA在庫')}
                   <th style={{ ...thStyleLeft, textAlign: 'right' }}>評価</th>
                   {th('units', '販売数')}
                   {th('new_order_qty', '推奨発注数')}
@@ -229,7 +230,6 @@ export default function AnalyticsPage() {
                   <th style={{ ...thStyleLeft, textAlign: 'right', color: '#aaa' }}>広告CVR※</th>
                   <th style={{ ...thStyleLeft, textAlign: 'right', color: '#aaa' }}>広告売上※</th>
                   <th style={{ ...thStyleLeft, textAlign: 'right', color: '#aaa' }}>広告売上率※</th>
-                  {th('available', 'FBA在庫')}
                   {th('inbound', '納品中')}
                 </tr>
               </thead>
@@ -252,6 +252,7 @@ export default function AnalyticsPage() {
                         <span style={{ fontSize: 11, color: '#888', marginLeft: 6 }}>{[item.color, item.size].filter(Boolean).join('/')}</span>
                       )}
                     </td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(item.available)}</td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {item.rating != null
                         ? <span style={{ fontWeight: 600 }}>★ {item.rating}{item.rating_count != null && <><br /><span style={{ fontSize: 11, color: '#888' }}>({fmt(item.rating_count)})</span></>}</span>
@@ -287,7 +288,6 @@ export default function AnalyticsPage() {
                     <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
                     <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
                     <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
-                    <td style={{ textAlign: 'right' }}>{fmt(item.available)}</td>
                     <td style={{ textAlign: 'right', color: item.inbound > 0 ? '#2563eb' : '#bbb' }}>
                       {item.inbound > 0 ? fmt(item.inbound) : '-'}
                     </td>
