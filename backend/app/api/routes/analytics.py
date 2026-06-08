@@ -31,17 +31,19 @@ def _run_analytics_job(job_id: str, days: int):
         from app.services.tool4seller import fetch_product_data
 
         if app_settings.SP_API_REFRESH_TOKEN:
-            from app.services.amazon_api import fetch_inventory, fetch_sales_detail, fetch_catalog_info, fetch_all_sales
-            with ThreadPoolExecutor(max_workers=5) as ex:
+            from app.services.amazon_api import fetch_inventory, fetch_sales_detail, fetch_catalog_info, fetch_all_sales, fetch_new_product_info
+            with ThreadPoolExecutor(max_workers=6) as ex:
                 f_inv       = ex.submit(fetch_inventory)
                 f_sales     = ex.submit(fetch_sales_detail, asin_list, days)
                 f_all_sales = ex.submit(fetch_all_sales, asin_list)
                 f_catalog   = ex.submit(fetch_catalog_info, asin_list)
                 f_t4s       = ex.submit(fetch_product_data, asin_list, days)
+                f_new       = ex.submit(fetch_new_product_info, asin_list)
             inventory    = f_inv.result()
             sales_detail = f_sales.result()
             catalog_info = f_catalog.result()
             all_sales_7, all_sales_15, all_sales_30, all_sales_60, all_sales_90 = f_all_sales.result()
+            new_product_info = f_new.result()
             try:
                 t4s_data = f_t4s.result()
             except Exception:
@@ -51,6 +53,7 @@ def _run_analytics_job(job_id: str, days: int):
             sales_detail = {}
             catalog_info = {}
             all_sales_7 = all_sales_15 = all_sales_30 = all_sales_60 = all_sales_90 = {}
+            new_product_info = {}
             try:
                 t4s_data = fetch_product_data(asin_list, days)
             except Exception:
@@ -116,24 +119,39 @@ def _run_analytics_job(job_id: str, days: int):
             profit       = round(normal_revenue - total_cost, 0)
             profit_rate  = round(profit / normal_revenue * 100, 1) if normal_revenue > 0 else 0
 
-            # 発注数計算（発注管理と同じロジック）
+            # 発注数計算
             ordered = ordered_qty_by_sku.get(p.sku, 0)
             processing = inventory.get(p.fnsku, {}).get("processing", 0)
-            s7  = all_sales_7.get(p.asin, 0)
-            s15 = all_sales_15.get(p.asin, 0)
-            s30 = all_sales_30.get(p.asin, 0)
-            s60 = all_sales_60.get(p.asin, 0)
-            s90 = all_sales_90.get(p.asin, 0)
+            stock = available + inbound + ordered + processing + (p.extra_stock or 0)
+            np_info = new_product_info.get(p.asin, {})
+            elapsed_days = np_info.get("elapsed_days")  # Noneなら既存商品
 
-            calc = calc_order_qty(
-                available=available, inbound=inbound + ordered, processing=processing,
-                extra_stock=p.extra_stock or 0,
-                sales_7=s7, sales_15=s15, sales_30=s30, sales_60=s60,
-                set_size=p.set_size or 1, s=calc_settings, sales_90=s90,
-            )
-            new_order_qty = calc.qty_pieces  # ピース単位で表示
-            is_new_product = False
-            elapsed_days = None
+            if elapsed_days is not None:
+                # 新商品: 累計販売数÷経過日数×リードタイム−在庫
+                total_units_np = np_info.get("total_units", 0)
+                vine_units = vine_orders if exclude_vine else 0
+                net_total = max(total_units_np - vine_units, 0)
+                daily_new = net_total / elapsed_days if elapsed_days > 0 else 0
+                need = max(0, round(daily_new * (calc_settings.lead_days or 93) - stock))
+                set_size = max(1, p.set_size or 1)
+                qty_sets = -(-need // set_size) if need > 0 else 0
+                new_order_qty = qty_sets * set_size
+                is_new_product = True
+            else:
+                # 既存商品: 発注管理と同じロジック
+                s7  = all_sales_7.get(p.asin, 0)
+                s15 = all_sales_15.get(p.asin, 0)
+                s30 = all_sales_30.get(p.asin, 0)
+                s60 = all_sales_60.get(p.asin, 0)
+                s90 = all_sales_90.get(p.asin, 0)
+                calc = calc_order_qty(
+                    available=available, inbound=inbound + ordered, processing=processing,
+                    extra_stock=p.extra_stock or 0,
+                    sales_7=s7, sales_15=s15, sales_30=s30, sales_60=s60,
+                    set_size=p.set_size or 1, s=calc_settings, sales_90=s90,
+                )
+                new_order_qty = calc.qty_pieces
+                is_new_product = False
 
             total_revenue += normal_revenue
             total_units   += normal_units

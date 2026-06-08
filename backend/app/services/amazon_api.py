@@ -265,6 +265,79 @@ def fetch_sales_detail(asin_list: List[str], days: int = 30) -> Dict[str, dict]:
     return result
 
 
+def fetch_new_product_info(asin_list: List[str]) -> Dict[str, dict]:
+    """新商品判定用: ASINごとに初回売上日・経過日数・累計販売数を返す。
+    戻り値: {asin: {first_sale_date, elapsed_days, total_units}}
+    経過日数が90日以上または売上なしの場合はelapsed_days=None。
+    キャッシュTTL=1時間。
+    """
+    from datetime import datetime, timedelta, timezone
+    cache_key = "new_product_info"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    mp = "A1VC38T7YXB528"
+    now = datetime.now(timezone.utc)
+    # 月次で365日分取得して初回売上月を特定
+    start_365 = now - timedelta(days=365)
+
+    def _fetch_one(asin: str) -> tuple:
+        try:
+            params = urllib.parse.urlencode({
+                "marketplaceIds": mp,
+                "interval": f"{start_365.strftime('%Y-%m-%dT%H:%M:%SZ')}--{now.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+                "granularity": "Month",
+                "asin": asin,
+            })
+            data = _call_sp_api(f"/sales/v1/orderMetrics?{params}")
+            payload = data.get("payload", [])
+
+            # 売上がある最初の月を探す
+            first_month_start = None
+            for m in payload:
+                if (m.get("unitCount") or 0) > 0:
+                    first_month_start = m.get("interval", "").split("--")[0]
+                    break
+
+            if not first_month_start:
+                return asin, {"first_sale_date": None, "elapsed_days": None, "total_units": 0}
+
+            first_dt = datetime.fromisoformat(first_month_start.replace("Z", "+00:00"))
+            elapsed_days = (now - first_dt).days
+
+            if elapsed_days >= 90:
+                return asin, {"first_sale_date": first_month_start, "elapsed_days": None, "total_units": 0}
+
+            # 90日未満 → 初回売上日から今日までの累計販売数を取得
+            params2 = urllib.parse.urlencode({
+                "marketplaceIds": mp,
+                "interval": f"{first_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}--{now.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+                "granularity": "Total",
+                "asin": asin,
+            })
+            data2 = _call_sp_api(f"/sales/v1/orderMetrics?{params2}")
+            total_units = sum(m.get("unitCount", 0) for m in data2.get("payload", []))
+
+            return asin, {
+                "first_sale_date": first_month_start,
+                "elapsed_days": max(elapsed_days, 1),
+                "total_units": total_units,
+            }
+        except Exception:
+            return asin, {"first_sale_date": None, "elapsed_days": None, "total_units": 0}
+
+    result = {}
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        futures = {ex.submit(_fetch_one, asin): asin for asin in asin_list}
+        for f in as_completed(futures):
+            asin, val = f.result()
+            result[asin] = val
+
+    _cache_set(cache_key, result)
+    return result
+
+
 def _fetch_price_and_fee_one(sku: str) -> tuple:
     """1SKUの出品価格とFBA手数料を取得。戻り値: (sku, selling_price, fba_fee)"""
     mp = "A1VC38T7YXB528"
