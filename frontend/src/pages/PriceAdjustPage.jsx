@@ -16,18 +16,13 @@ export default function PriceAdjustPage() {
   })
 
   const approve = useMutation({
-    mutationFn: ({ id, sku, newPrice }) => {
-      // セラーセントラルの在庫管理ページをSKU検索＋価格パラメータ付きで開く
+    mutationFn: ({ id }) => api.post(`/price-adjustments/${id}/approve`),
+    onSuccess: (_, { sku, newPrice }) => {
+      qc.invalidateQueries(['priceAdjustments'])
       const url = `https://sellercentral.amazon.co.jp/myinventory/inventory?fulfilledBy=all&page=1&pageSize=250&sort=date_created_desc&status=all&searchField=sku&search=${encodeURIComponent(sku)}&cit_sku=${encodeURIComponent(sku)}&cit_price=${newPrice}`
       window.open(url, '_blank')
-      return api.post(`/price-adjustments/${id}/approve`)
     },
-    onSuccess: () => qc.invalidateQueries(['priceAdjustments']),
-    onError: (e) => {
-      // セラーセントラルは開いているのでDBだけ更新失敗の場合も通知
-      qc.invalidateQueries(['priceAdjustments'])
-      console.warn('DB更新失敗:', e.message)
-    },
+    onError: (e) => alert('承認失敗: ' + (e.response?.data?.detail || e.message)),
   })
 
   const reject = useMutation({
