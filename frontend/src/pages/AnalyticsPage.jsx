@@ -280,7 +280,7 @@ export default function AnalyticsPage() {
                     </td>
                     <td style={{ textAlign: 'right', color: item.ad_spend != null ? '#b45309' : '#aaa' }}>{yen(item.ad_spend)}</td>
                     <td style={{ textAlign: 'right', color: item.acos != null ? (item.acos > 30 ? '#dc2626' : item.acos > 15 ? '#f59e0b' : '#16a34a') : '#aaa' }}>{fmtRate(item.acos)}</td>
-                    <td style={{ textAlign: 'right', color: item.roas != null ? '#1a56db' : '#aaa' }}>{item.roas != null ? item.roas.toFixed(2) : '-'}</td>
+                    <td style={{ textAlign: 'right', color: item.roas != null ? '#1a56db' : '#aaa' }}>{item.roas != null ? `${(item.roas * 100).toFixed(0)}%` : '-'}</td>
                     <td style={{ textAlign: 'right', color: item.tacos != null ? '#7c3aed' : '#aaa' }}>{fmtRate(item.tacos)}</td>
                     <td style={{ textAlign: 'right', color: item.impressions != null ? '#374151' : '#aaa' }}>{fmt(item.impressions)}</td>
                     <td style={{ textAlign: 'right', color: item.clicks != null ? '#374151' : '#aaa' }}>{fmt(item.clicks)}</td>
