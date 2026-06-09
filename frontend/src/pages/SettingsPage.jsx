@@ -185,6 +185,49 @@ export default function SettingsPage() {
           <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
             セール前日まで：全セール日数分を上乗せ。セール初日〜最終日：残り日数に応じて自動で減少。
           </p>
+
+          {/* Amazon主要セール一覧 */}
+          <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '12px 16px', marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', marginBottom: 8 }}>📅 Amazon主要セール参考カレンダー</div>
+            <table style={{ fontSize: 12, borderCollapse: 'collapse', width: '100%' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
+                  <th style={{ padding: '4px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>セール名</th>
+                  <th style={{ padding: '4px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>時期</th>
+                  <th style={{ padding: '4px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>規模感</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ['初売りセール',         '1月上旬（2〜3日間）',       '大',   '#fef3c7'],
+                  ['新生活セール',         '3月下旬〜4月上旬（約2週間）','大',   '#fef3c7'],
+                  ['スマイルSALE春',       '4月末〜5月初（GW前後）',    '中',   '#f0fdf4'],
+                  ['プライムデー',         '7月中旬（2日間）',           '最大', '#fef2f2'],
+                  ['スマイルSALE夏',       '8月末〜9月初',              '中',   '#f0fdf4'],
+                  ['プライム感謝祭',       '10月中旬（2日間）',          '大',   '#fef3c7'],
+                  ['ブラックフライデー',   '11月末（数日間）',           '大',   '#fef3c7'],
+                  ['サイバーマンデー',     '12月初旬（数日間）',         '大',   '#fef3c7'],
+                  ['年末セール',           '12月下旬',                  '中',   '#f0fdf4'],
+                  ['スマイルSALE（毎月）', '月末〜翌月初（2〜3日）',     '小',   '#f8fafc'],
+                ].map(([name, timing, scale, bg]) => (
+                  <tr key={name} style={{ borderBottom: '1px solid #f1f5f9', background: bg }}>
+                    <td style={{ padding: '5px 10px', color: '#374151', fontWeight: 500 }}>{name}</td>
+                    <td style={{ padding: '5px 10px', color: '#6b7280' }}>{timing}</td>
+                    <td style={{ padding: '5px 10px' }}>
+                      <span style={{
+                        fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 4,
+                        background: scale === '最大' ? '#fecdd3' : scale === '大' ? '#fed7aa' : scale === '中' ? '#bbf7d0' : '#e2e8f0',
+                        color: scale === '最大' ? '#be123c' : scale === '大' ? '#c2410c' : scale === '中' ? '#15803d' : '#64748b',
+                      }}>{scale}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p style={{ fontSize: 11, color: '#94a3b8', margin: '8px 0 0' }}>
+              ※ 日程は毎年変動します。公式発表後に下記の開始日・終了日を設定してください。
+            </p>
+          </div>
           <div className="form-grid">
             <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <label style={{ marginBottom: 0 }}>
