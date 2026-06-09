@@ -188,28 +188,25 @@ export default function SettingsPage() {
 
           {/* Amazon主要セール一覧 */}
           <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '12px 16px', marginBottom: 16 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', marginBottom: 8 }}>📅 Amazon主要セール参考カレンダー</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', marginBottom: 8 }}>📅 2026年 Amazon主要セールカレンダー</div>
             <table style={{ fontSize: 12, borderCollapse: 'collapse', width: '100%' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
                   <th style={{ padding: '4px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>セール名</th>
-                  <th style={{ padding: '4px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>時期</th>
-                  <th style={{ padding: '4px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>規模感</th>
+                  <th style={{ padding: '4px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>日程</th>
+                  <th style={{ padding: '4px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>規模</th>
+                  <th style={{ padding: '4px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>状態</th>
                 </tr>
               </thead>
               <tbody>
                 {[
-                  ['初売りセール',         '1月上旬（2〜3日間）',       '大',   '#fef3c7'],
-                  ['新生活セール',         '3月下旬〜4月上旬（約2週間）','大',   '#fef3c7'],
-                  ['スマイルSALE春',       '4月末〜5月初（GW前後）',    '中',   '#f0fdf4'],
-                  ['プライムデー',         '7月中旬（2日間）',           '最大', '#fef2f2'],
-                  ['スマイルSALE夏',       '8月末〜9月初',              '中',   '#f0fdf4'],
-                  ['プライム感謝祭',       '10月中旬（2日間）',          '大',   '#fef3c7'],
-                  ['ブラックフライデー',   '11月末（数日間）',           '大',   '#fef3c7'],
-                  ['サイバーマンデー',     '12月初旬（数日間）',         '大',   '#fef3c7'],
-                  ['年末セール',           '12月下旬',                  '中',   '#f0fdf4'],
-                  ['スマイルSALE（毎月）', '月末〜翌月初（2〜3日）',     '小',   '#f8fafc'],
-                ].map(([name, timing, scale, bg]) => (
+                  ['第4回スマイルSALE',   '5/27（金）9:00 〜 6/2（月）23:59',         '中',   '#f0fdf4', '✅ 確定'],
+                  ['プライムデー',        '先行 7/8〜10・本セール 7/11〜14（予想）',    '最大', '#fef2f2', '📢 開催月確定'],
+                  ['プライム感謝祭',      '10/9前後〜10/15前後（予想）',               '大',   '#fef3c7', '📋 予想'],
+                  ['ブラックフライデー',  '11月下旬・約1〜2週間（予想）',              '大',   '#fef3c7', '📋 予想'],
+                  ['年末アフターセール',  '12月（予想）',                              '中',   '#f8fafc', '📋 予想'],
+                  ['スマイルSALE（毎月）','月末〜翌月初（2〜3日）',                    '小',   '#f8fafc', '🔄 毎月'],
+                ].map(([name, timing, scale, bg, status]) => (
                   <tr key={name} style={{ borderBottom: '1px solid #f1f5f9', background: bg }}>
                     <td style={{ padding: '5px 10px', color: '#374151', fontWeight: 500 }}>{name}</td>
                     <td style={{ padding: '5px 10px', color: '#6b7280' }}>{timing}</td>
@@ -220,12 +217,13 @@ export default function SettingsPage() {
                         color: scale === '最大' ? '#be123c' : scale === '大' ? '#c2410c' : scale === '中' ? '#15803d' : '#64748b',
                       }}>{scale}</span>
                     </td>
+                    <td style={{ padding: '5px 10px', color: '#6b7280', fontSize: 11 }}>{status}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             <p style={{ fontSize: 11, color: '#94a3b8', margin: '8px 0 0' }}>
-              ※ 日程は毎年変動します。公式発表後に下記の開始日・終了日を設定してください。
+              ※ 予想・未確定の日程は公式発表後に下記で設定してください。
             </p>
           </div>
           <div className="form-grid">
