@@ -16,9 +16,18 @@ export default function PriceAdjustPage() {
   })
 
   const approve = useMutation({
-    mutationFn: (id) => api.post(`/price-adjustments/${id}/approve`),
+    mutationFn: ({ id, sku, newPrice }) => {
+      // セラーセントラルの在庫管理ページをSKU検索＋価格パラメータ付きで開く
+      const url = `https://sellercentral.amazon.co.jp/myinventory/inventory?searchField=sku&search=${encodeURIComponent(sku)}&cit_sku=${encodeURIComponent(sku)}&cit_price=${newPrice}`
+      window.open(url, '_blank')
+      return api.post(`/price-adjustments/${id}/approve`)
+    },
     onSuccess: () => qc.invalidateQueries(['priceAdjustments']),
-    onError: (e) => alert('承認失敗: ' + (e.response?.data?.detail || e.message)),
+    onError: (e) => {
+      // セラーセントラルは開いているのでDBだけ更新失敗の場合も通知
+      qc.invalidateQueries(['priceAdjustments'])
+      console.warn('DB更新失敗:', e.message)
+    },
   })
 
   const reject = useMutation({
@@ -137,8 +146,8 @@ export default function PriceAdjustPage() {
                           style={{ marginRight: 6 }}
                           disabled={approve.isPending}
                           onClick={() => {
-                            if (confirm(`${row.sku} の価格を ¥${row.old_price?.toLocaleString()} → ¥${row.new_price?.toLocaleString()} に変更しますか？\nAmazonに即時反映されます。`))
-                              approve.mutate(row.id)
+                            if (confirm(`${row.sku} の価格を ¥${row.old_price?.toLocaleString()} → ¥${row.new_price?.toLocaleString()} に変更しますか？\nセラーセントラルが開きます。拡張機能が価格を自動入力します。`))
+                              approve.mutate({ id: row.id, sku: row.sku, newPrice: row.new_price })
                           }}
                         >承認</button>
                         <button

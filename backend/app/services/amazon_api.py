@@ -425,36 +425,64 @@ def fetch_sales_period(days: int, offset_days: int, asin_list: List[str]) -> Dic
     return result
 
 
-def update_listing_price(sku: str, price: float) -> bool:
-    """SP-API Listings Items APIで出品価格を更新。成功でTrue"""
+def update_listing_price(sku: str, price: float) -> tuple:
+    """Feeds APIで出品価格を更新。戻り値: (success: bool, error_msg: str)"""
     mp = "A1VC38T7YXB528"
     token = _get_access_token()
-    body = json.dumps({
-        "productType": "PRODUCT",
-        "patches": [
-            {
-                "op": "replace",
-                "path": "/attributes/list_price",
-                "value": [{"currency_code": "JPY", "value": round(price)}],
-            }
-        ],
-    }).encode()
-    req = urllib.request.Request(
-        f"https://sellingpartnerapi-fe.amazon.com/listings/2022-04-01/items/{urllib.parse.quote(sku, safe='')}",
-        data=body,
-        method="PATCH",
-        headers={
-            "x-amz-access-token": token,
-            "Content-Type": "application/json",
-            "marketplaceIds": mp,
-        },
-    )
+
+    xml_body = f'''<?xml version="1.0" encoding="utf-8"?>
+<AmazonEnvelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="amznenvelope.xsd">
+  <Header><DocumentVersion>1.01</DocumentVersion><MerchantIdentifier>A29K12KTHSASJ0</MerchantIdentifier></Header>
+  <MessageType>Price</MessageType>
+  <Message><MessageID>1</MessageID>
+    <Price><SKU>{sku}</SKU><StandardPrice currency="JPY">{round(price)}</StandardPrice></Price>
+  </Message>
+</AmazonEnvelope>'''.encode("utf-8")
+
+    headers = {"x-amz-access-token": token, "Content-Type": "application/json"}
+
     try:
-        with urllib.request.urlopen(req, timeout=15) as res:
+        # Step1: フィードドキュメント作成
+        req1 = urllib.request.Request(
+            "https://sellingpartnerapi-fe.amazon.com/feeds/2021-06-30/documents",
+            data=json.dumps({"contentType": "text/xml; charset=UTF-8"}).encode(),
+            method="POST", headers=headers,
+        )
+        with urllib.request.urlopen(req1, timeout=15) as res:
+            doc = json.loads(res.read())
+        doc_id = doc["feedDocumentId"]
+        upload_url = doc["url"]
+
+        # Step2: XMLをS3にアップロード
+        upload_req = urllib.request.Request(
+            upload_url, data=xml_body, method="PUT",
+            headers={"Content-Type": "text/xml; charset=UTF-8"},
+        )
+        with urllib.request.urlopen(upload_req, timeout=15):
+            pass
+
+        # Step3: フィード送信
+        req3 = urllib.request.Request(
+            "https://sellingpartnerapi-fe.amazon.com/feeds/2021-06-30/feeds",
+            data=json.dumps({
+                "feedType": "POST_PRODUCT_PRICING_DATA",
+                "marketplaceIds": [mp],
+                "inputFeedDocumentId": doc_id,
+            }).encode(),
+            method="POST", headers=headers,
+        )
+        with urllib.request.urlopen(req3, timeout=15) as res:
             result = json.loads(res.read())
-        return result.get("status") == "ACCEPTED"
-    except Exception:
-        return False
+
+        if result.get("feedId"):
+            return True, ""
+        return False, str(result)
+
+    except urllib.error.HTTPError as e:
+        err = e.read().decode()
+        return False, f"HTTP {e.code}: {err}"
+    except Exception as ex:
+        return False, str(ex)
 
 
 def fetch_prices_and_fees(sku_list: List[str]) -> Dict[str, dict]:

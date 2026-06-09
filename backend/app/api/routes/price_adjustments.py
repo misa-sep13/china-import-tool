@@ -59,11 +59,6 @@ def approve_adjustment(log_id: int, db: Session = Depends(get_db)):
     if log.status != "pending":
         raise HTTPException(status_code=400, detail=f"ステータスが pending ではありません: {log.status}")
 
-    from app.services.amazon_api import update_listing_price
-    success = update_listing_price(log.sku, log.new_price)
-    if not success:
-        raise HTTPException(status_code=500, detail="SP-APIへの価格反映に失敗しました")
-
     # DBの selling_price も更新
     product = db.query(Product).filter(Product.id == log.product_id).first()
     if product:
