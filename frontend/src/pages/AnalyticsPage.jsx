@@ -29,6 +29,7 @@ export default function AnalyticsPage() {
   const [error, setError] = useState('')
   const [sortKey, setSortKey] = useState('revenue')
   const [sortAsc, setSortAsc] = useState(false)
+  const [search, setSearch] = useState('')
   const pollRef = useRef(null)
 
   const stopPolling = () => {
@@ -98,7 +99,16 @@ export default function AnalyticsPage() {
     else { setSortKey(key); setSortAsc(false) }
   }
 
-  const sorted = [...items].sort((a, b) => {
+  const filtered = search.trim()
+    ? items.filter(item => {
+        const q = search.trim().toLowerCase()
+        return (item.sku || '').toLowerCase().includes(q)
+            || (item.name || '').toLowerCase().includes(q)
+            || (item.asin || '').toLowerCase().includes(q)
+      })
+    : items
+
+  const sorted = [...filtered].sort((a, b) => {
     let va = a[sortKey] ?? -Infinity
     let vb = b[sortKey] ?? -Infinity
     return sortAsc ? va - vb : vb - va
@@ -177,6 +187,14 @@ export default function AnalyticsPage() {
                     {fmtRate(summary.profit_rate)}
                   </div>
                 </div>
+                <div style={{ width: 1, height: 36, background: '#e5e7eb', margin: '0 8px' }} />
+                <input
+                  type="text"
+                  placeholder="SKU・商品名・ASINで検索"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  style={{ padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, width: 220, outline: 'none' }}
+                />
               </div>
             </>
           )}
@@ -200,7 +218,7 @@ export default function AnalyticsPage() {
       {/* テーブル */}
       {!isLoading && jobStatus === 'done' && (
         <div className="card">
-          <h2>商品別分析（{items.length}件 / {period}日間）</h2>
+          <h2>商品別分析（{search.trim() ? `${sorted.length}件 / ${items.length}件中` : `${items.length}件`} / {period}日間）</h2>
           <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 310px)', WebkitOverflowScrolling: 'touch' }}>
             <table style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
               <thead>
