@@ -248,7 +248,7 @@ def fetch_sales_detail(asin_list: List[str], days: int = 30) -> Dict[str, dict]:
             data = _call_sp_api(f"/sales/v1/orderMetrics?{params}")
             payload = data.get("payload", [])
             units = sum(m.get("unitCount", 0) for m in payload)
-            revenue = sum(m.get("orderedProductSales", {}).get("amount", 0) for m in payload)
+            revenue = sum(m.get("totalSales", m.get("orderedProductSales", {})).get("amount", 0) for m in payload)
             avg_price = round(revenue / units, 0) if units > 0 else 0
             return asin, {"units": units, "revenue": round(revenue, 0), "avg_price": avg_price}
         except Exception:
