@@ -194,28 +194,25 @@ export default function SettingsPage() {
                 <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
                   <th style={{ padding: '4px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>セール名</th>
                   <th style={{ padding: '4px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>日程</th>
-                  <th style={{ padding: '4px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>規模</th>
+                  <th style={{ padding: '4px 10px', textAlign: 'center', color: '#94a3b8', fontWeight: 600 }}>推奨倍率</th>
                   <th style={{ padding: '4px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>状態</th>
                 </tr>
               </thead>
               <tbody>
                 {[
-                  ['第4回スマイルSALE',   '5/27（金）9:00 〜 6/2（月）23:59',         '中',   '#f0fdf4', '✅ 確定'],
-                  ['プライムデー',        '先行 7/8〜10・本セール 7/11〜14（予想）',    '最大', '#fef2f2', '📢 開催月確定'],
-                  ['プライム感謝祭',      '10/9前後〜10/15前後（予想）',               '大',   '#fef3c7', '📋 予想'],
-                  ['ブラックフライデー',  '11月下旬・約1〜2週間（予想）',              '大',   '#fef3c7', '📋 予想'],
-                  ['年末アフターセール',  '12月（予想）',                              '中',   '#f8fafc', '📋 予想'],
-                  ['スマイルSALE（毎月）','月末〜翌月初（2〜3日）',                    '小',   '#f8fafc', '🔄 毎月'],
-                ].map(([name, timing, scale, bg, status]) => (
+                  ['第4回スマイルSALE',   '5/27（金）9:00 〜 6/2（月）23:59',       '1.8x', '#f0fdf4', '✅ 確定'],
+                  ['プライムデー',        '先行 7/8〜10・本セール 7/11〜14（予想）', '2.5x', '#fef2f2', '📢 開催月確定'],
+                  ['プライム感謝祭',      '10/9前後〜10/15前後（予想）',             '2.5x', '#fef3c7', '📋 予想'],
+                  ['ブラックフライデー',  '11月下旬・約1〜2週間（予想）',            '3.0x', '#fef3c7', '📋 予想'],
+                  ['年末アフターセール',  '12月（予想）',                            '—',    '#f8fafc', '📋 予想'],
+                  ['新生活セール',        '3月下旬〜4月上旬',                        '2.0x', '#f8fafc', '📋 予想'],
+                  ['スマイルSALE（毎月）','月末〜翌月初（2〜3日）',                  '1.5x', '#f8fafc', '🔄 毎月'],
+                ].map(([name, timing, mult, bg, status]) => (
                   <tr key={name} style={{ borderBottom: '1px solid #f1f5f9', background: bg }}>
                     <td style={{ padding: '5px 10px', color: '#374151', fontWeight: 500 }}>{name}</td>
                     <td style={{ padding: '5px 10px', color: '#6b7280' }}>{timing}</td>
-                    <td style={{ padding: '5px 10px' }}>
-                      <span style={{
-                        fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 4,
-                        background: scale === '最大' ? '#fecdd3' : scale === '大' ? '#fed7aa' : scale === '中' ? '#bbf7d0' : '#e2e8f0',
-                        color: scale === '最大' ? '#be123c' : scale === '大' ? '#c2410c' : scale === '中' ? '#15803d' : '#64748b',
-                      }}>{scale}</span>
+                    <td style={{ padding: '5px 10px', textAlign: 'center' }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, fontFamily: 'monospace', color: mult === '—' ? '#94a3b8' : '#7c3aed' }}>{mult}</span>
                     </td>
                     <td style={{ padding: '5px 10px', color: '#6b7280', fontSize: 11 }}>{status}</td>
                   </tr>
