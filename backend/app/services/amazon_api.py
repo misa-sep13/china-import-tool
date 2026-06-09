@@ -531,7 +531,7 @@ def _get_ads_profile_id() -> str:
 
 
 def fetch_ads_data(asin_list: List[str], days: int) -> Dict[str, dict]:
-    """ASIN単位の広告データを取得。戻り値: {asin: {ad_spend, impressions, clicks, ad_orders, ad_revenue}}"""
+    """ASIN単位の広告データを取得（Ads API v3）。戻り値: {asin: {ad_spend, impressions, clicks, ad_orders, ad_revenue}}"""
     if not settings.ADS_API_REFRESH_TOKEN:
         return {}
 
@@ -540,8 +540,9 @@ def fetch_ads_data(asin_list: List[str], days: int) -> Dict[str, dict]:
         return cached
 
     from datetime import datetime, timedelta
-    end_date = (datetime.utcnow() - timedelta(days=1)).strftime("%Y%m%d")
-    start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y%m%d")
+    import gzip
+    end_date = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+    start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
 
     try:
         token = _get_ads_access_token()
@@ -556,18 +557,23 @@ def fetch_ads_data(asin_list: List[str], days: int) -> Dict[str, dict]:
             "Content-Type": "application/json",
         }
 
-        # SP広告（スポンサープロダクト）のASIN別レポートをリクエスト
         body = json.dumps({
-            "reportDate": end_date,
-            "metrics": "impressions,clicks,cost,attributedUnitsOrdered30d,attributedSales30d",
-            "segment": "asin",
+            "name": f"sp_asin_{days}d",
+            "startDate": start_date,
+            "endDate": end_date,
+            "configuration": {
+                "adProduct": "SPONSORED_PRODUCTS",
+                "groupBy": ["advertiser"],
+                "columns": ["impressions", "clicks", "cost", "purchases30d", "sales30d", "advertisedAsin"],
+                "reportTypeId": "spAdvertisedProduct",
+                "timeUnit": "SUMMARY",
+                "format": "GZIP_JSON",
+            },
         }).encode()
 
         req = urllib.request.Request(
-            "https://advertising-api-fe.amazon.com/v2/sp/productAds/report",
-            data=body,
-            method="POST",
-            headers=headers,
+            "https://advertising-api-fe.amazon.com/reporting/reports",
+            data=body, method="POST", headers=headers,
         )
         with urllib.request.urlopen(req, timeout=30) as res:
             report_resp = json.loads(res.read())
@@ -576,19 +582,18 @@ def fetch_ads_data(asin_list: List[str], days: int) -> Dict[str, dict]:
         if not report_id:
             return {}
 
-        # レポート完成まで最大60秒ポーリング
+        # レポート完成まで最大90秒ポーリング
         report_url = None
-        for _ in range(20):
+        for _ in range(30):
             time.sleep(3)
             status_req = urllib.request.Request(
-                f"https://advertising-api-fe.amazon.com/v2/reports/{report_id}",
-                method="GET",
-                headers=headers,
+                f"https://advertising-api-fe.amazon.com/reporting/reports/{report_id}",
+                method="GET", headers=headers,
             )
             with urllib.request.urlopen(status_req, timeout=15) as res:
                 status_data = json.loads(res.read())
-            if status_data.get("status") == "SUCCESS":
-                report_url = status_data.get("location")
+            if status_data.get("status") == "COMPLETED":
+                report_url = status_data.get("url")
                 break
             elif status_data.get("status") == "FAILURE":
                 return {}
@@ -596,8 +601,6 @@ def fetch_ads_data(asin_list: List[str], days: int) -> Dict[str, dict]:
         if not report_url:
             return {}
 
-        # レポートダウンロード（gzip）
-        import gzip, io
         dl_req = urllib.request.Request(report_url, method="GET")
         with urllib.request.urlopen(dl_req, timeout=30) as res:
             raw = res.read()
@@ -609,7 +612,7 @@ def fetch_ads_data(asin_list: List[str], days: int) -> Dict[str, dict]:
         # ASIN単位に集計
         result: Dict[str, dict] = {}
         for row in rows:
-            asin = row.get("advertisedAsin") or row.get("asin")
+            asin = row.get("advertisedAsin")
             if not asin:
                 continue
             if asin not in result:
@@ -617,8 +620,8 @@ def fetch_ads_data(asin_list: List[str], days: int) -> Dict[str, dict]:
             result[asin]["ad_spend"]    += float(row.get("cost") or 0)
             result[asin]["impressions"] += int(row.get("impressions") or 0)
             result[asin]["clicks"]      += int(row.get("clicks") or 0)
-            result[asin]["ad_orders"]   += int(row.get("attributedUnitsOrdered30d") or 0)
-            result[asin]["ad_revenue"]  += float(row.get("attributedSales30d") or 0)
+            result[asin]["ad_orders"]   += int(row.get("purchases30d") or 0)
+            result[asin]["ad_revenue"]  += float(row.get("sales30d") or 0)
 
         _cache_set(f"ads_data_{days}", result)
         return result
