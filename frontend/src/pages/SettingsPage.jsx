@@ -97,14 +97,14 @@ export default function SettingsPage() {
         <div className="card">
           <h2>発注計算（リードタイム）</h2>
           <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
-            発注〜FBA着まで：代行会社着15日＋配送依頼10日＋FBA着20日＋余裕在庫日数＝合計
+            常に指定日数分の在庫を維持するよう発注数を計算します。セールがある場合は上乗せ分が自動加算されます。
           </p>
           <div className="form-grid">
             <div className="form-group">
-              <label style={{ whiteSpace: 'nowrap' }}>リードタイム合計日数</label>
+              <label style={{ whiteSpace: 'nowrap' }}>リードタイム合計日数（通常時）</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <input type="number" min={1} {...f('lead_days', 'number')} style={{ width: 80 }} />
-                <span style={{ color: '#888', fontSize: 13 }}>日（推奨: 93）</span>
+                <span style={{ color: '#888', fontSize: 13 }}>日（推奨: 75）</span>
               </div>
             </div>
             <div className="form-group">
@@ -182,6 +182,9 @@ export default function SettingsPage() {
 
         <div className="card">
           <h2>セール期間設定</h2>
+          <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
+            セール前日まで：全セール日数分を上乗せ。セール初日〜最終日：残り日数に応じて自動で減少。
+          </p>
           <div className="form-grid">
             <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <label style={{ marginBottom: 0 }}>
@@ -198,12 +201,36 @@ export default function SettingsPage() {
               <input type="date" {...f('sale_end')} disabled={!form.sale_enabled} />
             </div>
             <div className="form-group">
-              <label>セール期間の上乗せ日数</label>
+              <label>セール中の売上倍率</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <input type="number" min={0} {...f('sale_extra_days', 'number')} style={{ width: 80 }} disabled={!form.sale_enabled} />
-                <span style={{ color: '#888', fontSize: 13 }}>日</span>
+                <input type="number" min={1} step={0.1} {...f('sale_multiplier', 'number')} style={{ width: 80 }} disabled={!form.sale_enabled} />
+                <span style={{ color: '#888', fontSize: 13 }}>倍（推奨: 3.0 ＝ 通常の3倍売れる想定）</span>
               </div>
             </div>
+            {form.sale_enabled && form.sale_start && form.sale_end && (() => {
+              const today = new Date()
+              const start = new Date(form.sale_start)
+              const end = new Date(form.sale_end)
+              const mult = form.sale_multiplier || 3.0
+              const extraPerDay = mult - 1
+              let saleDays, label
+              if (today < start) {
+                saleDays = Math.round((end - start) / 86400000) + 1
+                label = `セール前：全${saleDays}日分を上乗せ → +${Math.round(saleDays * extraPerDay)}日 → 合計 ${(form.lead_days || 75) + Math.round(saleDays * extraPerDay)}日分`
+              } else if (today <= end) {
+                const remaining = Math.round((end - today) / 86400000)
+                label = `セール中：残り${remaining}日分を上乗せ → +${Math.round(remaining * extraPerDay)}日 → 合計 ${(form.lead_days || 75) + Math.round(remaining * extraPerDay)}日分`
+              } else {
+                label = `セール終了後：上乗せなし → ${form.lead_days || 75}日分`
+              }
+              return (
+                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                  <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6, padding: '10px 14px', fontSize: 13, color: '#1d4ed8' }}>
+                    📦 現在の発注目標日数: {label}
+                  </div>
+                </div>
+              )
+            })()}
           </div>
         </div>
 
@@ -313,9 +340,9 @@ export default function SettingsPage() {
         {/* リードタイム */}
         <div>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: '#9ca3af', marginBottom: 12 }}>
-            🚢 リードタイム内訳（デフォルト 93日）
+            🚢 発注目標日数（デフォルト 75日）
           </h3>
-          <table style={{ fontSize: 13, borderCollapse: 'collapse', width: '100%' }}>
+          <table style={{ fontSize: 13, borderCollapse: 'collapse', width: '100%', marginBottom: 16 }}>
             <thead>
               <tr style={{ background: '#f9fafb' }}>
                 <th style={{ padding: '6px 12px', textAlign: 'left', fontWeight: 600, color: '#9ca3af' }}>フェーズ</th>
@@ -328,7 +355,7 @@ export default function SettingsPage() {
                 ['配送依頼 → 発送', '10日'],
                 ['発送 → FBA着', '20日'],
                 ['FBA検品・受入', '5日'],
-                ['余裕在庫（バッファ）', '43日'],
+                ['余裕在庫（バッファ）', '25日'],
               ].map(([phase, days]) => (
                 <tr key={phase} style={{ borderBottom: '1px solid #f3f4f6' }}>
                   <td style={{ padding: '6px 12px', color: '#9ca3af' }}>{phase}</td>
@@ -336,13 +363,30 @@ export default function SettingsPage() {
                 </tr>
               ))}
               <tr style={{ background: '#f9fafb', fontWeight: 700 }}>
-                <td style={{ padding: '6px 12px', color: '#9ca3af' }}>合計</td>
-                <td style={{ padding: '6px 12px', textAlign: 'right', fontFamily: 'monospace', color: '#9ca3af' }}>93日</td>
+                <td style={{ padding: '6px 12px', color: '#9ca3af' }}>合計（通常時）</td>
+                <td style={{ padding: '6px 12px', textAlign: 'right', fontFamily: 'monospace', color: '#9ca3af' }}>75日</td>
               </tr>
             </tbody>
           </table>
+          <h4 style={{ fontSize: 13, fontWeight: 700, color: '#9ca3af', marginBottom: 8 }}>セール時の上乗せ計算（例: プライムデー 9日間・3倍）</h4>
+          <table style={{ fontSize: 13, borderCollapse: 'collapse', width: '100%' }}>
+            <tbody>
+              {[
+                ['セール前日まで', '9日 × (3倍−1) = +18日 → 合計93日分', '#fef9c3', '#854d0e'],
+                ['セール初日', '残り8日 × 2 = +16日 → 合計91日分', '#fef9c3', '#854d0e'],
+                ['セール5日目', '残り4日 × 2 = +8日 → 合計83日分', '#fef9c3', '#854d0e'],
+                ['セール最終日', '残り0日 × 2 = +0日 → 合計75日分', '#f0fdf4', '#166534'],
+                ['セール終了後', '上乗せなし → 通常通り75日分', '#f9fafb', '#9ca3af'],
+              ].map(([timing, calc, bg, color]) => (
+                <tr key={timing} style={{ borderBottom: '1px solid #f3f4f6', background: bg }}>
+                  <td style={{ padding: '6px 12px', fontWeight: 600, color: '#9ca3af', width: 160 }}>{timing}</td>
+                  <td style={{ padding: '6px 12px', fontFamily: 'monospace', fontSize: 12, color }}>{calc}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
           <p style={{ fontSize: 12, color: '#c4c4c4', marginTop: 10 }}>
-            ※ リードタイムは「発注計算（リードタイム）」セクションで変更できます。セール期間中は上乗せ日数を加算します。
+            ※ セール日程を設定すると、発注目標日数が自動で増減します。手動入力不要。
           </p>
         </div>
       </div>

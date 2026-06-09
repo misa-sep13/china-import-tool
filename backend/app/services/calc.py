@@ -1,11 +1,11 @@
 from datetime import date
 from typing import Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 @dataclass
 class CalcSettings:
-    # リードタイム（日）
-    lead_days: int = 93          # 発注〜FBA着+余裕 合計
+    # リードタイム（日）: 常時75日分の在庫を維持。セールがあれば上乗せ分を動的に加算。
+    lead_days: int = 75
     # 加重平均の重み
     weight_d7: float = 0.05
     weight_d15: float = 0.15
@@ -21,7 +21,7 @@ class CalcSettings:
     sale_enabled: bool = False
     sale_start: Optional[date] = None
     sale_end: Optional[date] = None
-    sale_extra_days: int = 0         # セール期間の上乗せ日数
+    sale_multiplier: float = 3.0     # セール中の売上倍率（例: 3倍）
     # 後方互換（旧設定から移行）
     threshold_days: int = 75
     target_days_normal: int = 75
@@ -45,6 +45,30 @@ def is_in_sale(s: CalcSettings) -> bool:
         return False
     today = date.today()
     return s.sale_start <= today <= s.sale_end
+
+def calc_sale_extra_days(s: CalcSettings) -> float:
+    """
+    セール在庫の上乗せ日数（通常日換算）を返す。
+    - セール前日まで: 全セール日数 × (倍率-1)
+    - セール初日〜最終日: 残りセール日数 × (倍率-1)（当日分は含まない）
+    - セール終了後: 0
+    例) 9日間・3倍セール → 最大 9×2=18日分の上乗せ
+    """
+    if not s.sale_enabled or not s.sale_start or not s.sale_end:
+        return 0.0
+    today = date.today()
+    multiplier = s.sale_multiplier if s.sale_multiplier else 3.0
+    extra_per_day = multiplier - 1.0
+    if today < s.sale_start:
+        # セール前: セール全日数分を上乗せ
+        sale_days = (s.sale_end - s.sale_start).days + 1
+        return sale_days * extra_per_day
+    elif today <= s.sale_end:
+        # セール中: 残り日数（当日は売れているので除く）
+        remaining = (s.sale_end - today).days
+        return remaining * extra_per_day
+    else:
+        return 0.0
 
 def weighted_daily(sales_7, sales_15, sales_30, sales_60, sales_90, s: CalcSettings) -> float:
     """5期間の加重平均日販を返す。各値は「その期間の日販」"""
@@ -86,9 +110,9 @@ def calc_order_qty(
     days_left = int(stock / daily) if daily > 0 else 9999
     growth = growth_mult(sales_7, sales_15, sales_90, s)
 
-    # セール期間は上乗せ日数を加算
+    # セール期間・直前は上乗せ日数を加算（動的計算）
     sale = is_in_sale(s)
-    lead = s.lead_days + (s.sale_extra_days if sale else 0)
+    lead = s.lead_days + calc_sale_extra_days(s)
 
     # 目標在庫数 = 日販 × 補正 × リードタイム合計日数
     target_stock = round(daily * growth * lead)

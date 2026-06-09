@@ -28,9 +28,9 @@ def _migrate():
         ("order_settings","price_change_pct",     "ALTER TABLE order_settings ADD COLUMN price_change_pct FLOAT DEFAULT 0.03"),
         ("order_settings","min_profit_rate",      "ALTER TABLE order_settings ADD COLUMN min_profit_rate FLOAT DEFAULT 0.10"),
         ("order_settings","new_product_exclude_vine",  "ALTER TABLE order_settings ADD COLUMN new_product_exclude_vine BOOLEAN DEFAULT TRUE"),
-        ("order_settings","lead_days",       "ALTER TABLE order_settings ADD COLUMN lead_days INTEGER DEFAULT 93"),
-        ("order_settings","weight_d90",      "ALTER TABLE order_settings ADD COLUMN weight_d90 FLOAT DEFAULT 0.30"),
-        ("order_settings","sale_extra_days", "ALTER TABLE order_settings ADD COLUMN sale_extra_days INTEGER DEFAULT 0"),
+        ("order_settings","lead_days",        "ALTER TABLE order_settings ADD COLUMN lead_days INTEGER DEFAULT 75"),
+        ("order_settings","weight_d90",       "ALTER TABLE order_settings ADD COLUMN weight_d90 FLOAT DEFAULT 0.30"),
+        ("order_settings","sale_multiplier",  "ALTER TABLE order_settings ADD COLUMN sale_multiplier FLOAT DEFAULT 3.0"),
     ]
 
     inspector = inspect(engine)
@@ -50,6 +50,7 @@ def _migrate():
 
     drop_migrations = [
         ("order_settings", "new_product_required_days"),
+        ("order_settings", "sale_extra_days"),
     ]
     for table, col in drop_migrations:
         try:

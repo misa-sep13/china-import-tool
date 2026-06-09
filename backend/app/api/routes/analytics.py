@@ -132,7 +132,7 @@ def _run_analytics_job(job_id: str, days: int):
                 vine_units = vine_orders if exclude_vine else 0
                 net_total = max(total_units_np - vine_units, 0)
                 daily_new = net_total / elapsed_days if elapsed_days > 0 else 0
-                need = max(0, round(daily_new * (calc_settings.lead_days or 93) - stock))
+                need = max(0, round(daily_new * (calc_settings.lead_days or 75) - stock))
                 set_size = max(1, p.set_size or 1)
                 qty_sets = -(-need // set_size) if need > 0 else 0
                 new_order_qty = qty_sets * set_size

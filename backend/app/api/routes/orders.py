@@ -221,7 +221,8 @@ def _run_stock_job(job_id: str):
             from app.services.calc import weighted_daily
             daily = weighted_daily(s7, s15, s30, s60, s90, s)
             stock = available + inbound + ordered + processing + (p.extra_stock or 0)
-            needed_pieces = round(daily * calc.growth * s.lead_days - stock) if daily > 0 else 0
+            from app.services.calc import calc_sale_extra_days
+            needed_pieces = round(daily * calc.growth * (s.lead_days + calc_sale_extra_days(s)) - stock) if daily > 0 else 0
 
             result.append({
                 "product_id": p.id,
@@ -492,7 +493,7 @@ def _build_calc_settings(row: Optional[OrderSettings]) -> CalcSettings:
     if not row:
         return CalcSettings()
     return CalcSettings(
-        lead_days=getattr(row, 'lead_days', 93) or 93,
+        lead_days=getattr(row, 'lead_days', 75) or 75,
         weight_d7=row.weight_d7,
         weight_d15=row.weight_d15,
         weight_d30=row.weight_d30,
@@ -506,7 +507,7 @@ def _build_calc_settings(row: Optional[OrderSettings]) -> CalcSettings:
         sale_enabled=row.sale_enabled,
         sale_start=row.sale_start,
         sale_end=row.sale_end,
-        sale_extra_days=getattr(row, 'sale_extra_days', 0) or 0,
+        sale_multiplier=getattr(row, 'sale_multiplier', 3.0) or 3.0,
         # 後方互換
         threshold_days=row.threshold_days,
         target_days_normal=row.target_days_normal,
