@@ -18,7 +18,7 @@ export default function PriceAdjustPage() {
   const approve = useMutation({
     mutationFn: ({ id, sku, newPrice }) => {
       // セラーセントラルの在庫管理ページをSKU検索＋価格パラメータ付きで開く
-      const url = `https://sellercentral.amazon.co.jp/myinventory/inventory?searchField=sku&search=${encodeURIComponent(sku)}&cit_sku=${encodeURIComponent(sku)}&cit_price=${newPrice}`
+      const url = `https://sellercentral.amazon.co.jp/myinventory/inventory?fulfilledBy=all&page=1&pageSize=250&sort=date_created_desc&status=all&searchField=sku&search=${encodeURIComponent(sku)}&cit_sku=${encodeURIComponent(sku)}&cit_price=${newPrice}`
       window.open(url, '_blank')
       return api.post(`/price-adjustments/${id}/approve`)
     },
