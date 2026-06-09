@@ -466,3 +466,162 @@ def fetch_prices_and_fees(sku_list: List[str]) -> Dict[str, dict]:
             sku, selling_price, fba_fee = f.result()
             result[sku] = {"selling_price": selling_price, "fba_fee": fba_fee}
     return result
+
+
+# ---------- Amazon Ads API ----------
+
+_ads_token_cache = {"token": None, "expires_at": 0}
+
+
+def _get_ads_access_token() -> str:
+    if _ads_token_cache["token"] and time.time() < _ads_token_cache["expires_at"]:
+        return _ads_token_cache["token"]
+
+    data = urllib.parse.urlencode({
+        "grant_type": "refresh_token",
+        "refresh_token": settings.ADS_API_REFRESH_TOKEN,
+        "client_id": settings.ADS_API_CLIENT_ID,
+        "client_secret": settings.ADS_API_CLIENT_SECRET,
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://api.amazon.com/auth/o2/token",
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as res:
+        result = json.loads(res.read())
+
+    _ads_token_cache["token"] = result["access_token"]
+    _ads_token_cache["expires_at"] = time.time() + result["expires_in"] - 60
+    return _ads_token_cache["token"]
+
+
+def _get_ads_profile_id() -> str:
+    """日本マーケットプレイス（countryCode=JP）のprofileIdを取得"""
+    cached = _cache_get("ads_profile_id")
+    if cached:
+        return cached
+
+    token = _get_ads_access_token()
+    req = urllib.request.Request(
+        "https://advertising-api-fe.amazon.com/v2/profiles",
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Amazon-Advertising-API-ClientId": settings.ADS_API_CLIENT_ID,
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=15) as res:
+        profiles = json.loads(res.read())
+
+    profile_id = None
+    for p in profiles:
+        if p.get("countryCode") == "JP":
+            profile_id = str(p["profileId"])
+            break
+    if not profile_id and profiles:
+        profile_id = str(profiles[0]["profileId"])
+
+    if profile_id:
+        _cache[("ads_profile_id")] = {"value": profile_id, "expires_at": time.time() + _CACHE_TTL_LONG}
+    return profile_id
+
+
+def fetch_ads_data(asin_list: List[str], days: int) -> Dict[str, dict]:
+    """ASIN単位の広告データを取得。戻り値: {asin: {ad_spend, impressions, clicks, ad_orders, ad_revenue}}"""
+    if not settings.ADS_API_REFRESH_TOKEN:
+        return {}
+
+    cached = _cache_get(f"ads_data_{days}")
+    if cached is not None:
+        return cached
+
+    from datetime import datetime, timedelta
+    end_date = (datetime.utcnow() - timedelta(days=1)).strftime("%Y%m%d")
+    start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y%m%d")
+
+    try:
+        token = _get_ads_access_token()
+        profile_id = _get_ads_profile_id()
+        if not profile_id:
+            return {}
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Amazon-Advertising-API-ClientId": settings.ADS_API_CLIENT_ID,
+            "Amazon-Advertising-API-Scope": profile_id,
+            "Content-Type": "application/json",
+        }
+
+        # SP広告（スポンサープロダクト）のASIN別レポートをリクエスト
+        body = json.dumps({
+            "reportDate": end_date,
+            "metrics": "impressions,clicks,cost,attributedUnitsOrdered30d,attributedSales30d",
+            "segment": "asin",
+        }).encode()
+
+        req = urllib.request.Request(
+            "https://advertising-api-fe.amazon.com/v2/sp/productAds/report",
+            data=body,
+            method="POST",
+            headers=headers,
+        )
+        with urllib.request.urlopen(req, timeout=30) as res:
+            report_resp = json.loads(res.read())
+
+        report_id = report_resp.get("reportId")
+        if not report_id:
+            return {}
+
+        # レポート完成まで最大60秒ポーリング
+        report_url = None
+        for _ in range(20):
+            time.sleep(3)
+            status_req = urllib.request.Request(
+                f"https://advertising-api-fe.amazon.com/v2/reports/{report_id}",
+                method="GET",
+                headers=headers,
+            )
+            with urllib.request.urlopen(status_req, timeout=15) as res:
+                status_data = json.loads(res.read())
+            if status_data.get("status") == "SUCCESS":
+                report_url = status_data.get("location")
+                break
+            elif status_data.get("status") == "FAILURE":
+                return {}
+
+        if not report_url:
+            return {}
+
+        # レポートダウンロード（gzip）
+        import gzip, io
+        dl_req = urllib.request.Request(report_url, method="GET")
+        with urllib.request.urlopen(dl_req, timeout=30) as res:
+            raw = res.read()
+        try:
+            rows = json.loads(gzip.decompress(raw))
+        except Exception:
+            rows = json.loads(raw)
+
+        # ASIN単位に集計
+        result: Dict[str, dict] = {}
+        for row in rows:
+            asin = row.get("advertisedAsin") or row.get("asin")
+            if not asin:
+                continue
+            if asin not in result:
+                result[asin] = {"ad_spend": 0, "impressions": 0, "clicks": 0, "ad_orders": 0, "ad_revenue": 0}
+            result[asin]["ad_spend"]    += float(row.get("cost") or 0)
+            result[asin]["impressions"] += int(row.get("impressions") or 0)
+            result[asin]["clicks"]      += int(row.get("clicks") or 0)
+            result[asin]["ad_orders"]   += int(row.get("attributedUnitsOrdered30d") or 0)
+            result[asin]["ad_revenue"]  += float(row.get("attributedSales30d") or 0)
+
+        _cache_set(f"ads_data_{days}", result)
+        return result
+
+    except Exception:
+        return {}

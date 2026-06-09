@@ -31,19 +31,21 @@ def _run_analytics_job(job_id: str, days: int):
         from app.services.tool4seller import fetch_product_data
 
         if app_settings.SP_API_REFRESH_TOKEN:
-            from app.services.amazon_api import fetch_inventory, fetch_sales_detail, fetch_catalog_info, fetch_all_sales, fetch_new_product_info
-            with ThreadPoolExecutor(max_workers=6) as ex:
+            from app.services.amazon_api import fetch_inventory, fetch_sales_detail, fetch_catalog_info, fetch_all_sales, fetch_new_product_info, fetch_ads_data
+            with ThreadPoolExecutor(max_workers=7) as ex:
                 f_inv       = ex.submit(fetch_inventory)
                 f_sales     = ex.submit(fetch_sales_detail, asin_list, days)
                 f_all_sales = ex.submit(fetch_all_sales, asin_list)
                 f_catalog   = ex.submit(fetch_catalog_info, asin_list)
                 f_t4s       = ex.submit(fetch_product_data, asin_list, days)
                 f_new       = ex.submit(fetch_new_product_info, asin_list)
+                f_ads       = ex.submit(fetch_ads_data, asin_list, days)
             inventory    = f_inv.result()
             sales_detail = f_sales.result()
             catalog_info = f_catalog.result()
             all_sales_7, all_sales_15, all_sales_30, all_sales_60, all_sales_90 = f_all_sales.result()
             new_product_info = f_new.result()
+            ads_data = f_ads.result()
             try:
                 t4s_data = f_t4s.result()
             except Exception:
@@ -54,6 +56,7 @@ def _run_analytics_job(job_id: str, days: int):
             catalog_info = {}
             all_sales_7 = all_sales_15 = all_sales_30 = all_sales_60 = all_sales_90 = {}
             new_product_info = {}
+            ads_data = {}
             try:
                 t4s_data = fetch_product_data(asin_list, days)
             except Exception:
@@ -153,6 +156,20 @@ def _run_analytics_job(job_id: str, days: int):
                 new_order_qty = calc.qty_pieces
                 is_new_product = False
 
+            # 広告データ
+            ads = ads_data.get(p.asin, {})
+            ad_spend    = ads.get("ad_spend") or None
+            impressions = ads.get("impressions") or None
+            clicks      = ads.get("clicks") or None
+            ad_orders   = ads.get("ad_orders") or None
+            ad_revenue  = ads.get("ad_revenue") or None
+            acos  = round(ad_spend / ad_revenue * 100, 1) if ad_spend and ad_revenue else None
+            roas  = round(ad_revenue / ad_spend, 2)       if ad_spend and ad_revenue else None
+            tacos = round(ad_spend / normal_revenue * 100, 1) if ad_spend and normal_revenue else None
+            ctr   = round(clicks / impressions * 100, 2)  if clicks and impressions else None
+            ad_cvr = round(ad_orders / clicks * 100, 1)   if ad_orders and clicks else None
+            ad_revenue_rate = round(ad_revenue / normal_revenue * 100, 1) if ad_revenue and normal_revenue else None
+
             total_revenue += normal_revenue
             total_units   += normal_units
             total_profit  += profit
@@ -190,13 +207,17 @@ def _run_analytics_job(job_id: str, days: int):
                 # 在庫
                 "available":    available,
                 "inbound":      inbound,
-                # 広告（Ads API実装後に追加）
-                "ad_spend":     None,
-                "acos":         None,
-                "roas":         None,
-                "impressions":  None,
-                "clicks":       None,
-                "ctr":          None,
+                "ad_spend":         round(ad_spend, 0) if ad_spend else None,
+                "impressions":      impressions,
+                "clicks":           clicks,
+                "ctr":              ctr,
+                "acos":             acos,
+                "roas":             roas,
+                "tacos":            tacos,
+                "ad_orders":        ad_orders,
+                "ad_cvr":           ad_cvr,
+                "ad_revenue":       round(ad_revenue, 0) if ad_revenue else None,
+                "ad_revenue_rate":  ad_revenue_rate,
             })
 
         # 売上順にソート

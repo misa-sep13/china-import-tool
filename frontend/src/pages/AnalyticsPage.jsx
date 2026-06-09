@@ -219,17 +219,17 @@ export default function AnalyticsPage() {
                   {th('cost_jpy', '仕入原価')}
                   {th('profit', '粗利益')}
                   {th('profit_rate', '粗利益率')}
-                  <th style={{ ...thStyleLeft, textAlign: 'right', color: '#aaa' }}>広告費※</th>
-                  <th style={{ ...thStyleLeft, textAlign: 'right', color: '#aaa' }}>ACOS※</th>
-                  <th style={{ ...thStyleLeft, textAlign: 'right', color: '#aaa' }}>ROAS※</th>
-                  <th style={{ ...thStyleLeft, textAlign: 'right', color: '#aaa' }}>TACOS※</th>
-                  <th style={{ ...thStyleLeft, textAlign: 'right', color: '#aaa' }}>インプレッション※</th>
-                  <th style={{ ...thStyleLeft, textAlign: 'right', color: '#aaa' }}>クリック数※</th>
-                  <th style={{ ...thStyleLeft, textAlign: 'right', color: '#aaa' }}>CTR※</th>
-                  <th style={{ ...thStyleLeft, textAlign: 'right', color: '#aaa' }}>広告注文数※</th>
-                  <th style={{ ...thStyleLeft, textAlign: 'right', color: '#aaa' }}>広告CVR※</th>
-                  <th style={{ ...thStyleLeft, textAlign: 'right', color: '#aaa' }}>広告売上※</th>
-                  <th style={{ ...thStyleLeft, textAlign: 'right', color: '#aaa' }}>広告売上率※</th>
+                  <th style={{ ...thStyleLeft, textAlign: 'right', color: '#b45309' }}>広告費</th>
+                  <th style={{ ...thStyleLeft, textAlign: 'right' }}>ACOS</th>
+                  <th style={{ ...thStyleLeft, textAlign: 'right' }}>ROAS</th>
+                  <th style={{ ...thStyleLeft, textAlign: 'right' }}>TACOS</th>
+                  <th style={{ ...thStyleLeft, textAlign: 'right' }}>インプレッション</th>
+                  <th style={{ ...thStyleLeft, textAlign: 'right' }}>クリック数</th>
+                  <th style={{ ...thStyleLeft, textAlign: 'right' }}>CTR</th>
+                  <th style={{ ...thStyleLeft, textAlign: 'right' }}>広告注文数</th>
+                  <th style={{ ...thStyleLeft, textAlign: 'right' }}>広告CVR</th>
+                  <th style={{ ...thStyleLeft, textAlign: 'right' }}>広告売上</th>
+                  <th style={{ ...thStyleLeft, textAlign: 'right' }}>広告売上率</th>
                   {th('inbound', '納品中')}
                 </tr>
               </thead>
@@ -278,17 +278,17 @@ export default function AnalyticsPage() {
                     <td style={{ textAlign: 'right', fontWeight: 600, color: profitColor(item.profit_rate) }}>
                       {fmtRate(item.profit_rate)}
                     </td>
-                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
-                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
-                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
-                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
-                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
-                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
-                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
-                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
-                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
-                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
-                    <td style={{ textAlign: 'right', color: '#aaa' }}>-</td>
+                    <td style={{ textAlign: 'right', color: item.ad_spend != null ? '#b45309' : '#aaa' }}>{yen(item.ad_spend)}</td>
+                    <td style={{ textAlign: 'right', color: item.acos != null ? (item.acos > 30 ? '#dc2626' : item.acos > 15 ? '#f59e0b' : '#16a34a') : '#aaa' }}>{fmtRate(item.acos)}</td>
+                    <td style={{ textAlign: 'right', color: item.roas != null ? '#1a56db' : '#aaa' }}>{item.roas != null ? item.roas.toFixed(2) : '-'}</td>
+                    <td style={{ textAlign: 'right', color: item.tacos != null ? '#7c3aed' : '#aaa' }}>{fmtRate(item.tacos)}</td>
+                    <td style={{ textAlign: 'right', color: item.impressions != null ? '#374151' : '#aaa' }}>{fmt(item.impressions)}</td>
+                    <td style={{ textAlign: 'right', color: item.clicks != null ? '#374151' : '#aaa' }}>{fmt(item.clicks)}</td>
+                    <td style={{ textAlign: 'right', color: item.ctr != null ? '#374151' : '#aaa' }}>{item.ctr != null ? `${item.ctr}%` : '-'}</td>
+                    <td style={{ textAlign: 'right', color: item.ad_orders != null ? '#374151' : '#aaa' }}>{fmt(item.ad_orders)}</td>
+                    <td style={{ textAlign: 'right', color: item.ad_cvr != null ? '#374151' : '#aaa' }}>{item.ad_cvr != null ? `${item.ad_cvr}%` : '-'}</td>
+                    <td style={{ textAlign: 'right', color: item.ad_revenue != null ? '#16a34a' : '#aaa' }}>{yen(item.ad_revenue)}</td>
+                    <td style={{ textAlign: 'right', color: item.ad_revenue_rate != null ? '#374151' : '#aaa' }}>{fmtRate(item.ad_revenue_rate)}</td>
                     <td style={{ textAlign: 'right', color: item.inbound > 0 ? '#2563eb' : '#bbb' }}>
                       {item.inbound > 0 ? fmt(item.inbound) : '-'}
                     </td>
@@ -297,7 +297,7 @@ export default function AnalyticsPage() {
               </tbody>
             </table>
           </div>
-          <p style={{ fontSize: 12, color: '#aaa', marginTop: 12 }}>※ 広告関連指標はAmazon Ads API連携後に表示されます</p>
+          <p style={{ fontSize: 12, color: '#aaa', marginTop: 12 }}>※ 広告データはAmazon Ads APIから取得（広告未設定の商品は「-」表示）</p>
         </div>
       )}
     </div>

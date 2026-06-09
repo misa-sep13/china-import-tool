@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     TOOL4SELLER_PASSWORD: Optional[str] = None
     TOOL4SELLER_SHOP_ID: Optional[str] = None
 
+    # Amazon Ads API
+    ADS_API_CLIENT_ID: Optional[str] = None
+    ADS_API_CLIENT_SECRET: Optional[str] = None
+    ADS_API_REFRESH_TOKEN: Optional[str] = None
+
     class Config:
         env_file = ".env"
 
