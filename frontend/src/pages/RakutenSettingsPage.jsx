@@ -212,7 +212,7 @@ export default function RakutenSettingsPage() {
                 ⛔ APIキーの有効期限が切れています！楽天RMS管理画面で更新してください。
               </div>
             )
-            if (days <= 14) return (
+            if (days <= 7) return (
               <div style={{ background: '#fff7ed', border: '1px solid #fdba74', borderRadius: 8, padding: '10px 16px', marginBottom: 16, color: '#c2410c', fontWeight: 600 }}>
                 ⚠️ APIキーの有効期限まで残り <strong>{days}日</strong>（{form.rms_key_expires_at}）。楽天RMS管理画面で更新してください。
               </div>
@@ -236,7 +236,7 @@ export default function RakutenSettingsPage() {
             <div className="form-group">
               <label>APIキー有効期限</label>
               <input type="date" {...f('rms_key_expires_at')} />
-              <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>3ヶ月ごとに更新。期限14日前からアラート表示します。</p>
+              <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>3ヶ月ごとに更新。期限7日前からアラート表示します。</p>
             </div>
           </div>
 
