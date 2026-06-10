@@ -534,8 +534,10 @@ async def test_rms_connection(db: Session = Depends(get_db)):
     settings = _get_or_create_settings(db)
     if not settings.rms_service_secret or not settings.rms_license_key:
         raise HTTPException(400, "APIキーが設定されていません")
-    ok = await test_connection(settings.rms_service_secret, settings.rms_license_key)
-    return {"ok": ok}
+    result = await test_connection(settings.rms_service_secret, settings.rms_license_key)
+    if not result["ok"]:
+        raise HTTPException(502, f"接続失敗 (HTTP {result.get('status')}): {result.get('detail', '')}")
+    return {"ok": True}
 
 
 @router.post("/rms/sync")

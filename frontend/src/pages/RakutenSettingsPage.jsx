@@ -251,7 +251,7 @@ export default function RakutenSettingsPage() {
                   const r = await api.post('/rakuten/rms/test')
                   setTestResult(r.data.ok ? '✅ 接続成功' : '❌ 接続失敗')
                 } catch (e) {
-                  setTestResult(`❌ ${e.response?.data?.detail || '接続エラー'}`)
+                  setTestResult(`❌ ${e.response?.data?.detail || e.message || '接続エラー'}`)
                 } finally { setTesting(false) }
               }}
             >

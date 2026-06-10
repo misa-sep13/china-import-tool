@@ -114,15 +114,33 @@ async def fetch_sales_by_sku(
     return sku_sales
 
 
-async def test_connection(service_secret: str, license_key: str) -> bool:
-    """接続テスト"""
+async def test_connection(service_secret: str, license_key: str) -> dict:
+    """接続テスト - 注文検索APIで確認"""
     headers = _auth_header(service_secret, license_key)
+    # 直近1日の注文を1件だけ検索してAPIの疎通確認
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    body = {
+        "dateType": 1,
+        "startDatetime": (now - timedelta(days=1)).strftime("%Y-%m-%dT00:00:00+0900"),
+        "endDatetime": now.strftime("%Y-%m-%dT23:59:59+0900"),
+        "orderProgressList": [100],
+        "PaginationRequestModel": {
+            "requestRecordsAmount": 1,
+            "requestPage": 1,
+            "SortModelList": [{"sortColumn": 2, "sortDirection": 1}],
+        },
+    }
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            res = await client.get(
-                f"{RMS_BASE}/1.0/shop/get",
-                headers=headers,
+        async with httpx.AsyncClient(timeout=15) as client:
+            res = await client.post(
+                f"{RMS_BASE}/2.0/order/searchOrder",
+                headers={**headers, "Content-Type": "application/json; charset=utf-8"},
+                content=json.dumps(body, ensure_ascii=False).encode("utf-8"),
             )
-            return res.status_code == 200
-    except Exception:
-        return False
+        if res.status_code == 200:
+            return {"ok": True, "status": res.status_code}
+        else:
+            return {"ok": False, "status": res.status_code, "detail": res.text[:200]}
+    except Exception as e:
+        return {"ok": False, "status": 0, "detail": str(e)}
