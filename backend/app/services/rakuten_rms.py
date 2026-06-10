@@ -32,12 +32,11 @@ async def fetch_sales_by_sku(
     now = datetime.now()
     start_dt = now - timedelta(days=days)
 
-    # 注文検索
+    # 注文検索（最小限のパラメータ）
     search_body = {
-        "dateType": 1,  # 1=注文日
+        "dateType": 1,
         "startDatetime": start_dt.strftime("%Y-%m-%dT00:00:00+0900"),
         "endDatetime": now.strftime("%Y-%m-%dT23:59:59+0900"),
-        "orderProgressList": [100, 200, 300, 400, 500, 600],  # 全ステータス
         "PaginationRequestModel": {
             "requestRecordsAmount": 1000,
             "requestPage": 1,
