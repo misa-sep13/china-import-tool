@@ -6,6 +6,8 @@ import InvoicePage from './pages/InvoicePage'
 import PriceAdjustPage from './pages/PriceAdjustPage'
 import StockPage from './pages/StockPage'
 import AnalyticsPage from './pages/AnalyticsPage'
+import RakutenOrderPage from './pages/RakutenOrderPage'
+import RakutenProductsPage from './pages/RakutenProductsPage'
 import './App.css'
 
 function App() {
@@ -34,6 +36,17 @@ function App() {
         <NavLink to="/settings" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           ⚙️ 設定
         </NavLink>
+
+        {/* 楽天セクション */}
+        <div style={{ borderTop: '1px solid #2d3748', margin: '16px 0 8px', paddingTop: 8, fontSize: 11, color: '#475569', fontWeight: 700, letterSpacing: 1, paddingLeft: 16 }}>
+          楽天市場
+        </div>
+        <NavLink to="/rakuten/orders" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          🛒 発注管理
+        </NavLink>
+        <NavLink to="/rakuten/products" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          🏷️ 商品マスタ
+        </NavLink>
       </nav>
       <main className="main-content">
         <Routes>
@@ -44,6 +57,8 @@ function App() {
           <Route path="/invoices" element={<InvoicePage />} />
           <Route path="/price-adjust" element={<PriceAdjustPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/rakuten/orders" element={<RakutenOrderPage />} />
+          <Route path="/rakuten/products" element={<RakutenProductsPage />} />
         </Routes>
       </main>
     </div>
