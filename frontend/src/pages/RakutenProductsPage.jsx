@@ -231,8 +231,8 @@ export default function RakutenProductsPage() {
             <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>基本情報</h3>
             <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
               <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                <label>商品管理番号（URL）<span style={{ color: '#f87171' }}> *</span></label>
-                <input {...f('sku')} placeholder="例: ITEM-001（楽天商品URLの一部になる番号）" />
+                <label>SKU管理番号<span style={{ color: '#f87171' }}> *</span></label>
+                <input {...f('sku')} placeholder="例: y76_b-b" />
               </div>
               <div className="form-group" style={{ gridColumn: '1 / -1' }}>
                 <label>商品名</label>
@@ -276,14 +276,6 @@ export default function RakutenProductsPage() {
             <div style={{ borderTop: '1px solid #e2e8f0', margin: '16px 0', paddingTop: 14 }}>
               <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>🛒 楽天管理情報</h3>
               <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                  <label>在庫管理番号</label>
-                  <input {...f('rakuten_item_url')} placeholder="例: ITEM-001（社内在庫管理用番号）" />
-                </div>
-                <div className="form-group">
-                  <label>楽天SKU管理番号（半角32文字）</label>
-                  <input {...f('rakuten_sku_id')} placeholder="例: y60_4_black" />
-                </div>
                 <div className="form-group">
                   <label>規定在庫数</label>
                   <input type="number" min={0} {...f('standard_stock', 'number')} />
