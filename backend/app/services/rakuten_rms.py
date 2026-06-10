@@ -20,7 +20,7 @@ def _auth_header(service_secret: str, license_key: str) -> dict:
 async def fetch_sales_by_sku(
     service_secret: str,
     license_key: str,
-    days: int = 62,
+    days: int = 60,
 ) -> dict:
     """
     過去90日間の受注データを取得し、
