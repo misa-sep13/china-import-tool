@@ -99,8 +99,17 @@ def list_products(db: Session = Depends(get_db)):
 
 @router.post("/products", response_model=RakutenProductOut)
 def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):
-    if db.query(RakutenProduct).filter(RakutenProduct.sku == data.sku).first():
-        raise HTTPException(400, "SKUが既に存在します")
+    existing = db.query(RakutenProduct).filter(RakutenProduct.sku == data.sku).first()
+    if existing:
+        if existing.is_active:
+            raise HTTPException(400, "SKUが既に存在します")
+        # 論理削除済みの場合は復活させて更新
+        for k, v in data.model_dump().items():
+            setattr(existing, k, v)
+        existing.is_active = True
+        db.commit()
+        db.refresh(existing)
+        return existing
     p = RakutenProduct(**data.model_dump())
     db.add(p)
     db.commit()
