@@ -236,7 +236,10 @@ class RakutenOrderOut(BaseModel):
 def list_orders(db: Session = Depends(get_db)):
     return (
         db.query(RakutenOrderHistory)
-        .filter(RakutenOrderHistory.is_deleted == False)
+        .filter(
+            RakutenOrderHistory.is_deleted == False,
+            RakutenOrderHistory.is_delivered == False,
+        )
         .order_by(RakutenOrderHistory.ordered_at.desc())
         .all()
     )
