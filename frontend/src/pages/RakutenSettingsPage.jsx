@@ -2,10 +2,21 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 
+// APIキー有効期限の残り日数を計算
+function daysUntil(dateStr) {
+  if (!dateStr) return null
+  const diff = new Date(dateStr) - new Date()
+  return Math.ceil(diff / (1000 * 60 * 60 * 24))
+}
+
 export default function RakutenSettingsPage() {
   const qc = useQueryClient()
   const [form, setForm] = useState(null)
   const [saved, setSaved] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState(null)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState(null)
 
   const { data } = useQuery({
     queryKey: ['rakuten-settings'],
@@ -186,6 +197,89 @@ export default function RakutenSettingsPage() {
               )}
             </div>
           )}
+        </div>
+
+        {/* 楽天RMS API設定 */}
+        <div className="card" style={{ marginTop: 20 }}>
+          <h2>🔑 楽天RMS API設定</h2>
+
+          {/* 有効期限アラート */}
+          {(() => {
+            const days = daysUntil(form.rms_key_expires_at)
+            if (days === null) return null
+            if (days <= 0) return (
+              <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '10px 16px', marginBottom: 16, color: '#991b1b', fontWeight: 600 }}>
+                ⛔ APIキーの有効期限が切れています！楽天RMS管理画面で更新してください。
+              </div>
+            )
+            if (days <= 14) return (
+              <div style={{ background: '#fff7ed', border: '1px solid #fdba74', borderRadius: 8, padding: '10px 16px', marginBottom: 16, color: '#c2410c', fontWeight: 600 }}>
+                ⚠️ APIキーの有効期限まで残り <strong>{days}日</strong>（{form.rms_key_expires_at}）。楽天RMS管理画面で更新してください。
+              </div>
+            )
+            return (
+              <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8, padding: '10px 16px', marginBottom: 16, color: '#166534' }}>
+                ✅ APIキー有効期限: <strong>{form.rms_key_expires_at}</strong>（残り{days}日）
+              </div>
+            )
+          })()}
+
+          <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <div className="form-group">
+              <label>serviceSecret（SP〜）</label>
+              <input {...f('rms_service_secret')} placeholder="SP411150_xxxxxxxxxx" />
+            </div>
+            <div className="form-group">
+              <label>licenseKey（SL〜）</label>
+              <input {...f('rms_license_key')} placeholder="SL411150_xxxxxxxxxx" />
+            </div>
+            <div className="form-group">
+              <label>APIキー有効期限</label>
+              <input type="date" {...f('rms_key_expires_at')} />
+              <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>3ヶ月ごとに更新。期限14日前からアラート表示します。</p>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button
+              type="button" className="btn"
+              style={{ fontSize: 13, background: '#f1f5f9' }}
+              disabled={testing}
+              onClick={async () => {
+                setTesting(true); setTestResult(null)
+                try {
+                  const r = await api.post('/rakuten/rms/test')
+                  setTestResult(r.data.ok ? '✅ 接続成功' : '❌ 接続失敗')
+                } catch (e) {
+                  setTestResult(`❌ ${e.response?.data?.detail || '接続エラー'}`)
+                } finally { setTesting(false) }
+              }}
+            >
+              {testing ? '確認中...' : '🔌 接続テスト'}
+            </button>
+            <button
+              type="button" className="btn"
+              style={{ fontSize: 13, background: '#dbeafe', color: '#1e40af' }}
+              disabled={syncing}
+              onClick={async () => {
+                setSyncing(true); setSyncResult(null)
+                try {
+                  const r = await api.post('/rakuten/rms/sync')
+                  setSyncResult(`✅ 同期完了: ${r.data.updated_products}件更新（取得SKU: ${r.data.synced_skus}件）`)
+                  qc.invalidateQueries(['rakuten-recommendations'])
+                } catch (e) {
+                  setSyncResult(`❌ ${e.response?.data?.detail || '同期エラー'}`)
+                } finally { setSyncing(false) }
+              }}
+            >
+              {syncing ? '同期中...' : '🔄 今すぐ販売データ同期'}
+            </button>
+            {testResult && <span style={{ fontSize: 13, fontWeight: 600 }}>{testResult}</span>}
+            {syncResult && <span style={{ fontSize: 13, fontWeight: 600 }}>{syncResult}</span>}
+          </div>
+          <p style={{ fontSize: 12, color: '#888', marginTop: 12 }}>
+            ※ 同期すると過去60日間の受注データを取得し、バリエーション別の直近30日・前30日の販売数を自動更新します。
+          </p>
         </div>
 
         {/* 楽天市場セール参考 */}

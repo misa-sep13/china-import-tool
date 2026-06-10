@@ -14,3 +14,7 @@ class RakutenSettings(Base):
     super_sale_mode     = Column(String,  default='A')      # 'A'=除外, 'B'=追加
     super_sale_start    = Column(Date,    nullable=True)
     super_sale_end      = Column(Date,    nullable=True)
+    # 楽天RMS API
+    rms_service_secret  = Column(String,  nullable=True)    # SP411150_xxx
+    rms_license_key     = Column(String,  nullable=True)    # SL411150_xxx
+    rms_key_expires_at  = Column(Date,    nullable=True)    # APIキー有効期限

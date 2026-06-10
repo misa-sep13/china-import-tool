@@ -6,6 +6,7 @@ from typing import Optional, List
 from datetime import date, datetime
 import csv, io, json
 from pydantic import BaseModel
+import asyncio
 from app.core.database import get_db
 from app.models.rakuten_product import RakutenProduct
 from app.models.rakuten_order import RakutenOrderHistory
@@ -20,14 +21,17 @@ router = APIRouter(prefix="/rakuten", tags=["rakuten"])
 # ============================================================
 
 class RakutenSettingsSchema(BaseModel):
-    lead_days:         int   = 20
-    target_days:       int   = 30
-    safety_stock_rate: float = 0.10
-    threshold_days:    int   = 60
-    super_sale_enabled: bool = False
-    super_sale_mode:   str   = 'A'
-    super_sale_start:  Optional[date] = None
-    super_sale_end:    Optional[date] = None
+    lead_days:          int   = 20
+    target_days:        int   = 30
+    safety_stock_rate:  float = 0.10
+    threshold_days:     int   = 60
+    super_sale_enabled: bool  = False
+    super_sale_mode:    str   = 'A'
+    super_sale_start:   Optional[date] = None
+    super_sale_end:     Optional[date] = None
+    rms_service_secret: Optional[str] = None
+    rms_license_key:    Optional[str] = None
+    rms_key_expires_at: Optional[date] = None
 
     class Config:
         from_attributes = True
@@ -516,4 +520,61 @@ def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_
         "updated": updated,
         "skipped": skipped,
         "errors": errors,
+    }
+
+
+# ============================================================
+# RMS API 連携
+# ============================================================
+
+@router.post("/rms/test")
+async def test_rms_connection(db: Session = Depends(get_db)):
+    """RMS API 接続テスト"""
+    from app.services.rakuten_rms import test_connection
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "APIキーが設定されていません")
+    ok = await test_connection(settings.rms_service_secret, settings.rms_license_key)
+    return {"ok": ok}
+
+
+@router.post("/rms/sync")
+async def sync_sales_from_rms(db: Session = Depends(get_db)):
+    """楽天RMS APIから受注データを取得し、バリエーション別30日販売数を更新"""
+    from app.services.rakuten_rms import fetch_sales_by_sku
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません。楽天設定から登録してください。")
+
+    try:
+        sku_sales = await fetch_sales_by_sku(
+            settings.rms_service_secret,
+            settings.rms_license_key,
+            days=60,
+        )
+    except Exception as e:
+        raise HTTPException(502, f"楽天APIエラー: {str(e)}")
+
+    # バリエーション商品(is_component=False, set_components あり)の販売数を更新
+    updated = 0
+    products = db.query(RakutenProduct).filter(
+        RakutenProduct.is_active == True,
+        RakutenProduct.is_component == False,
+    ).all()
+
+    for p in products:
+        # 楽天SKU管理番号 または 商品管理番号(sku)で照合
+        sales = sku_sales.get(p.rakuten_sku_id or "") or sku_sales.get(p.sku or "") or {}
+        if sales:
+            p.sales_30_recent = sales.get("recent", 0)
+            p.sales_30_prev   = sales.get("prev",   0)
+            p.sales_updated_at = datetime.now()
+            updated += 1
+
+    db.commit()
+    return {
+        "ok": True,
+        "synced_skus": len(sku_sales),
+        "updated_products": updated,
+        "last_sync": datetime.now().isoformat(),
     }
