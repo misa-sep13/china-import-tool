@@ -83,9 +83,19 @@ export default function RakutenProductsPage() {
     try { return JSON.parse(json || '[]') } catch { return [] }
   }
 
-  const filtered = products.filter(p => {
-    // デフォルト: バリエーション(セット商品)を非表示、単品のみ表示
-    if (!showComponents && !p.is_component) return false
+  // 単品（親）・セット（子）・スタンドアロン に分類
+  const singles    = products.filter(p => p.is_component)
+  const sets       = products.filter(p => !p.is_component && p.set_components && p.set_components !== '[]')
+  const standalone = products.filter(p => !p.is_component && (!p.set_components || p.set_components === '[]'))
+
+  // 単品SKUに紐づくセット一覧を返す
+  const getSetsForSingle = (sku) =>
+    sets.filter(s => {
+      try { return JSON.parse(s.set_components || '[]').some(c => c.sku === sku) }
+      catch { return false }
+    })
+
+  const searchMatch = (p) => {
     if (!search) return true
     return (
       (p.sku || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -93,7 +103,11 @@ export default function RakutenProductsPage() {
       (p.jan_code || '').includes(search) ||
       (p.rakuten_sku_id || '').includes(search)
     )
-  })
+  }
+
+  const filteredSingles    = singles.filter(searchMatch)
+  const filteredStandalone = standalone.filter(searchMatch)
+  const filtered = [] // 旧変数との互換用（使わない）
 
   if (isLoading) return <div className="loading">読み込み中...</div>
 
@@ -142,23 +156,12 @@ export default function RakutenProductsPage() {
         <input
           type="text" placeholder="SKU・商品名・JANコード・楽天SKUで絞り込み"
           value={search} onChange={e => setSearch(e.target.value)}
-          style={{ width: '100%', maxWidth: 380 }}
+          style={{ width: '100%', maxWidth: 420 }}
         />
-        <button
-          className="btn"
-          style={{
-            fontSize: 12, whiteSpace: 'nowrap',
-            background: showComponents ? '#fef9c3' : '#f1f5f9',
-            color: showComponents ? '#854d0e' : '#64748b',
-            border: `1px solid ${showComponents ? '#fde68a' : '#e2e8f0'}`,
-          }}
-          onClick={() => setShowComponents(v => !v)}
-        >
-          📦 {showComponents ? 'バリエーションを非表示' : 'バリエーションを表示'}
-          <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.7 }}>
-            ({products.filter(p => !p.is_component).length}件)
-          </span>
-        </button>
+        <span style={{ fontSize: 12, color: '#6b7280' }}>
+          単品 {filteredSingles.length}件 / その他 {filteredStandalone.length}件
+          {sets.length > 0 && ` / バリエーション ${sets.length}件（単品から展開）`}
+        </span>
       </div>
 
       {/* 商品テーブル */}
@@ -167,73 +170,53 @@ export default function RakutenProductsPage() {
           <thead>
             <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
               {['管理番号（URL）', '商品名 / システム連携SKU', '楽天SKU', '仕入先', '実在庫', '輸送中', '規定在庫', '直近30日', '前30日', '操作'].map(h => (
-                <th key={h} style={{ padding: '10px 12px', textAlign: 'center', color: '#555', whiteSpace: 'nowrap' }}>{h}</th>
+                <th key={h} style={{ padding: '10px 12px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && (
+            {filteredSingles.length === 0 && filteredStandalone.length === 0 && (
               <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
             )}
-            {filtered.map(p => {
-              const comps = parseComponents(p.set_components)
+
+            {/* ① 単品（親） → クリックでバリエーション展開 */}
+            {filteredSingles.map(p => {
               const expanded = !!compTab[p.id]
+              const children = getSetsForSingle(p.sku)
               return (
-                <>
-                  <tr key={p.id} style={{ borderBottom: '1px solid #e5e7eb', background: '#ffffff' }}>
-                    <td style={{ padding: '10px 12px', fontFamily: 'monospace', whiteSpace: 'nowrap', fontSize: 12, color: '#111827' }}>
-                      {p.sku}
-                      {p.is_component && (
-                        <span style={{ display: 'block', fontSize: 10, background: '#fef3c7', color: '#92400e', borderRadius: 4, padding: '1px 5px', marginTop: 2, width: 'fit-content', border: '1px solid #fbbf24' }}>単品</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '10px 12px', minWidth: 160 }}>
-                      <div style={{ color: '#111827', fontWeight: 700 }}>{p.name || '—'}</div>
-                      {p.spec && <div style={{ color: '#6b7280', fontSize: 11 }}>🔗 {p.spec}</div>}
-                      {p.buy_url && <a href={p.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#e94560' }}>仕入れURL</a>}
-                    </td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151', fontFamily: 'monospace', fontSize: 12 }}>{p.rakuten_sku_id || '—'}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.supplier || '—'}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700, color: '#111827' }}>{p.stock}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.inbound}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.standard_stock}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#1d4ed8', fontWeight: 700 }}>{p.sales_30_recent}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.sales_30_prev}</td>
-                    <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
-                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                        {comps.length > 0 && (
-                          <button
-                            className="btn"
-                            style={{ fontSize: 11, padding: '3px 8px', background: expanded ? '#dbeafe' : '#f1f5f9', color: '#334155' }}
-                            onClick={() => setCompTab(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
-                          >
-                            {expanded ? '▲' : '▼'} 構成
-                          </button>
-                        )}
-                        <button className="btn" style={{ fontSize: 12, padding: '3px 10px' }} onClick={() => openEdit(p)}>編集</button>
-                        <button
-                          className="btn" style={{ fontSize: 12, padding: '3px 10px', color: '#dc2626' }}
-                          onClick={() => { if (confirm(`${p.name || p.sku} を削除しますか？`)) deleteMutation.mutate(p.id) }}
-                        >削除</button>
-                      </div>
-                    </td>
-                  </tr>
-                  {/* セット構成 — クリックで展開 */}
-                  {comps.length > 0 && expanded && (
-                    <tr key={`${p.id}-comp`} style={{ borderBottom: '1px solid #e5e7eb', background: '#eff6ff' }}>
-                      <td colSpan={10} style={{ padding: '8px 24px 10px' }}>
-                        <span style={{ fontSize: 12, color: '#1e3a5f', marginRight: 8, fontWeight: 700 }}>📦 セット構成:</span>
-                        {comps.map((c, i) => (
-                          <span key={i} style={{ fontSize: 12, background: '#dbeafe', borderRadius: 6, padding: '3px 10px', marginRight: 6, color: '#1e40af', border: '1px solid #93c5fd', fontWeight: 600 }}>
-                            {c.sku} × {c.qty}
-                          </span>
-                        ))}
-                      </td>
-                    </tr>
-                  )}
-                </>
+                <ProductRow
+                  key={p.id}
+                  p={p}
+                  expanded={expanded}
+                  childCount={children.length}
+                  onToggle={() => setCompTab(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
+                  onEdit={openEdit}
+                  onDelete={(p) => { if (confirm(`${p.name || p.sku} を削除しますか？`)) deleteMutation.mutate(p.id) }}
+                  isSingle={true}
+                >
+                  {/* バリエーション子行 */}
+                  {expanded && children.map(child => (
+                    <ProductRow
+                      key={child.id}
+                      p={child}
+                      onEdit={openEdit}
+                      onDelete={(p) => { if (confirm(`${p.name || p.sku} を削除しますか？`)) deleteMutation.mutate(p.id) }}
+                      isChild={true}
+                    />
+                  ))}
+                </ProductRow>
               )
             })}
+
+            {/* ② スタンドアロン商品（セット構成なし・単品フラグなし） */}
+            {filteredStandalone.map(p => (
+              <ProductRow
+                key={p.id}
+                p={p}
+                onEdit={openEdit}
+                onDelete={(p) => { if (confirm(`${p.name || p.sku} を削除しますか？`)) deleteMutation.mutate(p.id) }}
+              />
+            ))}
           </tbody>
         </table>
       </div>
@@ -382,6 +365,57 @@ export default function RakutenProductsPage() {
         </div>
       )}
     </div>
+  )
+}
+
+// 商品行コンポーネント
+function ProductRow({ p, expanded, childCount, onToggle, onEdit, onDelete, isSingle, isChild, children }) {
+  const rowBg = isChild ? '#f8faff' : '#ffffff'
+  const indent = isChild ? 32 : 0
+
+  return (
+    <>
+      <tr style={{ borderBottom: '1px solid #e5e7eb', background: rowBg }}>
+        <td style={{ padding: `10px 12px 10px ${12 + indent}px`, fontFamily: 'monospace', whiteSpace: 'nowrap', fontSize: 12, color: '#111827' }}>
+          {isChild && <span style={{ color: '#94a3b8', marginRight: 6 }}>└</span>}
+          {p.sku}
+          {isSingle && (
+            <span style={{ display: 'block', fontSize: 10, background: '#fef3c7', color: '#92400e', borderRadius: 4, padding: '1px 5px', marginTop: 2, width: 'fit-content', border: '1px solid #fbbf24' }}>単品</span>
+          )}
+        </td>
+        <td style={{ padding: '10px 12px', minWidth: 160 }}>
+          <div style={{ color: '#111827', fontWeight: 700 }}>{p.name || '—'}</div>
+          {p.spec && <div style={{ color: '#6b7280', fontSize: 11 }}>🔗 {p.spec}</div>}
+          {p.buy_url && <a href={p.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#e94560' }}>仕入れURL</a>}
+        </td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151', fontFamily: 'monospace', fontSize: 12 }}>{p.rakuten_sku_id || '—'}</td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.supplier || '—'}</td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700, color: '#111827' }}>{p.stock}</td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.inbound}</td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.standard_stock}</td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#1d4ed8', fontWeight: 700 }}>{p.sales_30_recent}</td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.sales_30_prev}</td>
+        <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {isSingle && childCount > 0 && (
+              <button
+                className="btn"
+                style={{ fontSize: 11, padding: '3px 8px', background: expanded ? '#dbeafe' : '#f1f5f9', color: '#1e40af', border: `1px solid ${expanded ? '#93c5fd' : '#e2e8f0'}`, whiteSpace: 'nowrap' }}
+                onClick={onToggle}
+              >
+                {expanded ? '▲' : '▼'} {childCount}件
+              </button>
+            )}
+            <button className="btn" style={{ fontSize: 12, padding: '3px 10px' }} onClick={() => onEdit(p)}>編集</button>
+            <button
+              className="btn" style={{ fontSize: 12, padding: '3px 10px', color: '#dc2626' }}
+              onClick={() => onDelete(p)}
+            >削除</button>
+          </div>
+        </td>
+      </tr>
+      {children}
+    </>
   )
 }
 
