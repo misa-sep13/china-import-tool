@@ -134,13 +134,13 @@ export default function RakutenOrderPage() {
                   return (
                     <tr key={item.sku} style={{ borderBottom: '1px solid #f0f2f8', background: rowBg }}>
                       <td style={{ padding: '10px 12px', minWidth: 160 }}>
-                        <div style={{ fontWeight: 600 }}>{item.name || '—'}</div>
+                        <div style={{ fontWeight: 400, color: '#1a1a2e' }}>{item.name || '—'}</div>
                         <div style={{ color: '#999', fontSize: 11 }}>{item.sku}</div>
                         {item.buy_url && (
                           <a href={item.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#e94560' }}>仕入れURL</a>
                         )}
                       </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700 }}>{item.stock}</td>
+                      <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600 }}>{item.stock}</td>
                       <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{item.inbound}</td>
                       <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{item.ordered}</td>
                       <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600 }}>{item.total_stock}</td>
