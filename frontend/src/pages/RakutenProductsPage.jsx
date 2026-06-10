@@ -376,25 +376,25 @@ function ProductRow({ p, expanded, childCount, onToggle, onEdit, onDelete, isSin
   return (
     <>
       <tr style={{ borderBottom: '1px solid #e5e7eb', background: rowBg }}>
-        <td style={{ padding: `10px 12px 10px ${12 + indent}px`, fontFamily: 'monospace', whiteSpace: 'nowrap', fontSize: 12, color: '#111827' }}>
-          {isChild && <span style={{ color: '#94a3b8', marginRight: 6 }}>└</span>}
+        <td style={{ padding: `10px 12px 10px ${12 + indent}px`, fontFamily: 'monospace', whiteSpace: 'nowrap', fontSize: 12, color: '#666' }}>
+          {isChild && <span style={{ color: '#ccc', marginRight: 6 }}>└</span>}
           {p.sku}
           {isSingle && (
             <span style={{ display: 'block', fontSize: 10, background: '#fef3c7', color: '#92400e', borderRadius: 4, padding: '1px 5px', marginTop: 2, width: 'fit-content', border: '1px solid #fbbf24' }}>単品</span>
           )}
         </td>
         <td style={{ padding: '10px 12px', minWidth: 160 }}>
-          <div style={{ color: '#111827', fontWeight: 700 }}>{p.name || '—'}</div>
-          {p.spec && <div style={{ color: '#6b7280', fontSize: 11 }}>🔗 {p.spec}</div>}
+          <div style={{ color: '#1a1a2e', fontWeight: 500 }}>{p.name || '—'}</div>
+          {p.spec && <div style={{ color: '#999', fontSize: 11 }}>🔗 {p.spec}</div>}
           {p.buy_url && <a href={p.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#e94560' }}>仕入れURL</a>}
         </td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151', fontFamily: 'monospace', fontSize: 12 }}>{p.rakuten_sku_id || '—'}</td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.supplier || '—'}</td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700, color: '#111827' }}>{p.stock}</td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.inbound}</td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.standard_stock}</td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#1d4ed8', fontWeight: 700 }}>{p.sales_30_recent}</td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.sales_30_prev}</td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666', fontFamily: 'monospace', fontSize: 12 }}>{p.rakuten_sku_id || '—'}</td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{p.supplier || '—'}</td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#1a1a2e' }}>{p.stock}</td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{p.inbound}</td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{p.standard_stock}</td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#2563eb', fontWeight: 600 }}>{p.sales_30_recent}</td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{p.sales_30_prev}</td>
         <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             {isSingle && childCount > 0 && (
