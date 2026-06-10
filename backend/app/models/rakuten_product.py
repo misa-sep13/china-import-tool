@@ -6,16 +6,16 @@ class RakutenProduct(Base):
     __tablename__ = "rakuten_products"
 
     id           = Column(Integer, primary_key=True)
-    sku          = Column(String, unique=True, index=True)  # 商品管理番号（SKU）
+    sku          = Column(String, unique=True, index=True)  # 商品管理番号（URL）: 楽天URLキー・ITEM-001形式
     name         = Column(String)
     jan_code     = Column(String)               # JANコード
-    buy_url      = Column(String)               # 仕入れURL（TAO太郎発注URL）
+    buy_url      = Column(String)               # 仕入れURL（タオタロウ発注URL）
     price        = Column(Float)                # 仕入れ値（元）
-    spec         = Column(String)               # 仕様（色・サイズ等）
+    spec         = Column(String)               # システム連携用SKU番号（全角48文字）
     set_size     = Column(Integer, default=1)   # セット入数
     # 楽天管理情報
-    rakuten_item_url = Column(String)           # 楽天商品管理番号（商品URL）
-    rakuten_sku_id   = Column(String)           # 楽天SKU管理番号
+    rakuten_item_url = Column(String)           # 在庫管理番号（社内管理用）
+    rakuten_sku_id   = Column(String)           # 楽天SKU管理番号（半角32文字: y60_4_black形式）
     supplier         = Column(String)           # 仕入先
     standard_stock   = Column(Integer, default=0)  # 規定在庫数
     # 在庫

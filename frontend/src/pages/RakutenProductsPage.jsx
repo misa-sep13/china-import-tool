@@ -146,7 +146,7 @@ export default function RakutenProductsPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: '#1e2433', borderBottom: '2px solid #2d3748' }}>
-              {['SKU', '商品名 / 仕様', '楽天SKU', '仕入先', '実在庫', '輸送中', '規定在庫', '直近30日', '前30日', '操作'].map(h => (
+              {['管理番号（URL）', '商品名 / システム連携SKU', '楽天SKU', '仕入先', '実在庫', '輸送中', '規定在庫', '直近30日', '前30日', '操作'].map(h => (
                 <th key={h} style={{ padding: '10px 12px', textAlign: 'center', color: '#94a3b8', whiteSpace: 'nowrap' }}>{h}</th>
               ))}
             </tr>
@@ -160,10 +160,10 @@ export default function RakutenProductsPage() {
               return (
                 <>
                   <tr key={p.id} style={{ borderBottom: comps.length > 0 ? 'none' : '1px solid #2d3748' }}>
-                    <td style={{ padding: '10px 12px', color: '#94a3b8', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{p.sku}</td>
+                    <td style={{ padding: '10px 12px', color: '#94a3b8', fontFamily: 'monospace', whiteSpace: 'nowrap', fontSize: 11 }}>{p.sku}</td>
                     <td style={{ padding: '10px 12px', minWidth: 160 }}>
                       <div style={{ color: '#e2e8f0', fontWeight: 600 }}>{p.name || '—'}</div>
-                      {p.spec && <div style={{ color: '#64748b', fontSize: 11 }}>{p.spec}</div>}
+                      {p.spec && <div style={{ color: '#64748b', fontSize: 11 }}>🔗 {p.spec}</div>}
                       {p.buy_url && <a href={p.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#60a5fa' }}>仕入れURL</a>}
                     </td>
                     <td style={{ padding: '10px 12px', textAlign: 'center', color: '#94a3b8', fontFamily: 'monospace', fontSize: 12 }}>{p.rakuten_sku_id || '—'}</td>
@@ -213,16 +213,16 @@ export default function RakutenProductsPage() {
             <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>基本情報</h3>
             <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
               <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                <label>商品管理番号（SKU）<span style={{ color: '#f87171' }}> *</span></label>
-                <input {...f('sku')} placeholder="例: ITEM-001" />
+                <label>商品管理番号（URL）<span style={{ color: '#f87171' }}> *</span></label>
+                <input {...f('sku')} placeholder="例: ITEM-001（楽天商品URLの一部になる番号）" />
               </div>
               <div className="form-group" style={{ gridColumn: '1 / -1' }}>
                 <label>商品名</label>
                 <input {...f('name')} placeholder="例: ○○ポーチ" />
               </div>
               <div className="form-group">
-                <label>システム連携用SKU番号</label>
-                <input {...f('spec')} placeholder="例: レッド / Mサイズ" />
+                <label>システム連携用SKU番号（全角48文字）</label>
+                <input {...f('spec')} placeholder="例: 厚手4足セット　ブラック" />
               </div>
               <div className="form-group">
                 <label>JANコード</label>
@@ -251,12 +251,12 @@ export default function RakutenProductsPage() {
               <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>🛒 楽天管理情報</h3>
               <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
                 <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                  <label>商品管理番号（商品URL）</label>
-                  <input {...f('rakuten_item_url')} placeholder="https://item.rakuten.co.jp/shop/xxx/" />
+                  <label>在庫管理番号</label>
+                  <input {...f('rakuten_item_url')} placeholder="例: ITEM-001（社内在庫管理用番号）" />
                 </div>
                 <div className="form-group">
-                  <label>楽天SKU管理番号</label>
-                  <input {...f('rakuten_sku_id')} placeholder="例: 12345678-A" />
+                  <label>楽天SKU管理番号（半角32文字）</label>
+                  <input {...f('rakuten_sku_id')} placeholder="例: y60_4_black" />
                 </div>
                 <div className="form-group">
                   <label>規定在庫数</label>
@@ -365,9 +365,11 @@ function SetComponentsEditor({ value, onChange, allProducts }) {
             onChange={e => updateRow(i, 'sku', e.target.value)}
             style={{ flex: 2, padding: '6px 8px', fontSize: 13, background: '#0f172a', color: '#e2e8f0', border: '1px solid #374151', borderRadius: 6 }}
           >
-            <option value="">— SKUを選択 —</option>
+            <option value="">— 商品を選択 —</option>
             {allProducts.map(p => (
-              <option key={p.id} value={p.sku}>{p.sku} {p.name ? `(${p.name})` : ''}</option>
+              <option key={p.id} value={p.sku}>
+                {p.sku}{p.spec ? ` [${p.spec}]` : ''}{p.name ? ` - ${p.name}` : ''}
+              </option>
             ))}
           </select>
           <input
