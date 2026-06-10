@@ -95,7 +95,7 @@ class RakutenProductOut(RakutenProductIn):
 
 @router.get("/products", response_model=List[RakutenProductOut])
 def list_products(db: Session = Depends(get_db)):
-    return db.query(RakutenProduct).filter(RakutenProduct.is_active == True).order_by(RakutenProduct.sku.desc()).all()
+    return db.query(RakutenProduct).filter(RakutenProduct.is_active == True).order_by(RakutenProduct.sku.asc()).all()
 
 @router.post("/products", response_model=RakutenProductOut)
 def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):
