@@ -84,7 +84,8 @@ export default function RakutenProductsPage() {
   }
 
   const filtered = products.filter(p => {
-    if (!showComponents && p.is_component) return false
+    // デフォルト: バリエーション(セット商品)を非表示、単品のみ表示
+    if (!showComponents && !p.is_component) return false
     if (!search) return true
     return (
       (p.sku || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -153,9 +154,9 @@ export default function RakutenProductsPage() {
           }}
           onClick={() => setShowComponents(v => !v)}
         >
-          🔩 {showComponents ? '単品を非表示' : '単品を表示'}
+          📦 {showComponents ? 'バリエーションを非表示' : 'バリエーションを表示'}
           <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.7 }}>
-            ({products.filter(p => p.is_component).length}件)
+            ({products.filter(p => !p.is_component).length}件)
           </span>
         </button>
       </div>
@@ -179,25 +180,25 @@ export default function RakutenProductsPage() {
               const expanded = !!compTab[p.id]
               return (
                 <>
-                  <tr key={p.id} style={{ borderBottom: '1px solid #f0f2f8', background: p.is_component ? '#fffbeb' : 'white' }}>
-                    <td style={{ padding: '10px 12px', fontFamily: 'monospace', whiteSpace: 'nowrap', fontSize: 12, color: '#333' }}>
+                  <tr key={p.id} style={{ borderBottom: '1px solid #e5e7eb', background: '#ffffff' }}>
+                    <td style={{ padding: '10px 12px', fontFamily: 'monospace', whiteSpace: 'nowrap', fontSize: 12, color: '#111827' }}>
                       {p.sku}
                       {p.is_component && (
-                        <span style={{ display: 'block', fontSize: 10, background: '#fef3c7', color: '#92400e', borderRadius: 4, padding: '1px 5px', marginTop: 2, width: 'fit-content' }}>単品</span>
+                        <span style={{ display: 'block', fontSize: 10, background: '#fef3c7', color: '#92400e', borderRadius: 4, padding: '1px 5px', marginTop: 2, width: 'fit-content', border: '1px solid #fbbf24' }}>単品</span>
                       )}
                     </td>
                     <td style={{ padding: '10px 12px', minWidth: 160 }}>
-                      <div style={{ color: '#1a1a2e', fontWeight: 600 }}>{p.name || '—'}</div>
-                      {p.spec && <div style={{ color: '#888', fontSize: 11 }}>🔗 {p.spec}</div>}
+                      <div style={{ color: '#111827', fontWeight: 700 }}>{p.name || '—'}</div>
+                      {p.spec && <div style={{ color: '#6b7280', fontSize: 11 }}>🔗 {p.spec}</div>}
                       {p.buy_url && <a href={p.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#e94560' }}>仕入れURL</a>}
                     </td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#555', fontFamily: 'monospace', fontSize: 12 }}>{p.rakuten_sku_id || '—'}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#555' }}>{p.supplier || '—'}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700, color: '#1a1a2e' }}>{p.stock}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#555' }}>{p.inbound}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#555' }}>{p.standard_stock}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#2563eb', fontWeight: 600 }}>{p.sales_30_recent}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#555' }}>{p.sales_30_prev}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151', fontFamily: 'monospace', fontSize: 12 }}>{p.rakuten_sku_id || '—'}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.supplier || '—'}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700, color: '#111827' }}>{p.stock}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.inbound}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.standard_stock}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#1d4ed8', fontWeight: 700 }}>{p.sales_30_recent}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#374151' }}>{p.sales_30_prev}</td>
                     <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                         {comps.length > 0 && (
@@ -219,11 +220,11 @@ export default function RakutenProductsPage() {
                   </tr>
                   {/* セット構成 — クリックで展開 */}
                   {comps.length > 0 && expanded && (
-                    <tr key={`${p.id}-comp`} style={{ borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                    <tr key={`${p.id}-comp`} style={{ borderBottom: '1px solid #e5e7eb', background: '#eff6ff' }}>
                       <td colSpan={10} style={{ padding: '8px 24px 10px' }}>
-                        <span style={{ fontSize: 12, color: '#475569', marginRight: 8, fontWeight: 600 }}>📦 セット構成:</span>
+                        <span style={{ fontSize: 12, color: '#1e3a5f', marginRight: 8, fontWeight: 700 }}>📦 セット構成:</span>
                         {comps.map((c, i) => (
-                          <span key={i} style={{ fontSize: 12, background: '#e0f2fe', borderRadius: 6, padding: '3px 10px', marginRight: 6, color: '#0369a1', border: '1px solid #bae6fd' }}>
+                          <span key={i} style={{ fontSize: 12, background: '#dbeafe', borderRadius: 6, padding: '3px 10px', marginRight: 6, color: '#1e40af', border: '1px solid #93c5fd', fontWeight: 600 }}>
                             {c.sku} × {c.qty}
                           </span>
                         ))}
