@@ -17,32 +17,21 @@ def _auth_header(service_secret: str, license_key: str) -> dict:
     return {"Authorization": f"ESA {token}"}
 
 
-async def fetch_sales_by_sku(
-    service_secret: str,
-    license_key: str,
-    days: int = 60,
-) -> dict:
-    """
-    過去90日間の受注データを取得し、
-    SKUごとの販売数を {sku: {"recent": N, "prev": N, "total_90": N, "stockout_days": N}} 形式で返す
-    recent = 直近30日、prev = 31〜60日前、total_90 = 90日合計
-    stockout_days = 注文0件の日数（在庫切れ日数の近似）
-    """
-    headers = _auth_header(service_secret, license_key)
-    now = datetime.now()
-    start_dt = now - timedelta(days=days)
-
-    # 注文検索（最小限のパラメータ）
+async def _search_orders_in_range(
+    headers: dict,
+    start_dt: datetime,
+    end_dt: datetime,
+) -> list:
+    """指定期間の注文番号リストを取得（63日以内の制限あり）"""
     search_body = {
         "dateType": 1,
         "startDatetime": start_dt.strftime("%Y-%m-%dT00:00:00+0900"),
-        "endDatetime": now.strftime("%Y-%m-%dT00:00:00+0900"),
+        "endDatetime": end_dt.strftime("%Y-%m-%dT23:59:59+0900"),
         "PaginationRequestModel": {
             "requestRecordsAmount": 1000,
             "requestPage": 1,
         },
     }
-
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.post(
             f"{RMS_BASE}/2.0/order/searchOrder",
@@ -53,8 +42,6 @@ async def fetch_sales_by_sku(
             raise Exception(f"searchOrder HTTP {res.status_code}: {res.text}")
         data = res.json()
 
-    # searchOrder のレスポンス構造に合わせて注文番号を取り出す
-    # ["order1", "order2"] の場合と [{"orderNumber": "order1"}] の場合の両方に対応
     raw_list = data.get("orderNumberList") or []
     order_numbers = []
     for item in raw_list:
@@ -64,6 +51,38 @@ async def fetch_sales_by_sku(
             num = item.get("orderNumber") or item.get("order_number") or item.get("id")
             if num:
                 order_numbers.append(str(num))
+    return order_numbers
+
+
+async def fetch_sales_by_sku(
+    service_secret: str,
+    license_key: str,
+    days: int = 90,
+) -> dict:
+    """
+    過去90日間の受注データを取得し、
+    SKUごとの販売数を {sku: {"recent": N, "prev": N, "total_90": N, "stockout_days": N}} 形式で返す
+    recent = 直近30日、prev = 31〜60日前、total_90 = 90日合計
+    stockout_days = 注文0件の日数（在庫切れ日数の近似）
+    楽天APIは63日以内制限のため、90日取得時は2回に分けてリクエストする
+    """
+    headers = _auth_header(service_secret, license_key)
+    now = datetime.now()
+
+    # 楽天APIは63日以内の制限があるため、60日ずつに分割してリクエスト
+    MAX_DAYS = 60
+    order_numbers = []
+    fetched_days = 0
+    while fetched_days < days:
+        chunk = min(MAX_DAYS, days - fetched_days)
+        chunk_end = now - timedelta(days=fetched_days)
+        chunk_start = now - timedelta(days=fetched_days + chunk)
+        numbers = await _search_orders_in_range(headers, chunk_start, chunk_end)
+        order_numbers.extend(numbers)
+        fetched_days += chunk
+
+    # 重複除去
+    order_numbers = list(dict.fromkeys(order_numbers))
 
     if not order_numbers:
         return {}
