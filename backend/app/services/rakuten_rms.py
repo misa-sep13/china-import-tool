@@ -20,12 +20,13 @@ def _auth_header(service_secret: str, license_key: str) -> dict:
 async def fetch_sales_by_sku(
     service_secret: str,
     license_key: str,
-    days: int = 60,
+    days: int = 90,
 ) -> dict:
     """
-    過去 days 日間の受注データを取得し、
-    SKUごとの販売数を {sku: {"recent": N, "prev": N}} 形式で返す
-    recent = 直近30日、prev = 31〜60日前
+    過去90日間の受注データを取得し、
+    SKUごとの販売数を {sku: {"recent": N, "prev": N, "total_90": N, "stockout_days": N}} 形式で返す
+    recent = 直近30日、prev = 31〜60日前、total_90 = 90日合計
+    stockout_days = 注文0件の日数（在庫切れ日数の近似）
     """
     headers = _auth_header(service_secret, license_key)
     now = datetime.now()
@@ -62,8 +63,10 @@ async def fetch_sales_by_sku(
         return {}
 
     # 注文詳細を取得（最大100件ずつ）
-    sku_sales: dict[str, dict] = {}
-    cutoff_recent = now - timedelta(days=30)  # 直近30日の境界
+    # {sku: {date_str: qty}} で日別販売数を集計
+    sku_daily: dict[str, dict] = {}
+    cutoff_recent = now - timedelta(days=30)   # 直近30日の境界
+    cutoff_prev   = now - timedelta(days=60)   # 31〜60日の境界
 
     for i in range(0, len(order_numbers), 100):
         batch = order_numbers[i:i+100]
@@ -78,37 +81,54 @@ async def fetch_sales_by_sku(
             detail_data = res.json()
 
         for order in detail_data.get("orderModelList", []):
-            # 注文日を取得
             order_date_str = order.get("orderDatetime", "")
             try:
                 order_date = datetime.fromisoformat(order_date_str.replace("+0900", "+09:00"))
             except Exception:
                 order_date = now - timedelta(days=15)
 
-            is_recent = order_date >= cutoff_recent
-
             # キャンセル除外
             if order.get("orderProgress", 0) == 900:
                 continue
 
-            # 商品明細からSKUと数量を取得
+            day_key = order_date.strftime("%Y-%m-%d")
+
             for package in order.get("PackageModelList", []):
                 for item in package.get("ItemModelList", []):
-                    sku = item.get("manageNumber", "")  # 楽天商品管理番号
-                    if not sku:
-                        # システム連携用SKU番号も試みる
-                        sku = item.get("itemNumber", "")
+                    sku = item.get("manageNumber", "") or item.get("itemNumber", "")
                     if not sku:
                         continue
                     qty = item.get("units", 1) or 1
 
-                    if sku not in sku_sales:
-                        sku_sales[sku] = {"recent": 0, "prev": 0}
+                    if sku not in sku_daily:
+                        sku_daily[sku] = {}
+                    sku_daily[sku][day_key] = sku_daily[sku].get(day_key, 0) + qty
 
-                    if is_recent:
-                        sku_sales[sku]["recent"] += qty
-                    else:
-                        sku_sales[sku]["prev"] += qty
+    # 集計: recent(30日), prev(31〜60日), total_90, stockout_days
+    sku_sales: dict[str, dict] = {}
+    for sku, daily in sku_daily.items():
+        recent = prev = total_90 = 0
+        for day_str, qty in daily.items():
+            try:
+                d = datetime.strptime(day_str, "%Y-%m-%d")
+            except Exception:
+                continue
+            total_90 += qty
+            if d >= cutoff_recent:
+                recent += qty
+            elif d >= cutoff_prev:
+                prev += qty
+
+        # 在庫切れ日数 = 過去90日のうち注文が1件もない日数
+        days_with_orders = len(set(daily.keys()))
+        stockout_days = max(0, 90 - days_with_orders)
+
+        sku_sales[sku] = {
+            "recent":       recent,
+            "prev":         prev,
+            "total_90":     total_90,
+            "stockout_days": stockout_days,
+        }
 
     return sku_sales
 

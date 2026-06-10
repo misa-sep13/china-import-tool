@@ -22,8 +22,10 @@ class RakutenProduct(Base):
     stock        = Column(Integer, default=0)    # 実在庫（手持ち）
     inbound      = Column(Integer, default=0)    # 輸送中
     # 販売実績（楽天APIまたは手動入力）
-    sales_30_recent  = Column(Integer, default=0) # 直近30日販売数
-    sales_30_prev    = Column(Integer, default=0) # 60日前〜31日前の30日販売数
+    sales_30_recent  = Column(Integer, default=0) # 直近30日販売数（参考用）
+    sales_30_prev    = Column(Integer, default=0) # 60日前〜31日前の販売数（参考用）
+    sales_90         = Column(Integer, default=0) # 直近90日販売数（発注計算に使用）
+    stockout_days_90 = Column(Integer, default=0) # 過去90日の在庫切れ日数
     sales_updated_at = Column(DateTime, nullable=True)
     # メモ
     customer_memo = Column(Text)                # お客様専用メモ（TAO太郎G列）

@@ -212,6 +212,8 @@ def get_recommendations(db: Session = Depends(get_db)):
             sales_30_recent=sales_recent,
             sales_30_prev=sales_prev,
             super_sale_qty=0,
+            sales_90=p.sales_90 or 0,
+            stockout_days_90=p.stockout_days_90 or 0,
             s=s,
         )
         items.append({
@@ -568,8 +570,10 @@ async def sync_sales_from_rms(db: Session = Depends(get_db)):
         # 楽天SKU管理番号 または 商品管理番号(sku)で照合
         sales = sku_sales.get(p.rakuten_sku_id or "") or sku_sales.get(p.sku or "") or {}
         if sales:
-            p.sales_30_recent = sales.get("recent", 0)
-            p.sales_30_prev   = sales.get("prev",   0)
+            p.sales_30_recent  = sales.get("recent", 0)
+            p.sales_30_prev    = sales.get("prev",   0)
+            p.sales_90         = sales.get("total_90", 0)
+            p.stockout_days_90 = sales.get("stockout_days", 0)
             p.sales_updated_at = datetime.now()
             updated += 1
 

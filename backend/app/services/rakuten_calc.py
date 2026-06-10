@@ -20,51 +20,61 @@ class RakutenCalcResult:
     needs_order:   bool   # 発注タイミング到来フラグ
 
 def calc_rakuten_order(
-    stock:           int,   # 実在庫（手持ちのみ）
-    inbound:         int,   # 輸送中
-    ordered:         int,   # 発注済み（未納品）
-    sales_30_recent: float, # 直近30日販売数
-    sales_30_prev:   float, # 60日前〜31日前の30日販売数
-    super_sale_qty:  int = 0, # スーパーセール追加分（modeB時）
+    stock:            int,   # 実在庫（手持ちのみ）
+    inbound:          int,   # 輸送中
+    ordered:          int,   # 発注済み（未納品）
+    sales_30_recent:  float, # 直近30日販売数（成長率計算用）
+    sales_30_prev:    float, # 60日前〜31日前の販売数（成長率計算用）
+    super_sale_qty:   int = 0,  # スーパーセール追加分（modeB時）
+    sales_90:         float = 0, # 直近90日販売数（日販計算のベース）
+    stockout_days_90: int = 0,   # 過去90日の在庫切れ日数
     s: RakutenCalcSettings = None,
 ) -> RakutenCalcResult:
     if s is None:
         s = RakutenCalcSettings()
 
-    # --- 成長率 ---
-    # 成長率 = (直近30日 / 前30日 - 1)
-    if (sales_30_prev or 0) > 0:
+    # --- 有効販売日数（90日 - 在庫切れ日数）---
+    effective_days = max(1, 90 - (stockout_days_90 or 0))
+
+    # --- 日販（在庫切れ期間を除いた実態ベース）---
+    if (sales_90 or 0) > 0:
+        # 90日データがあればそちらを優先
+        daily_avg = (sales_90 or 0) / effective_days
+    elif (sales_30_recent or 0) > 0:
+        # 90日データがなければ直近30日で代用
+        daily_avg = (sales_30_recent or 0) / 30.0
+    else:
+        daily_avg = 0.0
+
+    # --- 成長率（直近30日 vs 前30日）---
+    if (sales_30_prev or 0) > 0 and (sales_30_recent or 0) > 0:
         growth_rate = (sales_30_recent / sales_30_prev) - 1.0
+        growth_rate = max(-0.5, min(growth_rate, 2.0))
     else:
         growth_rate = 0.0
-    # 成長率を -50% 〜 +200% にクランプ（極端な値を抑制）
-    growth_rate = max(-0.5, min(growth_rate, 2.0))
 
-    # --- 予測販売数（30日） ---
-    predicted_30 = (sales_30_recent or 0) * (1.0 + growth_rate)
+    # --- 予測販売数（目標日数分）---
+    predicted_30 = daily_avg * s.target_days * (1.0 + growth_rate)
 
-    # --- 日販 ---
-    daily_avg = predicted_30 / 30.0 if predicted_30 > 0 else 0.0
-
-    # --- 発注〜入荷まで売れる数（20日分） ---
+    # --- 発注〜入荷まで売れる数 ---
     lead_sales = daily_avg * s.lead_days
 
     # --- 安全在庫 ---
     safety_stock = (predicted_30 + lead_sales) * s.safety_stock_rate
 
-    # --- 全在庫（提案発注数の計算に使う） ---
+    # --- 全在庫 ---
     total_stock = (stock or 0) + (inbound or 0) + (ordered or 0)
 
     # --- 提案発注数 ---
     raw = predicted_30 + lead_sales + safety_stock + (super_sale_qty or 0) - total_stock
     order_qty = max(0, round(raw))
 
-    # --- 発注タイミング判定（全在庫が閾値以下） ---
+    # --- 発注タイミング判定 ---
     threshold = daily_avg * s.threshold_days
-    needs_order = total_stock <= threshold
+    needs_order = (total_stock <= threshold) and daily_avg > 0
 
-    # --- 在庫日数（実在庫ベース） ---
-    days_left = (stock or 0) / daily_avg if daily_avg > 0 else 9999.0
+    # --- 在庫日数（全在庫ベース）---
+    days_left = total_stock / daily_avg if daily_avg > 0 else 9999.0
 
     return RakutenCalcResult(
         order_qty=order_qty,
