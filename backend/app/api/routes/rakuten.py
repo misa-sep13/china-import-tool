@@ -20,8 +20,8 @@ router = APIRouter(prefix="/rakuten", tags=["rakuten"])
 class RakutenSettingsSchema(BaseModel):
     lead_days:         int   = 20
     target_days:       int   = 30
-    safety_stock_rate: float = 0.15
-    threshold_days:    int   = 30
+    safety_stock_rate: float = 0.10
+    threshold_days:    int   = 60
     super_sale_enabled: bool = False
     super_sale_mode:   str   = 'A'
     super_sale_start:  Optional[date] = None

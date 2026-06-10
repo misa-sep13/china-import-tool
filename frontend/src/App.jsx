@@ -8,6 +8,7 @@ import StockPage from './pages/StockPage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import RakutenOrderPage from './pages/RakutenOrderPage'
 import RakutenProductsPage from './pages/RakutenProductsPage'
+import RakutenSettingsPage from './pages/RakutenSettingsPage'
 import './App.css'
 
 function App() {
@@ -47,6 +48,9 @@ function App() {
         <NavLink to="/rakuten/products" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🏷️ 商品マスタ
         </NavLink>
+        <NavLink to="/rakuten/settings" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          ⚙️ 楽天設定
+        </NavLink>
       </nav>
       <main className="main-content">
         <Routes>
@@ -59,6 +63,7 @@ function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/rakuten/orders" element={<RakutenOrderPage />} />
           <Route path="/rakuten/products" element={<RakutenProductsPage />} />
+          <Route path="/rakuten/settings" element={<RakutenSettingsPage />} />
         </Routes>
       </main>
     </div>
