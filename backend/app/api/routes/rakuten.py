@@ -168,46 +168,69 @@ def get_recommendations(db: Session = Depends(get_db)):
         .all()
     )
 
-    # スーパーセールmodeB: 前回のセール販売数（簡易: super_sale_qty は未来の実装）
-    super_sale_qty = 0  # TODO: 実装時に商品ごとのセール数を参照
+    # 全商品を取得
+    all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
 
-    products = db.query(RakutenProduct).filter(
-        RakutenProduct.is_active == True,
-        RakutenProduct.is_component == False,
-    ).all()
+    # セット商品（is_component=False かつ set_components あり）の販売実績を
+    # 構成単品SKUへ按分して集計する
+    # result: {単品SKU: {"recent": N, "prev": N}}
+    unit_sales: dict[str, dict] = {}
+
+    for p in all_products:
+        if p.is_component or not p.set_components:
+            continue
+        try:
+            comps = json.loads(p.set_components or "[]")
+        except Exception:
+            comps = []
+        for c in comps:
+            unit_sku = c.get("sku", "")
+            qty = c.get("qty", 1) or 1
+            if not unit_sku:
+                continue
+            if unit_sku not in unit_sales:
+                unit_sales[unit_sku] = {"recent": 0, "prev": 0}
+            unit_sales[unit_sku]["recent"] += (p.sales_30_recent or 0) * qty
+            unit_sales[unit_sku]["prev"]   += (p.sales_30_prev   or 0) * qty
+
+    # 単品（is_component=True）ごとに発注計算
+    singles = [p for p in all_products if p.is_component]
     items = []
-    for p in products:
+    for p in singles:
         ordered = ordered_by_sku.get(p.sku, 0) or 0
+        agg = unit_sales.get(p.sku, {})
+        sales_recent = agg.get("recent", 0)
+        sales_prev   = agg.get("prev",   0)
         calc = calc_rakuten_order(
             stock=p.stock or 0,
             inbound=p.inbound or 0,
             ordered=ordered,
-            sales_30_recent=p.sales_30_recent or 0,
-            sales_30_prev=p.sales_30_prev or 0,
-            super_sale_qty=super_sale_qty,
+            sales_30_recent=sales_recent,
+            sales_30_prev=sales_prev,
+            super_sale_qty=0,
             s=s,
         )
         items.append({
-            "product_id":     p.id,
-            "sku":            p.sku or "",
-            "name":           p.name or "",
-            "jan_code":       p.jan_code or "",
-            "buy_url":        p.buy_url or "",
-            "set_size":       p.set_size or 1,
-            "stock":          p.stock or 0,
-            "inbound":        p.inbound or 0,
-            "ordered":        ordered,
-            "total_stock":    calc.total_stock,
-            "daily_avg":      calc.daily_avg,
-            "days_left":      calc.days_left,
-            "growth_rate":    calc.growth_rate,
-            "predicted_30":   calc.predicted_30,
-            "lead_sales":     calc.lead_sales,
-            "safety_stock":   calc.safety_stock,
-            "order_qty":      calc.order_qty,
-            "needs_order":    calc.needs_order,
-            "sales_30_recent": p.sales_30_recent or 0,
-            "sales_30_prev":   p.sales_30_prev or 0,
+            "product_id":      p.id,
+            "sku":             p.sku or "",
+            "name":            p.name or "",
+            "jan_code":        p.jan_code or "",
+            "buy_url":         p.buy_url or "",
+            "set_size":        p.set_size or 1,
+            "stock":           p.stock or 0,
+            "inbound":         p.inbound or 0,
+            "ordered":         ordered,
+            "total_stock":     calc.total_stock,
+            "daily_avg":       calc.daily_avg,
+            "days_left":       calc.days_left,
+            "growth_rate":     calc.growth_rate,
+            "predicted_30":    calc.predicted_30,
+            "lead_sales":      calc.lead_sales,
+            "safety_stock":    calc.safety_stock,
+            "order_qty":       calc.order_qty,
+            "needs_order":     calc.needs_order,
+            "sales_30_recent": sales_recent,
+            "sales_30_prev":   sales_prev,
         })
 
     return {"items": items, "settings": RakutenSettingsSchema.model_validate(settings_row)}
