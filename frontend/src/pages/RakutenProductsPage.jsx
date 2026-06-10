@@ -221,7 +221,7 @@ export default function RakutenProductsPage() {
                 <input {...f('name')} placeholder="例: ○○ポーチ" />
               </div>
               <div className="form-group">
-                <label>仕様（色・サイズ等）</label>
+                <label>システム連携用SKU番号</label>
                 <input {...f('spec')} placeholder="例: レッド / Mサイズ" />
               </div>
               <div className="form-group">
@@ -237,7 +237,7 @@ export default function RakutenProductsPage() {
                 <input {...f('supplier')} placeholder="例: タオタロウ" />
               </div>
               <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                <label>仕入れURL（TAO太郎発注URL）</label>
+                <label>仕入れURL（タオタロウ発注URL）</label>
                 <input {...f('buy_url')} placeholder="https://..." />
               </div>
               <div className="form-group">
@@ -251,7 +251,7 @@ export default function RakutenProductsPage() {
               <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>🛒 楽天管理情報</h3>
               <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
                 <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                  <label>楽天商品管理番号（商品URL）</label>
+                  <label>商品管理番号（商品URL）</label>
                   <input {...f('rakuten_item_url')} placeholder="https://item.rakuten.co.jp/shop/xxx/" />
                 </div>
                 <div className="form-group">
