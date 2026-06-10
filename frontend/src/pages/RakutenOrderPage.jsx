@@ -67,7 +67,7 @@ export default function RakutenOrderPage() {
         <button className="btn" onClick={() => refetch()} style={{ fontSize: 13 }}>🔄 更新</button>
         <button
           className="btn"
-          style={{ fontSize: 13, background: '#166534', color: '#fff', border: 'none' }}
+          style={{ fontSize: 13, background: '#22c55e', color: '#fff', border: 'none' }}
           disabled={downloading}
           onClick={async () => {
             const targets = items
@@ -78,21 +78,21 @@ export default function RakutenOrderPage() {
             try { await downloadExcel(targets) } finally { setDownloading(false) }
           }}
         >
-          {downloading ? '生成中...' : '📥 発注Excel (TAO太郎)'}
+          {downloading ? '生成中...' : '📥 発注Excel（タオタロウ）'}
         </button>
       </div>
 
       {/* 設定サマリー */}
       <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
         {[
-          ['目標販売日数', `${settings.target_days ?? 30}日`],
-          ['リードタイム', `${settings.lead_days ?? 20}日`],
-          ['安全在庫率', `${((settings.safety_stock_rate ?? 0.15) * 100).toFixed(0)}%`],
-          ['発注閾値', `在庫${settings.threshold_days ?? 30}日分以下`],
-        ].map(([label, val]) => (
-          <div key={label} style={{ background: '#1e2433', borderRadius: 8, padding: '8px 16px', fontSize: 13 }}>
-            <span style={{ color: '#94a3b8' }}>{label}: </span>
-            <span style={{ color: '#e2e8f0', fontWeight: 700 }}>{val}</span>
+          ['目標販売日数', `${settings.target_days ?? 30}日`,    '#dbeafe', '#1e40af'],
+          ['リードタイム', `${settings.lead_days ?? 20}日`,      '#dcfce7', '#166534'],
+          ['安全在庫率',  `${((settings.safety_stock_rate ?? 0.10) * 100).toFixed(0)}%`, '#fef9c3', '#854d0e'],
+          ['発注閾値',    `在庫${settings.threshold_days ?? 60}日分以下`, '#fce7f3', '#9d174d'],
+        ].map(([label, val, bg, color]) => (
+          <div key={label} style={{ background: bg, borderRadius: 8, padding: '8px 16px', fontSize: 13 }}>
+            <span style={{ color }}>{label}: </span>
+            <span style={{ color, fontWeight: 800 }}>{val}</span>
           </div>
         ))}
       </div>
