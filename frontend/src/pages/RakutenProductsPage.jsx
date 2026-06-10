@@ -164,56 +164,66 @@ export default function RakutenProductsPage() {
       <div className="card" style={{ padding: 0, overflow: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
-            <tr style={{ background: '#1e2433', borderBottom: '2px solid #2d3748' }}>
+            <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
               {['管理番号（URL）', '商品名 / システム連携SKU', '楽天SKU', '仕入先', '実在庫', '輸送中', '規定在庫', '直近30日', '前30日', '操作'].map(h => (
-                <th key={h} style={{ padding: '10px 12px', textAlign: 'center', color: '#94a3b8', whiteSpace: 'nowrap' }}>{h}</th>
+                <th key={h} style={{ padding: '10px 12px', textAlign: 'center', color: '#555', whiteSpace: 'nowrap' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#64748b' }}>商品がありません</td></tr>
+              <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
             )}
             {filtered.map(p => {
               const comps = parseComponents(p.set_components)
+              const expanded = !!compTab[p.id]
               return (
                 <>
-                  <tr key={p.id} style={{ borderBottom: comps.length > 0 ? 'none' : '1px solid #2d3748' }}>
-                    <td style={{ padding: '10px 12px', color: '#94a3b8', fontFamily: 'monospace', whiteSpace: 'nowrap', fontSize: 11 }}>
+                  <tr key={p.id} style={{ borderBottom: '1px solid #f0f2f8', background: p.is_component ? '#fffbeb' : 'white' }}>
+                    <td style={{ padding: '10px 12px', fontFamily: 'monospace', whiteSpace: 'nowrap', fontSize: 12, color: '#333' }}>
                       {p.sku}
                       {p.is_component && (
-                        <span style={{ display: 'block', fontSize: 10, background: '#fef9c3', color: '#92400e', borderRadius: 4, padding: '1px 5px', marginTop: 2, width: 'fit-content' }}>単品</span>
+                        <span style={{ display: 'block', fontSize: 10, background: '#fef3c7', color: '#92400e', borderRadius: 4, padding: '1px 5px', marginTop: 2, width: 'fit-content' }}>単品</span>
                       )}
                     </td>
                     <td style={{ padding: '10px 12px', minWidth: 160 }}>
-                      <div style={{ color: '#e2e8f0', fontWeight: 600 }}>{p.name || '—'}</div>
-                      {p.spec && <div style={{ color: '#64748b', fontSize: 11 }}>🔗 {p.spec}</div>}
-                      {p.buy_url && <a href={p.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#60a5fa' }}>仕入れURL</a>}
+                      <div style={{ color: '#1a1a2e', fontWeight: 600 }}>{p.name || '—'}</div>
+                      {p.spec && <div style={{ color: '#888', fontSize: 11 }}>🔗 {p.spec}</div>}
+                      {p.buy_url && <a href={p.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#e94560' }}>仕入れURL</a>}
                     </td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#94a3b8', fontFamily: 'monospace', fontSize: 12 }}>{p.rakuten_sku_id || '—'}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#94a3b8' }}>{p.supplier || '—'}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700, color: '#e2e8f0' }}>{p.stock}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#94a3b8' }}>{p.inbound}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#94a3b8' }}>{p.standard_stock}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#60a5fa', fontWeight: 600 }}>{p.sales_30_recent}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#94a3b8' }}>{p.sales_30_prev}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#555', fontFamily: 'monospace', fontSize: 12 }}>{p.rakuten_sku_id || '—'}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#555' }}>{p.supplier || '—'}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700, color: '#1a1a2e' }}>{p.stock}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#555' }}>{p.inbound}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#555' }}>{p.standard_stock}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#2563eb', fontWeight: 600 }}>{p.sales_30_recent}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#555' }}>{p.sales_30_prev}</td>
                     <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
-                      <div style={{ display: 'flex', gap: 6 }}>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        {comps.length > 0 && (
+                          <button
+                            className="btn"
+                            style={{ fontSize: 11, padding: '3px 8px', background: expanded ? '#dbeafe' : '#f1f5f9', color: '#334155' }}
+                            onClick={() => setCompTab(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
+                          >
+                            {expanded ? '▲' : '▼'} 構成
+                          </button>
+                        )}
                         <button className="btn" style={{ fontSize: 12, padding: '3px 10px' }} onClick={() => openEdit(p)}>編集</button>
                         <button
-                          className="btn" style={{ fontSize: 12, padding: '3px 10px', color: '#f87171' }}
+                          className="btn" style={{ fontSize: 12, padding: '3px 10px', color: '#dc2626' }}
                           onClick={() => { if (confirm(`${p.name || p.sku} を削除しますか？`)) deleteMutation.mutate(p.id) }}
                         >削除</button>
                       </div>
                     </td>
                   </tr>
-                  {/* セット構成（単品）展開表示 */}
-                  {comps.length > 0 && (
-                    <tr key={`${p.id}-comp`} style={{ borderBottom: '1px solid #2d3748', background: '#0f172a' }}>
-                      <td colSpan={10} style={{ padding: '6px 24px 10px' }}>
-                        <span style={{ fontSize: 11, color: '#475569', marginRight: 8 }}>📦 セット構成:</span>
+                  {/* セット構成 — クリックで展開 */}
+                  {comps.length > 0 && expanded && (
+                    <tr key={`${p.id}-comp`} style={{ borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                      <td colSpan={10} style={{ padding: '8px 24px 10px' }}>
+                        <span style={{ fontSize: 12, color: '#475569', marginRight: 8, fontWeight: 600 }}>📦 セット構成:</span>
                         {comps.map((c, i) => (
-                          <span key={i} style={{ fontSize: 11, background: '#1e2433', borderRadius: 4, padding: '2px 8px', marginRight: 6, color: '#94a3b8' }}>
+                          <span key={i} style={{ fontSize: 12, background: '#e0f2fe', borderRadius: 6, padding: '3px 10px', marginRight: 6, color: '#0369a1', border: '1px solid #bae6fd' }}>
                             {c.sku} × {c.qty}
                           </span>
                         ))}
