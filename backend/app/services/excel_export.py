@@ -76,7 +76,7 @@ def build_taotaro_excel(items: List[Dict]) -> bytes:
 
 
 def build_rakuten_taotaro_excel(items: List[Dict]) -> bytes:
-    """楽天版 TAO太郎インポート用Excel（ASIN/FNSKU列なし）"""
+    """楽天版 TAO太郎インポート用Excel（Amazonと同じ8列形式・ASIN/FNSKUは空欄）"""
     wb = Workbook()
     ws = wb.active
     ws.title = "Sheet1"
@@ -84,8 +84,8 @@ def build_rakuten_taotaro_excel(items: List[Dict]) -> bytes:
     thin = Side(style="thin")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    # 1行目：タイトル（A1:F1を結合）
-    ws.merge_cells("A1:F1")
+    # 1行目：タイトル（A1:H1を結合）
+    ws.merge_cells("A1:H1")
     title_cell = ws["A1"]
     title_cell.value = "導入例"
     title_cell.font = Font(bold=True)
@@ -93,14 +93,16 @@ def build_rakuten_taotaro_excel(items: List[Dict]) -> bytes:
     title_cell.fill = PatternFill("solid", fgColor="D9E1F2")
     ws.row_dimensions[1].height = 20
 
-    # 2行目：ヘッダー（楽天はASIN/FNSKU不要）
+    # 2行目：ヘッダー（Amazonと同じ8列）
     headers = [
         "発注先URL　↓※発注先URLをここに入れる",  # A
         "仕様",           # B
         "数量",           # C
         "単価",           # D
-        "お客様専用メモ",  # E
-        "備考",           # F
+        "ASIN",           # E（楽天では空欄）
+        "FNSKU",          # F（楽天では空欄）
+        "お客様専用メモ",  # G
+        "備考",           # H
     ]
     header_fill = PatternFill("solid", fgColor="E2EFDA")
     header_font = Font(bold=True)
@@ -112,7 +114,7 @@ def build_rakuten_taotaro_excel(items: List[Dict]) -> bytes:
         cell.border = border
     ws.row_dimensions[2].height = 25
 
-    # 3行目以降：データ
+    # 3行目以降：データ（ASIN/FNSKUは空欄）
     for i, item in enumerate(items):
         row_num = 3 + i
         values = [
@@ -120,8 +122,10 @@ def build_rakuten_taotaro_excel(items: List[Dict]) -> bytes:
             item.get("spec", ""),           # B: 仕様
             item.get("qty", 0),             # C: 数量
             item.get("price", 0),           # D: 単価
-            item.get("customer_memo", ""),  # E: お客様専用メモ
-            item.get("notes", ""),          # F: 備考
+            "",                             # E: ASIN（空欄）
+            "",                             # F: FNSKU（空欄）
+            item.get("customer_memo", ""),  # G: お客様専用メモ
+            item.get("notes", ""),          # H: 備考
         ]
         for col, val in enumerate(values, 1):
             cell = ws.cell(row=row_num, column=col, value=val)
@@ -130,8 +134,8 @@ def build_rakuten_taotaro_excel(items: List[Dict]) -> bytes:
             if col == 1 and val:
                 cell.font = Font(color="0563C1", underline="single")
 
-    # 列幅調整
-    col_widths = {1: 45, 2: 22, 3: 8, 4: 8, 5: 25, 6: 20}
+    # 列幅調整（Amazonと同じ）
+    col_widths = {1: 45, 2: 22, 3: 8, 4: 8, 5: 14, 6: 14, 7: 25, 8: 20}
     for col, width in col_widths.items():
         ws.column_dimensions[get_column_letter(col)].width = width
 
