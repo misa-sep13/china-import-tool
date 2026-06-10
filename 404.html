@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script>
+    var path = window.location.pathname.replace('/china-import-tool', '') || '/';
+    var search = window.location.search;
+    var hash = window.location.hash;
+    window.location.replace('/china-import-tool/?p=' + encodeURIComponent(path + search) + hash);
+  </script>
+</head>
+<body></body>
+</html>

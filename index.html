@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/china-import-tool/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>中国輸入管理</title>
+    <script>
+      (function() {
+        var p = new URLSearchParams(window.location.search).get('p');
+        if (p) {
+          window.history.replaceState(null, null, '/china-import-tool' + p);
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/china-import-tool/assets/index-DQ0jDEbR.js"></script>
+    <link rel="stylesheet" crossorigin href="/china-import-tool/assets/index-D-v-KoQA.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
