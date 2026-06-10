@@ -10,6 +10,7 @@ import RakutenOrderPage from './pages/RakutenOrderPage'
 import RakutenProductsPage from './pages/RakutenProductsPage'
 import RakutenStockPage from './pages/RakutenStockPage'
 import RakutenSettingsPage from './pages/RakutenSettingsPage'
+import RakutenInvoicePage from './pages/RakutenInvoicePage'
 import './App.css'
 
 function App() {
@@ -52,6 +53,9 @@ function App() {
         <NavLink to="/rakuten/products" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🏷️ 商品マスタ
         </NavLink>
+        <NavLink to="/rakuten/invoices" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          📄 仕入管理
+        </NavLink>
         <NavLink to="/rakuten/settings" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           ⚙️ 楽天設定
         </NavLink>
@@ -68,6 +72,7 @@ function App() {
           <Route path="/rakuten/orders" element={<RakutenOrderPage />} />
           <Route path="/rakuten/stock" element={<RakutenStockPage />} />
           <Route path="/rakuten/products" element={<RakutenProductsPage />} />
+          <Route path="/rakuten/invoices" element={<RakutenInvoicePage />} />
           <Route path="/rakuten/settings" element={<RakutenSettingsPage />} />
         </Routes>
       </main>

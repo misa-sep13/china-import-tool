@@ -80,6 +80,7 @@ class RakutenProductIn(BaseModel):
     inbound:          int = 0
     sales_30_recent:  int = 0
     sales_30_prev:    int = 0
+    cost_jpy:         Optional[float] = None
     selling_price:    Optional[float] = None
     customer_memo:    Optional[str] = None
     notes:            Optional[str] = None
@@ -113,7 +114,7 @@ def list_stock(db: Session = Depends(get_db)):
     result = []
     for p in products:
         selling_price = p.selling_price
-        cost_jpy = p.price  # 仕入れ値（元）→ 円換算は別途。ここでは元のまま保持
+        cost_jpy = p.cost_jpy
         commission = round(selling_price * commission_rate, 0) if selling_price else None
         profit = round(selling_price - (cost_jpy or 0) - (commission or 0), 0) if selling_price else None
         profit_rate = round(profit / selling_price * 100, 1) if (selling_price and profit is not None) else None
@@ -573,6 +574,111 @@ def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_
         "skipped": skipped,
         "errors": errors,
     }
+
+
+# ============================================================
+# 仕入れ管理（インボイスExcel読み込み）
+# ============================================================
+
+class RakutenInvoiceItemIn(BaseModel):
+    sku: str
+    name_jp: str = ""
+    qty: int
+    unit_price_cny: float
+
+class RakutenInvoiceIn(BaseModel):
+    invoice_no: str = ""
+    invoice_date: str = ""
+    exchange_rate: float
+    domestic_freight: float = 0
+    international_freight: float = 0
+    items: List[RakutenInvoiceItemIn]
+
+@router.post("/invoices/parse-excel")
+async def rakuten_parse_excel(file: UploadFile = File(...)):
+    """タオタロウ形式ExcelをパースしてSKU・単価を返す"""
+    import openpyxl
+    content = await file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content))
+    except Exception as e:
+        raise HTTPException(400, f"Excel読み込みエラー: {str(e)}")
+
+    ws = wb.active
+    invoice_no = ""
+    for row in ws.iter_rows(min_row=1, max_row=15, values_only=True):
+        for cell in row:
+            if cell and str(cell).startswith("VIP"):
+                invoice_no = str(cell)
+                break
+
+    header_row = None
+    for i, row in enumerate(ws.iter_rows(min_row=1, max_row=20, values_only=True), 1):
+        if row[0] == "10) Name of Commodity":
+            header_row = i + 1
+            break
+
+    if not header_row:
+        raise HTTPException(400, "商品データが見つかりません")
+
+    items = []
+    domestic_freight = international_freight = 0
+    for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
+        if row[0] and str(row[0]).startswith("Domestic"):
+            domestic_freight = row[8] or 0
+            continue
+        if row[0] and str(row[0]).startswith("International"):
+            international_freight = row[8] or 0
+            continue
+        if row[0] and str(row[0]).startswith("MADE IN"):
+            break
+        if row[0] is None and row[6] and row[7]:
+            sku = str(int(row[12])) if row[12] and isinstance(row[12], (int, float)) else str(row[12] or "")
+            items.append({
+                "sku": sku,
+                "name_jp": str(row[2] or ""),
+                "qty": int(row[6]) if row[6] else 0,
+                "unit_price_cny": float(row[7]) if row[7] else 0,
+                "total_price_cny": float(row[8]) if row[8] else 0,
+            })
+
+    return {
+        "invoice_no": invoice_no,
+        "domestic_freight": domestic_freight,
+        "international_freight": international_freight,
+        "items": items,
+    }
+
+@router.post("/invoices/calculate")
+def rakuten_calculate_cost(data: RakutenInvoiceIn):
+    total_cny = sum(i.qty * i.unit_price_cny for i in data.items)
+    total_freight = data.domestic_freight + data.international_freight
+    result = []
+    for item in data.items:
+        item_total = item.qty * item.unit_price_cny
+        freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
+        cost_jpy = ((item_total + freight_alloc) / item.qty * data.exchange_rate) if item.qty > 0 else 0
+        result.append({**item.model_dump(), "total_price_cny": round(item_total, 2),
+                        "freight_alloc_cny": round(freight_alloc, 2), "cost_jpy": round(cost_jpy, 1)})
+    return {"items": result, "total_cny": round(total_cny, 2),
+            "total_freight_cny": round(total_freight, 2),
+            "grand_total_jpy": round((total_cny + total_freight) * data.exchange_rate, 0)}
+
+@router.post("/invoices/save")
+def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
+    total_cny = sum(i.qty * i.unit_price_cny for i in data.items)
+    total_freight = data.domestic_freight + data.international_freight
+    updated = 0
+    for item in data.items:
+        item_total = item.qty * item.unit_price_cny
+        freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
+        cost_jpy = round(((item_total + freight_alloc) / item.qty * data.exchange_rate), 1) if item.qty > 0 else 0
+        product = db.query(RakutenProduct).filter(RakutenProduct.sku == item.sku, RakutenProduct.is_active == True).first()
+        if product:
+            product.cost_jpy = cost_jpy
+            updated += 1
+    db.commit()
+    return {"updated": updated}
 
 
 # ============================================================

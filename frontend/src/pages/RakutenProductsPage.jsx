@@ -29,6 +29,12 @@ export default function RakutenProductsPage() {
     queryFn: () => api.get('/rakuten/products').then(r => r.data),
   })
 
+  const { data: settings } = useQuery({
+    queryKey: ['rakuten-settings'],
+    queryFn: () => api.get('/rakuten/settings').then(r => r.data),
+  })
+  const commissionRate = settings?.commission_rate ?? 0.09
+
   const saveMutation = useMutation({
     mutationFn: (d) => editing === 'new'
       ? api.post('/rakuten/products', d)
@@ -169,14 +175,14 @@ export default function RakutenProductsPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-              {['SKU管理番号', '商品名 / システム連携SKU', '仕入先', '販売価格', '仕入れ値(元)', '操作'].map(h => (
+              {['SKU管理番号', '商品名 / 仕様', 'お客様専用メモ', '仕入原価(円)', '販売価格(円)', '手数料率', '利益額', '利益率', '備考', '操作'].map(h => (
                 <th key={h} style={{ padding: '10px 12px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {filteredSingles.length === 0 && filteredStandalone.length === 0 && (
-              <tr><td colSpan={6} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
+              <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
             )}
 
             {/* ① 単品（親） → クリックでバリエーション展開 */}
@@ -187,6 +193,7 @@ export default function RakutenProductsPage() {
                 <ProductRow
                   key={p.id}
                   p={p}
+                  commissionRate={commissionRate}
                   expanded={expanded}
                   childCount={children.length}
                   onToggle={() => setCompTab(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
@@ -199,6 +206,7 @@ export default function RakutenProductsPage() {
                     <ProductRow
                       key={child.id}
                       p={child}
+                      commissionRate={commissionRate}
                       onEdit={openEdit}
                       onDelete={(p) => { if (confirm(`${p.name || p.sku} を削除しますか？`)) deleteMutation.mutate(p.id) }}
                       isChild={true}
@@ -213,6 +221,7 @@ export default function RakutenProductsPage() {
               <ProductRow
                 key={p.id}
                 p={p}
+                commissionRate={commissionRate}
                 onEdit={openEdit}
                 onDelete={(p) => { if (confirm(`${p.name || p.sku} を削除しますか？`)) deleteMutation.mutate(p.id) }}
               />
@@ -365,9 +374,13 @@ export default function RakutenProductsPage() {
 }
 
 // 商品行コンポーネント
-function ProductRow({ p, expanded, childCount, onToggle, onEdit, onDelete, isSingle, isChild, children }) {
+function ProductRow({ p, commissionRate = 0.09, expanded, childCount, onToggle, onEdit, onDelete, isSingle, isChild, children }) {
   const rowBg = isChild ? '#f8faff' : '#ffffff'
   const indent = isChild ? 32 : 0
+
+  const commission = p.selling_price ? p.selling_price * commissionRate : null
+  const profit = (p.selling_price != null && p.cost_jpy != null) ? p.selling_price - p.cost_jpy - (p.selling_price * commissionRate) : null
+  const profitRate = (profit != null && p.selling_price) ? profit / p.selling_price : null
 
   return (
     <>
@@ -379,17 +392,30 @@ function ProductRow({ p, expanded, childCount, onToggle, onEdit, onDelete, isSin
             <span style={{ display: 'block', fontSize: 10, background: '#fef3c7', color: '#92400e', borderRadius: 4, padding: '1px 5px', marginTop: 2, width: 'fit-content', border: '1px solid #fbbf24' }}>単品</span>
           )}
         </td>
-        <td style={{ padding: '10px 12px', minWidth: 160 }}>
+        <td style={{ padding: '10px 12px', minWidth: 140 }}>
           <div style={{ color: '#1a1a2e', fontWeight: 500 }}>{p.name || '—'}</div>
-          {p.spec && <div style={{ color: '#999', fontSize: 11 }}>🔗 {p.spec}</div>}
-          {p.buy_url && <a href={p.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#e94560' }}>仕入れURL</a>}
+          {p.spec && <div style={{ color: '#888', fontSize: 11 }}>{p.spec}</div>}
         </td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{p.supplier || '—'}</td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#1a1a2e', fontWeight: 600 }}>
+        <td style={{ padding: '10px 12px', maxWidth: 140, fontSize: 12, color: '#475569' }}>
+          {p.customer_memo ? <span style={{ whiteSpace: 'pre-wrap' }}>{p.customer_memo}</span> : '—'}
+        </td>
+        <td style={{ padding: '10px 12px', textAlign: 'right', color: '#1a1a2e' }}>
+          {p.cost_jpy != null ? `¥${p.cost_jpy.toLocaleString()}` : '—'}
+        </td>
+        <td style={{ padding: '10px 12px', textAlign: 'right', color: '#1a1a2e', fontWeight: 600 }}>
           {p.selling_price ? `¥${p.selling_price.toLocaleString()}` : '—'}
         </td>
         <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>
-          {p.price ? `¥${p.price}` : '—'}
+          {(commissionRate * 100).toFixed(0)}%
+        </td>
+        <td style={{ padding: '10px 12px', textAlign: 'right', color: profit != null ? (profit >= 0 ? '#16a34a' : '#dc2626') : '#999', fontWeight: 600 }}>
+          {profit != null ? `¥${Math.round(profit).toLocaleString()}` : '—'}
+        </td>
+        <td style={{ padding: '10px 12px', textAlign: 'right', color: profitRate != null ? (profitRate >= 0.15 ? '#16a34a' : profitRate >= 0 ? '#ca8a04' : '#dc2626') : '#999' }}>
+          {profitRate != null ? `${(profitRate * 100).toFixed(1)}%` : '—'}
+        </td>
+        <td style={{ padding: '10px 12px', maxWidth: 120, fontSize: 12, color: '#475569' }}>
+          {p.notes || '—'}
         </td>
         <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

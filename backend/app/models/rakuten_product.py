@@ -27,6 +27,7 @@ class RakutenProduct(Base):
     sales_90         = Column(Integer, default=0) # 直近63日販売数（発注計算に使用・楽天API上限63日）
     stockout_days_90 = Column(Integer, default=0) # 在庫切れ日数（在庫管理機能実装後に自動更新）
     sales_updated_at = Column(DateTime, nullable=True)
+    cost_jpy         = Column(Float)             # 仕入原価（円）
     selling_price    = Column(Float)             # 販売価格（円）
     # メモ
     customer_memo = Column(Text)                # お客様専用メモ（TAO太郎G列）
