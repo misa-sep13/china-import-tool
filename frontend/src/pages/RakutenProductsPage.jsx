@@ -206,7 +206,7 @@ export default function RakutenProductsPage() {
       {/* 編集モーダル */}
       {editing && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div className="dark-form" style={{ background: '#1a2235', borderRadius: 12, padding: 32, width: 620, maxHeight: '90vh', overflowY: 'auto', border: '1px solid #2d3748' }}>
+          <div style={{ background: '#fff', color: '#1a1a2e', borderRadius: 12, padding: 32, width: 620, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
             <h2 style={{ marginBottom: 20 }}>{editing === 'new' ? '商品追加' : '商品編集'}</h2>
 
             {/* 基本情報 */}
@@ -247,7 +247,7 @@ export default function RakutenProductsPage() {
             </div>
 
             {/* 楽天管理情報 */}
-            <div style={{ borderTop: '1px solid #2d3748', margin: '16px 0', paddingTop: 14 }}>
+            <div style={{ borderTop: '1px solid #e2e8f0', margin: '16px 0', paddingTop: 14 }}>
               <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>🛒 楽天管理情報</h3>
               <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
                 <div className="form-group" style={{ gridColumn: '1 / -1' }}>
@@ -266,7 +266,7 @@ export default function RakutenProductsPage() {
             </div>
 
             {/* 在庫・販売実績 */}
-            <div style={{ borderTop: '1px solid #2d3748', margin: '0 0 16px', paddingTop: 14 }}>
+            <div style={{ borderTop: '1px solid #e2e8f0', margin: '0 0 16px', paddingTop: 14 }}>
               <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>📦 在庫 / 販売実績</h3>
               <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
                 <div className="form-group">
@@ -289,7 +289,7 @@ export default function RakutenProductsPage() {
             </div>
 
             {/* メモ */}
-            <div style={{ borderTop: '1px solid #2d3748', margin: '0 0 16px', paddingTop: 14 }}>
+            <div style={{ borderTop: '1px solid #e2e8f0', margin: '0 0 16px', paddingTop: 14 }}>
               <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>📝 メモ</h3>
               <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
                 <div className="form-group">
@@ -308,7 +308,7 @@ export default function RakutenProductsPage() {
             </div>
 
             {/* セット構成（単品管理） */}
-            <div style={{ borderTop: '1px solid #2d3748', margin: '0 0 16px', paddingTop: 14 }}>
+            <div style={{ borderTop: '1px solid #e2e8f0', margin: '0 0 16px', paddingTop: 14 }}>
               <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 4 }}>🔗 セット構成（単品管理）</h3>
               <p style={{ fontSize: 12, color: '#475569', marginBottom: 10 }}>
                 セット商品の場合、構成する単品SKUと数量をJSON形式で入力します。
