@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional, List
 from datetime import date, datetime
-import csv, io, codecs
+import csv, io, json
 from pydantic import BaseModel
 from app.core.database import get_db
 from app.models.rakuten_product import RakutenProduct
@@ -60,18 +60,26 @@ def update_settings(data: RakutenSettingsSchema, db: Session = Depends(get_db)):
 # ============================================================
 
 class RakutenProductIn(BaseModel):
-    sku:             str
-    name:            Optional[str] = None
-    jan_code:        Optional[str] = None
-    buy_url:         Optional[str] = None
-    price:           Optional[float] = None
-    set_size:        int = 1
-    stock:           int = 0
-    inbound:         int = 0
-    sales_30_recent: int = 0
-    sales_30_prev:   int = 0
-    memo:            Optional[str] = None
-    is_active:       bool = True
+    sku:              str
+    name:             Optional[str] = None
+    jan_code:         Optional[str] = None
+    buy_url:          Optional[str] = None
+    price:            Optional[float] = None
+    spec:             Optional[str] = None
+    set_size:         int = 1
+    rakuten_item_url: Optional[str] = None
+    rakuten_sku_id:   Optional[str] = None
+    supplier:         Optional[str] = None
+    standard_stock:   int = 0
+    stock:            int = 0
+    inbound:          int = 0
+    sales_30_recent:  int = 0
+    sales_30_prev:    int = 0
+    customer_memo:    Optional[str] = None
+    notes:            Optional[str] = None
+    memo:             Optional[str] = None
+    set_components:   Optional[str] = None  # JSON文字列
+    is_active:        bool = True
 
 class RakutenProductOut(RakutenProductIn):
     id:               int
@@ -267,27 +275,71 @@ def delete_order(order_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================================
+# Excel発注書ダウンロード（TAO太郎形式）
+# ============================================================
+
+@router.post("/orders/excel")
+def download_order_excel(body: dict, db: Session = Depends(get_db)):
+    """発注リストをTAO太郎形式Excelで出力"""
+    from app.services.excel_export import build_rakuten_taotaro_excel
+    order_items = body.get("items", [])  # [{sku, qty}, ...]
+
+    excel_items = []
+    for oi in order_items:
+        sku = oi.get("sku")
+        qty = oi.get("qty", 0)
+        if not sku or not qty:
+            continue
+        p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
+        if not p:
+            continue
+        excel_items.append({
+            "buy_url":       p.buy_url or "",
+            "spec":          p.spec or "",
+            "qty":           qty,
+            "price":         p.price or 0,
+            "customer_memo": p.customer_memo or "",
+            "notes":         p.notes or "",
+        })
+
+    xls = build_rakuten_taotaro_excel(excel_items)
+    return StreamingResponse(
+        io.BytesIO(xls),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=rakuten_order.xlsx"},
+    )
+
+
+# ============================================================
 # CSV インポート / テンプレートDL
 # ============================================================
 
 CSV_COLUMNS = [
-    "sku", "name", "jan_code", "buy_url", "price",
-    "set_size", "stock", "inbound",
-    "sales_30_recent", "sales_30_prev", "memo",
+    "sku", "name", "jan_code", "spec", "buy_url", "price",
+    "set_size", "rakuten_item_url", "rakuten_sku_id", "supplier", "standard_stock",
+    "stock", "inbound", "sales_30_recent", "sales_30_prev",
+    "customer_memo", "notes", "memo",
 ]
 
 CSV_COLUMN_LABELS = {
-    "sku":             "商品管理番号(SKU)※必須",
-    "name":            "商品名",
-    "jan_code":        "JANコード",
-    "buy_url":         "仕入れURL",
-    "price":           "仕入れ値(元)",
-    "set_size":        "セット入数",
-    "stock":           "実在庫(手持ち)",
-    "inbound":         "輸送中",
-    "sales_30_recent": "直近30日販売数",
-    "sales_30_prev":   "60日前〜31日前の販売数",
-    "memo":            "メモ",
+    "sku":              "商品管理番号(SKU)※必須",
+    "name":             "商品名",
+    "jan_code":         "JANコード",
+    "spec":             "仕様",
+    "buy_url":          "仕入れURL",
+    "price":            "仕入れ値(元)",
+    "set_size":         "セット入数",
+    "rakuten_item_url": "楽天商品管理番号(商品URL)",
+    "rakuten_sku_id":   "楽天SKU管理番号",
+    "supplier":         "仕入先",
+    "standard_stock":   "規定在庫数",
+    "stock":            "実在庫(手持ち)",
+    "inbound":          "輸送中",
+    "sales_30_recent":  "直近30日販売数",
+    "sales_30_prev":    "60日前〜31日前の販売数",
+    "customer_memo":    "お客様専用メモ",
+    "notes":            "備考",
+    "memo":             "内部メモ",
 }
 
 @router.get("/products/csv/template")
@@ -299,9 +351,11 @@ def download_csv_template():
     writer.writerow([CSV_COLUMN_LABELS[c] for c in CSV_COLUMNS])
     # サンプル行
     writer.writerow([
-        "ITEM-001", "サンプル商品A", "4900000000001",
+        "ITEM-001", "サンプル商品A", "4900000000001", "レッド",
         "https://item.taobao.com/xxx", "12.5",
-        "1", "100", "0", "45", "40", "メモ例",
+        "1", "https://item.rakuten.co.jp/shop/xxx/", "12345678-A", "タオタロウ", "50",
+        "100", "0", "45", "40",
+        "お客様専用メモ例", "備考例", "内部メモ例",
     ])
     output.seek(0)
     # BOM付きUTF-8でExcelで文字化けしないように
@@ -321,10 +375,18 @@ def export_products_csv(db: Session = Depends(get_db)):
     writer.writerow([CSV_COLUMN_LABELS[c] for c in CSV_COLUMNS])
     for p in products:
         writer.writerow([
-            p.sku or "", p.name or "", p.jan_code or "",
+            p.sku or "", p.name or "", p.jan_code or "", p.spec or "",
             p.buy_url or "", p.price if p.price is not None else "",
-            p.set_size or 1, p.stock or 0, p.inbound or 0,
-            p.sales_30_recent or 0, p.sales_30_prev or 0, p.memo or "",
+            p.set_size or 1,
+            getattr(p, 'rakuten_item_url', '') or "",
+            getattr(p, 'rakuten_sku_id', '') or "",
+            getattr(p, 'supplier', '') or "",
+            getattr(p, 'standard_stock', 0) or 0,
+            p.stock or 0, p.inbound or 0,
+            p.sales_30_recent or 0, p.sales_30_prev or 0,
+            getattr(p, 'customer_memo', '') or "",
+            getattr(p, 'notes', '') or "",
+            p.memo or "",
         ])
     output.seek(0)
     content = "﻿" + output.getvalue()
@@ -383,16 +445,23 @@ def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_
             except: return default
 
         data = {
-            "name":            normalized.get("name") or None,
-            "jan_code":        normalized.get("jan_code") or None,
-            "buy_url":         normalized.get("buy_url") or None,
-            "price":           to_float(normalized.get("price")),
-            "set_size":        to_int(normalized.get("set_size"), 1),
-            "stock":           to_int(normalized.get("stock"), 0),
-            "inbound":         to_int(normalized.get("inbound"), 0),
-            "sales_30_recent": to_int(normalized.get("sales_30_recent"), 0),
-            "sales_30_prev":   to_int(normalized.get("sales_30_prev"), 0),
-            "memo":            normalized.get("memo") or None,
+            "name":             normalized.get("name") or None,
+            "jan_code":         normalized.get("jan_code") or None,
+            "spec":             normalized.get("spec") or None,
+            "buy_url":          normalized.get("buy_url") or None,
+            "price":            to_float(normalized.get("price")),
+            "set_size":         to_int(normalized.get("set_size"), 1),
+            "rakuten_item_url": normalized.get("rakuten_item_url") or None,
+            "rakuten_sku_id":   normalized.get("rakuten_sku_id") or None,
+            "supplier":         normalized.get("supplier") or None,
+            "standard_stock":   to_int(normalized.get("standard_stock"), 0),
+            "stock":            to_int(normalized.get("stock"), 0),
+            "inbound":          to_int(normalized.get("inbound"), 0),
+            "sales_30_recent":  to_int(normalized.get("sales_30_recent"), 0),
+            "sales_30_prev":    to_int(normalized.get("sales_30_prev"), 0),
+            "customer_memo":    normalized.get("customer_memo") or None,
+            "notes":            normalized.get("notes") or None,
+            "memo":             normalized.get("memo") or None,
         }
 
         existing = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()

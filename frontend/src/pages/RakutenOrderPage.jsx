@@ -2,10 +2,21 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 
+async function downloadExcel(items) {
+  const res = await api.post('/rakuten/orders/excel', { items }, { responseType: 'blob' })
+  const url = URL.createObjectURL(new Blob([res.data]))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'rakuten_order.xlsx'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 export default function RakutenOrderPage() {
   const qc = useQueryClient()
   const [orderInputs, setOrderInputs] = useState({})   // { sku: qty }
   const [ordering, setOrdering] = useState(null)
+  const [downloading, setDownloading] = useState(false)
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['rakuten-recommendations'],
@@ -51,9 +62,24 @@ export default function RakutenOrderPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
         <h1>🛒 楽天 発注管理</h1>
         <button className="btn" onClick={() => refetch()} style={{ fontSize: 13 }}>🔄 更新</button>
+        <button
+          className="btn"
+          style={{ fontSize: 13, background: '#166534', color: '#fff', border: 'none' }}
+          disabled={downloading}
+          onClick={async () => {
+            const targets = items
+              .map(item => ({ sku: item.sku, qty: Number(orderInputs[item.sku] ?? item.order_qty) }))
+              .filter(i => i.qty > 0)
+            if (targets.length === 0) { alert('発注数が1以上の商品がありません'); return }
+            setDownloading(true)
+            try { await downloadExcel(targets) } finally { setDownloading(false) }
+          }}
+        >
+          {downloading ? '生成中...' : '📥 発注Excel (TAO太郎)'}
+        </button>
       </div>
 
       {/* 設定サマリー */}
