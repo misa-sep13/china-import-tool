@@ -22,35 +22,45 @@ async def _search_orders_in_range(
     start_dt: datetime,
     end_dt: datetime,
 ) -> list:
-    """指定期間の注文番号リストを取得（63日以内の制限あり）"""
-    search_body = {
-        "dateType": 1,
-        "startDatetime": start_dt.strftime("%Y-%m-%dT00:00:00+0900"),
-        "endDatetime": end_dt.strftime("%Y-%m-%dT23:59:59+0900"),
-        "PaginationRequestModel": {
-            "requestRecordsAmount": 1000,
-            "requestPage": 1,
-        },
-    }
-    async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.post(
-            f"{RMS_BASE}/2.0/order/searchOrder",
-            headers={**headers, "Content-Type": "application/json; charset=utf-8"},
-            content=json.dumps(search_body, ensure_ascii=False).encode("utf-8"),
-        )
-        if not res.is_success:
-            raise Exception(f"searchOrder HTTP {res.status_code}: {res.text}")
-        data = res.json()
-
-    raw_list = data.get("orderNumberList") or []
+    """指定期間の注文番号リストを全ページ取得（63日以内の制限あり）"""
     order_numbers = []
-    for item in raw_list:
-        if isinstance(item, str):
-            order_numbers.append(item)
-        elif isinstance(item, dict):
-            num = item.get("orderNumber") or item.get("order_number") or item.get("id")
-            if num:
-                order_numbers.append(str(num))
+    page = 1
+
+    while True:
+        search_body = {
+            "dateType": 1,
+            "startDatetime": start_dt.strftime("%Y-%m-%dT00:00:00+0900"),
+            "endDatetime": end_dt.strftime("%Y-%m-%dT23:59:59+0900"),
+            "PaginationRequestModel": {
+                "requestRecordsAmount": 100,
+                "requestPage": page,
+            },
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.post(
+                f"{RMS_BASE}/2.0/order/searchOrder",
+                headers={**headers, "Content-Type": "application/json; charset=utf-8"},
+                content=json.dumps(search_body, ensure_ascii=False).encode("utf-8"),
+            )
+            if not res.is_success:
+                raise Exception(f"searchOrder HTTP {res.status_code}: {res.text}")
+            data = res.json()
+
+        raw_list = data.get("orderNumberList") or []
+        for item in raw_list:
+            if isinstance(item, str):
+                order_numbers.append(item)
+            elif isinstance(item, dict):
+                num = item.get("orderNumber") or item.get("order_number") or item.get("id")
+                if num:
+                    order_numbers.append(str(num))
+
+        pagination = data.get("PaginationResponseModel") or {}
+        total_pages = pagination.get("totalPages", 1)
+        if page >= total_pages:
+            break
+        page += 1
+
     return order_numbers
 
 
