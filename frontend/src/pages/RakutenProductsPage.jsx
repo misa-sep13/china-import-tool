@@ -8,7 +8,7 @@ const EMPTY = {
   standard_stock: 0, stock: 0, inbound: 0,
   sales_30_recent: 0, sales_30_prev: 0,
   customer_memo: '', notes: '', memo: '',
-  set_components: '', is_active: true,
+  set_components: '', is_component: false, is_active: true,
 }
 
 const BASE_URL = api.defaults.baseURL || ''
@@ -18,6 +18,7 @@ export default function RakutenProductsPage() {
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(EMPTY)
   const [search, setSearch] = useState('')
+  const [showComponents, setShowComponents] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importing, setImporting] = useState(false)
   const [compTab, setCompTab] = useState({})  // {id: bool} セット構成展開
@@ -82,13 +83,16 @@ export default function RakutenProductsPage() {
     try { return JSON.parse(json || '[]') } catch { return [] }
   }
 
-  const filtered = products.filter(p =>
-    !search ||
-    (p.sku || '').toLowerCase().includes(search.toLowerCase()) ||
-    (p.name || '').toLowerCase().includes(search.toLowerCase()) ||
-    (p.jan_code || '').includes(search) ||
-    (p.rakuten_sku_id || '').includes(search)
-  )
+  const filtered = products.filter(p => {
+    if (!showComponents && p.is_component) return false
+    if (!search) return true
+    return (
+      (p.sku || '').toLowerCase().includes(search.toLowerCase()) ||
+      (p.name || '').toLowerCase().includes(search.toLowerCase()) ||
+      (p.jan_code || '').includes(search) ||
+      (p.rakuten_sku_id || '').includes(search)
+    )
+  })
 
   if (isLoading) return <div className="loading">読み込み中...</div>
 
@@ -133,12 +137,27 @@ export default function RakutenProductsPage() {
       )}
 
       {/* 検索 */}
-      <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>
+      <div className="card" style={{ padding: '12px 16px', marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <input
           type="text" placeholder="SKU・商品名・JANコード・楽天SKUで絞り込み"
           value={search} onChange={e => setSearch(e.target.value)}
-          style={{ width: '100%', maxWidth: 420 }}
+          style={{ width: '100%', maxWidth: 380 }}
         />
+        <button
+          className="btn"
+          style={{
+            fontSize: 12, whiteSpace: 'nowrap',
+            background: showComponents ? '#fef9c3' : '#f1f5f9',
+            color: showComponents ? '#854d0e' : '#64748b',
+            border: `1px solid ${showComponents ? '#fde68a' : '#e2e8f0'}`,
+          }}
+          onClick={() => setShowComponents(v => !v)}
+        >
+          🔩 {showComponents ? '単品を非表示' : '単品を表示'}
+          <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.7 }}>
+            ({products.filter(p => p.is_component).length}件)
+          </span>
+        </button>
       </div>
 
       {/* 商品テーブル */}
@@ -160,7 +179,12 @@ export default function RakutenProductsPage() {
               return (
                 <>
                   <tr key={p.id} style={{ borderBottom: comps.length > 0 ? 'none' : '1px solid #2d3748' }}>
-                    <td style={{ padding: '10px 12px', color: '#94a3b8', fontFamily: 'monospace', whiteSpace: 'nowrap', fontSize: 11 }}>{p.sku}</td>
+                    <td style={{ padding: '10px 12px', color: '#94a3b8', fontFamily: 'monospace', whiteSpace: 'nowrap', fontSize: 11 }}>
+                      {p.sku}
+                      {p.is_component && (
+                        <span style={{ display: 'block', fontSize: 10, background: '#fef9c3', color: '#92400e', borderRadius: 4, padding: '1px 5px', marginTop: 2, width: 'fit-content' }}>単品</span>
+                      )}
+                    </td>
                     <td style={{ padding: '10px 12px', minWidth: 160 }}>
                       <div style={{ color: '#e2e8f0', fontWeight: 600 }}>{p.name || '—'}</div>
                       {p.spec && <div style={{ color: '#64748b', fontSize: 11 }}>🔗 {p.spec}</div>}
@@ -301,6 +325,17 @@ export default function RakutenProductsPage() {
               <div className="form-group">
                 <label>内部メモ</label>
                 <textarea value={form.memo || ''} onChange={e => setForm(p => ({ ...p, memo: e.target.value }))} rows={2} />
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!form.is_component}
+                    onChange={e => setForm(p => ({ ...p, is_component: e.target.checked }))}
+                    style={{ width: 'auto', accentColor: '#f59e0b' }}
+                  />
+                  <span>🔩 単品フラグ（セット構成用の内部管理商品 — 一覧では非表示）</span>
+                </label>
               </div>
             </div>
 

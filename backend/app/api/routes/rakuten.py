@@ -79,6 +79,7 @@ class RakutenProductIn(BaseModel):
     notes:            Optional[str] = None
     memo:             Optional[str] = None
     set_components:   Optional[str] = None  # JSON文字列
+    is_component:     bool = False          # 単品（セット構成用内部管理）フラグ
     is_active:        bool = True
 
 class RakutenProductOut(RakutenProductIn):
@@ -170,7 +171,10 @@ def get_recommendations(db: Session = Depends(get_db)):
     # スーパーセールmodeB: 前回のセール販売数（簡易: super_sale_qty は未来の実装）
     super_sale_qty = 0  # TODO: 実装時に商品ごとのセール数を参照
 
-    products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    products = db.query(RakutenProduct).filter(
+        RakutenProduct.is_active == True,
+        RakutenProduct.is_component == False,
+    ).all()
     items = []
     for p in products:
         ordered = ordered_by_sku.get(p.sku, 0) or 0
@@ -321,18 +325,18 @@ CSV_COLUMNS = [
     "sku", "name", "jan_code", "spec", "buy_url", "price",
     "set_size", "rakuten_item_url", "rakuten_sku_id", "supplier", "standard_stock",
     "stock", "inbound", "sales_30_recent", "sales_30_prev",
-    "customer_memo", "notes", "memo",
+    "customer_memo", "notes", "memo", "set_components", "is_component",
 ]
 
 CSV_COLUMN_LABELS = {
-    "sku":              "商品管理番号(SKU)※必須",
+    "sku":              "商品管理番号(URL)※必須",
     "name":             "商品名",
     "jan_code":         "JANコード",
-    "spec":             "仕様",
+    "spec":             "システム連携用SKU番号",
     "buy_url":          "仕入れURL",
     "price":            "仕入れ値(元)",
     "set_size":         "セット入数",
-    "rakuten_item_url": "楽天商品管理番号(商品URL)",
+    "rakuten_item_url": "在庫管理番号",
     "rakuten_sku_id":   "楽天SKU管理番号",
     "supplier":         "仕入先",
     "standard_stock":   "規定在庫数",
@@ -343,6 +347,8 @@ CSV_COLUMN_LABELS = {
     "customer_memo":    "お客様専用メモ",
     "notes":            "備考",
     "memo":             "内部メモ",
+    "set_components":   "セット構成JSON",
+    "is_component":     "単品フラグ(TRUE/FALSE)",
 }
 
 @router.get("/products/csv/template")
@@ -447,6 +453,8 @@ def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_
             try: return float(v) if v else default
             except: return default
 
+        is_comp_raw = normalized.get("is_component", "").upper()
+        is_component = is_comp_raw in ("TRUE", "1", "YES", "はい")
         data = {
             "name":             normalized.get("name") or None,
             "jan_code":         normalized.get("jan_code") or None,
@@ -465,6 +473,8 @@ def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_
             "customer_memo":    normalized.get("customer_memo") or None,
             "notes":            normalized.get("notes") or None,
             "memo":             normalized.get("memo") or None,
+            "set_components":   normalized.get("set_components") or None,
+            "is_component":     is_component,
         }
 
         existing = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()

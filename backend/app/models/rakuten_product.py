@@ -31,5 +31,6 @@ class RakutenProduct(Base):
     memo          = Column(Text)                # 内部メモ
     # セット構成（単品管理）: JSON文字列 "[{\"sku\":\"ITEM-001\",\"qty\":2}]"
     set_components = Column(Text)
+    is_component = Column(Boolean, default=False)  # 単品（セット構成用内部管理）フラグ
     is_active    = Column(Boolean, default=True)
     created_at   = Column(DateTime, server_default=func.now())
