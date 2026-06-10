@@ -244,6 +244,14 @@ export default function RakutenProductsPage() {
                 <label>仕入れ値（元）</label>
                 <input type="number" step="0.01" {...f('price', 'number')} />
               </div>
+              <div className="form-group">
+                <label>お客様専用メモ（タオタロウG列）</label>
+                <textarea value={form.customer_memo || ''} onChange={e => setForm(p => ({ ...p, customer_memo: e.target.value }))} rows={2} />
+              </div>
+              <div className="form-group">
+                <label>備考（タオタロウH列）</label>
+                <textarea value={form.notes || ''} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} rows={2} />
+              </div>
             </div>
 
             {/* 楽天管理情報 */}
@@ -288,22 +296,11 @@ export default function RakutenProductsPage() {
               </div>
             </div>
 
-            {/* メモ */}
+            {/* 内部メモ */}
             <div style={{ borderTop: '1px solid #e2e8f0', margin: '0 0 16px', paddingTop: 14 }}>
-              <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>📝 メモ</h3>
-              <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                <div className="form-group">
-                  <label>お客様専用メモ（TAO太郎G列）</label>
-                  <textarea value={form.customer_memo || ''} onChange={e => setForm(p => ({ ...p, customer_memo: e.target.value }))} rows={2} />
-                </div>
-                <div className="form-group">
-                  <label>備考（TAO太郎H列）</label>
-                  <textarea value={form.notes || ''} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} rows={2} />
-                </div>
-                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                  <label>内部メモ</label>
-                  <textarea value={form.memo || ''} onChange={e => setForm(p => ({ ...p, memo: e.target.value }))} rows={2} />
-                </div>
+              <div className="form-group">
+                <label>内部メモ</label>
+                <textarea value={form.memo || ''} onChange={e => setForm(p => ({ ...p, memo: e.target.value }))} rows={2} />
               </div>
             </div>
 
