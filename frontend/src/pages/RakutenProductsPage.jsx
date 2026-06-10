@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 
@@ -8,11 +8,16 @@ const EMPTY = {
   sales_30_recent: 0, sales_30_prev: 0, memo: '', is_active: true,
 }
 
+const BASE_URL = api.defaults.baseURL || ''
+
 export default function RakutenProductsPage() {
   const qc = useQueryClient()
   const [editing, setEditing] = useState(null)   // null | 'new' | product
   const [form, setForm] = useState(EMPTY)
   const [search, setSearch] = useState('')
+  const [importResult, setImportResult] = useState(null)  // { created, updated, skipped, errors }
+  const [importing, setImporting] = useState(false)
+  const fileRef = useRef(null)
 
   const { data: products = [], isLoading } = useQuery({
     queryKey: ['rakuten-products'],
@@ -34,6 +39,28 @@ export default function RakutenProductsPage() {
   const openNew = () => { setForm(EMPTY); setEditing('new') }
   const openEdit = (p) => { setForm({ ...p }); setEditing(p) }
 
+  const handleImport = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImporting(true)
+    setImportResult(null)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await api.post('/rakuten/products/csv/import', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      setImportResult(res.data)
+      qc.invalidateQueries(['rakuten-products'])
+      qc.invalidateQueries(['rakuten-recommendations'])
+    } catch (err) {
+      setImportResult({ error: err.response?.data?.detail || 'インポートエラーが発生しました' })
+    } finally {
+      setImporting(false)
+      e.target.value = ''
+    }
+  }
+
   const f = (k, type = 'text') => ({
     value: form[k] ?? '',
     onChange: e => setForm(prev => ({ ...prev, [k]: type === 'number' ? Number(e.target.value) : e.target.value }))
@@ -50,10 +77,60 @@ export default function RakutenProductsPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
         <h1>🛒 楽天 商品マスタ</h1>
         <button className="btn btn-primary" onClick={openNew}>+ 商品追加</button>
+
+        {/* CSVテンプレートDL */}
+        <a
+          href={`${BASE_URL}/rakuten/products/csv/template`}
+          download
+          className="btn"
+          style={{ fontSize: 13, textDecoration: 'none' }}
+        >
+          📥 CSVテンプレート
+        </a>
+
+        {/* CSVアップロード */}
+        <button className="btn" style={{ fontSize: 13 }} onClick={() => fileRef.current?.click()} disabled={importing}>
+          {importing ? '取り込み中...' : '📤 CSVインポート'}
+        </button>
+        <input ref={fileRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImport} />
+
+        {/* CSVエクスポート */}
+        <a
+          href={`${BASE_URL}/rakuten/products/csv/export`}
+          download
+          className="btn"
+          style={{ fontSize: 13, textDecoration: 'none' }}
+        >
+          📊 CSV書き出し
+        </a>
       </div>
+
+      {/* インポート結果 */}
+      {importResult && (
+        <div style={{
+          background: importResult.error ? '#2d1b1b' : '#1b2d1b',
+          border: `1px solid ${importResult.error ? '#f87171' : '#4ade80'}`,
+          borderRadius: 8, padding: '12px 16px', marginBottom: 16, fontSize: 13,
+        }}>
+          {importResult.error ? (
+            <span style={{ color: '#f87171' }}>❌ {importResult.error}</span>
+          ) : (
+            <div>
+              <span style={{ color: '#4ade80', fontWeight: 700 }}>
+                ✅ 新規追加: {importResult.created}件　更新: {importResult.updated}件　スキップ: {importResult.skipped}件
+              </span>
+              {importResult.errors?.length > 0 && (
+                <ul style={{ color: '#fcd34d', margin: '8px 0 0', paddingLeft: 16 }}>
+                  {importResult.errors.map((e, i) => <li key={i}>{e}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 検索 */}
       <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>

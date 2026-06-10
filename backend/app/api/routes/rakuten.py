@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional, List
 from datetime import date, datetime
+import csv, io, codecs
 from pydantic import BaseModel
 from app.core.database import get_db
 from app.models.rakuten_product import RakutenProduct
@@ -262,3 +264,151 @@ def delete_order(order_id: int, db: Session = Depends(get_db)):
     o.is_deleted = True
     db.commit()
     return {"ok": True}
+
+
+# ============================================================
+# CSV インポート / テンプレートDL
+# ============================================================
+
+CSV_COLUMNS = [
+    "sku", "name", "jan_code", "buy_url", "price",
+    "set_size", "stock", "inbound",
+    "sales_30_recent", "sales_30_prev", "memo",
+]
+
+CSV_COLUMN_LABELS = {
+    "sku":             "商品管理番号(SKU)※必須",
+    "name":            "商品名",
+    "jan_code":        "JANコード",
+    "buy_url":         "仕入れURL",
+    "price":           "仕入れ値(元)",
+    "set_size":        "セット入数",
+    "stock":           "実在庫(手持ち)",
+    "inbound":         "輸送中",
+    "sales_30_recent": "直近30日販売数",
+    "sales_30_prev":   "60日前〜31日前の販売数",
+    "memo":            "メモ",
+}
+
+@router.get("/products/csv/template")
+def download_csv_template():
+    """CSVテンプレートをダウンロード"""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    # ヘッダー行（日本語ラベル）
+    writer.writerow([CSV_COLUMN_LABELS[c] for c in CSV_COLUMNS])
+    # サンプル行
+    writer.writerow([
+        "ITEM-001", "サンプル商品A", "4900000000001",
+        "https://item.taobao.com/xxx", "12.5",
+        "1", "100", "0", "45", "40", "メモ例",
+    ])
+    output.seek(0)
+    # BOM付きUTF-8でExcelで文字化けしないように
+    content = "﻿" + output.getvalue()
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=rakuten_products_template.csv"},
+    )
+
+@router.get("/products/csv/export")
+def export_products_csv(db: Session = Depends(get_db)):
+    """現在の商品マスタをCSVエクスポート"""
+    products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).order_by(RakutenProduct.id).all()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([CSV_COLUMN_LABELS[c] for c in CSV_COLUMNS])
+    for p in products:
+        writer.writerow([
+            p.sku or "", p.name or "", p.jan_code or "",
+            p.buy_url or "", p.price if p.price is not None else "",
+            p.set_size or 1, p.stock or 0, p.inbound or 0,
+            p.sales_30_recent or 0, p.sales_30_prev or 0, p.memo or "",
+        ])
+    output.seek(0)
+    content = "﻿" + output.getvalue()
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=rakuten_products.csv"},
+    )
+
+@router.post("/products/csv/import")
+def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """CSVをアップロードして商品を一括登録・更新"""
+    try:
+        raw = file.file.read()
+        # BOM除去 + デコード（UTF-8 / Shift-JIS 両対応）
+        for enc in ("utf-8-sig", "shift_jis", "utf-8"):
+            try:
+                text = raw.decode(enc)
+                break
+            except Exception:
+                continue
+        else:
+            raise HTTPException(400, "文字コードの読み取りに失敗しました（UTF-8またはShift-JISで保存してください）")
+    except Exception as e:
+        raise HTTPException(400, f"ファイル読み込みエラー: {e}")
+
+    reader = csv.DictReader(io.StringIO(text))
+
+    # ヘッダーを内部キー名にマッピング（日本語ラベル or 英語キー どちらでも受け付ける）
+    label_to_key = {v: k for k, v in CSV_COLUMN_LABELS.items()}
+    label_to_key.update({k: k for k in CSV_COLUMNS})  # 英語キーもOK
+
+    created = updated = skipped = 0
+    errors = []
+
+    for i, row in enumerate(reader, start=2):  # 2行目から（1行目はヘッダー）
+        # ヘッダーを正規化
+        normalized = {}
+        for col, val in row.items():
+            key = label_to_key.get((col or "").strip())
+            if key:
+                normalized[key] = (val or "").strip()
+
+        sku = normalized.get("sku", "")
+        if not sku:
+            errors.append(f"{i}行目: SKUが空のためスキップ")
+            skipped += 1
+            continue
+
+        def to_int(v, default=0):
+            try: return int(float(v)) if v else default
+            except: return default
+
+        def to_float(v, default=None):
+            try: return float(v) if v else default
+            except: return default
+
+        data = {
+            "name":            normalized.get("name") or None,
+            "jan_code":        normalized.get("jan_code") or None,
+            "buy_url":         normalized.get("buy_url") or None,
+            "price":           to_float(normalized.get("price")),
+            "set_size":        to_int(normalized.get("set_size"), 1),
+            "stock":           to_int(normalized.get("stock"), 0),
+            "inbound":         to_int(normalized.get("inbound"), 0),
+            "sales_30_recent": to_int(normalized.get("sales_30_recent"), 0),
+            "sales_30_prev":   to_int(normalized.get("sales_30_prev"), 0),
+            "memo":            normalized.get("memo") or None,
+        }
+
+        existing = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
+        if existing:
+            for k, v in data.items():
+                setattr(existing, k, v)
+            updated += 1
+        else:
+            p = RakutenProduct(sku=sku, **data)
+            db.add(p)
+            created += 1
+
+    db.commit()
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors,
+    }
