@@ -206,7 +206,7 @@ export default function RakutenProductsPage() {
       {/* 編集モーダル */}
       {editing && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#1a2235', borderRadius: 12, padding: 32, width: 620, maxHeight: '90vh', overflowY: 'auto', border: '1px solid #2d3748' }}>
+          <div className="dark-form" style={{ background: '#1a2235', borderRadius: 12, padding: 32, width: 620, maxHeight: '90vh', overflowY: 'auto', border: '1px solid #2d3748' }}>
             <h2 style={{ marginBottom: 20 }}>{editing === 'new' ? '商品追加' : '商品編集'}</h2>
 
             {/* 基本情報 */}

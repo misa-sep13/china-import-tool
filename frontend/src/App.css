@@ -190,3 +190,31 @@ input:focus, select:focus, textarea:focus { border-color: #e94560; }
 
 .loading { padding: 40px; text-align: center; color: #999; }
 .error-msg { color: #e94560; font-size: 13px; margin-top: 6px; }
+
+/* ダークモーダル用フォームスタイル */
+.dark-form input,
+.dark-form textarea,
+.dark-form select {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-color: #374151;
+}
+.dark-form input::placeholder,
+.dark-form textarea::placeholder {
+  color: #475569;
+}
+.dark-form input:focus,
+.dark-form textarea:focus,
+.dark-form select:focus {
+  border-color: #e94560;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+.dark-form label,
+.dark-form .form-group label {
+  color: #64748b;
+}
+.dark-form option {
+  background: #0f172a;
+  color: #e2e8f0;
+}
