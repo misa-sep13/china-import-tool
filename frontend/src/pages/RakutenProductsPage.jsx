@@ -169,14 +169,14 @@ export default function RakutenProductsPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-              {['管理番号（URL）', '商品名 / システム連携SKU', '楽天SKU', '仕入先', '実在庫', '輸送中', '規定在庫', '直近30日', '前30日', '操作'].map(h => (
+              {['SKU管理番号', '商品名 / システム連携SKU', '仕入先', '実在庫', '輸送中', '規定在庫', '直近30日', '前30日', '操作'].map(h => (
                 <th key={h} style={{ padding: '10px 12px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {filteredSingles.length === 0 && filteredStandalone.length === 0 && (
-              <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
+              <tr><td colSpan={9} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
             )}
 
             {/* ① 単品（親） → クリックでバリエーション展開 */}
@@ -388,7 +388,6 @@ function ProductRow({ p, expanded, childCount, onToggle, onEdit, onDelete, isSin
           {p.spec && <div style={{ color: '#999', fontSize: 11 }}>🔗 {p.spec}</div>}
           {p.buy_url && <a href={p.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#e94560' }}>仕入れURL</a>}
         </td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666', fontFamily: 'monospace', fontSize: 12 }}>{p.rakuten_sku_id || '—'}</td>
         <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{p.supplier || '—'}</td>
         <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#1a1a2e' }}>{p.stock}</td>
         <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{p.inbound}</td>
