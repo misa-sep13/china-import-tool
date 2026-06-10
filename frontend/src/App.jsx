@@ -45,10 +45,10 @@ function App() {
           楽天市場
         </div>
         <NavLink to="/rakuten/orders" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-          🛒 発注管理
+          📦 発注管理
         </NavLink>
         <NavLink to="/rakuten/stock" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-          📦 在庫・損益
+          📊 在庫・損益
         </NavLink>
         <NavLink to="/rakuten/products" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🏷️ 商品マスタ
