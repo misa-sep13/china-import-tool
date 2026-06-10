@@ -169,14 +169,14 @@ export default function RakutenProductsPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-              {['SKU管理番号', '商品名 / システム連携SKU', '仕入先', '実在庫', '輸送中', '規定在庫', '直近30日', '前30日', '操作'].map(h => (
+              {['SKU管理番号', '商品名 / システム連携SKU', '仕入先', '販売価格', '仕入れ値(元)', '操作'].map(h => (
                 <th key={h} style={{ padding: '10px 12px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {filteredSingles.length === 0 && filteredStandalone.length === 0 && (
-              <tr><td colSpan={9} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
+              <tr><td colSpan={6} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
             )}
 
             {/* ① 単品（親） → クリックでバリエーション展開 */}
@@ -261,6 +261,10 @@ export default function RakutenProductsPage() {
               <div className="form-group">
                 <label>仕入れ値（元）</label>
                 <input type="number" step="0.01" {...f('price', 'number')} />
+              </div>
+              <div className="form-group">
+                <label>販売価格（円）</label>
+                <input type="number" step="1" {...f('selling_price', 'number')} />
               </div>
               <div className="form-group">
                 <label>お客様専用メモ（タオタロウG列）</label>
@@ -381,11 +385,12 @@ function ProductRow({ p, expanded, childCount, onToggle, onEdit, onDelete, isSin
           {p.buy_url && <a href={p.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#e94560' }}>仕入れURL</a>}
         </td>
         <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{p.supplier || '—'}</td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: '#1a1a2e' }}>{p.stock}</td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{p.inbound}</td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{p.standard_stock}</td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#2563eb', fontWeight: 600 }}>{p.sales_30_recent}</td>
-        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{p.sales_30_prev}</td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#1a1a2e', fontWeight: 600 }}>
+          {p.selling_price ? `¥${p.selling_price.toLocaleString()}` : '—'}
+        </td>
+        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>
+          {p.price ? `¥${p.price}` : '—'}
+        </td>
         <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             {isSingle && childCount > 0 && (

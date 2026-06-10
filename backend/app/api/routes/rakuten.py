@@ -29,6 +29,7 @@ class RakutenSettingsSchema(BaseModel):
     super_sale_mode:    str   = 'A'
     super_sale_start:   Optional[date] = None
     super_sale_end:     Optional[date] = None
+    commission_rate:    float = 0.09
     rms_service_secret: Optional[str] = None
     rms_license_key:    Optional[str] = None
     rms_key_expires_at: Optional[date] = None
@@ -79,6 +80,7 @@ class RakutenProductIn(BaseModel):
     inbound:          int = 0
     sales_30_recent:  int = 0
     sales_30_prev:    int = 0
+    selling_price:    Optional[float] = None
     customer_memo:    Optional[str] = None
     notes:            Optional[str] = None
     memo:             Optional[str] = None
@@ -96,6 +98,45 @@ class RakutenProductOut(RakutenProductIn):
 @router.get("/products", response_model=List[RakutenProductOut])
 def list_products(db: Session = Depends(get_db)):
     return db.query(RakutenProduct).filter(RakutenProduct.is_active == True).order_by(RakutenProduct.sku.asc()).all()
+
+@router.get("/stock")
+def list_stock(db: Session = Depends(get_db)):
+    """在庫・損益一覧（バリエーション商品のみ、is_component=Falseを対象）"""
+    settings = _get_or_create_settings(db)
+    commission_rate = settings.commission_rate or 0.09
+    products = (
+        db.query(RakutenProduct)
+        .filter(RakutenProduct.is_active == True, RakutenProduct.is_component == False)
+        .order_by(RakutenProduct.sku.asc())
+        .all()
+    )
+    result = []
+    for p in products:
+        selling_price = p.selling_price
+        cost_jpy = p.price  # 仕入れ値（元）→ 円換算は別途。ここでは元のまま保持
+        commission = round(selling_price * commission_rate, 0) if selling_price else None
+        profit = round(selling_price - (cost_jpy or 0) - (commission or 0), 0) if selling_price else None
+        profit_rate = round(profit / selling_price * 100, 1) if (selling_price and profit is not None) else None
+        result.append({
+            "id": p.id,
+            "sku": p.sku,
+            "name": p.name,
+            "spec": p.spec,
+            "customer_memo": p.customer_memo,
+            "stock": p.stock,
+            "inbound": p.inbound,
+            "standard_stock": p.standard_stock,
+            "sales_30_recent": p.sales_30_recent,
+            "sales_30_prev": p.sales_30_prev,
+            "selling_price": selling_price,
+            "cost_jpy": cost_jpy,
+            "commission": commission,
+            "commission_rate": commission_rate,
+            "profit": profit,
+            "profit_rate": profit_rate,
+            "notes": p.notes,
+        })
+    return result
 
 @router.post("/products", response_model=RakutenProductOut)
 def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):

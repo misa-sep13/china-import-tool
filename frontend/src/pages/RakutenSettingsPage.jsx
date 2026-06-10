@@ -60,6 +60,26 @@ export default function RakutenSettingsPage() {
 
       <form onSubmit={e => { e.preventDefault(); save.mutate(form) }}>
 
+        {/* 損益計算設定 */}
+        <div className="card" style={{ marginBottom: 16 }}>
+          <h2>💰 損益計算</h2>
+          <div className="form-grid">
+            <div className="form-group">
+              <label>楽天手数料率</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="number" min={0} max={100} step={0.1}
+                  value={Math.round((form.commission_rate ?? 0.09) * 1000) / 10}
+                  onChange={e => setForm(p => ({ ...p, commission_rate: Number(e.target.value) / 100 }))}
+                  style={{ width: 80 }}
+                />
+                <span style={{ color: '#888', fontSize: 13 }}>%</span>
+              </div>
+              <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>販売価格 × この率 = 手数料（デフォルト9%）</p>
+            </div>
+          </div>
+        </div>
+
         {/* 発注計算設定 */}
         <div className="card">
           <h2>📦 発注計算</h2>
