@@ -49,7 +49,8 @@ async def fetch_sales_by_sku(
             headers={**headers, "Content-Type": "application/json; charset=utf-8"},
             content=json.dumps(search_body, ensure_ascii=False).encode("utf-8"),
         )
-        res.raise_for_status()
+        if not res.is_success:
+            raise Exception(f"searchOrder HTTP {res.status_code}: {res.text}")
         data = res.json()
 
     # searchOrder のレスポンス構造に合わせて注文番号を取り出す
