@@ -53,11 +53,17 @@ async def fetch_sales_by_sku(
         res.raise_for_status()
         data = res.json()
 
+    # searchOrder のレスポンス構造に合わせて注文番号を取り出す
+    # ["order1", "order2"] の場合と [{"orderNumber": "order1"}] の場合の両方に対応
+    raw_list = data.get("orderNumberList") or []
     order_numbers = []
-    pagination = data.get("PaginationResponseModel", {})
-    total = pagination.get("totalRecords", 0)
-    for order in data.get("orderNumberList", []):
-        order_numbers.append(order)
+    for item in raw_list:
+        if isinstance(item, str):
+            order_numbers.append(item)
+        elif isinstance(item, dict):
+            num = item.get("orderNumber") or item.get("order_number") or item.get("id")
+            if num:
+                order_numbers.append(str(num))
 
     if not order_numbers:
         return {}
@@ -68,8 +74,8 @@ async def fetch_sales_by_sku(
     cutoff_recent = now - timedelta(days=30)   # 直近30日の境界
     cutoff_prev   = now - timedelta(days=60)   # 31〜60日の境界
 
-    for i in range(0, len(order_numbers), 100):
-        batch = order_numbers[i:i+100]
+    for i in range(0, len(order_numbers), 10):
+        batch = order_numbers[i:i+10]
         detail_body = {"orderNumberList": batch}
         async with httpx.AsyncClient(timeout=30) as client:
             res = await client.post(
@@ -77,7 +83,9 @@ async def fetch_sales_by_sku(
                 headers={**headers, "Content-Type": "application/json; charset=utf-8"},
                 content=json.dumps(detail_body, ensure_ascii=False).encode("utf-8"),
             )
-            res.raise_for_status()
+            if not res.is_success:
+                # エラー内容をraiseせず次のバッチへ（部分取得を継続）
+                continue
             detail_data = res.json()
 
         for order in detail_data.get("orderModelList", []):

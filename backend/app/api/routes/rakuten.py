@@ -554,7 +554,7 @@ async def sync_sales_from_rms(db: Session = Depends(get_db)):
         sku_sales = await fetch_sales_by_sku(
             settings.rms_service_secret,
             settings.rms_license_key,
-            days=60,
+            days=90,
         )
     except Exception as e:
         raise HTTPException(502, f"楽天APIエラー: {str(e)}")
