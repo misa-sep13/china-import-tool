@@ -529,6 +529,32 @@ def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_
 # RMS API 連携
 # ============================================================
 
+@router.get("/rms/debug-orders")
+async def debug_rms_orders(db: Session = Depends(get_db)):
+    """デバッグ用: searchOrderの生レスポンスを返す（直近3日）"""
+    import json, base64, httpx
+    from datetime import datetime, timedelta
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "APIキーが設定されていません")
+    token = base64.b64encode(f"{settings.rms_service_secret}:{settings.rms_license_key}".encode()).decode()
+    headers = {"Authorization": f"ESA {token}", "Content-Type": "application/json; charset=utf-8"}
+    now = datetime.now()
+    body = {
+        "dateType": 1,
+        "startDatetime": (now - timedelta(days=3)).strftime("%Y-%m-%dT00:00:00+0900"),
+        "endDatetime": now.strftime("%Y-%m-%dT23:59:59+0900"),
+        "PaginationRequestModel": {"requestRecordsAmount": 10, "requestPage": 1},
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.post(
+            "https://api.rms.rakuten.co.jp/es/2.0/order/searchOrder",
+            headers=headers,
+            content=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        )
+    return {"status": res.status_code, "body": res.json()}
+
+
 @router.post("/rms/test")
 async def test_rms_connection(db: Session = Depends(get_db)):
     """RMS API 接続テスト"""
