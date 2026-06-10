@@ -20,7 +20,7 @@ def _auth_header(service_secret: str, license_key: str) -> dict:
 async def fetch_sales_by_sku(
     service_secret: str,
     license_key: str,
-    days: int = 90,
+    days: int = 63,
 ) -> dict:
     """
     過去90日間の受注データを取得し、
@@ -127,9 +127,8 @@ async def fetch_sales_by_sku(
             elif d >= cutoff_prev:
                 prev += qty
 
-        # 在庫切れ日数 = 過去90日のうち注文が1件もない日数
-        days_with_orders = len(set(daily.keys()))
-        stockout_days = max(0, 90 - days_with_orders)
+        # 在庫切れ日数は在庫管理機能実装後に正確に計算（現在は0）
+        stockout_days = 0
 
         sku_sales[sku] = {
             "recent":       recent,

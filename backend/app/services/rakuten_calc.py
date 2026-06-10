@@ -33,12 +33,12 @@ def calc_rakuten_order(
     if s is None:
         s = RakutenCalcSettings()
 
-    # --- 有効販売日数（90日 - 在庫切れ日数）---
-    effective_days = max(1, 90 - (stockout_days_90 or 0))
+    # --- 有効販売日数（63日 - 在庫切れ日数）---
+    effective_days = max(1, 63 - (stockout_days_90 or 0))
 
     # --- 日販（在庫切れ期間を除いた実態ベース）---
     if (sales_90 or 0) > 0:
-        # 90日データがあればそちらを優先
+        # 63日データがあればそちらを優先（sales_90フィールドを流用）
         daily_avg = (sales_90 or 0) / effective_days
     elif (sales_30_recent or 0) > 0:
         # 90日データがなければ直近30日で代用
