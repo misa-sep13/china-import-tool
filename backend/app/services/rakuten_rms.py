@@ -20,7 +20,7 @@ def _auth_header(service_secret: str, license_key: str) -> dict:
 async def fetch_sales_by_sku(
     service_secret: str,
     license_key: str,
-    days: int = 63,
+    days: int = 62,
 ) -> dict:
     """
     過去90日間の受注データを取得し、
@@ -36,7 +36,7 @@ async def fetch_sales_by_sku(
     search_body = {
         "dateType": 1,
         "startDatetime": start_dt.strftime("%Y-%m-%dT00:00:00+0900"),
-        "endDatetime": now.strftime("%Y-%m-%dT23:59:59+0900"),
+        "endDatetime": now.strftime("%Y-%m-%dT00:00:00+0900"),
         "PaginationRequestModel": {
             "requestRecordsAmount": 1000,
             "requestPage": 1,
