@@ -40,7 +40,6 @@ async def fetch_sales_by_sku(
         "PaginationRequestModel": {
             "requestRecordsAmount": 1000,
             "requestPage": 1,
-            "SortModelList": [{"sortColumn": 2, "sortDirection": 1}],
         },
     }
 
@@ -128,7 +127,6 @@ async def test_connection(service_secret: str, license_key: str) -> dict:
         "PaginationRequestModel": {
             "requestRecordsAmount": 1,
             "requestPage": 1,
-            "SortModelList": [{"sortColumn": 2, "sortDirection": 1}],
         },
     }
     try:
