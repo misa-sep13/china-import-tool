@@ -4,12 +4,13 @@
 """
 import base64
 import json
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from typing import Optional
 import httpx
 
 
 RMS_BASE = "https://api.rms.rakuten.co.jp/es"
+BATCH_SIZE = 10  # getOrder の1回あたりの件数
 
 
 def _auth_header(service_secret: str, license_key: str) -> dict:
@@ -17,94 +18,15 @@ def _auth_header(service_secret: str, license_key: str) -> dict:
     return {"Authorization": f"ESA {token}"}
 
 
-async def _search_orders_in_range(
+async def _process_page(
     headers: dict,
-    start_dt: datetime,
-    end_dt: datetime,
-) -> list:
-    """指定期間の注文番号リストを全ページ取得（63日以内の制限あり）"""
-    order_numbers = []
-    page = 1
-
-    while True:
-        search_body = {
-            "dateType": 1,
-            "startDatetime": start_dt.strftime("%Y-%m-%dT00:00:00+0900"),
-            "endDatetime": end_dt.strftime("%Y-%m-%dT23:59:59+0900"),
-            "PaginationRequestModel": {
-                "requestRecordsAmount": 100,
-                "requestPage": page,
-            },
-        }
-        async with httpx.AsyncClient(timeout=30) as client:
-            res = await client.post(
-                f"{RMS_BASE}/2.0/order/searchOrder",
-                headers={**headers, "Content-Type": "application/json; charset=utf-8"},
-                content=json.dumps(search_body, ensure_ascii=False).encode("utf-8"),
-            )
-            if not res.is_success:
-                raise Exception(f"searchOrder HTTP {res.status_code}: {res.text}")
-            data = res.json()
-
-        raw_list = data.get("orderNumberList") or []
-        for item in raw_list:
-            if isinstance(item, str):
-                order_numbers.append(item)
-            elif isinstance(item, dict):
-                num = item.get("orderNumber") or item.get("order_number") or item.get("id")
-                if num:
-                    order_numbers.append(str(num))
-
-        pagination = data.get("PaginationResponseModel") or {}
-        total_pages = pagination.get("totalPages", 1)
-        if page >= total_pages:
-            break
-        page += 1
-
-    return order_numbers
-
-
-async def fetch_sales_by_sku(
-    service_secret: str,
-    license_key: str,
-    days: int = 90,
-) -> dict:
-    """
-    過去90日間の受注データを取得し、
-    SKUごとの販売数を {sku: {"recent": N, "prev": N, "total_90": N, "stockout_days": N}} 形式で返す
-    recent = 直近30日、prev = 31〜60日前、total_90 = 90日合計
-    stockout_days = 注文0件の日数（在庫切れ日数の近似）
-    楽天APIは63日以内制限のため、90日取得時は2回に分けてリクエストする
-    """
-    headers = _auth_header(service_secret, license_key)
-    now = datetime.now()
-
-    # 楽天APIは63日以内の制限があるため、60日ずつに分割してリクエスト
-    MAX_DAYS = 60
-    order_numbers = []
-    fetched_days = 0
-    while fetched_days < days:
-        chunk = min(MAX_DAYS, days - fetched_days)
-        chunk_end = now - timedelta(days=fetched_days)
-        chunk_start = now - timedelta(days=fetched_days + chunk)
-        numbers = await _search_orders_in_range(headers, chunk_start, chunk_end)
-        order_numbers.extend(numbers)
-        fetched_days += chunk
-
-    # 重複除去
-    order_numbers = list(dict.fromkeys(order_numbers))
-
-    if not order_numbers:
-        return {}
-
-    # 注文詳細を取得（最大100件ずつ）
-    # {sku: {date_str: qty}} で日別販売数を集計
-    sku_daily: dict[str, dict] = {}
-    cutoff_recent = now - timedelta(days=30)   # 直近30日の境界
-    cutoff_prev   = now - timedelta(days=60)   # 31〜60日の境界
-
-    for i in range(0, len(order_numbers), 10):
-        batch = order_numbers[i:i+10]
+    order_numbers: list,
+    sku_daily: dict,
+    now: datetime,
+) -> None:
+    """注文番号リストの詳細を取得してsku_dailyに集計（メモリ節約のため都度処理）"""
+    for i in range(0, len(order_numbers), BATCH_SIZE):
+        batch = order_numbers[i:i + BATCH_SIZE]
         detail_body = {"orderNumberList": batch}
         async with httpx.AsyncClient(timeout=30) as client:
             res = await client.post(
@@ -113,57 +35,117 @@ async def fetch_sales_by_sku(
                 content=json.dumps(detail_body, ensure_ascii=False).encode("utf-8"),
             )
             if not res.is_success:
-                # エラー内容をraiseせず次のバッチへ（部分取得を継続）
                 continue
             detail_data = res.json()
 
         for order in detail_data.get("orderModelList", []):
+            if order.get("orderProgress", 0) == 900:  # キャンセル除外
+                continue
             order_date_str = order.get("orderDatetime", "")
             try:
                 order_date = datetime.fromisoformat(order_date_str.replace("+0900", "+09:00"))
             except Exception:
                 order_date = now - timedelta(days=15)
 
-            # キャンセル除外
-            if order.get("orderProgress", 0) == 900:
-                continue
-
             day_key = order_date.strftime("%Y-%m-%d")
-
             for package in order.get("PackageModelList", []):
                 for item in package.get("ItemModelList", []):
                     sku = item.get("manageNumber", "") or item.get("itemNumber", "")
                     if not sku:
                         continue
                     qty = item.get("units", 1) or 1
-
                     if sku not in sku_daily:
                         sku_daily[sku] = {}
                     sku_daily[sku][day_key] = sku_daily[sku].get(day_key, 0) + qty
 
-    # 集計: recent(30日), prev(31〜60日), total_90, stockout_days
+
+async def fetch_sales_by_sku(
+    service_secret: str,
+    license_key: str,
+    days: int = 60,
+) -> dict:
+    """
+    過去N日間の受注データを取得し、SKUごとの販売数を返す。
+    楽天APIは63日以内の制限があるため60日ずつ分割してリクエストする。
+    注文番号は全件メモリに溜めず、ページ取得のたびに即時 getOrder 処理してメモリを節約する。
+    """
+    headers = _auth_header(service_secret, license_key)
+    now = datetime.now()
+    cutoff_recent = now - timedelta(days=30)
+    cutoff_prev   = now - timedelta(days=60)
+
+    sku_daily: dict[str, dict] = {}
+    seen_orders: set[str] = set()  # 重複注文番号の除去
+
+    MAX_DAYS = 60
+    fetched_days = 0
+    while fetched_days < days:
+        chunk = min(MAX_DAYS, days - fetched_days)
+        chunk_end   = now - timedelta(days=fetched_days)
+        chunk_start = now - timedelta(days=fetched_days + chunk)
+
+        # ページネーションで全ページ取得しながら都度getOrder処理
+        page = 1
+        while True:
+            search_body = {
+                "dateType": 1,
+                "startDatetime": chunk_start.strftime("%Y-%m-%dT00:00:00+0900"),
+                "endDatetime":   chunk_end.strftime("%Y-%m-%dT23:59:59+0900"),
+                "PaginationRequestModel": {
+                    "requestRecordsAmount": 100,
+                    "requestPage": page,
+                },
+            }
+            async with httpx.AsyncClient(timeout=30) as client:
+                res = await client.post(
+                    f"{RMS_BASE}/2.0/order/searchOrder",
+                    headers={**headers, "Content-Type": "application/json; charset=utf-8"},
+                    content=json.dumps(search_body, ensure_ascii=False).encode("utf-8"),
+                )
+                if not res.is_success:
+                    raise Exception(f"searchOrder HTTP {res.status_code}: {res.text}")
+                data = res.json()
+
+            raw_list = data.get("orderNumberList") or []
+            page_numbers = []
+            for item in raw_list:
+                num = item if isinstance(item, str) else (
+                    item.get("orderNumber") or item.get("order_number") or item.get("id") or ""
+                )
+                num = str(num)
+                if num and num not in seen_orders:
+                    seen_orders.add(num)
+                    page_numbers.append(num)
+
+            if page_numbers:
+                await _process_page(headers, page_numbers, sku_daily, now)
+
+            pagination = data.get("PaginationResponseModel") or {}
+            if page >= pagination.get("totalPages", 1):
+                break
+            page += 1
+
+        fetched_days += chunk
+
+    # 集計
     sku_sales: dict[str, dict] = {}
     for sku, daily in sku_daily.items():
-        recent = prev = total_90 = 0
+        recent = prev = total = 0
         for day_str, qty in daily.items():
             try:
                 d = datetime.strptime(day_str, "%Y-%m-%d")
             except Exception:
                 continue
-            total_90 += qty
+            total += qty
             if d >= cutoff_recent:
                 recent += qty
             elif d >= cutoff_prev:
                 prev += qty
-
-        # 在庫切れ日数は在庫管理機能実装後に正確に計算（現在は0）
-        stockout_days = 0
-
         sku_sales[sku] = {
-            "recent":       recent,
-            "prev":         prev,
-            "total_90":     total_90,
-            "stockout_days": stockout_days,
+            "recent": recent,
+            "prev": prev,
+            "total_90": total,
+            "stockout_days": 0,
         }
 
     return sku_sales
@@ -172,18 +154,13 @@ async def fetch_sales_by_sku(
 async def test_connection(service_secret: str, license_key: str) -> dict:
     """接続テスト - 注文検索APIで確認"""
     headers = _auth_header(service_secret, license_key)
-    # 直近1日の注文を1件だけ検索してAPIの疎通確認
-    from datetime import datetime, timedelta
     now = datetime.now()
     body = {
         "dateType": 1,
         "startDatetime": (now - timedelta(days=1)).strftime("%Y-%m-%dT00:00:00+0900"),
         "endDatetime": now.strftime("%Y-%m-%dT23:59:59+0900"),
         "orderProgressList": [100],
-        "PaginationRequestModel": {
-            "requestRecordsAmount": 1,
-            "requestPage": 1,
-        },
+        "PaginationRequestModel": {"requestRecordsAmount": 1, "requestPage": 1},
     }
     try:
         async with httpx.AsyncClient(timeout=15) as client:
