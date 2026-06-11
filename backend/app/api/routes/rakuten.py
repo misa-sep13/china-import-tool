@@ -726,7 +726,7 @@ async def test_rms_connection(db: Session = Depends(get_db)):
 
 @router.post("/rms/sync-prices")
 async def sync_prices_from_rms(db: Session = Depends(get_db)):
-    """RMS Item APIから商品の売価を取得してselling_priceを更新"""
+    """RMS Items Search APIから商品の売価を取得してselling_priceを更新"""
     import base64, httpx
     settings = _get_or_create_settings(db)
     if not settings.rms_service_secret or not settings.rms_license_key:
@@ -738,33 +738,61 @@ async def sync_prices_from_rms(db: Session = Depends(get_db)):
     headers = {"Authorization": f"ESA {token}"}
 
     products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
-    # rakuten_product_no（商品管理番号）でグルーピング
-    product_nos = list({p.rakuten_product_no for p in products if p.rakuten_product_no})
 
-    price_map = {}  # rakuten_product_no -> itemPrice
-    async with httpx.AsyncClient(timeout=30) as client:
-        for item_url in product_nos:
+    # skuをベースに商品管理番号を抽出（例: y133_blue → y133）
+    # rakuten_sku_idがある場合はそれがRMS上のバリエーションキー
+    # 商品管理番号でグルーピング（skuの_より前の部分、またはsku自体）
+    def get_manage_number(p):
+        if p.sku:
+            # y133_blue → y133 のようにアンダースコア前を取る
+            # ただしy132など単品はそのまま
+            parts = p.sku.rsplit('_', 1)
+            return parts[0] if len(parts) > 1 else p.sku
+        return None
+
+    manage_numbers = list({get_manage_number(p) for p in products if get_manage_number(p)})
+
+    # variants[sku].standardPrice をSKUごとに収集
+    # key: rakuten_sku_id or sku → price
+    sku_price_map = {}
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        offset = 0
+        limit = 100
+        while True:
             res = await client.get(
-                f"https://api.rms.rakuten.co.jp/es/2.0/item/get",
+                "https://api.rms.rakuten.co.jp/es/2.0/items/search",
                 headers=headers,
-                params={"itemUrl": item_url},
+                params={"limit": limit, "offset": offset},
             )
             if res.status_code != 200:
-                continue
+                break
             data = res.json()
-            item = data.get("itemGetResult", {}).get("item", {})
-            price = item.get("itemPrice")
-            if price is not None:
-                price_map[item_url] = float(price)
+            results = data.get("results", [])
+            if not results:
+                break
+            for entry in results:
+                item = entry.get("item", {})
+                variants = item.get("variants", {})
+                for variant_key, variant_data in variants.items():
+                    price = variant_data.get("standardPrice")
+                    if price is not None:
+                        sku_price_map[variant_key] = float(price)
+            total = data.get("numFound", 0)
+            offset += limit
+            if offset >= total:
+                break
 
     updated = 0
     for p in products:
-        if p.rakuten_product_no and p.rakuten_product_no in price_map:
-            p.selling_price = price_map[p.rakuten_product_no]
+        # rakuten_sku_id優先、なければskuで照合
+        key = p.rakuten_sku_id or p.sku or ""
+        if key and key in sku_price_map:
+            p.selling_price = sku_price_map[key]
             updated += 1
 
     db.commit()
-    return {"ok": True, "fetched_items": len(price_map), "updated_products": updated}
+    return {"ok": True, "fetched_variants": len(sku_price_map), "updated_products": updated}
 
 
 @router.post("/rms/sync")
