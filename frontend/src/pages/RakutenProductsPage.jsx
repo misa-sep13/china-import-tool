@@ -381,6 +381,50 @@ export default function RakutenProductsPage() {
   )
 }
 
+// 仕入れURL複数対応：改行区切りで複数URLを保持
+function BuyUrlLinks({ buyUrl }) {
+  const [open, setOpen] = useState(false)
+  if (!buyUrl) return null
+  const urls = buyUrl.split('\n').map(u => u.trim()).filter(Boolean)
+  if (urls.length === 1) {
+    return (
+      <a href={urls[0]} target="_blank" rel="noopener noreferrer"
+        style={{ color: '#3b82f6', textDecoration: 'underline', cursor: 'pointer' }}>
+        🔗
+      </a>
+    )
+  }
+  return (
+    <span style={{ position: 'relative' }}>
+      <span onClick={() => setOpen(o => !o)}
+        style={{ color: '#3b82f6', cursor: 'pointer', userSelect: 'none' }}>
+        🔗{urls.length}
+      </span>
+      {open && (
+        <div style={{
+          position: 'absolute', zIndex: 100, background: '#fff', border: '1px solid #d1d5db',
+          borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '6px 0',
+          left: 0, top: '100%', minWidth: 260, whiteSpace: 'nowrap'
+        }}>
+          {urls.map((url, i) => (
+            <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+              style={{ display: 'block', padding: '5px 12px', color: '#3b82f6', fontSize: 12,
+                textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis' }}
+              onMouseEnter={e => e.target.style.background='#f0f9ff'}
+              onMouseLeave={e => e.target.style.background='transparent'}>
+              URL {i + 1}: {url.replace('https://detail.1688.com/offer/', '').slice(0, 40)}...
+            </a>
+          ))}
+          <div onClick={() => setOpen(false)}
+            style={{ padding: '4px 12px', fontSize: 11, color: '#999', cursor: 'pointer', borderTop: '1px solid #f0f0f0' }}>
+            閉じる
+          </div>
+        </div>
+      )}
+    </span>
+  )
+}
+
 // 商品行コンポーネント
 function ProductRow({ p, commissionRate = 0.09, expanded, childCount, onToggle, onEdit, onDelete, isSingle, isChild, children }) {
   const rowBg = isChild ? '#f8faff' : '#ffffff'
@@ -401,7 +445,10 @@ function ProductRow({ p, commissionRate = 0.09, expanded, childCount, onToggle, 
           )}
         </td>
         <td style={{ padding: '10px 12px', minWidth: 140 }}>
-          <div style={{ color: '#1a1a2e', fontWeight: 500 }}>{p.name || '—'}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ color: '#1a1a2e', fontWeight: 500 }}>{p.name || '—'}</span>
+            <BuyUrlLinks buyUrl={p.buy_url} />
+          </div>
           {p.spec && <div style={{ color: '#888', fontSize: 11 }}>{p.spec}</div>}
         </td>
         <td style={{ padding: '10px 12px', width: 90, maxWidth: 90, overflow: 'hidden', fontSize: 12, color: '#475569' }}>
