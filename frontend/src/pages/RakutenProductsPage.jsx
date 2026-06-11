@@ -21,6 +21,8 @@ export default function RakutenProductsPage() {
   const [showComponents, setShowComponents] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importing, setImporting] = useState(false)
+  const [syncingPrices, setSyncingPrices] = useState(false)
+  const [syncPriceResult, setSyncPriceResult] = useState(null)
   const [compTab, setCompTab] = useState({})  // {id: bool} セット構成展開
   const fileRef = useRef(null)
 
@@ -61,6 +63,21 @@ export default function RakutenProductsPage() {
     value: form[k] ?? '',
     onChange: e => setForm(prev => ({ ...prev, [k]: type === 'number' ? Number(e.target.value) : e.target.value }))
   })
+
+  const handleSyncPrices = async () => {
+    if (!window.confirm('RMS APIから売価を取得して更新します。よろしいですか？')) return
+    setSyncingPrices(true)
+    setSyncPriceResult(null)
+    try {
+      const res = await api.post('/rakuten/rms/sync-prices')
+      setSyncPriceResult(res.data)
+      qc.invalidateQueries(['rakuten-products'])
+    } catch (err) {
+      setSyncPriceResult({ error: err.response?.data?.detail || '売価同期エラーが発生しました' })
+    } finally {
+      setSyncingPrices(false)
+    }
+  }
 
   const handleImport = async (e) => {
     const file = e.target.files?.[0]
@@ -136,6 +153,14 @@ export default function RakutenProductsPage() {
         <a href={`${BASE_URL}/rakuten/products/csv/export`} download className="btn" style={{ fontSize: 13, textDecoration: 'none' }}>
           📊 CSV書き出し
         </a>
+        <button className="btn" style={{ fontSize: 13 }} onClick={handleSyncPrices} disabled={syncingPrices}>
+          {syncingPrices ? '取得中...' : '💰 売価同期(RMS)'}
+        </button>
+        {syncPriceResult && (
+          <span style={{ fontSize: 12, color: syncPriceResult.error ? '#e53e3e' : '#38a169' }}>
+            {syncPriceResult.error || `${syncPriceResult.updated_products}件更新`}
+          </span>
+        )}
       </div>
 
       {importResult && (

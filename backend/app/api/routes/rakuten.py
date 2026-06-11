@@ -724,6 +724,49 @@ async def test_rms_connection(db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@router.post("/rms/sync-prices")
+async def sync_prices_from_rms(db: Session = Depends(get_db)):
+    """RMS Item APIから商品の売価を取得してselling_priceを更新"""
+    import base64, httpx
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません。")
+
+    token = base64.b64encode(
+        f"{settings.rms_service_secret}:{settings.rms_license_key}".encode()
+    ).decode()
+    headers = {"Authorization": f"ESA {token}"}
+
+    products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    # rakuten_product_no（商品管理番号）でグルーピング
+    product_nos = list({p.rakuten_product_no for p in products if p.rakuten_product_no})
+
+    price_map = {}  # rakuten_product_no -> itemPrice
+    async with httpx.AsyncClient(timeout=30) as client:
+        for item_url in product_nos:
+            res = await client.get(
+                f"https://api.rms.rakuten.co.jp/es/2.0/item/get",
+                headers=headers,
+                params={"itemUrl": item_url},
+            )
+            if res.status_code != 200:
+                continue
+            data = res.json()
+            item = data.get("itemGetResult", {}).get("item", {})
+            price = item.get("itemPrice")
+            if price is not None:
+                price_map[item_url] = float(price)
+
+    updated = 0
+    for p in products:
+        if p.rakuten_product_no and p.rakuten_product_no in price_map:
+            p.selling_price = price_map[p.rakuten_product_no]
+            updated += 1
+
+    db.commit()
+    return {"ok": True, "fetched_items": len(price_map), "updated_products": updated}
+
+
 @router.post("/rms/sync")
 async def sync_sales_from_rms(db: Session = Depends(get_db)):
     """楽天RMS APIから受注データを取得し、バリエーション別30日販売数を更新"""
