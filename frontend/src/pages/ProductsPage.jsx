@@ -23,6 +23,7 @@ export default function ProductsPage() {
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(EMPTY)
   const [error, setError] = useState('')
+  const [search, setSearch] = useState('')
   const [inlineEdit, setInlineEdit] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [hoveredImg, setHoveredImg] = useState(null) // { url, x, y }
@@ -117,6 +118,15 @@ export default function ProductsPage() {
     if (e.key === 'Escape') setInlineEdit(null)
   }
 
+  const toHalf = (s) => (s || '').replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+  const normalize = (s) => toHalf(s).toLowerCase()
+  const filteredProducts = products.filter(p => {
+    if (!search) return true
+    const q = normalize(search)
+    return normalize(p.sku).includes(q) || normalize(p.name).includes(q) ||
+      (p.asin || '').toLowerCase().includes(q) || normalize(p.fnsku).includes(q)
+  })
+
   // 最終更新日時（全商品で最新のもの）
   const lastUpdated = products
     .map(p => p.fees_updated_at)
@@ -168,7 +178,18 @@ export default function ProductsPage() {
         </span>
       </div>
 
-      {products.length === 0 ? (
+      <div style={{ margin: '12px 0' }}>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="SKU・商品名・ASIN・FNSKUで絞り込み"
+          style={{ padding: '8px 12px', width: 320, border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14 }}
+        />
+        {search && <span style={{ marginLeft: 10, color: '#888', fontSize: 13 }}>{filteredProducts.length}件</span>}
+      </div>
+
+      {filteredProducts.length === 0 ? (
         <div className="card empty-state">
           <div style={{ fontSize: 40 }}>🏷️</div>
           <p>商品が登録されていません。「＋ 商品を追加」から登録してください。</p>
@@ -194,7 +215,7 @@ export default function ProductsPage() {
                 </tr>
               </thead>
               <tbody>
-                {products.map(p => {
+                {filteredProducts.map(p => {
                   const profit = calcProfit(p)
                   return (
                     <tr key={p.id}>
