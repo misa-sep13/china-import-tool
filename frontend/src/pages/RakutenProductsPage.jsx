@@ -435,21 +435,11 @@ function BuyUrlLinks({ buyUrl, name }) {
   }
 
   return (
-    <div>
-      <span
-        onClick={openAll}
-        style={{ color: '#1a1a2e', fontWeight: 500, cursor: 'pointer', borderBottom: '1px dashed #94a3b8' }}>
-        {name}
-      </span>
-      <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
-        {urls.map((url, i) => (
-          <a key={i} href={url} target="_blank" rel="noreferrer"
-            style={{ fontSize: 11, color: '#3b82f6', textDecoration: 'none', borderBottom: '1px solid #93c5fd' }}>
-            URL{i + 1}
-          </a>
-        ))}
-      </div>
-    </div>
+    <span
+      onClick={openAll}
+      style={{ color: '#1a1a2e', fontWeight: 500, cursor: 'pointer', borderBottom: '1px dashed #94a3b8' }}>
+      {name}
+    </span>
   )
 }
 
