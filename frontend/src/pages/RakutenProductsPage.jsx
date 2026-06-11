@@ -400,8 +400,10 @@ function ProductRow({ p, commissionRate = 0.09, expanded, childCount, onToggle, 
           <div style={{ color: '#1a1a2e', fontWeight: 500 }}>{p.name || '—'}</div>
           {p.spec && <div style={{ color: '#888', fontSize: 11 }}>{p.spec}</div>}
         </td>
-        <td style={{ padding: '10px 12px', maxWidth: 140, fontSize: 12, color: '#475569' }}>
-          {p.customer_memo ? <span style={{ whiteSpace: 'pre-wrap' }}>{p.customer_memo}</span> : '—'}
+        <td style={{ padding: '10px 12px', maxWidth: 100, fontSize: 12, color: '#475569' }}>
+          {p.customer_memo
+            ? <span title={p.customer_memo} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'default' }}>{p.customer_memo}</span>
+            : '—'}
         </td>
         <td style={{ padding: '10px 12px', textAlign: 'right', color: '#1a1a2e' }}>
           {p.cost_jpy != null ? `¥${p.cost_jpy.toLocaleString()}` : '—'}
@@ -418,8 +420,10 @@ function ProductRow({ p, commissionRate = 0.09, expanded, childCount, onToggle, 
         <td style={{ padding: '10px 12px', textAlign: 'right', color: profitRate != null ? (profitRate >= 0.15 ? '#16a34a' : profitRate >= 0 ? '#ca8a04' : '#dc2626') : '#999' }}>
           {profitRate != null ? `${(profitRate * 100).toFixed(1)}%` : '—'}
         </td>
-        <td style={{ padding: '10px 12px', maxWidth: 120, fontSize: 12, color: '#475569' }}>
-          {p.notes || '—'}
+        <td style={{ padding: '10px 12px', maxWidth: 100, fontSize: 12, color: '#475569' }}>
+          {p.notes
+            ? <span title={p.notes} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'default' }}>{p.notes}</span>
+            : '—'}
         </td>
         <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
