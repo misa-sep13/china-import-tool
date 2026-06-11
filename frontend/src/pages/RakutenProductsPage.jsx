@@ -69,9 +69,18 @@ export default function RakutenProductsPage() {
     setSyncingPrices(true)
     setSyncPriceResult(null)
     try {
-      const res = await api.post('/rakuten/rms/sync-prices')
-      setSyncPriceResult(res.data)
-      qc.invalidateQueries(['rakuten-products'])
+      await api.post('/rakuten/rms/sync-prices')
+      // バックグラウンド処理なのでポーリングで完了を待つ
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, 2000))
+        const status = await api.get('/rakuten/rms/sync-prices/status')
+        if (!status.data.running && status.data.result) {
+          setSyncPriceResult(status.data.result)
+          qc.invalidateQueries(['rakuten-products'])
+          return
+        }
+      }
+      setSyncPriceResult({ error: 'タイムアウト：/status で後ほど確認してください' })
     } catch (err) {
       setSyncPriceResult({ error: err.response?.data?.detail || '売価同期エラーが発生しました' })
     } finally {

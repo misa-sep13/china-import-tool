@@ -724,75 +724,90 @@ async def test_rms_connection(db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+_price_sync_status = {"running": False, "result": None}
+
+@router.get("/rms/sync-prices/status")
+def get_price_sync_status():
+    return _price_sync_status
+
 @router.post("/rms/sync-prices")
-async def sync_prices_from_rms(db: Session = Depends(get_db)):
-    """RMS Items Search APIから商品の売価を取得してselling_priceを更新"""
-    import base64, httpx
+async def sync_prices_from_rms(background_tasks, db: Session = Depends(get_db)):
+    """RMS Items Search APIから商品の売価をバックグラウンドで取得"""
+    from fastapi import BackgroundTasks
+    import base64, httpx, asyncio
     settings = _get_or_create_settings(db)
     if not settings.rms_service_secret or not settings.rms_license_key:
         raise HTTPException(400, "RMS APIキーが設定されていません。")
+
+    if _price_sync_status["running"]:
+        return {"ok": True, "message": "同期中です。しばらくお待ちください。", **_price_sync_status}
 
     token = base64.b64encode(
         f"{settings.rms_service_secret}:{settings.rms_license_key}".encode()
     ).decode()
     headers = {"Authorization": f"ESA {token}"}
-
     products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    product_data = [(p.id, p.rakuten_sku_id or p.sku or "") for p in products]
 
-    # skuをベースに商品管理番号を抽出（例: y133_blue → y133）
-    # rakuten_sku_idがある場合はそれがRMS上のバリエーションキー
-    # 商品管理番号でグルーピング（skuの_より前の部分、またはsku自体）
-    def get_manage_number(p):
-        if p.sku:
-            # y133_blue → y133 のようにアンダースコア前を取る
-            # ただしy132など単品はそのまま
-            parts = p.sku.rsplit('_', 1)
-            return parts[0] if len(parts) > 1 else p.sku
-        return None
+    from app.core.database import SessionLocal
 
-    manage_numbers = list({get_manage_number(p) for p in products if get_manage_number(p)})
+    async def do_sync():
+        _price_sync_status["running"] = True
+        _price_sync_status["result"] = None
+        sku_price_map = {}
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                offset = 0
+                retry = 0
+                while True:
+                    res = await client.get(
+                        "https://api.rms.rakuten.co.jp/es/2.0/items/search",
+                        headers=headers,
+                        params={"offset": offset},
+                    )
+                    if res.status_code == 429:
+                        if retry >= 5:
+                            break
+                        await asyncio.sleep(2 ** retry)
+                        retry += 1
+                        continue
+                    if res.status_code != 200:
+                        break
+                    retry = 0
+                    data = res.json()
+                    results = data.get("results", [])
+                    if not results:
+                        break
+                    for entry in results:
+                        item = entry.get("item", {})
+                        for variant_key, variant_data in item.get("variants", {}).items():
+                            price = variant_data.get("standardPrice")
+                            if price is not None:
+                                sku_price_map[variant_key] = float(price)
+                    total = data.get("numFound", 0)
+                    offset += len(results)
+                    if offset >= total:
+                        break
+                    await asyncio.sleep(0.3)
 
-    # variants[sku].standardPrice をSKUごとに収集
-    # key: rakuten_sku_id or sku → price
-    sku_price_map = {}
+            updated = 0
+            with SessionLocal() as session:
+                for pid, key in product_data:
+                    if key and key in sku_price_map:
+                        p = session.query(RakutenProduct).filter(RakutenProduct.id == pid).first()
+                        if p:
+                            p.selling_price = sku_price_map[key]
+                            updated += 1
+                session.commit()
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        offset = 0
-        limit = 100
-        while True:
-            res = await client.get(
-                "https://api.rms.rakuten.co.jp/es/2.0/items/search",
-                headers=headers,
-                params={"limit": limit, "offset": offset},
-            )
-            if res.status_code != 200:
-                break
-            data = res.json()
-            results = data.get("results", [])
-            if not results:
-                break
-            for entry in results:
-                item = entry.get("item", {})
-                variants = item.get("variants", {})
-                for variant_key, variant_data in variants.items():
-                    price = variant_data.get("standardPrice")
-                    if price is not None:
-                        sku_price_map[variant_key] = float(price)
-            total = data.get("numFound", 0)
-            offset += limit
-            if offset >= total:
-                break
+            _price_sync_status["result"] = {"ok": True, "fetched_variants": len(sku_price_map), "updated_products": updated}
+        except Exception as e:
+            _price_sync_status["result"] = {"ok": False, "error": str(e)}
+        finally:
+            _price_sync_status["running"] = False
 
-    updated = 0
-    for p in products:
-        # rakuten_sku_id優先、なければskuで照合
-        key = p.rakuten_sku_id or p.sku or ""
-        if key and key in sku_price_map:
-            p.selling_price = sku_price_map[key]
-            updated += 1
-
-    db.commit()
-    return {"ok": True, "fetched_variants": len(sku_price_map), "updated_products": updated}
+    asyncio.create_task(do_sync())
+    return {"ok": True, "message": "バックグラウンドで売価取得を開始しました。/status で進捗確認できます。"}
 
 
 @router.post("/rms/sync")
