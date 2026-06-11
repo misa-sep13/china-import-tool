@@ -389,13 +389,19 @@ function BuyUrlLinks({ buyUrl, name }) {
     return <span style={{ color: '#1a1a2e', fontWeight: 500 }}>{name}</span>
   }
 
-  const openAll = () => urls.forEach(url => window.open(url, '_blank'))
-
   return (
-    <span onClick={openAll}
-      style={{ color: '#1a1a2e', fontWeight: 500, borderBottom: '1px dashed #94a3b8', cursor: 'pointer', userSelect: 'none' }}>
-      {name}
-    </span>
+    <div>
+      <span style={{ color: '#1a1a2e', fontWeight: 500 }}>{name}</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
+        {urls.map((url, i) => (
+          <a key={i} href={url} target="_blank" rel="noreferrer"
+            style={{ fontSize: 11, color: '#3b82f6', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 200 }}
+            title={url}>
+            🔗 URL{urls.length > 1 ? i + 1 : ''}
+          </a>
+        ))}
+      </div>
+    </div>
   )
 }
 
