@@ -101,13 +101,17 @@ export default function RakutenProductsPage() {
       catch { return false }
     })
 
+  const toHalf = (s) => s.replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+  const normalize = (s) => toHalf(s || '').toLowerCase()
+
   const searchMatch = (p) => {
     if (!search) return true
+    const q = normalize(search)
     return (
-      (p.sku || '').toLowerCase().includes(search.toLowerCase()) ||
-      (p.name || '').toLowerCase().includes(search.toLowerCase()) ||
+      normalize(p.sku).includes(q) ||
+      normalize(p.name).includes(q) ||
       (p.jan_code || '').includes(search) ||
-      (p.rakuten_sku_id || '').includes(search)
+      normalize(p.rakuten_sku_id).includes(q)
     )
   }
 
