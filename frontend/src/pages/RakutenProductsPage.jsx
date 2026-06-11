@@ -383,45 +383,17 @@ export default function RakutenProductsPage() {
 
 // 仕入れURL複数対応：改行区切りで複数URLを保持。nameをクリッカブルにする
 function BuyUrlLinks({ buyUrl, name }) {
-  const [open, setOpen] = useState(false)
   const urls = (buyUrl || '').split('\n').map(u => u.trim()).filter(Boolean)
 
   if (urls.length === 0) {
     return <span style={{ color: '#1a1a2e', fontWeight: 500 }}>{name}</span>
   }
-  if (urls.length === 1) {
-    return (
-      <a href={urls[0]} target="_blank" rel="noopener noreferrer"
-        style={{ color: '#1a1a2e', fontWeight: 500, textDecoration: 'none', borderBottom: '1px dashed #94a3b8', cursor: 'pointer' }}>
-        {name}
-      </a>
-    )
-  }
+  const openAll = () => urls.forEach(url => window.open(url, '_blank', 'noopener,noreferrer'))
+
   return (
-    <span style={{ position: 'relative' }}>
-      <span onClick={() => setOpen(o => !o)}
-        style={{ color: '#1a1a2e', fontWeight: 500, borderBottom: '1px dashed #94a3b8', cursor: 'pointer', userSelect: 'none' }}>
-        {name}
-      </span>
-      {open && (
-        <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 99 }} onClick={() => setOpen(false)} />
-          <div style={{
-            position: 'absolute', zIndex: 100, background: '#fff', border: '1px solid #d1d5db',
-            borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '6px 0',
-            left: 0, top: '100%', minWidth: 280
-          }}>
-            {urls.map((url, i) => (
-              <a key={i} href={url} target="_blank" rel="noopener noreferrer"
-                style={{ display: 'block', padding: '6px 12px', color: '#3b82f6', fontSize: 12, textDecoration: 'none' }}
-                onMouseEnter={e => e.currentTarget.style.background='#f0f9ff'}
-                onMouseLeave={e => e.currentTarget.style.background='transparent'}>
-                URL {i + 1}
-              </a>
-            ))}
-          </div>
-        </>
-      )}
+    <span onClick={openAll}
+      style={{ color: '#1a1a2e', fontWeight: 500, borderBottom: '1px dashed #94a3b8', cursor: 'pointer', userSelect: 'none' }}>
+      {name}
     </span>
   )
 }
