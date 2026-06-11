@@ -13,6 +13,7 @@ class Product(Base):
     name = Column(String)
     amazon_url = Column(String)
     buy_url = Column(String)        # 仕入れURL（1688/TAOBao）
+    supplier = Column(String, default="タオタロウ")  # 仕入先
     photo_url = Column(String)
     color = Column(String)
     size = Column(String)

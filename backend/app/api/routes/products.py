@@ -15,6 +15,7 @@ class ProductCreate(BaseModel):
     name: Optional[str] = ""
     amazon_url: Optional[str] = ""
     buy_url: Optional[str] = ""
+    supplier: Optional[str] = "タオタロウ"
     photo_url: Optional[str] = ""
     color: Optional[str] = ""
     size: Optional[str] = ""
@@ -34,6 +35,7 @@ class ProductUpdate(BaseModel):
     name: Optional[str] = None
     amazon_url: Optional[str] = None
     buy_url: Optional[str] = None
+    supplier: Optional[str] = None
     photo_url: Optional[str] = None
     color: Optional[str] = None
     size: Optional[str] = None
