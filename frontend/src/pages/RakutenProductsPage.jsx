@@ -179,8 +179,12 @@ export default function RakutenProductsPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-              {['SKU管理番号', '商品名 / 仕様', 'お客様専用メモ', '仕入原価(円)', '販売価格(円)', '手数料率', '利益額', '利益率', '備考', '操作'].map(h => (
-                <th key={h} style={{ padding: '10px 12px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700 }}>{h}</th>
+              {[
+                ['SKU管理番号', null], ['商品名 / 仕様', null], ['お客様専用メモ', 90],
+                ['仕入原価(円)', null], ['販売価格(円)', null], ['手数料率', null],
+                ['利益額', null], ['利益率', null], ['備考', 90], ['操作', null]
+              ].map(([h, w]) => (
+                <th key={h} style={{ padding: '10px 12px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700, ...(w ? { width: w, maxWidth: w } : {}) }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -400,7 +404,7 @@ function ProductRow({ p, commissionRate = 0.09, expanded, childCount, onToggle, 
           <div style={{ color: '#1a1a2e', fontWeight: 500 }}>{p.name || '—'}</div>
           {p.spec && <div style={{ color: '#888', fontSize: 11 }}>{p.spec}</div>}
         </td>
-        <td style={{ padding: '10px 12px', maxWidth: 100, fontSize: 12, color: '#475569' }}>
+        <td style={{ padding: '10px 12px', width: 90, maxWidth: 90, overflow: 'hidden', fontSize: 12, color: '#475569' }}>
           {p.customer_memo
             ? <span title={p.customer_memo} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'default' }}>{p.customer_memo}</span>
             : '—'}
@@ -420,7 +424,7 @@ function ProductRow({ p, commissionRate = 0.09, expanded, childCount, onToggle, 
         <td style={{ padding: '10px 12px', textAlign: 'right', color: profitRate != null ? (profitRate >= 0.15 ? '#16a34a' : profitRate >= 0 ? '#ca8a04' : '#dc2626') : '#999' }}>
           {profitRate != null ? `${(profitRate * 100).toFixed(1)}%` : '—'}
         </td>
-        <td style={{ padding: '10px 12px', maxWidth: 100, fontSize: 12, color: '#475569' }}>
+        <td style={{ padding: '10px 12px', width: 90, maxWidth: 90, overflow: 'hidden', fontSize: 12, color: '#475569' }}>
           {p.notes
             ? <span title={p.notes} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'default' }}>{p.notes}</span>
             : '—'}
