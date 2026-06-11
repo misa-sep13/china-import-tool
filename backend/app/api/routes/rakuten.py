@@ -790,7 +790,8 @@ async def sync_prices_from_rms(db: Session = Depends(get_db)):
                     await asyncio.sleep(0.3)
 
             updated = 0
-            with SessionLocal() as session:
+            session = SessionLocal()
+            try:
                 for pid, key in product_data:
                     if key and key in sku_price_map:
                         p = session.query(RakutenProduct).filter(RakutenProduct.id == pid).first()
@@ -798,6 +799,8 @@ async def sync_prices_from_rms(db: Session = Depends(get_db)):
                             p.selling_price = sku_price_map[key]
                             updated += 1
                 session.commit()
+            finally:
+                session.close()
 
             _price_sync_status["result"] = {"ok": True, "fetched_variants": len(sku_price_map), "updated_products": updated}
         except Exception as e:
