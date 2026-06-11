@@ -731,9 +731,8 @@ def get_price_sync_status():
     return _price_sync_status
 
 @router.post("/rms/sync-prices")
-async def sync_prices_from_rms(background_tasks, db: Session = Depends(get_db)):
+async def sync_prices_from_rms(db: Session = Depends(get_db)):
     """RMS Items Search APIから商品の売価をバックグラウンドで取得"""
-    from fastapi import BackgroundTasks
     import base64, httpx, asyncio
     settings = _get_or_create_settings(db)
     if not settings.rms_service_secret or not settings.rms_license_key:
