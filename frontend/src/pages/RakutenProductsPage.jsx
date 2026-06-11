@@ -272,8 +272,8 @@ export default function RakutenProductsPage() {
                 <input {...f('supplier')} placeholder="例: タオタロウ" />
               </div>
               <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                <label>仕入れURL（タオタロウ発注URL）</label>
-                <input {...f('buy_url')} placeholder="https://..." />
+                <label>仕入れURL（複数ある場合は1行に1URL）</label>
+                <textarea {...f('buy_url')} placeholder="https://..." rows={3} style={{ fontFamily: 'monospace', fontSize: 12 }} />
               </div>
               <div className="form-group">
                 <label>仕入れ値（元）</label>
@@ -381,45 +381,46 @@ export default function RakutenProductsPage() {
   )
 }
 
-// 仕入れURL複数対応：改行区切りで複数URLを保持
-function BuyUrlLinks({ buyUrl }) {
+// 仕入れURL複数対応：改行区切りで複数URLを保持。nameをクリッカブルにする
+function BuyUrlLinks({ buyUrl, name }) {
   const [open, setOpen] = useState(false)
-  if (!buyUrl) return null
-  const urls = buyUrl.split('\n').map(u => u.trim()).filter(Boolean)
+  const urls = (buyUrl || '').split('\n').map(u => u.trim()).filter(Boolean)
+
+  if (urls.length === 0) {
+    return <span style={{ color: '#1a1a2e', fontWeight: 500 }}>{name}</span>
+  }
   if (urls.length === 1) {
     return (
       <a href={urls[0]} target="_blank" rel="noopener noreferrer"
-        style={{ color: '#3b82f6', textDecoration: 'underline', cursor: 'pointer' }}>
-        🔗
+        style={{ color: '#1a1a2e', fontWeight: 500, textDecoration: 'none', borderBottom: '1px dashed #94a3b8', cursor: 'pointer' }}>
+        {name}
       </a>
     )
   }
   return (
     <span style={{ position: 'relative' }}>
       <span onClick={() => setOpen(o => !o)}
-        style={{ color: '#3b82f6', cursor: 'pointer', userSelect: 'none' }}>
-        🔗{urls.length}
+        style={{ color: '#1a1a2e', fontWeight: 500, borderBottom: '1px dashed #94a3b8', cursor: 'pointer', userSelect: 'none' }}>
+        {name}
       </span>
       {open && (
-        <div style={{
-          position: 'absolute', zIndex: 100, background: '#fff', border: '1px solid #d1d5db',
-          borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '6px 0',
-          left: 0, top: '100%', minWidth: 260, whiteSpace: 'nowrap'
-        }}>
-          {urls.map((url, i) => (
-            <a key={i} href={url} target="_blank" rel="noopener noreferrer"
-              style={{ display: 'block', padding: '5px 12px', color: '#3b82f6', fontSize: 12,
-                textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis' }}
-              onMouseEnter={e => e.target.style.background='#f0f9ff'}
-              onMouseLeave={e => e.target.style.background='transparent'}>
-              URL {i + 1}: {url.replace('https://detail.1688.com/offer/', '').slice(0, 40)}...
-            </a>
-          ))}
-          <div onClick={() => setOpen(false)}
-            style={{ padding: '4px 12px', fontSize: 11, color: '#999', cursor: 'pointer', borderTop: '1px solid #f0f0f0' }}>
-            閉じる
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 99 }} onClick={() => setOpen(false)} />
+          <div style={{
+            position: 'absolute', zIndex: 100, background: '#fff', border: '1px solid #d1d5db',
+            borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '6px 0',
+            left: 0, top: '100%', minWidth: 280
+          }}>
+            {urls.map((url, i) => (
+              <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                style={{ display: 'block', padding: '6px 12px', color: '#3b82f6', fontSize: 12, textDecoration: 'none' }}
+                onMouseEnter={e => e.currentTarget.style.background='#f0f9ff'}
+                onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                URL {i + 1}
+              </a>
+            ))}
           </div>
-        </div>
+        </>
       )}
     </span>
   )
@@ -445,10 +446,7 @@ function ProductRow({ p, commissionRate = 0.09, expanded, childCount, onToggle, 
           )}
         </td>
         <td style={{ padding: '10px 12px', minWidth: 140 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ color: '#1a1a2e', fontWeight: 500 }}>{p.name || '—'}</span>
-            <BuyUrlLinks buyUrl={p.buy_url} />
-          </div>
+          <BuyUrlLinks buyUrl={p.buy_url} name={p.name || '—'} />
           {p.spec && <div style={{ color: '#888', fontSize: 11 }}>{p.spec}</div>}
         </td>
         <td style={{ padding: '10px 12px', width: 90, maxWidth: 90, overflow: 'hidden', fontSize: 12, color: '#475569' }}>
