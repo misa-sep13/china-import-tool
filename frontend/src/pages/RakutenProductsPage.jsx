@@ -203,8 +203,7 @@ export default function RakutenProductsPage() {
           style={{ width: '100%', maxWidth: 420 }}
         />
         <span style={{ fontSize: 12, color: '#6b7280' }}>
-          単品 {filteredSingles.length}件 / その他 {filteredStandalone.length}件
-          {sets.length > 0 && ` / バリエーション ${sets.length}件（単品から展開）`}
+          {filteredStandalone.length}件表示
         </span>
       </div>
 
@@ -223,40 +222,9 @@ export default function RakutenProductsPage() {
             </tr>
           </thead>
           <tbody>
-            {filteredSingles.length === 0 && filteredStandalone.length === 0 && (
+            {filteredStandalone.length === 0 && (
               <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
             )}
-
-            {/* ① 単品（親） → クリックでバリエーション展開 */}
-            {filteredSingles.map(p => {
-              const expanded = !!compTab[p.id]
-              const children = getSetsForSingle(p.sku)
-              return (
-                <ProductRow
-                  key={p.id}
-                  p={p}
-                  commissionRate={commissionRate}
-                  expanded={expanded}
-                  childCount={children.length}
-                  onToggle={() => setCompTab(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
-                  onEdit={openEdit}
-                  onDelete={(p) => { if (confirm(`${p.name || p.sku} を削除しますか？`)) deleteMutation.mutate(p.id) }}
-                  isSingle={true}
-                >
-                  {/* バリエーション子行 */}
-                  {expanded && children.map(child => (
-                    <ProductRow
-                      key={child.id}
-                      p={child}
-                      commissionRate={commissionRate}
-                      onEdit={openEdit}
-                      onDelete={(p) => { if (confirm(`${p.name || p.sku} を削除しますか？`)) deleteMutation.mutate(p.id) }}
-                      isChild={true}
-                    />
-                  ))}
-                </ProductRow>
-              )
-            })}
 
             {/* ② スタンドアロン商品（セット構成なし・単品フラグなし） */}
             {filteredStandalone.map(p => (
