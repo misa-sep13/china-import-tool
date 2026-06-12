@@ -174,6 +174,24 @@ def update_product(product_id: int, data: RakutenProductIn, db: Session = Depend
     db.refresh(p)
     return p
 
+@router.post("/products/bulk-set-components")
+def bulk_set_components(body: dict, db: Session = Depends(get_db)):
+    """SKUをキー、set_componentsをJSONとして受け取り一括更新"""
+    # body: {"updates": [{"sku": "y76_b-b", "set_components": "[...]"}, ...]}
+    updates = body.get("updates", [])
+    ok = 0
+    for item in updates:
+        sku = item.get("sku")
+        comps = item.get("set_components")
+        if not sku or comps is None:
+            continue
+        p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku, RakutenProduct.is_active == True).first()
+        if p:
+            p.set_components = comps
+            ok += 1
+    db.commit()
+    return {"updated": ok}
+
 @router.delete("/products/{product_id}")
 def delete_product(product_id: int, db: Session = Depends(get_db)):
     p = db.query(RakutenProduct).filter(RakutenProduct.id == product_id).first()
@@ -476,6 +494,8 @@ def export_products_csv(db: Session = Depends(get_db)):
             getattr(p, 'customer_memo', '') or "",
             getattr(p, 'notes', '') or "",
             p.memo or "",
+            p.set_components or "",
+            "TRUE" if p.is_component else "FALSE",
         ])
     output.seek(0)
     content = "﻿" + output.getvalue()
