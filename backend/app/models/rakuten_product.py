@@ -29,6 +29,7 @@ class RakutenProduct(Base):
     sales_updated_at = Column(DateTime, nullable=True)
     cost_jpy         = Column(Float)             # 仕入原価（円）
     selling_price    = Column(Float)             # 販売価格（円）
+    shipping_fee     = Column(Integer, default=180)  # 送料（円）デフォルト:ネコポス180円
     # メモ
     customer_memo = Column(Text)                # お客様専用メモ（TAO太郎G列）
     notes         = Column(Text)                # 備考（TAO太郎H列）

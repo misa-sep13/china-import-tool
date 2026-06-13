@@ -66,6 +66,7 @@ export default function RakutenStockPage() {
     setEditingId(p.id)
     setEditVals({
       selling_price: p.selling_price ?? '',
+      shipping_fee: p.shipping_fee ?? 180,
       stock: p.stock ?? 0,
       inbound: p.inbound ?? 0,
       standard_stock: p.standard_stock ?? 0,
@@ -79,6 +80,7 @@ export default function RakutenStockPage() {
     api.put(`/rakuten/products/${p.id}`, {
       ...p,
       selling_price: sp,
+      shipping_fee: Number(editVals.shipping_fee),
       stock: Number(editVals.stock),
       inbound: Number(editVals.inbound),
       standard_stock: Number(editVals.standard_stock),
@@ -118,21 +120,22 @@ export default function RakutenStockPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-              {['SKU', '商品名', '仕様', 'お客様専用メモ', '仕入原価(元)', '販売価格(円)', '手数料', '利益額', '利益率', '実在庫', '輸送中', '規定在庫', '直近30日', '前30日', '備考', ''].map(h => (
+              {['SKU', '商品名', '仕様', 'お客様専用メモ', '仕入原価(元)', '販売価格(円)', '送料', '手数料', '利益額', '利益率', '実在庫', '輸送中', '規定在庫', '直近30日', '前30日', '備考', ''].map(h => (
                 <th key={h} style={{ padding: '10px 10px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700, fontSize: 12 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={16} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
+              <tr><td colSpan={17} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
             )}
             {filtered.map(p => {
               const isEditing = editingId === p.id
               const sp = isEditing ? (editVals.selling_price !== '' ? Number(editVals.selling_price) : null) : p.selling_price
+              const shippingFee = isEditing ? Number(editVals.shipping_fee ?? 180) : (p.shipping_fee ?? 180)
               const commission = sp ? Math.round(sp * commissionRate) : null
               const cost = p.cost_jpy || 0
-              const profit = (sp && commission !== null) ? Math.round(sp - cost - commission) : null
+              const profit = (sp && commission !== null) ? Math.round(sp - cost - commission - shippingFee) : null
               const profitRate = (sp && profit !== null) ? (profit / sp * 100).toFixed(1) : null
 
               return (
@@ -150,6 +153,16 @@ export default function RakutenStockPage() {
                         style={{ width: 80, textAlign: 'right' }} />
                     ) : (
                       <span style={{ fontWeight: 600 }}>{sp ? `¥${sp.toLocaleString()}` : '—'}</span>
+                    )}
+                  </td>
+
+                  {/* 送料 */}
+                  <td style={{ padding: '8px 10px', textAlign: 'right', color: '#666' }}>
+                    {isEditing ? (
+                      <input type="number" value={editVals.shipping_fee} onChange={e => setEditVals(v => ({ ...v, shipping_fee: e.target.value }))}
+                        style={{ width: 70, textAlign: 'right' }} />
+                    ) : (
+                      `¥${shippingFee}`
                     )}
                   </td>
 

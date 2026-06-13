@@ -82,6 +82,7 @@ class RakutenProductIn(BaseModel):
     sales_30_prev:    int = 0
     cost_jpy:         Optional[float] = None
     selling_price:    Optional[float] = None
+    shipping_fee:     int = 180
     customer_memo:    Optional[str] = None
     notes:            Optional[str] = None
     memo:             Optional[str] = None
@@ -115,8 +116,9 @@ def list_stock(db: Session = Depends(get_db)):
     for p in products:
         selling_price = p.selling_price
         cost_jpy = p.cost_jpy
+        shipping_fee = p.shipping_fee if p.shipping_fee is not None else 180
         commission = round(selling_price * commission_rate, 0) if selling_price else None
-        profit = round(selling_price - (cost_jpy or 0) - (commission or 0), 0) if selling_price else None
+        profit = round(selling_price - (cost_jpy or 0) - (commission or 0) - shipping_fee, 0) if selling_price else None
         profit_rate = round(profit / selling_price * 100, 1) if (selling_price and profit is not None) else None
         result.append({
             "id": p.id,
@@ -131,6 +133,7 @@ def list_stock(db: Session = Depends(get_db)):
             "sales_30_prev": p.sales_30_prev,
             "selling_price": selling_price,
             "cost_jpy": cost_jpy,
+            "shipping_fee": shipping_fee,
             "commission": commission,
             "commission_rate": commission_rate,
             "profit": profit,
