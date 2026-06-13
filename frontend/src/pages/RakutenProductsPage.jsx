@@ -322,6 +322,10 @@ export default function RakutenProductsPage() {
                 <input type="number" step="0.01" {...f('price', 'number')} />
               </div>
               <div className="form-group">
+                <label>仕入原価（円）</label>
+                <input type="number" step="1" {...f('cost_jpy', 'number')} placeholder="インボイス取込で自動入力" />
+              </div>
+              <div className="form-group">
                 <label>販売価格（円）</label>
                 <input type="number" step="1" {...f('selling_price', 'number')} />
               </div>

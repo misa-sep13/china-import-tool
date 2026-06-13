@@ -30,6 +30,7 @@ class RakutenSettingsSchema(BaseModel):
     super_sale_start:   Optional[date] = None
     super_sale_end:     Optional[date] = None
     commission_rate:    float = 0.09
+    default_shipping_fee: int = 180
     rms_service_secret: Optional[str] = None
     rms_license_key:    Optional[str] = None
     rms_key_expires_at: Optional[date] = None

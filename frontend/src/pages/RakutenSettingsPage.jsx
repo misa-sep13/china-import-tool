@@ -77,6 +77,19 @@ export default function RakutenSettingsPage() {
               </div>
               <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>販売価格 × この率 = 手数料（デフォルト9%）</p>
             </div>
+            <div className="form-group">
+              <label>デフォルト送料（円）</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="number" min={0} step={1}
+                  value={form.default_shipping_fee ?? 180}
+                  onChange={e => setForm(p => ({ ...p, default_shipping_fee: Number(e.target.value) }))}
+                  style={{ width: 100 }}
+                />
+                <span style={{ color: '#888', fontSize: 13 }}>円</span>
+              </div>
+              <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>商品ごとに未設定の場合に使用されます（ネコポス: 180円）</p>
+            </div>
           </div>
         </div>
 
