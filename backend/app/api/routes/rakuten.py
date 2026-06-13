@@ -832,6 +832,70 @@ async def sync_prices_from_rms(db: Session = Depends(get_db)):
     return {"ok": True, "message": "バックグラウンドで売価取得を開始しました。/status で進捗確認できます。"}
 
 
+@router.post("/rms/import-stock")
+async def import_stock_from_rms(db: Session = Depends(get_db)):
+    """RMSから在庫数を一括取得してDBのstockに保存"""
+    from app.services.rakuten_rms import fetch_inventory_from_rms
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません。")
+
+    # manageNumberが設定されている商品を対象にする
+    # manageNumber = skuの "_" より前の部分（例: y49_pink2 → y49）
+    # ただしrakuten_item_urlが設定されていればそちらを優先
+    products = db.query(RakutenProduct).filter(
+        RakutenProduct.is_active == True,
+        RakutenProduct.sku != None,
+    ).all()
+
+    items = []
+    sku_to_product = {}
+    for p in products:
+        sku = p.sku or ""
+        if not sku:
+            continue
+        # manageNumber: rakuten_item_url優先、なければskuの"_"前
+        if p.rakuten_item_url:
+            manage_number = p.rakuten_item_url
+        elif "_" in sku:
+            manage_number = sku.rsplit("_", maxsplit=sku.count("_"))[0].split("_")[0]
+            # y49_pink2 → y49
+            manage_number = sku.split("_")[0]
+        else:
+            manage_number = sku
+        items.append({"manage_number": manage_number, "variant_id": sku})
+        sku_to_product[sku] = p
+
+    if not items:
+        raise HTTPException(400, "対象商品がありません。")
+
+    try:
+        rms_stock = await fetch_inventory_from_rms(
+            settings.rms_service_secret,
+            settings.rms_license_key,
+            items,
+        )
+    except Exception as e:
+        raise HTTPException(502, f"楽天APIエラー: {str(e)}")
+
+    updated = 0
+    not_found = 0
+    for sku, p in sku_to_product.items():
+        if sku in rms_stock:
+            p.stock = rms_stock[sku]
+            updated += 1
+        else:
+            not_found += 1
+
+    db.commit()
+    return {
+        "ok": True,
+        "updated": updated,
+        "not_found": not_found,
+        "total_from_rms": len(rms_stock),
+    }
+
+
 @router.post("/rms/sync")
 async def sync_sales_from_rms(db: Session = Depends(get_db)):
     """楽天RMS APIから受注データを取得し、バリエーション別30日販売数を更新"""

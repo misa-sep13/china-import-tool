@@ -23,6 +23,8 @@ export default function RakutenProductsPage() {
   const [importing, setImporting] = useState(false)
   const [syncingPrices, setSyncingPrices] = useState(false)
   const [syncPriceResult, setSyncPriceResult] = useState(null)
+  const [importingStock, setImportingStock] = useState(false)
+  const [importStockResult, setImportStockResult] = useState(null)
   const [compTab, setCompTab] = useState({})  // {id: bool} セット構成展開
   const fileRef = useRef(null)
 
@@ -92,6 +94,21 @@ export default function RakutenProductsPage() {
       setSyncPriceResult({ error: err.response?.data?.detail || '売価同期エラーが発生しました' })
     } finally {
       setSyncingPrices(false)
+    }
+  }
+
+  const handleImportStock = async () => {
+    if (!window.confirm('RMSから現在の在庫数を取得してDBに保存します。よろしいですか？')) return
+    setImportingStock(true)
+    setImportStockResult(null)
+    try {
+      const res = await api.post('/rakuten/rms/import-stock')
+      setImportStockResult(res.data)
+      qc.invalidateQueries(['rakuten-products'])
+    } catch (err) {
+      setImportStockResult({ error: err.response?.data?.detail || '在庫取得エラーが発生しました' })
+    } finally {
+      setImportingStock(false)
     }
   }
 
@@ -175,6 +192,14 @@ export default function RakutenProductsPage() {
         {syncPriceResult && (
           <span style={{ fontSize: 12, color: syncPriceResult.error ? '#e53e3e' : '#38a169' }}>
             {syncPriceResult.error || `${syncPriceResult.updated_products}件更新`}
+          </span>
+        )}
+        <button className="btn" style={{ fontSize: 13 }} onClick={handleImportStock} disabled={importingStock}>
+          {importingStock ? '取得中...' : '📦 在庫取得(RMS)'}
+        </button>
+        {importStockResult && (
+          <span style={{ fontSize: 12, color: importStockResult.error ? '#e53e3e' : '#38a169' }}>
+            {importStockResult.error || `${importStockResult.updated}件更新・${importStockResult.not_found}件未登録`}
           </span>
         )}
       </div>

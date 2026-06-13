@@ -151,6 +151,83 @@ async def fetch_sales_by_sku(
     return sku_sales
 
 
+async def fetch_inventory_from_rms(
+    service_secret: str,
+    license_key: str,
+    items: list[dict],  # [{"manage_number": "y49", "variant_id": "y49_pink2"}, ...]
+) -> dict:
+    """
+    RMSから在庫数を一括取得する。
+    戻り値: {"{variantId}": quantity, ...}
+    """
+    headers = {**_auth_header(service_secret, license_key), "Content-Type": "application/json"}
+    result = {}
+
+    # 1000件ずつ分割してリクエスト
+    for i in range(0, len(items), 1000):
+        chunk = items[i:i + 1000]
+        body = json.dumps({
+            "inventories": [
+                {"manageNumber": item["manage_number"], "variantId": item["variant_id"]}
+                for item in chunk
+            ]
+        }, ensure_ascii=False).encode("utf-8")
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.post(
+                f"{RMS_BASE}/2.0/inventories/bulk-get",
+                headers=headers,
+                content=body,
+            )
+            if not res.is_success:
+                raise Exception(f"bulk-get HTTP {res.status_code}: {res.text[:200]}")
+            data = res.json()
+
+        for inv in data.get("inventories", []):
+            result[inv["variantId"]] = inv["quantity"]
+
+    return result
+
+
+async def push_inventory_to_rms(
+    service_secret: str,
+    license_key: str,
+    items: list[dict],  # [{"manage_number": "y49", "variant_id": "y49_pink2", "quantity": 16}, ...]
+) -> dict:
+    """
+    在庫数をRMSに一括反映する。
+    items: manage_number, variant_id, quantity を含む辞書のリスト
+    戻り値: {"ok": int, "fail": int, "errors": [...]}
+    """
+    headers = {**_auth_header(service_secret, license_key), "Content-Type": "application/json"}
+    ok = 0
+    fail = 0
+    errors = []
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        for item in items:
+            manage_number = item["manage_number"]
+            variant_id = item["variant_id"]
+            quantity = item["quantity"]
+            url = f"{RMS_BASE}/2.0/inventories/manage-numbers/{manage_number}/variants/{variant_id}"
+            try:
+                res = await client.put(
+                    url,
+                    headers=headers,
+                    content=json.dumps({"mode": "ABSOLUTE", "quantity": quantity}, ensure_ascii=False).encode("utf-8"),
+                )
+                if res.status_code == 204:
+                    ok += 1
+                else:
+                    fail += 1
+                    errors.append({"sku": variant_id, "status": res.status_code, "detail": res.text[:100]})
+            except Exception as e:
+                fail += 1
+                errors.append({"sku": variant_id, "status": 0, "detail": str(e)})
+
+    return {"ok": ok, "fail": fail, "errors": errors}
+
+
 async def test_connection(service_secret: str, license_key: str) -> dict:
     """接続テスト - 注文検索APIで確認"""
     headers = _auth_header(service_secret, license_key)
