@@ -693,14 +693,53 @@ def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
     total_cny = sum(i.qty * i.unit_price_cny for i in data.items)
     total_freight = data.domestic_freight + data.international_freight
     updated = 0
+    updated_skus: dict[str, float] = {}  # sku -> cost_jpy
+
     for item in data.items:
         item_total = item.qty * item.unit_price_cny
         freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
-        cost_jpy = round(((item_total + freight_alloc) / item.qty * data.exchange_rate), 1) if item.qty > 0 else 0
+        # set_sizeで割って1単品あたりの原価を計算
         product = db.query(RakutenProduct).filter(RakutenProduct.sku == item.sku, RakutenProduct.is_active == True).first()
         if product:
+            set_size = product.set_size or 1
+            cost_jpy = round(((item_total + freight_alloc) / (item.qty * set_size) * data.exchange_rate), 1) if item.qty > 0 else 0
             product.cost_jpy = cost_jpy
+            updated_skus[item.sku] = cost_jpy
             updated += 1
+
+    # set_componentsを持つセット商品の原価を自動再計算
+    set_products = db.query(RakutenProduct).filter(
+        RakutenProduct.is_active == True,
+        RakutenProduct.is_component == False,
+        RakutenProduct.set_components != None,
+    ).all()
+    for sp in set_products:
+        try:
+            comps = json.loads(sp.set_components or "[]")
+        except Exception:
+            continue
+        total_cost = 0.0
+        all_found = True
+        for c in comps:
+            comp_sku = c.get("sku", "")
+            qty = c.get("qty", 1)
+            # 更新されたSKUの原価を優先、なければDB値を使用
+            if comp_sku in updated_skus:
+                comp_cost = updated_skus[comp_sku]
+            else:
+                comp_product = db.query(RakutenProduct).filter(
+                    RakutenProduct.sku == comp_sku, RakutenProduct.is_active == True
+                ).first()
+                if comp_product and comp_product.cost_jpy:
+                    comp_cost = comp_product.cost_jpy
+                else:
+                    all_found = False
+                    break
+            total_cost += comp_cost * qty
+        if all_found and total_cost > 0:
+            sp.cost_jpy = round(total_cost, 1)
+            updated += 1
+
     db.commit()
     return {"updated": updated}
 
