@@ -455,8 +455,9 @@ function ProductRow({ p, commissionRate = 0.09, expanded, childCount, onToggle, 
   const rowBg = isChild ? '#f8faff' : '#ffffff'
   const indent = isChild ? 32 : 0
 
+  const shippingFee = p.shipping_fee ?? 180
   const commission = p.selling_price ? p.selling_price * commissionRate : null
-  const profit = (p.selling_price != null && p.cost_jpy != null) ? p.selling_price - p.cost_jpy - (p.selling_price * commissionRate) : null
+  const profit = (p.selling_price != null && p.cost_jpy != null) ? p.selling_price - p.cost_jpy - (p.selling_price * commissionRate) - shippingFee : null
   const profitRate = (profit != null && p.selling_price) ? profit / p.selling_price : null
 
   return (
