@@ -7,6 +7,23 @@ export default function RakutenStockPage() {
   const [search, setSearch] = useState('')
   const [editingId, setEditingId] = useState(null)
   const [editVals, setEditVals] = useState({})
+  const [importingStock, setImportingStock] = useState(false)
+  const [importStockResult, setImportStockResult] = useState(null)
+
+  const handleImportStock = async () => {
+    if (!window.confirm('RMSから現在の在庫数を取得してDBに保存します。よろしいですか？')) return
+    setImportingStock(true)
+    setImportStockResult(null)
+    try {
+      const res = await api.post('/rakuten/rms/import-stock')
+      setImportStockResult(res.data)
+      qc.invalidateQueries(['rakuten-stock'])
+    } catch (err) {
+      setImportStockResult({ error: err.response?.data?.detail || '在庫取得エラーが発生しました' })
+    } finally {
+      setImportingStock(false)
+    }
+  }
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: ['rakuten-stock'],
@@ -78,6 +95,14 @@ export default function RakutenStockPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
         <h1>📦 楽天 在庫・損益一覧</h1>
         <span style={{ fontSize: 12, color: '#64748b' }}>手数料率: {(commissionRate * 100).toFixed(0)}%</span>
+        <button className="btn" style={{ fontSize: 13 }} onClick={handleImportStock} disabled={importingStock}>
+          {importingStock ? '取得中...' : '📦 在庫取得(RMS)'}
+        </button>
+        {importStockResult && (
+          <span style={{ fontSize: 12, color: importStockResult.error ? '#e53e3e' : '#38a169' }}>
+            {importStockResult.error || `${importStockResult.updated}件更新・${importStockResult.not_found}件未登録`}
+          </span>
+        )}
       </div>
 
       <div className="card" style={{ padding: '12px 16px', marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
