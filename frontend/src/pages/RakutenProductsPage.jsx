@@ -7,6 +7,7 @@ const EMPTY = {
   set_size: 1, rakuten_item_url: '', rakuten_sku_id: '', supplier: '',
   standard_stock: 0, stock: 0, inbound: 0,
   sales_30_recent: 0, sales_30_prev: 0,
+  cost_jpy: null, selling_price: null, shipping_fee: 180,
   customer_memo: '', notes: '', memo: '',
   set_components: '', is_component: false, is_active: true,
 }
@@ -323,6 +324,10 @@ export default function RakutenProductsPage() {
               <div className="form-group">
                 <label>販売価格（円）</label>
                 <input type="number" step="1" {...f('selling_price', 'number')} />
+              </div>
+              <div className="form-group">
+                <label>送料（円）</label>
+                <input type="number" step="1" {...f('shipping_fee', 'number')} placeholder="180" />
               </div>
               <div className="form-group">
                 <label>お客様専用メモ（タオタロウG列）</label>
