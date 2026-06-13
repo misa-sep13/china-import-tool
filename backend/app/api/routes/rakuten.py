@@ -70,6 +70,7 @@ class RakutenProductIn(BaseModel):
     name:             Optional[str] = None
     jan_code:         Optional[str] = None
     buy_url:          Optional[str] = None
+    supplier_spec:    Optional[str] = None
     price:            Optional[float] = None
     spec:             Optional[str] = None
     set_size:         int = 1
@@ -404,6 +405,7 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
             continue
         excel_items.append({
             "buy_url":       p.buy_url or "",
+            "supplier_spec": getattr(p, "supplier_spec", "") or "",
             "spec":          p.spec or "",
             "qty":           qty,
             "price":         p.price or 0,
@@ -424,7 +426,7 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
 # ============================================================
 
 CSV_COLUMNS = [
-    "sku", "name", "jan_code", "spec", "buy_url", "price",
+    "sku", "name", "jan_code", "spec", "buy_url", "supplier_spec", "price",
     "set_size", "rakuten_item_url", "rakuten_sku_id", "supplier", "standard_stock",
     "stock", "inbound", "sales_30_recent", "sales_30_prev",
     "customer_memo", "notes", "memo", "set_components", "is_component",
@@ -436,7 +438,8 @@ CSV_COLUMN_LABELS = {
     "jan_code":         "JANコード",
     "spec":             "システム連携用SKU番号",
     "buy_url":          "仕入れURL",
-    "price":            "仕入れ値(元)",
+    "supplier_spec":    "仕入れ仕様(中国語)",
+    "price":            "単価(元)",
     "set_size":         "セット入数",
     "rakuten_item_url": "在庫管理番号",
     "rakuten_sku_id":   "楽天SKU管理番号",
@@ -487,7 +490,8 @@ def export_products_csv(db: Session = Depends(get_db)):
     for p in products:
         writer.writerow([
             p.sku or "", p.name or "", p.jan_code or "", p.spec or "",
-            p.buy_url or "", p.price if p.price is not None else "",
+            p.buy_url or "", getattr(p, "supplier_spec", "") or "",
+            p.price if p.price is not None else "",
             p.set_size or 1,
             getattr(p, 'rakuten_item_url', '') or "",
             getattr(p, 'rakuten_sku_id', '') or "",
@@ -564,6 +568,7 @@ def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_
             "jan_code":         normalized.get("jan_code") or None,
             "spec":             normalized.get("spec") or None,
             "buy_url":          normalized.get("buy_url") or None,
+            "supplier_spec":    normalized.get("supplier_spec") or None,
             "price":            to_float(normalized.get("price")),
             "set_size":         to_int(normalized.get("set_size"), 1),
             "rakuten_item_url": normalized.get("rakuten_item_url") or None,

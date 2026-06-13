@@ -4,7 +4,7 @@ import api from '../api/client'
 
 const EMPTY = {
   sku: '', name: '', jan_code: '', spec: '', buy_url: '', price: '',
-  set_size: 1, rakuten_item_url: '', rakuten_sku_id: '', supplier: '',
+  set_size: 1, supplier_spec: '', rakuten_item_url: '', rakuten_sku_id: '', supplier: '',
   standard_stock: 0, stock: 0, inbound: 0,
   sales_30_recent: 0, sales_30_prev: 0,
   cost_jpy: null, selling_price: null, shipping_fee: 180,
@@ -306,8 +306,19 @@ export default function RakutenProductsPage() {
                 <input {...f('jan_code')} placeholder="例: 4900000000000" />
               </div>
               <div className="form-group">
-                <label>セット入数</label>
+                <label>
+                  セット入数
+                  <span title="インボイス1行が何個分か。&#13;&#10;例) 母乳パッド18枚を1袋として仕入れる場合はset_size=18&#13;&#10;例) 楽天で10枚セットとして売るがset_componentsで構成する場合はset_size=1&#13;&#10;例) 単品2個まとめ仕入れの場合はset_size=2（原価が÷2される）"
+                    style={{ marginLeft: 6, color: '#94a3b8', cursor: 'help', fontSize: 14 }}>ⓘ</span>
+                </label>
                 <input type="number" min={1} {...f('set_size', 'number')} />
+                <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>
+                  {form.set_components && form.set_components !== '[]'
+                    ? 'セット構成あり → 通常は1のまま'
+                    : form.set_size > 1
+                      ? `インボイス1行 = ${form.set_size}個分（原価÷${form.set_size}）`
+                      : 'インボイス1行 = 1個分（通常）'}
+                </div>
               </div>
               <div className="form-group">
                 <label>仕入先</label>
@@ -317,8 +328,12 @@ export default function RakutenProductsPage() {
                 <label>仕入れURL（複数ある場合は1行に1URL）</label>
                 <textarea {...f('buy_url')} placeholder="https://..." rows={3} style={{ fontFamily: 'monospace', fontSize: 12 }} />
               </div>
+              <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                <label>仕様（中国語）<span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 6 }}>TAO太郎B列・発注書に反映</span></label>
+                <input {...f('supplier_spec')} placeholder="例: M006加大码-直筒款黑色" />
+              </div>
               <div className="form-group">
-                <label>仕入れ値（元）</label>
+                <label>単価（元）</label>
                 <input type="number" step="0.01" {...f('price', 'number')} />
               </div>
               <div className="form-group">

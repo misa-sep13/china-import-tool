@@ -119,7 +119,7 @@ def build_rakuten_taotaro_excel(items: List[Dict]) -> bytes:
         row_num = 3 + i
         values = [
             item.get("buy_url", ""),        # A: 発注先URL
-            item.get("spec", ""),           # B: 仕様
+            item.get("supplier_spec", "") or item.get("spec", ""),  # B: 仕様（中国語優先）
             item.get("qty", 0),             # C: 数量
             item.get("price", 0),           # D: 単価
             "",                             # E: ASIN（空欄）

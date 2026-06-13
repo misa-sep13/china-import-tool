@@ -10,6 +10,7 @@ class RakutenProduct(Base):
     name         = Column(String)
     jan_code     = Column(String)               # JANコード
     buy_url      = Column(String)               # 仕入れURL（タオタロウ発注URL）
+    supplier_spec = Column(String)              # 仕入れ仕様（中国語：TAO太郎B列）
     price        = Column(Float)                # 仕入れ値（元）
     spec         = Column(String)               # システム連携用SKU番号（全角48文字）
     set_size     = Column(Integer, default=1)   # セット入数
