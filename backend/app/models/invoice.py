@@ -22,7 +22,7 @@ class InvoiceItem(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     invoice_id = Column(Integer, ForeignKey("invoices.id"), index=True)
-    sku = Column(String, index=True)               # TAO太郎SKU番号
+    sku = Column(String, index=True)               # タオタロウSKU番号
     product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
     name_cn = Column(String)                       # 中文品名
     name_jp = Column(String)                       # 日本語品名

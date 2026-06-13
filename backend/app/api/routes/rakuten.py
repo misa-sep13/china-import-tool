@@ -385,12 +385,12 @@ def delete_order(order_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================================
-# Excel発注書ダウンロード（TAO太郎形式）
+# Excel発注書ダウンロード（タオタロウ形式）
 # ============================================================
 
 @router.post("/orders/excel")
 def download_order_excel(body: dict, db: Session = Depends(get_db)):
-    """発注リストをTAO太郎形式Excelで出力"""
+    """発注リストをタオタロウ形式Excelで出力"""
     from app.services.excel_export import build_rakuten_taotaro_excel
     order_items = body.get("items", [])  # [{sku, qty}, ...]
 
@@ -709,6 +709,7 @@ def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
             set_size = product.set_size or 1
             cost_jpy = round(((item_total + freight_alloc) / (item.qty * set_size) * data.exchange_rate), 1) if item.qty > 0 else 0
             product.cost_jpy = cost_jpy
+            product.price = round(item.unit_price_cny / set_size, 2) if item.unit_price_cny else product.price
             updated_skus[item.sku] = cost_jpy
             updated += 1
 

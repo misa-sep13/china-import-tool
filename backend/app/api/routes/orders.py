@@ -397,7 +397,7 @@ def preview_orders(db: Session = Depends(get_db)):
 
 @router.post("/export")
 def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
-    """発注リストをTAO太郎形式のExcelとしてダウンロードし、発注履歴に保存"""
+    """発注リストをタオタロウ形式のExcelとしてダウンロードし、発注履歴に保存"""
     if not req.items:
         raise HTTPException(status_code=400, detail="発注リストが空です")
 
