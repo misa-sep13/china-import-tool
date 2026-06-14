@@ -8,7 +8,7 @@ const EMPTY = {
   standard_stock: 0, stock: 0, inbound: 0,
   sales_30_recent: 0, sales_30_prev: 0,
   cost_jpy: null, selling_price: null, shipping_fee: 180,
-  customer_memo: '', notes: '', memo: '',
+  customer_memo: '', notes: '', memo: '', invoice_note: '',
   set_components: '', is_component: false, is_active: true,
 }
 
@@ -379,6 +379,13 @@ export default function RakutenProductsPage() {
               <div className="form-group">
                 <label>備考（タオタロウH列）</label>
                 <textarea value={form.notes || ''} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} rows={2} />
+              </div>
+              <div className="form-group">
+                <label>
+                  商品内訳メモ（楽天専用）
+                  <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 6 }}>インボイスJ列に出力・振り分け確認用</span>
+                </label>
+                <textarea value={form.invoice_note || ''} onChange={e => setForm(p => ({ ...p, invoice_note: e.target.value }))} rows={2} placeholder="例：4色セット（咖啡色・乳白色・灰色・浅灰色 各1枚）" />
               </div>
             </div>
 

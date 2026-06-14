@@ -91,6 +91,7 @@ class RakutenProductIn(BaseModel):
     set_components:   Optional[str] = None  # JSON文字列
     is_component:     bool = False          # 単品（セット構成用内部管理）フラグ
     is_active:        bool = True
+    invoice_note:     Optional[str] = None  # 商品内訳メモ（楽天専用・インボイス振り分け用）
 
 class RakutenProductOut(RakutenProductIn):
     id:               int
@@ -411,6 +412,7 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
             "price":         p.price or 0,
             "customer_memo": p.customer_memo or "",
             "notes":         p.notes or "",
+            "invoice_note":  p.invoice_note or "",
         })
 
     xls = build_rakuten_taotaro_excel(excel_items)
@@ -614,6 +616,7 @@ class RakutenInvoiceItemIn(BaseModel):
     name_jp: str = ""
     qty: int
     unit_price_cny: float
+    asin_memo: str = ""  # J列（ASIN/商品番号）：商品内訳メモ
 
 class RakutenInvoiceIn(BaseModel):
     invoice_no: str = ""
@@ -711,12 +714,14 @@ async def rakuten_parse_excel(file: UploadFile = File(...)):
             break
         if row[0] is None and row[6] and row[7]:
             sku = str(int(row[12])) if row[12] and isinstance(row[12], (int, float)) else str(row[12] or "")
+            asin_memo = str(row[9]).strip() if len(row) > 9 and row[9] else ""
             items.append({
                 "sku": sku,
                 "name_jp": str(row[2] or ""),
                 "qty": int(row[6]) if row[6] else 0,
                 "unit_price_cny": float(row[7]) if row[7] else 0,
                 "total_price_cny": float(row[8]) if row[8] else 0,
+                "asin_memo": asin_memo,  # J列（ASIN/商品番号）：商品内訳メモ
             })
 
     return {
@@ -727,7 +732,7 @@ async def rakuten_parse_excel(file: UploadFile = File(...)):
     }
 
 @router.post("/invoices/calculate")
-def rakuten_calculate_cost(data: RakutenInvoiceIn):
+def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
     total_cny = sum(i.qty * i.unit_price_cny for i in data.items)
     total_freight = data.domestic_freight + data.international_freight
     import_tax_jpy = data.import_tax_jpy or 0
@@ -737,10 +742,13 @@ def rakuten_calculate_cost(data: RakutenInvoiceIn):
         freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
         tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
         cost_jpy = (((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / item.qty) if item.qty > 0 else 0
+        product = db.query(RakutenProduct).filter(RakutenProduct.sku == item.sku, RakutenProduct.is_active == True).first()
+        invoice_note = product.invoice_note if product else None
         result.append({**item.model_dump(), "total_price_cny": round(item_total, 2),
                         "freight_alloc_cny": round(freight_alloc, 2),
                         "tax_alloc_jpy": round(tax_alloc_jpy, 0),
-                        "cost_jpy": round(cost_jpy, 1)})
+                        "cost_jpy": round(cost_jpy, 1),
+                        "invoice_note": invoice_note})
     return {"items": result, "total_cny": round(total_cny, 2),
             "total_freight_cny": round(total_freight, 2),
             "import_tax_jpy": import_tax_jpy,

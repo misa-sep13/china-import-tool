@@ -200,16 +200,25 @@ export default function RakutenInvoicePage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-                  {['SKU', '品名', '数量', '単価(元)', '小計(元)', '按分送料(元)', '按分税(円)', '1個原価(円)'].map(h => (
-                    <th key={h} style={{ padding: '8px 12px', textAlign: h === 'SKU' || h === '品名' ? 'left' : 'right', whiteSpace: 'nowrap' }}>{h}</th>
+                  {['SKU', '品名', '商品内訳', '数量', '単価(元)', '小計(元)', '按分送料(元)', '按分税(円)', '1個原価(円)'].map(h => (
+                    <th key={h} style={{ padding: '8px 12px', textAlign: ['SKU', '品名', '商品内訳'].includes(h) ? 'left' : 'right', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {calculated.items.map((item, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                  <tr key={i} style={{ borderBottom: '1px solid #e5e7eb', background: item.asin_memo ? '#fffbeb' : undefined }}>
                     <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 12 }}>{item.sku}</td>
                     <td style={{ padding: '8px 12px', fontSize: 12 }}>{item.name_jp || '—'}</td>
+                    <td style={{ padding: '8px 12px', fontSize: 12 }}>
+                      {item.asin_memo
+                        ? <span style={{ background: '#fef08a', border: '1px solid #ca8a04', borderRadius: 4, padding: '2px 6px', fontSize: 11, fontWeight: 600 }}>
+                            ⚠️ {item.asin_memo}
+                          </span>
+                        : item.invoice_note
+                          ? <span style={{ color: '#64748b', fontSize: 11 }}>{item.invoice_note}</span>
+                          : '—'}
+                    </td>
                     <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.qty}</td>
                     <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.unit_price_cny}</td>
                     <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.total_price_cny}</td>

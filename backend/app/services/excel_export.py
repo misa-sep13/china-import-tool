@@ -5,7 +5,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 def build_taotaro_excel(items: List[Dict]) -> bytes:
-    """TAO太郎インポート用Excelを生成してbytesで返す"""
+    """タオタロウインポート用Excelを生成してbytesで返す"""
     wb = Workbook()
     ws = wb.active
     ws.title = "Sheet1"
@@ -76,7 +76,7 @@ def build_taotaro_excel(items: List[Dict]) -> bytes:
 
 
 def build_rakuten_taotaro_excel(items: List[Dict]) -> bytes:
-    """楽天版 TAO太郎インポート用Excel（Amazonと同じ8列形式・ASIN/FNSKUは空欄）"""
+    """楽天版 タオタロウインポート用Excel（Amazonと同じ8列形式・ASIN/FNSKUは空欄）"""
     wb = Workbook()
     ws = wb.active
     ws.title = "Sheet1"
@@ -114,7 +114,7 @@ def build_rakuten_taotaro_excel(items: List[Dict]) -> bytes:
         cell.border = border
     ws.row_dimensions[2].height = 25
 
-    # 3行目以降：データ（ASIN/FNSKUは空欄）
+    # 3行目以降：データ（ASIN/FNSKUは空欄、invoice_noteがあればASIN欄に出力）
     for i, item in enumerate(items):
         row_num = 3 + i
         values = [
@@ -122,7 +122,7 @@ def build_rakuten_taotaro_excel(items: List[Dict]) -> bytes:
             item.get("supplier_spec", "") or item.get("spec", ""),  # B: 仕様（中国語優先）
             item.get("qty", 0),             # C: 数量
             item.get("price", 0),           # D: 単価
-            "",                             # E: ASIN（空欄）
+            item.get("invoice_note", ""),   # E: 商品内訳メモ（楽天専用・インボイス振り分け用）
             "",                             # F: FNSKU（空欄）
             item.get("customer_memo", ""),  # G: お客様専用メモ
             item.get("notes", ""),          # H: 備考

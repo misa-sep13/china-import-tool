@@ -10,7 +10,7 @@ class RakutenProduct(Base):
     name         = Column(String)
     jan_code     = Column(String)               # JANコード
     buy_url      = Column(String)               # 仕入れURL（タオタロウ発注URL）
-    supplier_spec = Column(String)              # 仕入れ仕様（中国語：TAO太郎B列）
+    supplier_spec = Column(String)              # 仕入れ仕様（中国語：タオタロウB列）
     price        = Column(Float)                # 仕入れ値（元）
     spec         = Column(String)               # システム連携用SKU番号（全角48文字）
     set_size     = Column(Integer, default=1)   # セット入数
@@ -32,9 +32,10 @@ class RakutenProduct(Base):
     selling_price    = Column(Float)             # 販売価格（円）
     shipping_fee     = Column(Integer, default=180)  # 送料（円）デフォルト:ネコポス180円
     # メモ
-    customer_memo = Column(Text)                # お客様専用メモ（TAO太郎G列）
-    notes         = Column(Text)                # 備考（TAO太郎H列）
+    customer_memo = Column(Text)                # お客様専用メモ（タオタロウG列）
+    notes         = Column(Text)                # 備考（タオタロウH列）
     memo          = Column(Text)                # 内部メモ
+    invoice_note  = Column(Text)                # 商品内訳メモ（楽天専用・インボイス振り分け用・TAO太郎ASIN欄に出力）
     # セット構成（単品管理）: JSON文字列 "[{\"sku\":\"ITEM-001\",\"qty\":2}]"
     set_components = Column(Text)
     is_component = Column(Boolean, default=False)  # 単品（セット構成用内部管理）フラグ
