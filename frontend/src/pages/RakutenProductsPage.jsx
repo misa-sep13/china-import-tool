@@ -140,8 +140,17 @@ export default function RakutenProductsPage() {
 
   // 単品（親）・セット（子）・スタンドアロン に分類
   const singles    = products.filter(p => p.is_component)
-  const sets       = products.filter(p => !p.is_component && p.set_components && p.set_components !== '[]')
-  const standalone = products.filter(p => !p.is_component && (!p.set_components || p.set_components === '[]'))
+  const singleSkus = new Set(singles.map(p => p.sku))
+  // set_componentsが全てis_component=Trueの単品で構成される場合はstandaloneとして扱う
+  const isComponentOnlySet = (p) => {
+    if (!p.set_components || p.set_components === '[]') return false
+    try {
+      const comps = JSON.parse(p.set_components)
+      return comps.length > 0 && comps.every(c => singleSkus.has(c.sku))
+    } catch { return false }
+  }
+  const sets       = products.filter(p => !p.is_component && p.set_components && p.set_components !== '[]' && !isComponentOnlySet(p))
+  const standalone = products.filter(p => !p.is_component && (!p.set_components || p.set_components === '[]' || isComponentOnlySet(p)))
 
   // 単品SKUに紐づくセット一覧を返す
   const getSetsForSingle = (sku) =>
