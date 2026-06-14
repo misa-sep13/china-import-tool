@@ -906,6 +906,9 @@ async def sync_prices_from_rms(db: Session = Depends(get_db)):
                             price = variant_data.get("standardPrice")
                             if price is not None:
                                 sku_price_map[variant_key] = float(price)
+                            system_id = variant_data.get("systemId") or variant_data.get("variantSystemId")
+                            if system_id:
+                                sku_price_map[f"__spec__{variant_key}"] = system_id
                     total = data.get("numFound", 0)
                     offset += len(results)
                     if offset >= total:
@@ -916,11 +919,17 @@ async def sync_prices_from_rms(db: Session = Depends(get_db)):
             session = SessionLocal()
             try:
                 for pid, key in product_data:
-                    if key and key in sku_price_map:
-                        p = session.query(RakutenProduct).filter(RakutenProduct.id == pid).first()
-                        if p:
-                            p.selling_price = sku_price_map[key]
-                            updated += 1
+                    if not key:
+                        continue
+                    p = session.query(RakutenProduct).filter(RakutenProduct.id == pid).first()
+                    if not p:
+                        continue
+                    if key in sku_price_map:
+                        p.selling_price = sku_price_map[key]
+                        updated += 1
+                    spec_val = sku_price_map.get(f"__spec__{key}")
+                    if spec_val and not p.spec:
+                        p.spec = spec_val
                 session.commit()
             finally:
                 session.close()
@@ -933,6 +942,23 @@ async def sync_prices_from_rms(db: Session = Depends(get_db)):
 
     asyncio.create_task(do_sync())
     return {"ok": True, "message": "バックグラウンドで売価取得を開始しました。/status で進捗確認できます。"}
+
+
+@router.get("/rms/item-sample")
+async def rms_item_sample(manage_number: str, db: Session = Depends(get_db)):
+    """Item API 2.0のレスポンス構造確認用（開発用）"""
+    import base64, httpx
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません。")
+    token = base64.b64encode(f"{settings.rms_service_secret}:{settings.rms_license_key}".encode()).decode()
+    headers = {"Authorization": f"ESA {token}"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.get(
+            f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}",
+            headers=headers,
+        )
+    return {"status": res.status_code, "body": res.json() if res.status_code == 200 else res.text[:500]}
 
 
 @router.post("/rms/import-stock")
