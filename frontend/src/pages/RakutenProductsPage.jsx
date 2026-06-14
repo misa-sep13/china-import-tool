@@ -138,26 +138,48 @@ export default function RakutenProductsPage() {
     try { return JSON.parse(json || '[]') } catch { return [] }
   }
 
-  // 単品（親）・セット（子）・スタンドアロン に分類
-  const singles    = products.filter(p => p.is_component)
-  const singleSkus = new Set(singles.map(p => p.sku))
-  // set_componentsが全てis_component=Trueの単品で構成される場合はstandaloneとして扱う
-  const isComponentOnlySet = (p) => {
-    if (!p.set_components || p.set_components === '[]') return false
+  // 内部管理SKU（is_component=True）: 袋・パーツ等、一覧非表示
+  const internalSkus = new Set(products.filter(p => p.is_component).map(p => p.sku))
+
+  // set_componentsを持つ商品（バリエーション・セット）
+  const hasComponents = (p) => p.set_components && p.set_components !== '[]'
+
+  // set_componentsの全SKUが内部管理のみ → 袋セット組商品（親として表示）
+  const isInternalOnlySet = (p) => {
+    if (!hasComponents(p)) return false
     try {
       const comps = JSON.parse(p.set_components)
-      return comps.length > 0 && comps.every(c => singleSkus.has(c.sku))
+      return comps.length > 0 && comps.every(c => internalSkus.has(c.sku))
     } catch { return false }
   }
-  const sets       = products.filter(p => !p.is_component && p.set_components && p.set_components !== '[]' && !isComponentOnlySet(p))
-  const standalone = products.filter(p => !p.is_component && (!p.set_components || p.set_components === '[]' || isComponentOnlySet(p)))
 
-  // 単品SKUに紐づくセット一覧を返す
+  // 子として展開される商品（set_componentsに他の非内部SKUを含む）
+  const isChildSet = (p) => hasComponents(p) && !isInternalOnlySet(p)
+
+  // 子SKUの集合（展開される側）
+  const childSkus = new Set(
+    products.filter(isChildSet).flatMap(p => {
+      try { return JSON.parse(p.set_components).map(c => c.sku) } catch { return [] }
+    }).filter(sku => !internalSkus.has(sku))
+  )
+
+  // 親として展開できる単品（自分を参照しているisChildSetな商品が存在する）
   const getSetsForSingle = (sku) =>
-    sets.filter(s => {
-      try { return JSON.parse(s.set_components || '[]').some(c => c.sku === sku) }
-      catch { return false }
-    })
+    products.filter(p => isChildSet(p) && (() => {
+      try { return JSON.parse(p.set_components).some(c => c.sku === sku) } catch { return false }
+    })())
+
+  // 親SKU（子セットを持つ単品）
+  const parentSkus = new Set(
+    products.filter(p => !p.is_component && !isChildSet(p))
+      .filter(p => getSetsForSingle(p.sku).length > 0)
+      .map(p => p.sku)
+  )
+
+  // 分類
+  const singles    = products.filter(p => p.is_component)  // 内部管理（チェック時のみ表示）
+  const parents    = products.filter(p => !p.is_component && !isChildSet(p) && parentSkus.has(p.sku))
+  const standalone = products.filter(p => !p.is_component && !isChildSet(p) && !parentSkus.has(p.sku))
 
   const toHalf = (s) => s.replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
   const normalize = (s) => toHalf(s || '').toLowerCase()
@@ -174,8 +196,8 @@ export default function RakutenProductsPage() {
   }
 
   const filteredSingles    = singles.filter(searchMatch)
+  const filteredParents    = parents.filter(searchMatch)
   const filteredStandalone = standalone.filter(searchMatch)
-  const filtered = [] // 旧変数との互換用（使わない）
 
   if (isLoading) return <div className="loading">読み込み中...</div>
 
@@ -239,8 +261,7 @@ export default function RakutenProductsPage() {
           内部管理SKUを表示（{filteredSingles.length}件）
         </label>
         <span style={{ fontSize: 12, color: '#6b7280' }}>
-          通常商品 {filteredStandalone.length}件
-          {sets.length > 0 && ` / バリエーション ${sets.length}件`}
+          通常商品 {filteredStandalone.length}件 / バリエーション親 {filteredParents.length}件
         </span>
       </div>
 
@@ -259,12 +280,12 @@ export default function RakutenProductsPage() {
             </tr>
           </thead>
           <tbody>
-            {filteredStandalone.length === 0 && (!showComponents || filteredSingles.length === 0) && (
+            {filteredParents.length === 0 && filteredStandalone.length === 0 && (!showComponents || filteredSingles.length === 0) && (
               <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
             )}
 
-            {/* ① 内部管理SKU（is_component=True）→ チェック時のみ表示 */}
-            {showComponents && filteredSingles.map(p => {
+            {/* ① バリエーション親（単品）→ クリックでセット商品を展開 */}
+            {filteredParents.map(p => {
               const expanded = !!compTab[p.id]
               const children = getSetsForSingle(p.sku)
               return (
@@ -279,7 +300,6 @@ export default function RakutenProductsPage() {
                   onDelete={(p) => { if (confirm(`${p.name || p.sku} を削除しますか？`)) deleteMutation.mutate(p.id) }}
                   isSingle={true}
                 >
-                  {/* バリエーション子行 */}
                   {expanded && children.map(child => (
                     <ProductRow
                       key={child.id}
@@ -294,8 +314,19 @@ export default function RakutenProductsPage() {
               )
             })}
 
-            {/* ② スタンドアロン商品（セット構成なし・単品フラグなし） */}
+            {/* ② 通常商品（単品・セット問わず、バリエーション構造なし） */}
             {filteredStandalone.map(p => (
+              <ProductRow
+                key={p.id}
+                p={p}
+                commissionRate={commissionRate}
+                onEdit={openEdit}
+                onDelete={(p) => { if (confirm(`${p.name || p.sku} を削除しますか？`)) deleteMutation.mutate(p.id) }}
+              />
+            ))}
+
+            {/* ③ 内部管理SKU（is_component=True）→ チェック時のみ表示 */}
+            {showComponents && filteredSingles.map(p => (
               <ProductRow
                 key={p.id}
                 p={p}
