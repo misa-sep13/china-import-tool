@@ -945,8 +945,8 @@ async def sync_prices_from_rms(db: Session = Depends(get_db)):
 
 
 @router.get("/rms/item-sample")
-async def rms_item_sample(manage_number: str, db: Session = Depends(get_db)):
-    """Item API 2.0のレスポンス構造確認用（開発用）"""
+async def rms_item_sample(db: Session = Depends(get_db)):
+    """Item API 2.0のレスポンス構造確認用（先頭1件取得）"""
     import base64, httpx
     settings = _get_or_create_settings(db)
     if not settings.rms_service_secret or not settings.rms_license_key:
@@ -955,10 +955,11 @@ async def rms_item_sample(manage_number: str, db: Session = Depends(get_db)):
     headers = {"Authorization": f"ESA {token}"}
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.get(
-            f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}",
+            "https://api.rms.rakuten.co.jp/es/2.0/items/search",
             headers=headers,
+            params={"offset": 0, "limit": 1},
         )
-    return {"status": res.status_code, "body": res.json() if res.status_code == 200 else res.text[:500]}
+    return {"status": res.status_code, "body": res.json() if res.status_code == 200 else res.text[:1000]}
 
 
 @router.post("/rms/import-stock")
