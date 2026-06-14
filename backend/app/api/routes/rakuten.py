@@ -444,7 +444,7 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
                 "qty":           qty * comp_qty,
                 "price":         comp_price or 0,
                 "customer_memo": "",
-                "notes":         "",
+                "notes":         comp.get("notes", ""),
                 "invoice_note":  "",
             })
 
