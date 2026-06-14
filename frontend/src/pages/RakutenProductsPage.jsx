@@ -323,7 +323,7 @@ export default function RakutenProductsPage() {
               <div className="form-group">
                 <label>
                   セット入数
-                  <span title="インボイス1行が何個分か。&#13;&#10;例) 母乳パッド18枚を1袋として仕入れる場合はset_size=18&#13;&#10;例) 楽天で10枚セットとして売るがset_componentsで構成する場合はset_size=1&#13;&#10;例) 単品2個まとめ仕入れの場合はset_size=2（原価が÷2される）"
+                  <span title="インボイスの1個が楽天で売る何個分か。&#13;&#10;例) set_size=1：普通の単品（デフォルト）&#13;&#10;例) set_size=4：1枚仕入れ→4枚セットで販売（クロスふきんなど）在庫はセット数で入力&#13;&#10;例) set_size=18：1袋仕入れ→単品18枚分（母乳パッド袋）&#13;&#10;※set_componentsで構成管理する場合はset_size=1のまま"
                     style={{ marginLeft: 6, color: '#94a3b8', cursor: 'help', fontSize: 14 }}>ⓘ</span>
                 </label>
                 <input type="number" min={1} {...f('set_size', 'number')} />
