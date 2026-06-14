@@ -141,45 +141,43 @@ export default function RakutenProductsPage() {
   // 内部管理SKU（is_component=True）: 袋・パーツ等、一覧非表示
   const internalSkus = new Set(products.filter(p => p.is_component).map(p => p.sku))
 
-  // set_componentsを持つ商品（バリエーション・セット）
-  const hasComponents = (p) => p.set_components && p.set_components !== '[]'
+  const parseComps = (p) => { try { return JSON.parse(p.set_components || '[]') } catch { return [] } }
 
-  // set_componentsの全SKUが内部管理のみ → 袋セット組商品（親として表示）
-  const isInternalOnlySet = (p) => {
-    if (!hasComponents(p)) return false
-    try {
-      const comps = JSON.parse(p.set_components)
-      return comps.length > 0 && comps.every(c => internalSkus.has(c.sku))
-    } catch { return false }
+  // set_componentsに含まれる非内部SKUの一覧
+  const getNonInternalComps = (p) => parseComps(p).map(c => c.sku).filter(s => !internalSkus.has(s))
+
+  // パターンB: set_componentsに非内部SKUを持つ → 自分が親、中身が子
+  const isPatternB = (p) => !p.is_component && getNonInternalComps(p).length > 0
+
+  // パターンBの親から参照されている子SKU集合
+  const patternBChildSkus = new Set(
+    products.filter(isPatternB).flatMap(getNonInternalComps)
+  )
+
+  // パターンA: 自分を参照しているパターンBでない商品が存在する → 親
+  // （y76_black等: 子セット商品がset_componentsで自分を参照している）
+  const getSetsForSingle = (sku) =>
+    products.filter(p => !p.is_component && !isPatternB(p) && parseComps(p).some(c => c.sku === sku))
+
+  const isPatternAParent = (p) => !p.is_component && !isPatternB(p) && !patternBChildSkus.has(p.sku)
+    && getSetsForSingle(p.sku).length > 0
+
+  // 子として展開される商品（パターンAの子: set_componentsで非内部SKUを参照 かつ パターンBでない）
+  const isPatternAChild = (p) => !p.is_component && !isPatternB(p) && parseComps(p).some(c => !internalSkus.has(c.sku))
+
+  // 親の子一覧を返す
+  const getChildren = (p) => {
+    if (isPatternB(p)) return products.filter(c => getNonInternalComps(p).includes(c.sku))
+    return getSetsForSingle(p.sku)
   }
 
-  // 子として展開される商品（set_componentsに他の非内部SKUを含む）
-  const isChildSet = (p) => hasComponents(p) && !isInternalOnlySet(p)
-
-  // 子SKUの集合（展開される側）
-  const childSkus = new Set(
-    products.filter(isChildSet).flatMap(p => {
-      try { return JSON.parse(p.set_components).map(c => c.sku) } catch { return [] }
-    }).filter(sku => !internalSkus.has(sku))
-  )
-
-  // 親として展開できる単品（自分を参照しているisChildSetな商品が存在する）
-  const getSetsForSingle = (sku) =>
-    products.filter(p => isChildSet(p) && (() => {
-      try { return JSON.parse(p.set_components).some(c => c.sku === sku) } catch { return false }
-    })())
-
-  // 親SKU（子セットを持つ単品）
-  const parentSkus = new Set(
-    products.filter(p => !p.is_component && !isChildSet(p))
-      .filter(p => getSetsForSingle(p.sku).length > 0)
-      .map(p => p.sku)
-  )
-
   // 分類
-  const singles    = products.filter(p => p.is_component)  // 内部管理（チェック時のみ表示）
-  const parents    = products.filter(p => !p.is_component && !isChildSet(p) && parentSkus.has(p.sku))
-  const standalone = products.filter(p => !p.is_component && !isChildSet(p) && !parentSkus.has(p.sku))
+  const singles    = products.filter(p => p.is_component)
+  const parents    = products.filter(p => isPatternB(p) || isPatternAParent(p))
+  const standalone = products.filter(p =>
+    !p.is_component && !isPatternB(p) && !isPatternAParent(p) &&
+    !patternBChildSkus.has(p.sku) && !isPatternAChild(p)
+  )
 
   const toHalf = (s) => s.replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
   const normalize = (s) => toHalf(s || '').toLowerCase()
@@ -287,7 +285,7 @@ export default function RakutenProductsPage() {
             {/* ① バリエーション親（単品）→ クリックでセット商品を展開 */}
             {filteredParents.map(p => {
               const expanded = !!compTab[p.id]
-              const children = getSetsForSingle(p.sku)
+              const children = getChildren(p)
               return (
                 <ProductRow
                   key={p.id}
