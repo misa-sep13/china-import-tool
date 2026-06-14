@@ -621,7 +621,55 @@ class RakutenInvoiceIn(BaseModel):
     exchange_rate: float
     domestic_freight: float = 0
     international_freight: float = 0
+    import_tax_jpy: float = 0  # 輸入税合計（円）：関税＋消費税＋地方消費税
     items: List[RakutenInvoiceItemIn]
+
+@router.post("/invoices/parse-pdf")
+async def rakuten_parse_pdf(file: UploadFile = File(...)):
+    """輸入許可証PDFから納税額合計・為替レートを抽出"""
+    import re, fitz
+    content = await file.read()
+    try:
+        doc = fitz.open(stream=content, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(400, f"PDF読み込みエラー: {str(e)}")
+
+    full_text = ""
+    for page in doc:
+        from html import unescape
+        html = page.get_text("html")
+        text = unescape(re.sub('<[^>]+>', '\n', html))
+        full_text += text + "\n"
+
+    # 納税額合計：¥25,500 形式
+    tax_total = 0
+    m = re.search(r'\\([0-9,]+)\s*\n.*?納税額合計', full_text)
+    if not m:
+        # 数字の後に25,500のような値を探す（文字化けしていても数字は読める）
+        # ページ内で最大の¥XXX,XXX を納税額合計とみなす
+        amounts = re.findall(r'\\([0-9]{2,3},[0-9]{3})', full_text)
+        if amounts:
+            values = [int(a.replace(',', '')) for a in amounts]
+            tax_total = max(values)
+    else:
+        tax_total = int(m.group(1).replace(',', ''))
+
+    # 為替レート：CNY - 23.30 形式
+    exchange_rate = 0
+    m = re.search(r'CNY\s*[-\s]+([0-9]+\.[0-9]+)', full_text)
+    if m:
+        exchange_rate = float(m.group(1))
+
+    # 個別税額も抽出（関税・消費税・地方消費税）
+    taxes = re.findall(r'\\([0-9,]+)', full_text)
+    tax_values = sorted([int(t.replace(',', '')) for t in taxes], reverse=True)
+
+    return {
+        "import_tax_jpy": tax_total,
+        "exchange_rate": exchange_rate,
+        "tax_breakdown": tax_values[:10],  # デバッグ用：上位10件
+    }
+
 
 @router.post("/invoices/parse-excel")
 async def rakuten_parse_excel(file: UploadFile = File(...)):
@@ -682,16 +730,21 @@ async def rakuten_parse_excel(file: UploadFile = File(...)):
 def rakuten_calculate_cost(data: RakutenInvoiceIn):
     total_cny = sum(i.qty * i.unit_price_cny for i in data.items)
     total_freight = data.domestic_freight + data.international_freight
+    import_tax_jpy = data.import_tax_jpy or 0
     result = []
     for item in data.items:
         item_total = item.qty * item.unit_price_cny
         freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
-        cost_jpy = ((item_total + freight_alloc) / item.qty * data.exchange_rate) if item.qty > 0 else 0
+        tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
+        cost_jpy = (((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / item.qty) if item.qty > 0 else 0
         result.append({**item.model_dump(), "total_price_cny": round(item_total, 2),
-                        "freight_alloc_cny": round(freight_alloc, 2), "cost_jpy": round(cost_jpy, 1)})
+                        "freight_alloc_cny": round(freight_alloc, 2),
+                        "tax_alloc_jpy": round(tax_alloc_jpy, 0),
+                        "cost_jpy": round(cost_jpy, 1)})
     return {"items": result, "total_cny": round(total_cny, 2),
             "total_freight_cny": round(total_freight, 2),
-            "grand_total_jpy": round((total_cny + total_freight) * data.exchange_rate, 0)}
+            "import_tax_jpy": import_tax_jpy,
+            "grand_total_jpy": round((total_cny + total_freight) * data.exchange_rate + import_tax_jpy, 0)}
 
 @router.post("/invoices/save")
 def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
@@ -700,14 +753,15 @@ def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
     updated = 0
     updated_skus: dict[str, float] = {}  # sku -> cost_jpy
 
+    import_tax_jpy = data.import_tax_jpy or 0
     for item in data.items:
         item_total = item.qty * item.unit_price_cny
         freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
-        # set_sizeで割って1単品あたりの原価を計算
+        tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
         product = db.query(RakutenProduct).filter(RakutenProduct.sku == item.sku, RakutenProduct.is_active == True).first()
         if product:
             set_size = product.set_size or 1
-            cost_jpy = round(((item_total + freight_alloc) / (item.qty * set_size) * data.exchange_rate), 1) if item.qty > 0 else 0
+            cost_jpy = round((((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / (item.qty * set_size)), 1) if item.qty > 0 else 0
             product.cost_jpy = cost_jpy
             product.price = round(item.unit_price_cny / set_size, 2) if item.unit_price_cny else product.price
             updated_skus[item.sku] = cost_jpy
