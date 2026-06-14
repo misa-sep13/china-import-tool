@@ -906,9 +906,9 @@ async def sync_prices_from_rms(db: Session = Depends(get_db)):
                             price = variant_data.get("standardPrice")
                             if price is not None:
                                 sku_price_map[variant_key] = float(price)
-                            system_id = variant_data.get("systemId") or variant_data.get("variantSystemId")
-                            if system_id:
-                                sku_price_map[f"__spec__{variant_key}"] = system_id
+                            merchant_sku_id = variant_data.get("merchantDefinedSkuId")
+                            if merchant_sku_id:
+                                sku_price_map[f"__spec__{variant_key}"] = merchant_sku_id
                     total = data.get("numFound", 0)
                     offset += len(results)
                     if offset >= total:
