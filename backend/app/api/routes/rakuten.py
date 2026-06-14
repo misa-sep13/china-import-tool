@@ -404,16 +404,20 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
         p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
         if not p:
             continue
-        excel_items.append({
-            "buy_url":       p.buy_url or "",
-            "supplier_spec": getattr(p, "supplier_spec", "") or "",
-            "spec":          p.spec or "",
-            "qty":           qty,
-            "price":         p.price or 0,
-            "customer_memo": p.customer_memo or "",
-            "notes":         p.notes or "",
-            "invoice_note":  p.invoice_note or "",
-        })
+        urls = [u.strip() for u in (p.buy_url or "").splitlines() if u.strip()]
+        if not urls:
+            urls = [""]
+        for url in urls:
+            excel_items.append({
+                "buy_url":       url,
+                "supplier_spec": getattr(p, "supplier_spec", "") or "",
+                "spec":          p.spec or "",
+                "qty":           qty,
+                "price":         p.price or 0,
+                "customer_memo": p.customer_memo or "",
+                "notes":         p.notes or "",
+                "invoice_note":  p.invoice_note or "",
+            })
 
     xls = build_rakuten_taotaro_excel(excel_items)
     return StreamingResponse(
