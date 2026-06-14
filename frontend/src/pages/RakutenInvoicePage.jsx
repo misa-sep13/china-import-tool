@@ -108,6 +108,9 @@ export default function RakutenInvoicePage() {
 
       <div className="card" style={{ marginBottom: 16 }}>
         <h3 style={{ marginBottom: 16 }}>ファイル読み込み</h3>
+        <div style={{ fontSize: 12, color: '#92400e', background: '#fef3c7', border: '1px solid #fbbf24', borderRadius: 6, padding: '8px 12px', marginBottom: 12 }}>
+          ⚠️ インボイスExcelと輸入許可証PDFは<strong>同じ船便のもの</strong>をセットでアップロードしてください。
+        </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <span style={{ width: 180, fontSize: 13, color: '#475569', flexShrink: 0 }}>① インボイスExcel（必須）</span>
