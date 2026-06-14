@@ -146,8 +146,14 @@ export default function RakutenProductsPage() {
   // set_componentsに含まれる非内部SKUの一覧
   const getNonInternalComps = (p) => parseComps(p).map(c => c.sku).filter(s => !internalSkus.has(s))
 
-  // パターンB: set_componentsに非内部SKUを持つ → 自分が親、中身が子
-  const isPatternB = (p) => !p.is_component && getNonInternalComps(p).length > 0
+  // パターンB: set_componentsの中身が全て内部管理SKU → 自分が親、内部管理SKUが子
+  // （y34, y124型: 内部管理の構成品をまとめてセット販売）
+  const isPatternB = (p) => {
+    if (p.is_component) return false
+    const comps = parseComps(p)
+    if (comps.length === 0) return false
+    return comps.every(c => internalSkus.has(c.sku))
+  }
 
   // パターンBの親から参照されている子SKU集合
   const patternBChildSkus = new Set(
