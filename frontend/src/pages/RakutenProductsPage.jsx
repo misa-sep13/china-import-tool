@@ -142,47 +142,44 @@ export default function RakutenProductsPage() {
   const internalSkus = new Set(products.filter(p => p.is_component).map(p => p.sku))
 
   const parseComps = (p) => { try { return JSON.parse(p.set_components || '[]') } catch { return [] } }
+  const compSkus = (p) => parseComps(p).map(c => c.sku)
 
-  // set_componentsに含まれる非内部SKUの一覧
-  const getNonInternalComps = (p) => parseComps(p).map(c => c.sku).filter(s => !internalSkus.has(s))
-
-  // パターンB: set_componentsの中身が全て内部管理SKU → 自分が親、内部管理SKUが子
-  // （y34, y124型: 内部管理の構成品をまとめてセット販売）
-  const isPatternB = (p) => {
+  // set_componentsを持ち、かつ中身が全て内部管理SKU → セット販売商品（親として表示）
+  const isSetParent = (p) => {
     if (p.is_component) return false
-    const comps = parseComps(p)
-    if (comps.length === 0) return false
-    return comps.every(c => internalSkus.has(c.sku))
+    const skus = compSkus(p)
+    return skus.length > 0 && skus.every(s => internalSkus.has(s))
   }
 
-  // パターンBの親から参照されている子SKU集合
-  const patternBChildSkus = new Set(
-    products.filter(isPatternB).flatMap(getNonInternalComps)
+  // set_componentsを持ち、中身に通常SKU（非内部）が含まれる → バリエーション子商品
+  const isVariantChild = (p) => {
+    if (p.is_component) return false
+    return compSkus(p).some(s => !internalSkus.has(s))
+  }
+
+  // バリエーション子から参照されている親SKU集合（y76_black等）
+  const variantParentSkus = new Set(
+    products.filter(isVariantChild).flatMap(p => compSkus(p).filter(s => !internalSkus.has(s)))
   )
 
-  // パターンA: 自分を参照しているパターンBでない商品が存在する → 親
-  // （y76_black等: 子セット商品がset_componentsで自分を参照している）
-  const getSetsForSingle = (sku) =>
-    products.filter(p => !p.is_component && !isPatternB(p) && parseComps(p).some(c => c.sku === sku))
+  // バリエーション親の子一覧
+  const getVariantChildren = (sku) =>
+    products.filter(p => isVariantChild(p) && compSkus(p).includes(sku))
 
-  const isPatternAParent = (p) => !p.is_component && !isPatternB(p) && !patternBChildSkus.has(p.sku)
-    && getSetsForSingle(p.sku).length > 0
-
-  // 子として展開される商品（パターンAの子: set_componentsで非内部SKUを参照 かつ パターンBでない）
-  const isPatternAChild = (p) => !p.is_component && !isPatternB(p) && parseComps(p).some(c => !internalSkus.has(c.sku))
-
-  // 親の子一覧を返す
+  // 親の子一覧（セット販売 or バリエーション）
   const getChildren = (p) => {
-    if (isPatternB(p)) return products.filter(c => getNonInternalComps(p).includes(c.sku))
-    return getSetsForSingle(p.sku)
+    if (isSetParent(p)) return products.filter(c => internalSkus.has(c.sku) && compSkus(p).includes(c.sku))
+    return getVariantChildren(p.sku)
   }
 
   // 分類
-  const singles    = products.filter(p => p.is_component)
-  const parents    = products.filter(p => isPatternB(p) || isPatternAParent(p))
+  const singles  = products.filter(p => p.is_component)
+  // parents = バリエーション親のみ（内部管理SKUのみのセット親は展開不要なのでstandaloneへ）
+  const parents  = products.filter(p =>
+    !p.is_component && variantParentSkus.has(p.sku)
+  )
   const standalone = products.filter(p =>
-    !p.is_component && !isPatternB(p) && !isPatternAParent(p) &&
-    !patternBChildSkus.has(p.sku) && !isPatternAChild(p)
+    !p.is_component && !variantParentSkus.has(p.sku) && !isVariantChild(p)
   )
 
   const toHalf = (s) => s.replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
@@ -560,9 +557,6 @@ function ProductRow({ p, commissionRate = 0.09, expanded, childCount, onToggle, 
         <td style={{ padding: `10px 12px 10px ${12 + indent}px`, fontFamily: 'monospace', whiteSpace: 'nowrap', fontSize: 12, color: '#666' }}>
           {isChild && <span style={{ color: '#ccc', marginRight: 6 }}>└</span>}
           {p.sku}
-          {isSingle && (
-            <span style={{ display: 'block', fontSize: 10, background: '#fef3c7', color: '#92400e', borderRadius: 4, padding: '1px 5px', marginTop: 2, width: 'fit-content', border: '1px solid #fbbf24' }}>単品</span>
-          )}
         </td>
         <td style={{ padding: '10px 12px', minWidth: 140 }}>
           <BuyUrlLinks buyUrl={p.buy_url} name={p.name || '—'} />
@@ -624,40 +618,99 @@ function SetComponentsEditor({ value, onChange, allProducts }) {
 
   const update = (newItems) => onChange(JSON.stringify(newItems))
 
-  const addRow = () => update([...items, { sku: '', qty: 1 }])
+  const addRow = () => update([...items, { sku: '', qty: 1, buy_url: '', supplier_spec: '', price: '', notes: '' }])
   const removeRow = (i) => update(items.filter((_, idx) => idx !== i))
   const updateRow = (i, field, val) => {
     const next = items.map((item, idx) => idx === i ? { ...item, [field]: val } : item)
     update(next)
   }
 
+  const labelStyle = { fontSize: 11, color: '#94a3b8', marginBottom: 2 }
+  const inputStyle = { padding: '5px 8px', fontSize: 12, background: '#0f172a', color: '#e2e8f0', border: '1px solid #374151', borderRadius: 6, width: '100%' }
+
   return (
     <div>
       {items.map((item, i) => (
-        <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
-          <select
-            value={item.sku}
-            onChange={e => updateRow(i, 'sku', e.target.value)}
-            style={{ flex: 2, padding: '6px 8px', fontSize: 13, background: '#0f172a', color: '#e2e8f0', border: '1px solid #374151', borderRadius: 6 }}
-          >
-            <option value="">— 商品を選択 —</option>
-            {allProducts.map(p => (
-              <option key={p.id} value={p.sku}>
-                {p.sku}{p.spec ? ` [${p.spec}]` : ''}{p.name ? ` - ${p.name}` : ''}
-              </option>
-            ))}
-          </select>
-          <input
-            type="number" min={1} value={item.qty}
-            onChange={e => updateRow(i, 'qty', Number(e.target.value))}
-            style={{ width: 60, textAlign: 'center' }}
-            placeholder="数量"
-          />
-          <span style={{ color: '#64748b', fontSize: 12 }}>個</span>
-          <button className="btn" style={{ fontSize: 12, padding: '3px 8px', color: '#f87171' }} onClick={() => removeRow(i)}>✕</button>
+        <div key={i} style={{ border: '1px solid #1e293b', borderRadius: 8, padding: '10px 12px', marginBottom: 10, background: '#0a0f1e' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ fontSize: 12, color: '#94a3b8' }}>構成 {i + 1}</span>
+            <button className="btn" style={{ fontSize: 11, padding: '2px 8px', color: '#f87171' }} onClick={() => removeRow(i)}>✕ 削除</button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <div style={labelStyle}>SKU（商品マスタから選択 — 空欄でも可）</div>
+              <select
+                value={item.sku || ''}
+                onChange={e => updateRow(i, 'sku', e.target.value)}
+                style={{ ...inputStyle }}
+              >
+                <option value="">— 選択しない（URL直接入力）—</option>
+                {allProducts.map(p => (
+                  <option key={p.id} value={p.sku}>
+                    {p.sku}{p.name ? ` - ${p.name}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <div style={labelStyle}>発注先URL</div>
+              <input
+                value={item.buy_url || ''}
+                onChange={e => updateRow(i, 'buy_url', e.target.value)}
+                style={inputStyle}
+                placeholder="https://detail.1688.com/..."
+              />
+            </div>
+            <div>
+              <div style={labelStyle}>仕様（中国語）</div>
+              <input
+                value={item.supplier_spec || ''}
+                onChange={e => updateRow(i, 'supplier_spec', e.target.value)}
+                style={inputStyle}
+                placeholder="例: 水色"
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <div style={labelStyle}>単価（元）</div>
+                <input
+                  type="text"
+                  value={item.price ?? ''}
+                  onChange={e => {
+                    const v = e.target.value
+                    updateRow(i, 'price', v === '' ? '' : isNaN(Number(v)) ? item.price : v)
+                  }}
+                  onBlur={e => {
+                    const v = parseFloat(e.target.value)
+                    if (!isNaN(v)) updateRow(i, 'price', v)
+                  }}
+                  style={inputStyle}
+                  placeholder="0.19"
+                />
+              </div>
+              <div style={{ width: 70 }}>
+                <div style={labelStyle}>数量</div>
+                <input
+                  type="number" min={1}
+                  value={item.qty || 1}
+                  onChange={e => updateRow(i, 'qty', Number(e.target.value))}
+                  style={{ ...inputStyle, textAlign: 'center' }}
+                />
+              </div>
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <div style={labelStyle}>備考（タオタロウH列）</div>
+              <input
+                value={item.notes || ''}
+                onChange={e => updateRow(i, 'notes', e.target.value)}
+                style={inputStyle}
+                placeholder="例: チャック袋に入っているものをお願いします"
+              />
+            </div>
+          </div>
         </div>
       ))}
-      <button className="btn" style={{ fontSize: 12, marginTop: 4 }} onClick={addRow}>+ 単品を追加</button>
+      <button className="btn" style={{ fontSize: 12, marginTop: 4 }} onClick={addRow}>+ 構成を追加</button>
     </div>
   )
 }
