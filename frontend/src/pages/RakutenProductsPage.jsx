@@ -234,9 +234,13 @@ export default function RakutenProductsPage() {
           value={search} onChange={e => setSearch(e.target.value)}
           style={{ width: '100%', maxWidth: 420 }}
         />
+        <label style={{ fontSize: 12, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+          <input type="checkbox" checked={showComponents} onChange={e => setShowComponents(e.target.checked)} style={{ width: 'auto' }} />
+          内部管理SKUを表示（{filteredSingles.length}件）
+        </label>
         <span style={{ fontSize: 12, color: '#6b7280' }}>
-          単品 {filteredSingles.length}件 / その他 {filteredStandalone.length}件
-          {sets.length > 0 && ` / バリエーション ${sets.length}件（単品から展開）`}
+          通常商品 {filteredStandalone.length}件
+          {sets.length > 0 && ` / バリエーション ${sets.length}件`}
         </span>
       </div>
 
@@ -255,12 +259,12 @@ export default function RakutenProductsPage() {
             </tr>
           </thead>
           <tbody>
-            {filteredSingles.length === 0 && filteredStandalone.length === 0 && (
+            {filteredStandalone.length === 0 && (!showComponents || filteredSingles.length === 0) && (
               <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
             )}
 
-            {/* ① 単品（親） → クリックでバリエーション展開 */}
-            {filteredSingles.map(p => {
+            {/* ① 内部管理SKU（is_component=True）→ チェック時のみ表示 */}
+            {showComponents && filteredSingles.map(p => {
               const expanded = !!compTab[p.id]
               const children = getSetsForSingle(p.sku)
               return (
