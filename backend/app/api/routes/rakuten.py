@@ -415,7 +415,8 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
             "notes":         p.notes or "",
             "invoice_note":  p.invoice_note or "",
         })
-        # set_componentsの内部管理SKU（is_component=True）を展開して追加行として出力
+        # set_componentsを展開して追加行として出力
+        # set_components内のbuy_url/supplier_spec/priceを優先、なければ商品マスタから取得
         try:
             comps = json.loads(p.set_components or "[]")
         except Exception:
@@ -423,17 +424,27 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
         for comp in comps:
             comp_sku = comp.get("sku")
             comp_qty = comp.get("qty", 1)
-            c = db.query(RakutenProduct).filter(RakutenProduct.sku == comp_sku).first()
-            if not c or not c.is_component:
-                continue
+            # set_components内に直接情報がある場合はそちらを使う
+            comp_url  = comp.get("buy_url", "")
+            comp_spec = comp.get("supplier_spec", "")
+            comp_price = comp.get("price", None)
+            # なければ商品マスタから補完（is_componentのもののみ）
+            if not comp_url or not comp_spec or comp_price is None:
+                c = db.query(RakutenProduct).filter(RakutenProduct.sku == comp_sku).first() if comp_sku else None
+                if c and c.is_component:
+                    comp_url   = comp_url   or c.buy_url or ""
+                    comp_spec  = comp_spec  or getattr(c, "supplier_spec", "") or ""
+                    comp_price = comp_price if comp_price is not None else (c.price or 0)
+                elif not comp_url:
+                    continue  # URLも商品マスタもなければスキップ
             excel_items.append({
-                "buy_url":       c.buy_url or "",
-                "supplier_spec": getattr(c, "supplier_spec", "") or "",
-                "spec":          c.spec or "",
+                "buy_url":       comp_url,
+                "supplier_spec": comp_spec,
+                "spec":          "",
                 "qty":           qty * comp_qty,
-                "price":         c.price or 0,
-                "customer_memo": c.customer_memo or "",
-                "notes":         c.notes or "",
+                "price":         comp_price or 0,
+                "customer_memo": "",
+                "notes":         "",
                 "invoice_note":  "",
             })
 
