@@ -57,8 +57,23 @@ export default function RakutenProductsPage() {
     },
   })
 
-  const openNew = () => { setForm(EMPTY); setEditing('new') }
-  const openEdit = (p) => { setForm({ ...p }); setEditing(p) }
+  const [initialForm, setInitialForm] = useState(null)
+
+  const openNew = () => { setForm(EMPTY); setInitialForm(EMPTY); setEditing('new') }
+  const openEdit = (p) => { setForm({ ...p }); setInitialForm({ ...p }); setEditing(p) }
+
+  const handleModalClose = () => {
+    const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm)
+    if (isDirty) {
+      if (window.confirm('変更が保存されていません。保存しますか？')) {
+        saveMutation.mutate(form)
+      } else {
+        setEditing(null)
+      }
+    } else {
+      setEditing(null)
+    }
+  }
 
   const f = (k, type = 'text') => ({
     value: form[k] ?? '',
@@ -282,8 +297,8 @@ export default function RakutenProductsPage() {
 
       {/* 編集モーダル */}
       {editing && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#fff', color: '#1a1a2e', borderRadius: 12, padding: 32, width: 620, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
+        <div onClick={handleModalClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', color: '#1a1a2e', borderRadius: 12, padding: 32, width: 620, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
             <h2 style={{ marginBottom: 20 }}>{editing === 'new' ? '商品追加' : '商品編集'}</h2>
 
             {/* 基本情報 */}
@@ -329,7 +344,7 @@ export default function RakutenProductsPage() {
                 <textarea {...f('buy_url')} placeholder="https://..." rows={3} style={{ fontFamily: 'monospace', fontSize: 12 }} />
               </div>
               <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                <label>仕様（中国語）<span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 6 }}>TAO太郎B列・発注書に反映</span></label>
+                <label>仕様（中国語）<span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 6 }}>タオタロウB列・発注書に反映</span></label>
                 <input {...f('supplier_spec')} placeholder="例: M006加大码-直筒款黑色" />
               </div>
               <div className="form-group">
