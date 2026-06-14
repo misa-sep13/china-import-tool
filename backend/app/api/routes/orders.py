@@ -405,38 +405,29 @@ def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
     for item in req.items:
         if item.qty <= 0:
             continue
-        urls = [u.strip() for u in (item.buy_url or "").splitlines() if u.strip()]
-        if not urls:
-            urls = [""]
-        for url in urls:
-            items_data.append({
-                "sku": item.sku,
-                "name": item.name,
-                "amazon_url": item.amazon_url,
-                "buy_url": url,
-                "photo_url": item.photo_url,
-                "color": item.color,
-                "size": item.size,
-                "spec": item.spec,
-                "customer_memo": item.customer_memo,
-                "qty": item.qty,
-                "price": item.price,
-                "repack": item.repack,
-                "note": item.note,
-                "set_size": item.set_size,
-                "asin": item.asin,
-                "fnsku": item.fnsku,
-            })
+        items_data.append({
+            "sku": item.sku,
+            "name": item.name,
+            "amazon_url": item.amazon_url,
+            "buy_url": item.buy_url,
+            "photo_url": item.photo_url,
+            "color": item.color,
+            "size": item.size,
+            "spec": item.spec,
+            "customer_memo": item.customer_memo,
+            "qty": item.qty,
+            "price": item.price,
+            "repack": item.repack,
+            "note": item.note,
+            "set_size": item.set_size,
+            "asin": item.asin,
+            "fnsku": item.fnsku,
+        })
 
     if not items_data:
         raise HTTPException(status_code=400, detail="発注数が0の商品しかありません")
 
-    # 発注履歴はURLを展開せず1商品1行で保存（SKUの重複を避ける）
-    saved_skus = set()
     for item in items_data:
-        if item["sku"] in saved_skus:
-            continue
-        saved_skus.add(item["sku"])
         db.add(OrderHistory(
             sku=item["sku"],
             name=item["name"],
