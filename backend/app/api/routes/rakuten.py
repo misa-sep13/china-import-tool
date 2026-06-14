@@ -404,6 +404,7 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
         p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
         if not p:
             continue
+        # 本体行
         excel_items.append({
             "buy_url":       p.buy_url or "",
             "supplier_spec": getattr(p, "supplier_spec", "") or "",
@@ -414,6 +415,27 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
             "notes":         p.notes or "",
             "invoice_note":  p.invoice_note or "",
         })
+        # set_componentsの内部管理SKU（is_component=True）を展開して追加行として出力
+        try:
+            comps = json.loads(p.set_components or "[]")
+        except Exception:
+            comps = []
+        for comp in comps:
+            comp_sku = comp.get("sku")
+            comp_qty = comp.get("qty", 1)
+            c = db.query(RakutenProduct).filter(RakutenProduct.sku == comp_sku).first()
+            if not c or not c.is_component:
+                continue
+            excel_items.append({
+                "buy_url":       c.buy_url or "",
+                "supplier_spec": getattr(c, "supplier_spec", "") or "",
+                "spec":          c.spec or "",
+                "qty":           qty * comp_qty,
+                "price":         c.price or 0,
+                "customer_memo": c.customer_memo or "",
+                "notes":         c.notes or "",
+                "invoice_note":  "",
+            })
 
     xls = build_rakuten_taotaro_excel(excel_items)
     return StreamingResponse(
