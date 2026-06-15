@@ -5,6 +5,7 @@ from app.core.database import get_db
 from app.models.shipment_order import ShipmentOrder, ShipmentOrderItem
 from app.models.product import Product
 from app.models.rakuten_product import RakutenProduct
+from app.models.rakuten_order import RakutenOrderHistory
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timezone
@@ -281,16 +282,41 @@ def receive_shipment(order_id: int, db: Session = Depends(get_db)):
     items = db.query(ShipmentOrderItem).filter(ShipmentOrderItem.shipment_order_id == order_id).all()
     updated = 0
     skipped = 0
+    order_consumed = 0  # 発注済みリストから消化した件数
+
     for item in items:
         if not item.product_id:
             skipped += 1
             continue
         product = db.query(RakutenProduct).filter(RakutenProduct.id == item.product_id).first()
-        if product:
-            product.stock = (product.stock or 0) + item.qty
-            updated += 1
+        if not product:
+            skipped += 1
+            continue
+
+        # 在庫加算
+        product.stock = (product.stock or 0) + item.qty
+        updated += 1
+
+        # 発注済みリストをSKU・古い順に消化
+        remaining = item.qty
+        orders = db.query(RakutenOrderHistory).filter(
+            RakutenOrderHistory.sku == product.sku,
+            RakutenOrderHistory.is_deleted == False,
+        ).order_by(RakutenOrderHistory.created_at.asc()).all()
+
+        for o in orders:
+            if remaining <= 0:
+                break
+            if remaining >= o.qty:
+                remaining -= o.qty
+                o.is_deleted = True
+                order_consumed += 1
+            else:
+                o.qty -= remaining
+                remaining = 0
+                order_consumed += 1
 
     order.status = "received"
     order.received_at = datetime.now(timezone.utc)
     db.commit()
-    return {"updated": updated, "skipped": skipped}
+    return {"updated": updated, "skipped": skipped, "order_consumed": order_consumed}
