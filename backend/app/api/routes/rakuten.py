@@ -265,20 +265,6 @@ def get_recommendations(db: Session = Depends(get_db)):
     # 全商品を取得
     all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
 
-    # is_component=Falseの商品のset_componentsに含まれているSKUを収集（付属品）
-    comp_skus_in_sets: set = set()
-    for p in all_products:
-        if p.is_component or not p.set_components:
-            continue
-        try:
-            comps = json.loads(p.set_components)
-        except Exception:
-            comps = []
-        for c in comps:
-            sku = c.get("sku", "")
-            if sku:
-                comp_skus_in_sets.add(sku)
-
     # セット商品（is_component=False かつ set_components あり）の販売実績を
     # 構成単品SKUへ按分して集計する
     # result: {単品SKU: {"recent": N, "prev": N}}
@@ -301,13 +287,11 @@ def get_recommendations(db: Session = Depends(get_db)):
             unit_sales[unit_sku]["recent"] += (p.sales_30_recent or 0) * qty
             unit_sales[unit_sku]["prev"]   += (p.sales_30_prev   or 0) * qty
 
-    # is_component=True・buy_urlあり・set_componentsなし・他商品のset_componentsに含まれていない
+    # is_component=True・buy_urlあり
     singles = [
         p for p in all_products
         if p.is_component
         and (p.buy_url or "").strip()
-        and not p.set_components
-        and p.sku not in comp_skus_in_sets
     ]
     items = []
     for p in singles:
