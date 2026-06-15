@@ -369,28 +369,14 @@ def get_all_products_order(db: Session = Depends(get_db)):
     )
     all_products = db.query(RakutenProduct).filter(
         RakutenProduct.is_active == True,
+        RakutenProduct.is_component == False,
     ).all()
 
-    # 他商品のset_componentsに含まれているSKUを収集
-    comp_skus_in_sets: set = set()
-    for p in all_products:
-        if not p.set_components:
-            continue
-        try:
-            comps = json.loads(p.set_components)
-        except Exception:
-            comps = []
-        for c in comps:
-            sku = c.get("sku", "")
-            if sku:
-                comp_skus_in_sets.add(sku)
-
-    # is_component=False・buy_urlあり・他商品のセット構成に含まれていないもの
+    # buy_urlあり・set_componentsなし（セット組の親商品を除外）
     targets = [
         p for p in all_products
-        if not p.is_component
-        and (p.buy_url or "").strip()
-        and p.sku not in comp_skus_in_sets
+        if (p.buy_url or "").strip()
+        and not p.set_components
     ]
     items = []
     for p in targets:
