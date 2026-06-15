@@ -614,7 +614,7 @@ function SetComponentsEditor({ value, onChange, allProducts }) {
 
   const update = (newItems) => onChange(JSON.stringify(newItems))
 
-  const addRow = () => update([...items, { sku: '', qty: 1, buy_url: '', supplier_spec: '', price: '', notes: '' }])
+  const addRow = () => update([...items, { sku: '', qty: 1, buy_url: '', supplier_spec: '', price: '', customer_memo: '', notes: '' }])
   const removeRow = (i) => update(items.filter((_, idx) => idx !== i))
   const updateRow = (i, field, val) => {
     const next = items.map((item, idx) => idx === i ? { ...item, [field]: val } : item)
@@ -693,6 +693,15 @@ function SetComponentsEditor({ value, onChange, allProducts }) {
                   style={{ ...inputStyle, textAlign: 'center' }}
                 />
               </div>
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <div style={labelStyle}>お客様専用メモ（タオタロウG列）</div>
+              <input
+                value={item.customer_memo || ''}
+                onChange={e => updateRow(i, 'customer_memo', e.target.value)}
+                style={inputStyle}
+                placeholder="例: 4色セット（咖啡色・乳白色・灰色・浅灰色 各1枚）"
+              />
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
               <div style={labelStyle}>備考（タオタロウH列）</div>

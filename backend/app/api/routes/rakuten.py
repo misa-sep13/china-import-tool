@@ -413,7 +413,6 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
             "price":         p.price or 0,
             "customer_memo": p.customer_memo or "",
             "notes":         p.notes or "",
-            "customer_memo":  p.customer_memo or "",
         })
         # set_componentsを展開して追加行として出力
         # set_components内のbuy_url/supplier_spec/priceを優先、なければ商品マスタから取得
@@ -443,9 +442,8 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
                 "spec":          "",
                 "qty":           qty * comp_qty,
                 "price":         comp_price or 0,
-                "customer_memo": "",
+                "customer_memo": comp.get("customer_memo", ""),
                 "notes":         comp.get("notes", ""),
-                "customer_memo":  "",
             })
 
     xls = build_rakuten_taotaro_excel(excel_items)
