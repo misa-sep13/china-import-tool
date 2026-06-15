@@ -265,6 +265,20 @@ def get_recommendations(db: Session = Depends(get_db)):
     # 全商品を取得
     all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
 
+    # 他商品のset_componentsに含まれているSKUを収集（付属品・セット構成品）
+    comp_skus_in_sets: set = set()
+    for p in all_products:
+        if not p.set_components:
+            continue
+        try:
+            comps = json.loads(p.set_components)
+        except Exception:
+            comps = []
+        for c in comps:
+            sku = c.get("sku", "")
+            if sku:
+                comp_skus_in_sets.add(sku)
+
     # セット商品（is_component=False かつ set_components あり）の販売実績を
     # 構成単品SKUへ按分して集計する
     # result: {単品SKU: {"recent": N, "prev": N}}
@@ -287,8 +301,13 @@ def get_recommendations(db: Session = Depends(get_db)):
             unit_sales[unit_sku]["recent"] += (p.sales_30_recent or 0) * qty
             unit_sales[unit_sku]["prev"]   += (p.sales_30_prev   or 0) * qty
 
-    # 単品（is_component=True）ごとに発注計算
-    singles = [p for p in all_products if p.is_component]
+    # 単品（is_component=True）かつbuy_urlあり・他商品のセット構成に含まれていないもの
+    singles = [
+        p for p in all_products
+        if p.is_component
+        and (p.buy_url or "").strip()
+        and p.sku not in comp_skus_in_sets
+    ]
     items = []
     for p in singles:
         ordered = ordered_by_sku.get(p.sku, 0) or 0
@@ -350,10 +369,31 @@ def get_all_products_order(db: Session = Depends(get_db)):
     )
     all_products = db.query(RakutenProduct).filter(
         RakutenProduct.is_active == True,
-        RakutenProduct.is_component == False,
     ).all()
-    items = []
+
+    # 他商品のset_componentsに含まれているSKUを収集
+    comp_skus_in_sets: set = set()
     for p in all_products:
+        if not p.set_components:
+            continue
+        try:
+            comps = json.loads(p.set_components)
+        except Exception:
+            comps = []
+        for c in comps:
+            sku = c.get("sku", "")
+            if sku:
+                comp_skus_in_sets.add(sku)
+
+    # is_component=False・buy_urlあり・他商品のセット構成に含まれていないもの
+    targets = [
+        p for p in all_products
+        if not p.is_component
+        and (p.buy_url or "").strip()
+        and p.sku not in comp_skus_in_sets
+    ]
+    items = []
+    for p in targets:
         ordered = ordered_by_sku.get(p.sku, 0) or 0
         calc = calc_rakuten_order(
             stock=p.stock or 0,
