@@ -301,12 +301,11 @@ def get_recommendations(db: Session = Depends(get_db)):
             unit_sales[unit_sku]["recent"] += (p.sales_30_recent or 0) * qty
             unit_sales[unit_sku]["prev"]   += (p.sales_30_prev   or 0) * qty
 
-    # 単品（is_component=True）かつbuy_urlあり・他商品のセット構成に含まれていないもの
+    # 単品（is_component=True）かつbuy_urlあり
     singles = [
         p for p in all_products
         if p.is_component
         and (p.buy_url or "").strip()
-        and p.sku not in comp_skus_in_sets
     ]
     items = []
     for p in singles:
@@ -369,10 +368,9 @@ def get_all_products_order(db: Session = Depends(get_db)):
     )
     all_products = db.query(RakutenProduct).filter(
         RakutenProduct.is_active == True,
-        RakutenProduct.is_component == False,
     ).all()
 
-    # buy_urlあり・set_componentsなし（セット組の親商品を除外）
+    # buy_urlあり・set_componentsなし（セット組は除外）
     targets = [
         p for p in all_products
         if (p.buy_url or "").strip()
