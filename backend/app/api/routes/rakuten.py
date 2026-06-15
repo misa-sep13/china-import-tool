@@ -16,6 +16,19 @@ from app.services.rakuten_calc import calc_rakuten_order, RakutenCalcSettings
 router = APIRouter(prefix="/rakuten", tags=["rakuten"])
 
 
+def _clean_set_components(sc: Optional[str]) -> Optional[str]:
+    """set_componentsのJSON文字列から空エントリ（sku/buy_url/supplier_specが全て空）を除去。全削除なら None を返す。"""
+    if not sc:
+        return sc
+    try:
+        items = json.loads(sc)
+        filtered = [it for it in items if it.get("sku") or it.get("buy_url") or it.get("supplier_spec")]
+        return json.dumps(filtered, ensure_ascii=False) if filtered else None
+    except Exception:
+        return sc
+
+
+
 # ============================================================
 # Settings
 # ============================================================
@@ -147,6 +160,7 @@ def list_stock(db: Session = Depends(get_db)):
 
 @router.post("/products", response_model=RakutenProductOut)
 def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):
+    data.set_components = _clean_set_components(data.set_components)
     existing = db.query(RakutenProduct).filter(RakutenProduct.sku == data.sku).first()
     if existing:
         if existing.is_active:
@@ -166,6 +180,7 @@ def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):
 
 @router.put("/products/{product_id}", response_model=RakutenProductOut)
 def update_product(product_id: int, data: RakutenProductIn, db: Session = Depends(get_db)):
+    data.set_components = _clean_set_components(data.set_components)
     p = db.query(RakutenProduct).filter(RakutenProduct.id == product_id).first()
     if not p:
         raise HTTPException(404, "商品が見つかりません")
