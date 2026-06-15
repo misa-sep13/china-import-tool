@@ -1,6 +1,302 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
+import axios from 'axios'
+
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+
+/* ===================== 配送依頼タブ ===================== */
+function ShipmentTab() {
+  const [subTab, setSubTab] = useState('list')  // 'list' | 'new'
+  const [shipments, setShipments] = useState([])
+  const [detail, setDetail] = useState(null)
+  const [detailItems, setDetailItems] = useState([])
+  const [allProducts, setAllProducts] = useState([])
+
+  // 新規取り込み用
+  const [uploading, setUploading] = useState(false)
+  const [parsed, setParsed] = useState(null)
+  const [matched, setMatched] = useState([])
+  const [unmatched, setUnmatched] = useState([])
+  const [saving, setSaving] = useState(false)
+  const [note, setNote] = useState('')
+  const [done, setDone] = useState(false)
+
+  useEffect(() => {
+    fetchShipments()
+    axios.get(`${API}/rakuten/products/`).then(r => setAllProducts(r.data)).catch(() => {})
+  }, [])
+
+  async function fetchShipments() {
+    const res = await axios.get(`${API}/shipment-orders/`)
+    setShipments(res.data)
+  }
+
+  async function handleFile(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    setUploading(true)
+    setParsed(null); setMatched([]); setUnmatched([]); setDone(false)
+    const fd = new FormData()
+    fd.append('file', file)
+    try {
+      const res = await axios.post(`${API}/shipment-orders/parse-excel`, fd)
+      setParsed(res.data)
+      const matchRes = await axios.post(`${API}/shipment-orders/match`, res.data.items)
+      setMatched(matchRes.data.matched)
+      setUnmatched(matchRes.data.unmatched)
+    } catch (e) {
+      alert('読み込みエラー: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  function handleUnmatchedSelect(index, productId) {
+    setUnmatched(prev => prev.map((item, i) => {
+      if (i !== index) return item
+      const product = allProducts.find(p => p.id === parseInt(productId))
+      return { ...item, product_id: product?.id || null, sku: product?.sku || '', name_jp: product?.name || '' }
+    }))
+  }
+
+  async function handleSave() {
+    if (!parsed) return
+    setSaving(true)
+    try {
+      await axios.post(`${API}/shipment-orders/save`, {
+        shipped_date: parsed.shipped_date,
+        tracking_no: parsed.tracking_no,
+        order_no: parsed.order_no,
+        box_count: parsed.box_count,
+        total_weight_kg: parsed.total_weight_kg,
+        note,
+        matched,
+        unmatched,
+      })
+      setDone(true)
+      await fetchShipments()
+    } catch (e) {
+      alert('保存エラー: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function showDetail(s) {
+    setDetail(s)
+    const res = await axios.get(`${API}/shipment-orders/${s.id}/items`)
+    setDetailItems(res.data)
+  }
+
+  async function handleMatchItem(orderId, itemId, productId) {
+    await axios.patch(`${API}/shipment-orders/${orderId}/items/${itemId}/match`, { product_id: parseInt(productId) })
+    const res = await axios.get(`${API}/shipment-orders/${orderId}/items`)
+    setDetailItems(res.data)
+    await fetchShipments()
+  }
+
+  async function handleReceive(orderId) {
+    if (!confirm('入荷済みにして在庫を加算しますか？（元に戻せません）')) return
+    const res = await axios.post(`${API}/shipment-orders/${orderId}/receive`)
+    alert(`入荷処理完了。${res.data.updated}件の在庫を加算しました。（未照合スキップ: ${res.data.skipped}件）`)
+    await fetchShipments()
+    setDetail(prev => ({ ...prev, status: 'received' }))
+  }
+
+  const btnTab = (t) => ({
+    padding: '6px 16px', cursor: 'pointer', background: 'none', border: 'none', fontSize: 13,
+    borderBottom: subTab === t ? '2px solid #3b82f6' : '2px solid transparent',
+    fontWeight: subTab === t ? 700 : 400,
+    color: subTab === t ? '#3b82f6' : '#555',
+  })
+
+  // 詳細表示
+  if (detail) return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <button className="btn btn-secondary" onClick={() => setDetail(null)}>一覧に戻る</button>
+        <b>{detail.tracking_no}</b>
+        <span style={{ fontSize: 13, color: '#888' }}>{detail.shipped_date} ／ {detail.box_count}箱 ／ {detail.total_weight_kg}kg</span>
+        {detail.status !== 'received'
+          ? <button className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={() => handleReceive(detail.id)}>入荷済みにして在庫加算</button>
+          : <span style={{ marginLeft: 'auto', color: '#166534', fontWeight: 700 }}>入荷済み</span>
+        }
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>商品名(中)</th><th>色</th><th>サイズ</th>
+            <th style={{ textAlign: 'right' }}>数量</th>
+            <th>SKU</th><th style={{ textAlign: 'center' }}>照合</th>
+            {detail.status !== 'received' && <th>手動照合</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {detailItems.map(item => (
+            <tr key={item.id}>
+              <td style={{ fontSize: 12, maxWidth: 180 }}>{item.name_cn}</td>
+              <td style={{ fontSize: 12 }}>{item.color}</td>
+              <td style={{ fontSize: 12 }}>{item.size}</td>
+              <td style={{ textAlign: 'right' }}>{item.qty}</td>
+              <td style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                {item.sku || <span style={{ color: '#aaa' }}>未照合</span>}
+                {item.name_jp && <div style={{ fontSize: 11, color: '#555' }}>{item.name_jp}</div>}
+              </td>
+              <td style={{ textAlign: 'center', fontSize: 12, fontWeight: 700, color: item.is_matched ? '#22c55e' : '#e94560' }}>
+                {item.is_matched ? '照合済' : '未照合'}
+              </td>
+              {detail.status !== 'received' && (
+                <td>
+                  {!item.is_matched && (
+                    <select style={{ fontSize: 12 }} defaultValue=""
+                      onChange={e => e.target.value && handleMatchItem(detail.id, item.id, e.target.value)}>
+                      <option value="">-- SKUを選択 --</option>
+                      {allProducts.map(p => <option key={p.id} value={p.id}>{p.sku} {p.name}</option>)}
+                    </select>
+                  )}
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+
+  return (
+    <div>
+      <div style={{ display: 'flex', borderBottom: '1px solid #ddd', marginBottom: 16 }}>
+        <button style={btnTab('list')} onClick={() => setSubTab('list')}>入荷予定一覧</button>
+        <button style={btnTab('new')} onClick={() => { setSubTab('new'); setDone(false); setParsed(null) }}>配送依頼を取り込む</button>
+      </div>
+
+      {/* 一覧 */}
+      {subTab === 'list' && (
+        shipments.length === 0
+          ? <p style={{ color: '#888' }}>配送依頼がまだありません。</p>
+          : <table>
+              <thead>
+                <tr>
+                  <th>追跡番号</th><th>出荷日</th><th>箱数</th>
+                  <th style={{ textAlign: 'center' }}>未照合</th>
+                  <th style={{ textAlign: 'center' }}>状態</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {shipments.map(s => (
+                  <tr key={s.id}>
+                    <td style={{ fontFamily: 'monospace', fontSize: 11 }}>{s.tracking_no}</td>
+                    <td style={{ fontSize: 12 }}>{s.shipped_date}</td>
+                    <td style={{ textAlign: 'center' }}>{s.box_count}</td>
+                    <td style={{ textAlign: 'center', fontSize: 12, fontWeight: 700, color: s.unmatched_count > 0 ? '#e94560' : '#22c55e' }}>
+                      {s.unmatched_count > 0 ? `${s.unmatched_count}件` : '済'}
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700,
+                        background: s.status === 'received' ? '#dcfce7' : '#fef9c3',
+                        color: s.status === 'received' ? '#166534' : '#854d0e' }}>
+                        {s.status === 'received' ? '入荷済' : '入荷待ち'}
+                      </span>
+                    </td>
+                    <td><button className="btn btn-secondary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => showDetail(s)}>詳細</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+      )}
+
+      {/* 新規取り込み */}
+      {subTab === 'new' && (
+        done
+          ? <div className="card">
+              <p style={{ color: '#166534', fontWeight: 700 }}>保存しました。一覧から入荷済み処理ができます。</p>
+              <button className="btn btn-secondary" onClick={() => { setDone(false); setParsed(null); setMatched([]); setUnmatched([]) }}>続けて取り込む</button>
+            </div>
+          : <>
+              <div className="card" style={{ marginBottom: 16 }}>
+                <h3 style={{ marginBottom: 12 }}>配送依頼ファイル（send-order-list.xls）</h3>
+                <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={uploading} />
+                {uploading && <span style={{ marginLeft: 12, color: '#888' }}>読み込み・照合中...</span>}
+              </div>
+
+              {parsed && (
+                <>
+                  <div className="card" style={{ marginBottom: 16 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, fontSize: 13 }}>
+                      <div><b>追跡番号:</b> {parsed.tracking_no}</div>
+                      <div><b>出荷日:</b> {parsed.shipped_date}</div>
+                      <div><b>箱数:</b> {parsed.box_count}</div>
+                      <div><b>重量:</b> {parsed.total_weight_kg}kg</div>
+                    </div>
+                    <div className="form-group" style={{ marginTop: 12 }}>
+                      <label>メモ</label>
+                      <input value={note} onChange={e => setNote(e.target.value)} />
+                    </div>
+                  </div>
+
+                  {matched.length > 0 && (
+                    <div className="card" style={{ marginBottom: 16 }}>
+                      <h3 style={{ color: '#166534', marginBottom: 12 }}>照合済み {matched.length}件</h3>
+                      <table>
+                        <thead><tr><th>SKU</th><th>商品名</th><th>色</th><th>サイズ</th><th style={{ textAlign: 'right' }}>数量</th></tr></thead>
+                        <tbody>
+                          {matched.map((item, i) => (
+                            <tr key={i}>
+                              <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{item.sku}</td>
+                              <td style={{ fontSize: 12 }}>{item.name_jp || item.name_cn}</td>
+                              <td style={{ fontSize: 12 }}>{item.color}</td>
+                              <td style={{ fontSize: 12 }}>{item.size}</td>
+                              <td style={{ textAlign: 'right' }}>{item.qty}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {unmatched.length > 0 && (
+                    <div className="card" style={{ marginBottom: 16 }}>
+                      <h3 style={{ color: '#e94560', marginBottom: 12 }}>未照合 {unmatched.length}件 — SKUを選択してください</h3>
+                      <table>
+                        <thead><tr><th>商品名(中)</th><th>色</th><th>サイズ</th><th style={{ textAlign: 'right' }}>数量</th><th>SKU選択</th></tr></thead>
+                        <tbody>
+                          {unmatched.map((item, i) => (
+                            <tr key={i}>
+                              <td style={{ fontSize: 12 }}>
+                                <div>{item.name_cn}</div>
+                                {item.buy_url && <a href={item.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#3b82f6' }}>URL</a>}
+                              </td>
+                              <td style={{ fontSize: 12 }}>{item.color}</td>
+                              <td style={{ fontSize: 12 }}>{item.size}</td>
+                              <td style={{ textAlign: 'right' }}>{item.qty}</td>
+                              <td>
+                                {item.sku
+                                  ? <span style={{ fontSize: 12, color: '#166534', fontWeight: 700 }}>{item.sku}</span>
+                                  : <select style={{ fontSize: 12 }} defaultValue="" onChange={e => handleUnmatchedSelect(i, e.target.value)}>
+                                      <option value="">-- 選択 --</option>
+                                      {allProducts.map(p => <option key={p.id} value={p.id}>{p.sku} {p.name}</option>)}
+                                    </select>
+                                }
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                    {saving ? '保存中...' : '保存する'}
+                  </button>
+                </>
+              )}
+            </>
+      )}
+    </div>
+  )
+}
 
 async function downloadExcel(items) {
   const res = await api.post('/rakuten/orders/excel', { items }, { responseType: 'blob' })
@@ -85,14 +381,9 @@ export default function RakutenOrderPage() {
 
       {/* タブ */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <button
-          className={`btn ${tab === 'order' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setTab('order')}
-        >発注推奨リスト</button>
-        <button
-          className={`btn ${tab === 'history' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setTab('history')}
-        >発注済みリスト</button>
+        <button className={`btn ${tab === 'order' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('order')}>発注推奨リスト</button>
+        <button className={`btn ${tab === 'history' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('history')}>発注済みリスト</button>
+        <button className={`btn ${tab === 'shipment' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('shipment')}>配送依頼（在庫反映）</button>
       </div>
 
       {/* ===== 発注推奨リスト ===== */}
@@ -198,6 +489,9 @@ export default function RakutenOrderPage() {
           </div>
         </>
       )}
+
+      {/* ===== 配送依頼 ===== */}
+      {tab === 'shipment' && <ShipmentTab />}
 
       {/* ===== 発注済みリスト ===== */}
       {tab === 'history' && (

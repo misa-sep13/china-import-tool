@@ -660,6 +660,59 @@ class RakutenInvoiceIn(BaseModel):
     import_tax_jpy: float = 0  # 輸入税合計（円）：関税＋消費税＋地方消費税
     items: List[RakutenInvoiceItemIn]
 
+@router.post("/invoices/validate-pair")
+async def rakuten_validate_pair(
+    invoice_file: UploadFile = File(...),
+    permit_file: UploadFile = File(...),
+):
+    """インボイスXLSと輸入許可書PDFのCNY合計が一致するか検証する"""
+    import re, openpyxl
+    inv_content = await invoice_file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(inv_content))
+    except Exception as e:
+        raise HTTPException(400, f"インボイス読み込みエラー: {str(e)}")
+
+    ws = wb.active
+    header_row = None
+    for i, row in enumerate(ws.iter_rows(min_row=1, max_row=20, values_only=True), 1):
+        if row[0] == "10) Name of Commodity":
+            header_row = i + 1
+            break
+    if not header_row:
+        raise HTTPException(400, "インボイスの商品データが見つかりません")
+
+    total_cny = 0.0
+    for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
+        if row[0] and str(row[0]).startswith("MADE IN"):
+            break
+        if row[0] is None and row[6] and row[7]:
+            total_cny += float(row[6]) * float(row[7])
+
+    permit_content = await permit_file.read()
+    try:
+        import pdfplumber
+        with pdfplumber.open(io.BytesIO(permit_content)) as pdf:
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+    except Exception as e:
+        raise HTTPException(400, f"輸入許可書読み込みエラー: {str(e)}")
+
+    m = re.search(r'仕入書価格\s+[A-Z]\s+-\s+CIF\s+-\s+CNY\s+-\s+([\d,\.]+)', text)
+    permit_cny = float(m.group(1).replace(",", "")) if m else 0.0
+
+    total_cny = round(total_cny, 2)
+    diff = abs(total_cny - permit_cny)
+    ok = diff <= 1.0
+
+    return {
+        "ok": ok,
+        "invoice_cny": total_cny,
+        "permit_cny": permit_cny,
+        "diff": round(diff, 2),
+        "message": "照合OK" if ok else f"金額不一致（インボイス: {total_cny}元、輸入許可書: {permit_cny}元、差額: {round(diff,2)}元）",
+    }
+
+
 @router.post("/invoices/parse-pdf")
 async def rakuten_parse_pdf(file: UploadFile = File(...)):
     """輸入許可証PDFから納税額合計・為替レートを抽出"""

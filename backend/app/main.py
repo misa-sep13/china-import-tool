@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import Base, engine
-from app.api.routes import products, orders, settings, fba, invoices, price_adjustments, analytics
+from app.api.routes import products, orders, settings, fba, invoices, price_adjustments, analytics, shipment_orders
 from app.api.routes import rakuten
 from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
@@ -9,6 +9,7 @@ from app.models import price_log as price_log_models
 from app.models import rakuten_product as rakuten_product_models
 from app.models import rakuten_order as rakuten_order_models
 from app.models import rakuten_settings as rakuten_settings_models
+from app.models import shipment_order as shipment_order_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -58,6 +59,13 @@ def _migrate():
         ("rakuten_settings","default_shipping_fee", "ALTER TABLE rakuten_settings ADD COLUMN default_shipping_fee INTEGER DEFAULT 180"),
         ("rakuten_products","supplier_spec",       "ALTER TABLE rakuten_products ADD COLUMN supplier_spec VARCHAR"),
         ("rakuten_products","invoice_note",        "ALTER TABLE rakuten_products ADD COLUMN invoice_note TEXT"),
+        # インボイス：輸入許可書情報
+        ("invoices","customs_duty",          "ALTER TABLE invoices ADD COLUMN customs_duty INTEGER DEFAULT 0"),
+        ("invoices","consumption_tax",       "ALTER TABLE invoices ADD COLUMN consumption_tax INTEGER DEFAULT 0"),
+        ("invoices","local_consumption_tax", "ALTER TABLE invoices ADD COLUMN local_consumption_tax INTEGER DEFAULT 0"),
+        ("invoices","total_tax",             "ALTER TABLE invoices ADD COLUMN total_tax INTEGER DEFAULT 0"),
+        ("invoices","bl_number",             "ALTER TABLE invoices ADD COLUMN bl_number VARCHAR"),
+        ("invoices","declaration_no",        "ALTER TABLE invoices ADD COLUMN declaration_no VARCHAR"),
     ]
 
     inspector = inspect(engine)
@@ -120,6 +128,7 @@ app.include_router(invoices.router, prefix="/api")
 app.include_router(price_adjustments.router, prefix="/api")
 app.include_router(analytics.router, prefix="/api")
 app.include_router(rakuten.router, prefix="/api")
+app.include_router(shipment_orders.router, prefix="/api")
 
 @app.get("/")
 def root():
