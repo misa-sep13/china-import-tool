@@ -612,7 +612,10 @@ function SetComponentsEditor({ value, onChange, allProducts }) {
   const parse = (v) => { try { return JSON.parse(v || '[]') } catch { return [] } }
   const items = parse(value)
 
-  const update = (newItems) => onChange(JSON.stringify(newItems))
+  const update = (newItems) => {
+    const nonEmpty = newItems.filter(it => it.sku || it.buy_url || it.supplier_spec)
+    onChange(nonEmpty.length > 0 ? JSON.stringify(newItems) : '')
+  }
 
   const addRow = () => update([...items, { sku: '', qty: 1, buy_url: '', supplier_spec: '', price: '', customer_memo: '', notes: '' }])
   const removeRow = (i) => update(items.filter((_, idx) => idx !== i))
