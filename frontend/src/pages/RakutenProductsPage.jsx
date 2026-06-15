@@ -142,7 +142,7 @@ export default function RakutenProductsPage() {
   const internalSkus = new Set(products.filter(p => p.is_component).map(p => p.sku))
 
   const parseComps = (p) => { try { return JSON.parse(p.set_components || '[]') } catch { return [] } }
-  const compSkus = (p) => parseComps(p).map(c => c.sku)
+  const compSkus = (p) => parseComps(p).map(c => c.sku).filter(Boolean)
 
   // set_componentsを持ち、かつ中身が全て内部管理SKU → セット販売商品（親として表示）
   const isSetParent = (p) => {
