@@ -332,6 +332,60 @@ def get_recommendations(db: Session = Depends(get_db)):
     return {"items": items, "settings": RakutenSettingsSchema.model_validate(settings_row)}
 
 
+@router.get("/orders/all-products")
+def get_all_products_order(db: Session = Depends(get_db)):
+    """全商品（is_component=False）を発注推奨リストと同じ形式で返す"""
+    settings_row = _get_or_create_settings(db)
+    s = RakutenCalcSettings(
+        lead_days=settings_row.lead_days,
+        target_days=settings_row.target_days,
+        safety_stock_rate=settings_row.safety_stock_rate,
+        threshold_days=settings_row.threshold_days,
+    )
+    ordered_by_sku = dict(
+        db.query(RakutenOrderHistory.sku, func.sum(RakutenOrderHistory.qty))
+        .filter(RakutenOrderHistory.is_delivered == False, RakutenOrderHistory.is_deleted == False)
+        .group_by(RakutenOrderHistory.sku)
+        .all()
+    )
+    all_products = db.query(RakutenProduct).filter(
+        RakutenProduct.is_active == True,
+        RakutenProduct.is_component == False,
+    ).all()
+    items = []
+    for p in all_products:
+        ordered = ordered_by_sku.get(p.sku, 0) or 0
+        calc = calc_rakuten_order(
+            stock=p.stock or 0,
+            inbound=p.inbound or 0,
+            ordered=ordered,
+            sales_30_recent=p.sales_30_recent or 0,
+            sales_30_prev=p.sales_30_prev or 0,
+            super_sale_qty=0,
+            sales_90=getattr(p, 'sales_90', None) or 0,
+            stockout_days_90=getattr(p, 'stockout_days_90', None) or 0,
+            s=s,
+        )
+        items.append({
+            "product_id":      p.id,
+            "sku":             p.sku or "",
+            "name":            p.name or "",
+            "buy_url":         p.buy_url or "",
+            "stock":           p.stock or 0,
+            "inbound":         p.inbound or 0,
+            "ordered":         ordered,
+            "total_stock":     calc.total_stock,
+            "daily_avg":       calc.daily_avg,
+            "days_left":       calc.days_left,
+            "growth_rate":     calc.growth_rate,
+            "order_qty":       calc.order_qty,
+            "needs_order":     calc.needs_order,
+            "sales_30_recent": p.sales_30_recent or 0,
+            "sales_30_prev":   p.sales_30_prev or 0,
+        })
+    return {"items": items, "settings": RakutenSettingsSchema.model_validate(settings_row)}
+
+
 # ============================================================
 # Order History（発注済みリスト）
 # ============================================================
