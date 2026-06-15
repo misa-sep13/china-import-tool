@@ -114,7 +114,7 @@ def build_rakuten_taotaro_excel(items: List[Dict]) -> bytes:
         cell.border = border
     ws.row_dimensions[2].height = 25
 
-    # 3行目以降：データ（ASIN/FNSKUは空欄、invoice_noteがあればASIN欄に出力）
+    # 3行目以降：データ（ASIN/FNSKUは空欄、customer_memoがあればASIN欄に出力）
     for i, item in enumerate(items):
         row_num = 3 + i
         values = [
@@ -122,7 +122,7 @@ def build_rakuten_taotaro_excel(items: List[Dict]) -> bytes:
             item.get("supplier_spec", "") or item.get("spec", ""),  # B: 仕様（中国語優先）
             item.get("qty", 0),             # C: 数量
             item.get("price", 0),           # D: 単価
-            item.get("invoice_note", ""),   # E: 商品内訳メモ（楽天専用・インボイス振り分け用）
+            item.get("customer_memo", ""),  # E: お客様専用メモ（G列・インボイス振り分け用）
             "",                             # F: FNSKU（空欄）
             item.get("customer_memo", ""),  # G: お客様専用メモ
             item.get("notes", ""),          # H: 備考

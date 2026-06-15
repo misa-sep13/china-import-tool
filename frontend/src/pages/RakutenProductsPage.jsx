@@ -8,7 +8,7 @@ const EMPTY = {
   standard_stock: 0, stock: 0, inbound: 0,
   sales_30_recent: 0, sales_30_prev: 0,
   cost_jpy: null, selling_price: null, shipping_fee: 180,
-  customer_memo: '', notes: '', memo: '', invoice_note: '',
+  customer_memo: '', notes: '', memo: '',
   set_components: '', is_component: false, is_active: true,
 }
 
@@ -409,19 +409,15 @@ export default function RakutenProductsPage() {
                 <input type="number" step="1" {...f('shipping_fee', 'number')} placeholder="180" />
               </div>
               <div className="form-group">
-                <label>お客様専用メモ（タオタロウG列）</label>
-                <textarea value={form.customer_memo || ''} onChange={e => setForm(p => ({ ...p, customer_memo: e.target.value }))} rows={2} />
+                <label>
+                  お客様専用メモ（タオタロウG列）
+                  <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 6 }}>インボイス振り分け確認用・TAO太郎E列に出力</span>
+                </label>
+                <textarea value={form.customer_memo || ''} onChange={e => setForm(p => ({ ...p, customer_memo: e.target.value }))} rows={2} placeholder="例：4色セット（咖啡色・乳白色・灰色・浅灰色 各1枚）" />
               </div>
               <div className="form-group">
                 <label>備考（タオタロウH列）</label>
                 <textarea value={form.notes || ''} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} rows={2} />
-              </div>
-              <div className="form-group">
-                <label>
-                  商品内訳メモ（楽天専用）
-                  <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 6 }}>インボイスJ列に出力・振り分け確認用</span>
-                </label>
-                <textarea value={form.invoice_note || ''} onChange={e => setForm(p => ({ ...p, invoice_note: e.target.value }))} rows={2} placeholder="例：4色セット（咖啡色・乳白色・灰色・浅灰色 各1枚）" />
               </div>
             </div>
 

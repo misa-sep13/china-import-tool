@@ -225,8 +225,8 @@ export default function RakutenInvoicePage() {
                     <td style={{ padding: '8px 12px', fontSize: 12 }}>
                       {item.asin_memo
                         ? <span style={{ background: '#fef08a', border: '1px solid #ca8a04', borderRadius: 4, padding: '2px 6px', fontSize: 11, fontWeight: 600 }}>⚠️ {item.asin_memo}</span>
-                        : item.invoice_note
-                          ? <span style={{ color: '#64748b', fontSize: 11 }}>{item.invoice_note}</span>
+                        : item.customer_memo
+                          ? <span style={{ color: '#64748b', fontSize: 11 }}>{item.customer_memo}</span>
                           : '—'}
                     </td>
                     <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.qty}</td>
