@@ -264,15 +264,34 @@ def get_recommendations(db: Session = Depends(get_db)):
 
     # 全商品を取得
     all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    sku_to_product = {p.sku: p for p in all_products}
 
-    # セット商品（is_component=False かつ set_components あり）の販売実績を
-    # 構成単品SKUへ按分して集計する
-    # result: {単品SKU: {"recent": N, "prev": N}}
+    # 「親発注品」= is_component=False かつ buy_url あり かつ set_components あり
+    # （例: y34=3本セット、y15=天使の羽+風船セット）→ セットごと仕入れる商品
+    parent_orders: dict[str, RakutenProduct] = {
+        p.sku: p for p in all_products
+        if not p.is_component
+        and (p.buy_url or "").strip()
+        and p.set_components
+    }
+
+    # 親発注品のset_components内SKU → 個別に推奨リストへ出さない
+    parent_comp_skus: set[str] = set()
+    for p in parent_orders.values():
+        try:
+            comps = json.loads(p.set_components or "[]")
+            parent_comp_skus.update(c["sku"] for c in comps if c.get("sku"))
+        except Exception:
+            pass
+
+    # セット商品の販売実績を構成単品SKUへ按分（親発注品は除く）
     unit_sales: dict[str, dict] = {}
 
     for p in all_products:
         if p.is_component or not p.set_components:
             continue
+        if p.sku in parent_orders:
+            continue  # 親発注品は後で別処理
         try:
             comps = json.loads(p.set_components or "[]")
         except Exception:
@@ -287,14 +306,38 @@ def get_recommendations(db: Session = Depends(get_db)):
             unit_sales[unit_sku]["recent"] += (p.sales_30_recent or 0) * qty
             unit_sales[unit_sku]["prev"]   += (p.sales_30_prev   or 0) * qty
 
-    # is_component=True・buy_urlあり
+    # 親発注品の販売数 = 親自身の直販 + コンポーネントSKUの直販合計
+    for p_sku, p in parent_orders.items():
+        try:
+            comps = json.loads(p.set_components or "[]")
+        except Exception:
+            comps = []
+        comp_recent = sum(
+            (sku_to_product[c["sku"]].sales_30_recent or 0) * (c.get("qty", 1) or 1)
+            for c in comps if c.get("sku") and c["sku"] in sku_to_product
+        )
+        comp_prev = sum(
+            (sku_to_product[c["sku"]].sales_30_prev or 0) * (c.get("qty", 1) or 1)
+            for c in comps if c.get("sku") and c["sku"] in sku_to_product
+        )
+        unit_sales[p_sku] = {
+            "recent": (p.sales_30_recent or 0) + comp_recent,
+            "prev":   (p.sales_30_prev   or 0) + comp_prev,
+        }
+
+    # is_component=True + buy_url あり + 親発注品のコンポーネントでない
     singles = [
         p for p in all_products
         if p.is_component
         and (p.buy_url or "").strip()
+        and p.sku not in parent_comp_skus
     ]
+
+    # 通常単品 + 親発注品を合わせて計算
+    all_order_items = singles + list(parent_orders.values())
+
     items = []
-    for p in singles:
+    for p in all_order_items:
         ordered = ordered_by_sku.get(p.sku, 0) or 0
         agg = unit_sales.get(p.sku, {})
         sales_recent = agg.get("recent", 0)
