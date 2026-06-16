@@ -259,7 +259,7 @@ export default function RakutenProductsPage() {
         <input
           type="text" placeholder="SKU・商品名・JANコード・楽天SKUで絞り込み"
           value={search} onChange={e => setSearch(e.target.value)}
-          style={{ width: '100%', maxWidth: 420 }}
+          style={{ width: '100%', maxWidth: 320 }}
         />
         <select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)} style={{ minWidth: 120 }}>
           <option value="">仕入れ先: すべて</option>
