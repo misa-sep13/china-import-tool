@@ -5,6 +5,7 @@ import api from '../api/client'
 export default function RakutenStockPage() {
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
+  const [supplierFilter, setSupplierFilter] = useState('')
   const [editingId, setEditingId] = useState(null)
   const [editVals, setEditVals] = useState({})
   const [importingStock, setImportingStock] = useState(false)
@@ -52,7 +53,10 @@ export default function RakutenStockPage() {
     },
   })
 
+  const suppliers = [...new Set(items.map(p => p.supplier).filter(Boolean))].sort()
+
   const filtered = items.filter(p => {
+    if (supplierFilter && (p.supplier || '') !== supplierFilter) return false
     if (!search) return true
     const q = search.toLowerCase()
     return (p.sku || '').toLowerCase().includes(q) ||
@@ -111,8 +115,12 @@ export default function RakutenStockPage() {
         <input
           type="text" placeholder="SKU・商品名・仕様で絞り込み"
           value={search} onChange={e => setSearch(e.target.value)}
-          style={{ width: '100%', maxWidth: 380 }}
+          style={{ flex: '1 1 380px', minWidth: 0 }}
         />
+        <select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)} style={{ minWidth: 120 }}>
+          <option value="">仕入れ先: すべて</option>
+          {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
         <span style={{ fontSize: 12, color: '#6b7280' }}>{filtered.length}件</span>
       </div>
 
