@@ -187,7 +187,7 @@ export default function ProductsPage() {
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="SKU・商品名・ASIN・FNSKUで絞り込み"
-          style={{ padding: '8px 12px', width: 320, border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14 }}
+          style={{ padding: '8px 12px', width: 260, border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14 }}
         />
         <select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)}
           style={{ padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, width: 160 }}>

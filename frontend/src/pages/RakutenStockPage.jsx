@@ -115,7 +115,7 @@ export default function RakutenStockPage() {
         <input
           type="text" placeholder="SKU・商品名・仕様で絞り込み"
           value={search} onChange={e => setSearch(e.target.value)}
-          style={{ flex: '1 1 380px', minWidth: 0 }}
+          style={{ width: 220, flex: '0 0 220px' }}
         />
         <select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)} style={{ width: 160, flex: '0 0 160px' }}>
           <option value="">仕入れ先: すべて</option>
