@@ -180,7 +180,8 @@ def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):
 
 @router.put("/products/{product_id}", response_model=RakutenProductOut)
 def update_product(product_id: int, data: RakutenProductIn, db: Session = Depends(get_db)):
-    data.set_components = _clean_set_components(data.set_components)
+    if "set_components" in data.model_fields_set:
+        data.set_components = _clean_set_components(data.set_components)
     p = db.query(RakutenProduct).filter(RakutenProduct.id == product_id).first()
     if not p:
         raise HTTPException(404, "商品が見つかりません")
@@ -189,7 +190,7 @@ def update_product(product_id: int, data: RakutenProductIn, db: Session = Depend
     ).first()
     if dup:
         raise HTTPException(400, "SKUが既に存在します")
-    for k, v in data.model_dump().items():
+    for k, v in data.model_dump(exclude_unset=True).items():
         setattr(p, k, v)
     db.commit()
     db.refresh(p)
