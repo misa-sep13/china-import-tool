@@ -190,7 +190,7 @@ export default function ProductsPage() {
           style={{ padding: '8px 12px', width: 320, border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14 }}
         />
         <select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)}
-          style={{ padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, minWidth: 120 }}>
+          style={{ padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, width: 160 }}>
           <option value="">仕入れ先: すべて</option>
           {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
         </select>

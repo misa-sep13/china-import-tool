@@ -261,7 +261,7 @@ export default function RakutenProductsPage() {
           value={search} onChange={e => setSearch(e.target.value)}
           style={{ flex: '1 1 320px', minWidth: 0 }}
         />
-        <select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)} style={{ minWidth: 120 }}>
+        <select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)} style={{ width: 160, flex: '0 0 160px' }}>
           <option value="">仕入れ先: すべて</option>
           {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
