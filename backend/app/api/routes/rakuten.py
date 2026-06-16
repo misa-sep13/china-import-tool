@@ -526,16 +526,17 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
         p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
         if not p:
             continue
-        # 本体行
-        excel_items.append({
-            "buy_url":       p.buy_url or "",
-            "supplier_spec": getattr(p, "supplier_spec", "") or "",
-            "spec":          p.spec or "",
-            "qty":           qty,
-            "price":         p.price or 0,
-            "customer_memo": p.customer_memo or "",
-            "notes":         p.notes or "",
-        })
+        # 本体行（set_componentsありかつspec空の場合はスキップ）
+        if not (p.set_components and not (p.spec or "").strip()):
+            excel_items.append({
+                "buy_url":       p.buy_url or "",
+                "supplier_spec": getattr(p, "supplier_spec", "") or "",
+                "spec":          p.spec or "",
+                "qty":           qty,
+                "price":         p.price or 0,
+                "customer_memo": p.customer_memo or "",
+                "notes":         p.notes or "",
+            })
         # set_componentsを展開して追加行として出力
         # set_components内のbuy_url/supplier_spec/priceを優先、なければ商品マスタから取得
         try:
