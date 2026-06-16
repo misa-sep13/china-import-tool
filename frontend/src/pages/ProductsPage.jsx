@@ -24,6 +24,7 @@ export default function ProductsPage() {
   const [form, setForm] = useState(EMPTY)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
+  const [supplierFilter, setSupplierFilter] = useState('')
   const [inlineEdit, setInlineEdit] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [hoveredImg, setHoveredImg] = useState(null) // { url, x, y }
@@ -120,7 +121,9 @@ export default function ProductsPage() {
 
   const toHalf = (s) => (s || '').replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
   const normalize = (s) => toHalf(s).toLowerCase()
+  const suppliers = [...new Set(products.map(p => p.supplier).filter(Boolean))].sort()
   const filteredProducts = products.filter(p => {
+    if (supplierFilter && (p.supplier || '') !== supplierFilter) return false
     if (!search) return true
     const q = normalize(search)
     return normalize(p.sku).includes(q) || normalize(p.name).includes(q) ||
@@ -178,7 +181,7 @@ export default function ProductsPage() {
         </span>
       </div>
 
-      <div style={{ margin: '12px 0' }}>
+      <div style={{ margin: '12px 0', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <input
           type="text"
           value={search}
@@ -186,7 +189,12 @@ export default function ProductsPage() {
           placeholder="SKU・商品名・ASIN・FNSKUで絞り込み"
           style={{ padding: '8px 12px', width: 320, border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14 }}
         />
-        {search && <span style={{ marginLeft: 10, color: '#888', fontSize: 13 }}>{filteredProducts.length}件</span>}
+        <select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)}
+          style={{ padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, minWidth: 120 }}>
+          <option value="">仕入れ先: すべて</option>
+          {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        {(search || supplierFilter) && <span style={{ color: '#888', fontSize: 13 }}>{filteredProducts.length}件</span>}
       </div>
 
       {filteredProducts.length === 0 ? (

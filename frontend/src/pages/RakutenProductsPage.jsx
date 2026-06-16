@@ -19,6 +19,7 @@ export default function RakutenProductsPage() {
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(EMPTY)
   const [search, setSearch] = useState('')
+  const [supplierFilter, setSupplierFilter] = useState('')
   const [showComponents, setShowComponents] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importing, setImporting] = useState(false)
@@ -185,7 +186,10 @@ export default function RakutenProductsPage() {
   const toHalf = (s) => s.replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
   const normalize = (s) => toHalf(s || '').toLowerCase()
 
+  const suppliers = [...new Set(products.map(p => p.supplier).filter(Boolean))].sort()
+
   const searchMatch = (p) => {
+    if (supplierFilter && (p.supplier || '') !== supplierFilter) return false
     if (!search) return true
     const q = normalize(search)
     return (
@@ -257,6 +261,10 @@ export default function RakutenProductsPage() {
           value={search} onChange={e => setSearch(e.target.value)}
           style={{ width: '100%', maxWidth: 420 }}
         />
+        <select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)} style={{ minWidth: 120 }}>
+          <option value="">仕入れ先: すべて</option>
+          {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
         <label style={{ fontSize: 12, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
           <input type="checkbox" checked={showComponents} onChange={e => setShowComponents(e.target.checked)} style={{ width: 'auto' }} />
           内部管理SKUを表示（{filteredSingles.length}件）
