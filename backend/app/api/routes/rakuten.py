@@ -180,7 +180,8 @@ def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):
 
 @router.put("/products/{product_id}", response_model=RakutenProductOut)
 def update_product(product_id: int, data: RakutenProductIn, db: Session = Depends(get_db)):
-    data.set_components = _clean_set_components(data.set_components)
+    if "set_components" in data.model_fields_set:
+        data.set_components = _clean_set_components(data.set_components)
     p = db.query(RakutenProduct).filter(RakutenProduct.id == product_id).first()
     if not p:
         raise HTTPException(404, "商品が見つかりません")
@@ -189,7 +190,7 @@ def update_product(product_id: int, data: RakutenProductIn, db: Session = Depend
     ).first()
     if dup:
         raise HTTPException(400, "SKUが既に存在します")
-    for k, v in data.model_dump().items():
+    for k, v in data.model_dump(exclude_unset=True).items():
         setattr(p, k, v)
     db.commit()
     db.refresh(p)
@@ -264,15 +265,37 @@ def get_recommendations(db: Session = Depends(get_db)):
 
     # 全商品を取得
     all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    sku_to_product = {p.sku: p for p in all_products}
 
-    # セット商品（is_component=False かつ set_components あり）の販売実績を
-    # 構成単品SKUへ按分して集計する
-    # result: {単品SKU: {"recent": N, "prev": N}}
+    # 「親発注品」= is_component=False かつ buy_url あり かつ set_components あり
+    # （例: y34=3本セット、y15=天使の羽+風船セット）→ セットごと仕入れる商品
+    parent_orders: dict[str, RakutenProduct] = {
+        p.sku: p for p in all_products
+        if not p.is_component
+        and (p.buy_url or "").strip()
+        and p.set_components
+    }
+
+    # 親発注品のset_components内SKU → 個別に推奨リストへ出さない
+    parent_comp_skus: set[str] = set()
+    for p in parent_orders.values():
+        try:
+            comps = json.loads(p.set_components or "[]")
+            parent_comp_skus.update(c["sku"] for c in comps if c.get("sku"))
+        except Exception:
+            pass
+
+    # セット商品の販売実績を構成単品SKUへ按分（親発注品は除く）
+    # バリエーション（例: y76_b-w）が参照する単品（例: y76_black）は、
+    # is_component=False（一覧に表示する単品）でも日販計算には合算する
     unit_sales: dict[str, dict] = {}
+    referenced_skus: set[str] = set()
 
     for p in all_products:
         if p.is_component or not p.set_components:
             continue
+        if p.sku in parent_orders:
+            continue  # 親発注品は後で別処理
         try:
             comps = json.loads(p.set_components or "[]")
         except Exception:
@@ -282,19 +305,44 @@ def get_recommendations(db: Session = Depends(get_db)):
             qty = c.get("qty", 1) or 1
             if not unit_sku:
                 continue
+            referenced_skus.add(unit_sku)
             if unit_sku not in unit_sales:
                 unit_sales[unit_sku] = {"recent": 0, "prev": 0}
             unit_sales[unit_sku]["recent"] += (p.sales_30_recent or 0) * qty
             unit_sales[unit_sku]["prev"]   += (p.sales_30_prev   or 0) * qty
 
-    # is_component=True・buy_urlあり
+    # 親発注品の販売数 = 親自身の直販 + コンポーネントSKUの直販合計
+    for p_sku, p in parent_orders.items():
+        try:
+            comps = json.loads(p.set_components or "[]")
+        except Exception:
+            comps = []
+        comp_recent = sum(
+            (sku_to_product[c["sku"]].sales_30_recent or 0) * (c.get("qty", 1) or 1)
+            for c in comps if c.get("sku") and c["sku"] in sku_to_product
+        )
+        comp_prev = sum(
+            (sku_to_product[c["sku"]].sales_30_prev or 0) * (c.get("qty", 1) or 1)
+            for c in comps if c.get("sku") and c["sku"] in sku_to_product
+        )
+        unit_sales[p_sku] = {
+            "recent": (p.sales_30_recent or 0) + comp_recent,
+            "prev":   (p.sales_30_prev   or 0) + comp_prev,
+        }
+
+    # buy_url あり + 親発注品のコンポーネントでない + (内部管理SKU or バリエーションから参照される単品)
     singles = [
         p for p in all_products
-        if p.is_component
+        if (p.is_component or p.sku in referenced_skus)
         and (p.buy_url or "").strip()
+        and p.sku not in parent_comp_skus
     ]
+
+    # 通常単品 + 親発注品を合わせて計算
+    all_order_items = singles + list(parent_orders.values())
+
     items = []
-    for p in singles:
+    for p in all_order_items:
         ordered = ordered_by_sku.get(p.sku, 0) or 0
         agg = unit_sales.get(p.sku, {})
         sales_recent = agg.get("recent", 0)
@@ -483,16 +531,17 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
         p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
         if not p:
             continue
-        # 本体行
-        excel_items.append({
-            "buy_url":       p.buy_url or "",
-            "supplier_spec": getattr(p, "supplier_spec", "") or "",
-            "spec":          p.spec or "",
-            "qty":           qty,
-            "price":         p.price or 0,
-            "customer_memo": p.customer_memo or "",
-            "notes":         p.notes or "",
-        })
+        # 本体行（set_componentsありかつspec空の場合はスキップ）
+        if not (p.set_components and not (p.spec or "").strip()):
+            excel_items.append({
+                "buy_url":       p.buy_url or "",
+                "supplier_spec": getattr(p, "supplier_spec", "") or "",
+                "spec":          p.spec or "",
+                "qty":           qty,
+                "price":         p.price or 0,
+                "customer_memo": p.customer_memo or "",
+                "notes":         p.notes or "",
+            })
         # set_componentsを展開して追加行として出力
         # set_components内のbuy_url/supplier_spec/priceを優先、なければ商品マスタから取得
         try:

@@ -1,0 +1,48 @@
+name: Daily DB Backup
+
+on:
+  schedule:
+    # 毎日 15:00 UTC（= 0:00 JST）
+    - cron: '0 15 * * *'
+  workflow_dispatch:  # 手動実行も可能
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dump all tables to JSON
+        run: |
+          set -e
+          DATE=$(date -u +%Y-%m-%d)
+          DIR="backups/$DATE"
+          mkdir -p "$DIR"
+          BASE="${{ secrets.BACKEND_URL }}/api"
+          curl -sf --max-time 120 --retry 3 "$BASE/rakuten/products" -o "$DIR/rakuten_products.json"
+          curl -sf --max-time 120 --retry 3 "$BASE/rakuten/settings" -o "$DIR/rakuten_settings.json"
+          curl -sf --max-time 120 --retry 3 "$BASE/rakuten/orders/history" -o "$DIR/rakuten_order_history.json"
+          curl -sf --max-time 120 --retry 3 "$BASE/products" -o "$DIR/amazon_products.json"
+          curl -sf --max-time 120 --retry 3 "$BASE/settings" -o "$DIR/settings.json"
+          curl -sf --max-time 120 --retry 3 "$BASE/invoices" -o "$DIR/invoices.json" || true
+          curl -sf --max-time 120 --retry 3 "$BASE/price-adjustments" -o "$DIR/price_adjustments.json" || true
+          curl -sf --max-time 120 --retry 3 "$BASE/shipment-orders" -o "$DIR/shipment_orders.json" || true
+
+      - name: Remove backups older than 30 days
+        run: |
+          find backups -maxdepth 1 -mindepth 1 -type d | sort | head -n -30 | xargs -r rm -rf
+
+      - name: Commit and push backup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add backups
+          if git diff --cached --quiet; then
+            echo "no changes"
+          else
+            git commit -m "backup: $(date -u +%Y-%m-%d) のDBスナップショット"
+            git push
+          fi
