@@ -286,7 +286,10 @@ def get_recommendations(db: Session = Depends(get_db)):
             pass
 
     # セット商品の販売実績を構成単品SKUへ按分（親発注品は除く）
+    # バリエーション（例: y76_b-w）が参照する単品（例: y76_black）は、
+    # is_component=False（一覧に表示する単品）でも日販計算には合算する
     unit_sales: dict[str, dict] = {}
+    referenced_skus: set[str] = set()
 
     for p in all_products:
         if p.is_component or not p.set_components:
@@ -302,6 +305,7 @@ def get_recommendations(db: Session = Depends(get_db)):
             qty = c.get("qty", 1) or 1
             if not unit_sku:
                 continue
+            referenced_skus.add(unit_sku)
             if unit_sku not in unit_sales:
                 unit_sales[unit_sku] = {"recent": 0, "prev": 0}
             unit_sales[unit_sku]["recent"] += (p.sales_30_recent or 0) * qty
@@ -326,10 +330,10 @@ def get_recommendations(db: Session = Depends(get_db)):
             "prev":   (p.sales_30_prev   or 0) + comp_prev,
         }
 
-    # is_component=True + buy_url あり + 親発注品のコンポーネントでない
+    # buy_url あり + 親発注品のコンポーネントでない + (内部管理SKU or バリエーションから参照される単品)
     singles = [
         p for p in all_products
-        if p.is_component
+        if (p.is_component or p.sku in referenced_skus)
         and (p.buy_url or "").strip()
         and p.sku not in parent_comp_skus
     ]
