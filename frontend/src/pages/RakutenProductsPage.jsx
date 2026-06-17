@@ -58,6 +58,24 @@ export default function RakutenProductsPage() {
     },
   })
 
+  const [syncingSkuMap, setSyncingSkuMap] = useState(false)
+  const [syncSkuMapResult, setSyncSkuMapResult] = useState(null)
+
+  const handleSyncSkuMapping = async () => {
+    if (!window.confirm('RMSから商品管理番号・SKU番号を一括取得してDBに保存します。よろしいですか？')) return
+    setSyncingSkuMap(true)
+    setSyncSkuMapResult(null)
+    try {
+      const res = await api.post('/rakuten/rms/sync-sku-mapping')
+      setSyncSkuMapResult(res.data)
+      qc.invalidateQueries(['rakuten-products'])
+    } catch (err) {
+      setSyncSkuMapResult({ error: err.response?.data?.detail || 'エラーが発生しました' })
+    } finally {
+      setSyncingSkuMap(false)
+    }
+  }
+
   const [initialForm, setInitialForm] = useState(null)
 
   const openNew = () => { setForm(EMPTY); setInitialForm(EMPTY); setEditing('new') }
@@ -227,6 +245,14 @@ export default function RakutenProductsPage() {
         {syncPriceResult && (
           <span style={{ fontSize: 12, color: syncPriceResult.error ? '#e53e3e' : '#38a169' }}>
             {syncPriceResult.error || `${syncPriceResult.updated_products}件更新`}
+          </span>
+        )}
+        <button className="btn" style={{ fontSize: 13 }} onClick={handleSyncSkuMapping} disabled={syncingSkuMap}>
+          {syncingSkuMap ? '取得中...' : '🔗 管理番号同期(RMS)'}
+        </button>
+        {syncSkuMapResult && (
+          <span style={{ fontSize: 12, color: syncSkuMapResult.error ? '#e53e3e' : '#38a169' }}>
+            {syncSkuMapResult.error || `${syncSkuMapResult.updated}件更新`}
           </span>
         )}
       </div>

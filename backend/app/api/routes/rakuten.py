@@ -1258,6 +1258,77 @@ async def sync_prices_from_rms(db: Session = Depends(get_db)):
     return {"ok": True, "message": "バックグラウンドで売価取得を開始しました。/status で進捗確認できます。"}
 
 
+@router.post("/rms/sync-sku-mapping")
+async def sync_sku_mapping_from_rms(db: Session = Depends(get_db)):
+    """RMS Items APIから商品管理番号(rakuten_item_url)とSKU番号(rakuten_sku_id)を一括取得してDBに保存"""
+    import base64, httpx, asyncio
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません。")
+
+    token = base64.b64encode(
+        f"{settings.rms_service_secret}:{settings.rms_license_key}".encode()
+    ).decode()
+    headers = {"Authorization": f"ESA {token}"}
+
+    # RMSから全商品のmanageNumber・variantId・merchantDefinedSkuIdを取得
+    # variant_key(SKU管理番号) -> {manage_number, merchant_sku_id}
+    sku_map: dict[str, dict] = {}
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        offset = 0
+        retry = 0
+        while True:
+            res = await client.get(
+                "https://api.rms.rakuten.co.jp/es/2.0/items/search",
+                headers=headers,
+                params={"offset": offset},
+            )
+            if res.status_code == 429:
+                if retry >= 5:
+                    break
+                await asyncio.sleep(2 ** retry)
+                retry += 1
+                continue
+            if res.status_code != 200:
+                raise HTTPException(502, f"RMS API エラー: {res.status_code}")
+            retry = 0
+            data = res.json()
+            results = data.get("results", [])
+            if not results:
+                break
+            for entry in results:
+                item = entry.get("item", {})
+                manage_number = item.get("manageNumber", "")
+                for variant_key, variant_data in item.get("variants", {}).items():
+                    merchant_sku_id = variant_data.get("merchantDefinedSkuId") or ""
+                    sku_map[variant_key] = {
+                        "manage_number": manage_number,
+                        "merchant_sku_id": merchant_sku_id,
+                    }
+            total = data.get("numFound", 0)
+            offset += len(results)
+            if offset >= total:
+                break
+            await asyncio.sleep(0.3)
+
+    # DBの商品と照合してrakuten_item_url・rakuten_sku_idを更新
+    products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    updated = 0
+    for p in products:
+        if not p.sku:
+            continue
+        info = sku_map.get(p.sku)
+        if info:
+            p.rakuten_item_url = info["manage_number"]
+            if info["merchant_sku_id"]:
+                p.rakuten_sku_id = info["merchant_sku_id"]
+            updated += 1
+    db.commit()
+
+    return {"ok": True, "fetched_variants": len(sku_map), "updated": updated}
+
+
 @router.get("/rms/item-sample")
 async def rms_item_sample(db: Session = Depends(get_db)):
     """Item API 2.0のレスポンス構造確認用（先頭1件取得）"""
