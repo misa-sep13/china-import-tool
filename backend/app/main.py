@@ -101,11 +101,107 @@ def _migrate():
                 logger.warning(f"migrate: drop {table}.{col} -> {e}")
 
 from contextlib import asynccontextmanager
+import asyncio
+import logging
+
+logger = logging.getLogger("scheduler")
+
+async def _sync_rakuten_stock():
+    """1分ごと: RMSから在庫数を取得してDBに保存"""
+    from app.core.database import SessionLocal
+    from app.models.rakuten_settings import RakutenSettings
+    from app.models.rakuten_product import RakutenProduct
+    from app.services.rakuten_rms import fetch_inventory_from_rms
+
+    db = SessionLocal()
+    try:
+        settings = db.query(RakutenSettings).first()
+        if not settings or not settings.rms_service_secret or not settings.rms_license_key:
+            return
+
+        products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True, RakutenProduct.sku != None).all()
+        items = []
+        sku_to_product = {}
+        for p in products:
+            sku = p.sku or ""
+            if not sku:
+                continue
+            manage_number = p.rakuten_item_url or sku.split("_")[0]
+            items.append({"manage_number": manage_number, "variant_id": sku})
+            sku_to_product[sku] = p
+
+        if not items:
+            return
+
+        rms_stock = await fetch_inventory_from_rms(settings.rms_service_secret, settings.rms_license_key, items)
+        for sku, p in sku_to_product.items():
+            if sku in rms_stock:
+                p.stock = rms_stock[sku]
+        db.commit()
+        logger.info(f"[scheduler] 在庫同期完了: {len(rms_stock)}件")
+    except Exception as e:
+        logger.warning(f"[scheduler] 在庫同期エラー: {e}")
+    finally:
+        db.close()
+
+
+async def _sync_rakuten_sales():
+    """1時間ごと: RMSから販売数を取得してDBに保存"""
+    from app.core.database import SessionLocal
+    from app.models.rakuten_settings import RakutenSettings
+    from app.models.rakuten_product import RakutenProduct
+    from app.services.rakuten_rms import fetch_sales_by_sku
+    from datetime import datetime
+
+    db = SessionLocal()
+    try:
+        settings = db.query(RakutenSettings).first()
+        if not settings or not settings.rms_service_secret or not settings.rms_license_key:
+            return
+
+        sku_sales = await fetch_sales_by_sku(settings.rms_service_secret, settings.rms_license_key, days=60)
+        products = db.query(RakutenProduct).filter(
+            RakutenProduct.is_active == True, RakutenProduct.is_component == False
+        ).all()
+        updated = 0
+        for p in products:
+            sales = sku_sales.get(p.rakuten_sku_id or "") or sku_sales.get(p.sku or "") or {}
+            if sales:
+                p.sales_30_recent  = sales.get("recent", 0)
+                p.sales_30_prev    = sales.get("prev", 0)
+                p.sales_90         = sales.get("total_90", 0)
+                p.stockout_days_90 = sales.get("stockout_days", 0)
+                p.sales_updated_at = datetime.now()
+                updated += 1
+        db.commit()
+        logger.info(f"[scheduler] 販売数同期完了: {updated}件")
+    except Exception as e:
+        logger.warning(f"[scheduler] 販売数同期エラー: {e}")
+    finally:
+        db.close()
+
+
+async def _scheduler_loop():
+    """1分ごとに在庫同期、1時間ごとに販売数同期を実行"""
+    tick = 0
+    while True:
+        await asyncio.sleep(60)
+        tick += 1
+        await _sync_rakuten_stock()
+        if tick % 60 == 0:  # 60分ごと
+            await _sync_rakuten_sales()
+
 
 @asynccontextmanager
 async def lifespan(app):
     _migrate()
+    task = asyncio.create_task(_scheduler_loop())
     yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 app = FastAPI(title="中国輸入管理ツール", version="0.1.0", lifespan=lifespan)
 

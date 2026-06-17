@@ -343,7 +343,7 @@ export default function RakutenOrderPage() {
 
   const deleteOrder = useMutation({
     mutationFn: (id) => api.delete(`/rakuten/orders/history/${id}`),
-    onSuccess: () => qc.invalidateQueries(['rakuten-order-history']),
+    onSuccess: () => qc.refetchQueries(['rakuten-order-history']),
   })
 
   const items = data?.items || []
@@ -664,10 +664,10 @@ export default function RakutenOrderPage() {
                           className="btn btn-sm"
                           style={{ background: '#fee2e2', color: '#991b1b', whiteSpace: 'nowrap' }}
                           onClick={() => {
-                            if (confirm(`${row.sku} を発注済みリストから削除しますか？\n（納品済みの場合に押してください）`))
+                            if (confirm(`${row.sku} を発注済みリストから削除しますか？\n（納品済み・誤発注の場合に押してください）`))
                               deleteOrder.mutate(row.id)
                           }}
-                        >納品済</button>
+                        >削除</button>
                       </td>
                     </tr>
                   ))}
