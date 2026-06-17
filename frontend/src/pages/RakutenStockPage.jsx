@@ -43,16 +43,24 @@ export default function RakutenStockPage() {
 
   const commissionRate = settings?.commission_rate ?? 0.09
 
-  // 商品マスタと同じ階層ロジック
+  // 商品マスタと同じ階層ロジック（allProductsを使って親子関係を構築）
   const internalSkus = new Set(allProducts.filter(p => p.is_component).map(p => p.sku))
   const parseComps = (p) => { try { return JSON.parse(p.set_components || '[]') } catch { return [] } }
   const compSkus = (p) => parseComps(p).map(c => c.sku).filter(Boolean)
   const isVariantChild = (p) => !p.is_component && compSkus(p).some(s => !internalSkus.has(s))
+
+  // allProductsで親子関係を解析
   const variantParentSkus = new Set(
     allProducts.filter(isVariantChild).flatMap(p => compSkus(p).filter(s => !internalSkus.has(s)))
   )
+  // stockアイテムのSKU→set_componentsマップ（JSON文字列をパース）
+  const stockCompSkus = (p) => {
+    const sc = p.set_components
+    if (!sc) return []
+    try { return JSON.parse(sc).map(c => c.sku).filter(Boolean) } catch { return [] }
+  }
   const getVariantChildren = (sku) =>
-    items.filter(p => isVariantChild(p) && compSkus(p).includes(sku))
+    items.filter(p => stockCompSkus(p).includes(sku))
 
   const suppliers = [...new Set(items.map(p => p.supplier).filter(Boolean))].sort()
 
@@ -65,7 +73,7 @@ export default function RakutenStockPage() {
            (p.spec || '').toLowerCase().includes(q)
   }
 
-  const childSkus = new Set(items.filter(isVariantChild).map(p => p.sku))
+  const childSkus = new Set(items.filter(p => stockCompSkus(p).some(s => !internalSkus.has(s))).map(p => p.sku))
   const parents = items.filter(p => variantParentSkus.has(p.sku) && searchMatch(p))
   const others  = items.filter(p => !variantParentSkus.has(p.sku) && !childSkus.has(p.sku) && searchMatch(p))
   const displayCount = parents.length + others.length
