@@ -219,8 +219,8 @@ async def update_product(product_id: int, data: RakutenProductIn, db: Session = 
     db.commit()
     db.refresh(p)
 
-    # 在庫数が変更された場合はRMSにも反映
-    if "stock" in data.model_fields_set and p.stock != old_stock and p.sku:
+    # 在庫数が送信された場合はRMSにも反映（値が同じでもセット商品の再計算が必要なため）
+    if "stock" in data.model_fields_set and p.sku:
         try:
             settings = db.query(RakutenSettings).first()
             if settings and settings.rms_service_secret and settings.rms_license_key:
