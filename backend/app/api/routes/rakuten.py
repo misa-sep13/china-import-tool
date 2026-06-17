@@ -175,6 +175,8 @@ def list_stock(db: Session = Depends(get_db)):
             "profit": profit,
             "profit_rate": profit_rate,
             "notes": p.notes,
+            "supplier": p.supplier,
+            "set_components": p.set_components,
         })
     return result
 

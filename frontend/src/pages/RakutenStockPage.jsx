@@ -31,40 +31,44 @@ export default function RakutenStockPage() {
     queryFn: () => api.get('/rakuten/stock').then(r => r.data),
   })
 
+  const { data: allProducts = [] } = useQuery({
+    queryKey: ['rakuten-products'],
+    queryFn: () => api.get('/rakuten/products').then(r => r.data),
+  })
+
   const { data: settings } = useQuery({
     queryKey: ['rakuten-settings'],
     queryFn: () => api.get('/rakuten/settings').then(r => r.data),
   })
 
-  const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => api.patch(`/rakuten/products/${id}/stock`, data),
-    onSuccess: () => {
-      qc.invalidateQueries(['rakuten-stock'])
-      setEditingId(null)
-    },
-  })
+  const commissionRate = settings?.commission_rate ?? 0.09
 
-  const updatePriceMutation = useMutation({
-    mutationFn: ({ id, selling_price, stock, inbound, standard_stock }) =>
-      api.put(`/rakuten/products/${id}`, { selling_price, stock, inbound, standard_stock }),
-    onSuccess: () => {
-      qc.invalidateQueries(['rakuten-stock'])
-      setEditingId(null)
-    },
-  })
+  // 商品マスタと同じ階層ロジック
+  const internalSkus = new Set(allProducts.filter(p => p.is_component).map(p => p.sku))
+  const parseComps = (p) => { try { return JSON.parse(p.set_components || '[]') } catch { return [] } }
+  const compSkus = (p) => parseComps(p).map(c => c.sku).filter(Boolean)
+  const isVariantChild = (p) => !p.is_component && compSkus(p).some(s => !internalSkus.has(s))
+  const variantParentSkus = new Set(
+    allProducts.filter(isVariantChild).flatMap(p => compSkus(p).filter(s => !internalSkus.has(s)))
+  )
+  const getVariantChildren = (sku) =>
+    items.filter(p => isVariantChild(p) && compSkus(p).includes(sku))
 
   const suppliers = [...new Set(items.map(p => p.supplier).filter(Boolean))].sort()
 
-  const filtered = items.filter(p => {
+  const searchMatch = (p) => {
     if (supplierFilter && (p.supplier || '') !== supplierFilter) return false
     if (!search) return true
     const q = search.toLowerCase()
     return (p.sku || '').toLowerCase().includes(q) ||
            (p.name || '').toLowerCase().includes(q) ||
            (p.spec || '').toLowerCase().includes(q)
-  })
+  }
 
-  const commissionRate = settings?.commission_rate ?? 0.09
+  const childSkus = new Set(items.filter(isVariantChild).map(p => p.sku))
+  const parents = items.filter(p => variantParentSkus.has(p.sku) && searchMatch(p))
+  const others  = items.filter(p => !variantParentSkus.has(p.sku) && !childSkus.has(p.sku) && searchMatch(p))
+  const displayCount = parents.length + others.length
 
   const startEdit = (p) => {
     setEditingId(p.id)
@@ -79,8 +83,6 @@ export default function RakutenStockPage() {
 
   const saveEdit = (p) => {
     const sp = editVals.selling_price !== '' ? Number(editVals.selling_price) : null
-    const commission = sp ? sp * commissionRate : null
-    const cost = p.cost_jpy || 0
     api.put(`/rakuten/products/${p.id}`, {
       ...p,
       selling_price: sp,
@@ -95,6 +97,8 @@ export default function RakutenStockPage() {
   }
 
   if (isLoading) return <div className="loading">読み込み中...</div>
+
+  const rowProps = { commissionRate, editingId, editVals, setEditVals, startEdit, saveEdit, setEditingId }
 
   return (
     <div>
@@ -121,7 +125,7 @@ export default function RakutenStockPage() {
           <option value="">仕入れ先: すべて</option>
           {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        <span style={{ fontSize: 12, color: '#6b7280' }}>{filtered.length}件</span>
+        <span style={{ fontSize: 12, color: '#6b7280' }}>{displayCount}件</span>
       </div>
 
       <div className="card" style={{ padding: 0, overflow: 'auto' }}>
@@ -134,98 +138,91 @@ export default function RakutenStockPage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && (
+            {displayCount === 0 && (
               <tr><td colSpan={17} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
             )}
-            {filtered.map(p => {
-              const isEditing = editingId === p.id
-              const sp = isEditing ? (editVals.selling_price !== '' ? Number(editVals.selling_price) : null) : p.selling_price
-              const shippingFee = isEditing ? Number(editVals.shipping_fee ?? 180) : (p.shipping_fee ?? 180)
-              const commission = sp ? Math.round(sp * commissionRate) : null
-              const cost = p.cost_jpy || 0
-              const profit = (sp && commission !== null) ? Math.round(sp - cost - commission - shippingFee) : null
-              const profitRate = (sp && profit !== null) ? (profit / sp * 100).toFixed(1) : null
-
-              return (
-                <tr key={p.id} style={{ borderBottom: '1px solid #e5e7eb', background: isEditing ? '#f0f9ff' : '#fff' }}>
-                  <td style={{ padding: '8px 10px', fontFamily: 'monospace', fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>{p.sku}</td>
-                  <td style={{ padding: '8px 10px', minWidth: 140, color: '#1a1a2e' }}>{p.name || '—'}</td>
-                  <td style={{ padding: '8px 10px', color: '#666', fontSize: 12 }}>{p.spec || '—'}</td>
-                  <td style={{ padding: '8px 10px', color: '#666', fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.customer_memo || '—'}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right', color: '#666' }}>{cost ? `¥${cost}` : '—'}</td>
-
-                  {/* 販売価格 */}
-                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                    {isEditing ? (
-                      <input type="number" value={editVals.selling_price} onChange={e => setEditVals(v => ({ ...v, selling_price: e.target.value }))}
-                        style={{ width: 80, textAlign: 'right' }} />
-                    ) : (
-                      <span style={{ fontWeight: 600 }}>{sp ? `¥${sp.toLocaleString()}` : '—'}</span>
-                    )}
-                  </td>
-
-                  {/* 送料 */}
-                  <td style={{ padding: '8px 10px', textAlign: 'right', color: '#666' }}>
-                    {isEditing ? (
-                      <input type="number" value={editVals.shipping_fee} onChange={e => setEditVals(v => ({ ...v, shipping_fee: e.target.value }))}
-                        style={{ width: 70, textAlign: 'right' }} />
-                    ) : (
-                      `¥${shippingFee}`
-                    )}
-                  </td>
-
-                  <td style={{ padding: '8px 10px', textAlign: 'right', color: '#666' }}>{commission !== null ? `¥${commission.toLocaleString()}` : '—'}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: profit > 0 ? '#16a34a' : profit < 0 ? '#dc2626' : '#666' }}>
-                    {profit !== null ? `¥${profit.toLocaleString()}` : '—'}
-                  </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: profitRate > 30 ? '#16a34a' : profitRate > 0 ? '#d97706' : '#dc2626' }}>
-                    {profitRate !== null ? `${profitRate}%` : '—'}
-                  </td>
-
-                  {/* 実在庫 */}
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                    {isEditing ? (
-                      <input type="number" value={editVals.stock} onChange={e => setEditVals(v => ({ ...v, stock: e.target.value }))}
-                        style={{ width: 60, textAlign: 'center' }} />
-                    ) : (
-                      <span style={{ fontWeight: 600 }}>{p.stock}</span>
-                    )}
-                  </td>
-                  {/* 輸送中 */}
-                  <td style={{ padding: '8px 10px', textAlign: 'center', color: '#666' }}>
-                    {isEditing ? (
-                      <input type="number" value={editVals.inbound} onChange={e => setEditVals(v => ({ ...v, inbound: e.target.value }))}
-                        style={{ width: 60, textAlign: 'center' }} />
-                    ) : p.inbound}
-                  </td>
-                  {/* 規定在庫 */}
-                  <td style={{ padding: '8px 10px', textAlign: 'center', color: '#666' }}>
-                    {isEditing ? (
-                      <input type="number" value={editVals.standard_stock} onChange={e => setEditVals(v => ({ ...v, standard_stock: e.target.value }))}
-                        style={{ width: 60, textAlign: 'center' }} />
-                    ) : p.standard_stock}
-                  </td>
-
-                  <td style={{ padding: '8px 10px', textAlign: 'center', color: '#2563eb', fontWeight: 600 }}>{p.sales_30_recent}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'center', color: '#666' }}>{p.sales_30_prev}</td>
-                  <td style={{ padding: '8px 10px', color: '#666', fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.notes || '—'}</td>
-
-                  <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
-                    {isEditing ? (
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => saveEdit(p)}>保存</button>
-                        <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => setEditingId(null)}>取消</button>
-                      </div>
-                    ) : (
-                      <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => startEdit(p)}>編集</button>
-                    )}
-                  </td>
-                </tr>
-              )
+            {parents.map(p => {
+              const childList = getVariantChildren(p.sku).filter(searchMatch)
+              return [
+                <StockRow key={p.id} p={p} {...rowProps} />,
+                ...childList.map(c => <StockRow key={c.id} p={c} isChild {...rowProps} />)
+              ]
             })}
+            {others.map(p => <StockRow key={p.id} p={p} {...rowProps} />)}
           </tbody>
         </table>
       </div>
     </div>
+  )
+}
+
+function StockRow({ p, commissionRate, editingId, editVals, setEditVals, startEdit, saveEdit, setEditingId, isChild }) {
+  const isEditing = editingId === p.id
+  const sp = isEditing ? (editVals.selling_price !== '' ? Number(editVals.selling_price) : null) : p.selling_price
+  const shippingFee = isEditing ? Number(editVals.shipping_fee ?? 180) : (p.shipping_fee ?? 180)
+  const commission = sp ? Math.round(sp * commissionRate) : null
+  const cost = p.cost_jpy || 0
+  const profit = (sp && commission !== null) ? Math.round(sp - cost - commission - shippingFee) : null
+  const profitRate = (sp && profit !== null) ? (profit / sp * 100).toFixed(1) : null
+  const rowBg = isEditing ? '#f0f9ff' : isChild ? '#f8faff' : '#fff'
+
+  return (
+    <tr style={{ borderBottom: '1px solid #e5e7eb', background: rowBg }}>
+      <td style={{ padding: '8px 10px', paddingLeft: isChild ? 26 : 10, fontFamily: 'monospace', fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>
+        {isChild && <span style={{ color: '#cbd5e1', marginRight: 4 }}>└</span>}
+        {p.sku}
+      </td>
+      <td style={{ padding: '8px 10px', minWidth: 140, color: isChild ? '#555' : '#1a1a2e' }}>{p.name || '—'}</td>
+      <td style={{ padding: '8px 10px', color: '#666', fontSize: 12 }}>{p.spec || '—'}</td>
+      <td style={{ padding: '8px 10px', color: '#666', fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.customer_memo || '—'}</td>
+      <td style={{ padding: '8px 10px', textAlign: 'right', color: '#666' }}>{cost ? `¥${cost}` : '—'}</td>
+      <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+        {isEditing ? (
+          <input type="number" value={editVals.selling_price} onChange={e => setEditVals(v => ({ ...v, selling_price: e.target.value }))} style={{ width: 80, textAlign: 'right' }} />
+        ) : (
+          <span style={{ fontWeight: 600 }}>{sp ? `¥${sp.toLocaleString()}` : '—'}</span>
+        )}
+      </td>
+      <td style={{ padding: '8px 10px', textAlign: 'right', color: '#666' }}>
+        {isEditing ? (
+          <input type="number" value={editVals.shipping_fee} onChange={e => setEditVals(v => ({ ...v, shipping_fee: e.target.value }))} style={{ width: 70, textAlign: 'right' }} />
+        ) : `¥${shippingFee}`}
+      </td>
+      <td style={{ padding: '8px 10px', textAlign: 'right', color: '#666' }}>{commission !== null ? `¥${commission.toLocaleString()}` : '—'}</td>
+      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: profit > 0 ? '#16a34a' : profit < 0 ? '#dc2626' : '#666' }}>
+        {profit !== null ? `¥${profit.toLocaleString()}` : '—'}
+      </td>
+      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: profitRate > 30 ? '#16a34a' : profitRate > 0 ? '#d97706' : '#dc2626' }}>
+        {profitRate !== null ? `${profitRate}%` : '—'}
+      </td>
+      <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+        {isEditing ? (
+          <input type="number" value={editVals.stock} onChange={e => setEditVals(v => ({ ...v, stock: e.target.value }))} style={{ width: 60, textAlign: 'center' }} />
+        ) : <span style={{ fontWeight: 600 }}>{p.stock}</span>}
+      </td>
+      <td style={{ padding: '8px 10px', textAlign: 'center', color: '#666' }}>
+        {isEditing ? (
+          <input type="number" value={editVals.inbound} onChange={e => setEditVals(v => ({ ...v, inbound: e.target.value }))} style={{ width: 60, textAlign: 'center' }} />
+        ) : p.inbound}
+      </td>
+      <td style={{ padding: '8px 10px', textAlign: 'center', color: '#666' }}>
+        {isEditing ? (
+          <input type="number" value={editVals.standard_stock} onChange={e => setEditVals(v => ({ ...v, standard_stock: e.target.value }))} style={{ width: 60, textAlign: 'center' }} />
+        ) : p.standard_stock}
+      </td>
+      <td style={{ padding: '8px 10px', textAlign: 'center', color: '#2563eb', fontWeight: 600 }}>{p.sales_30_recent}</td>
+      <td style={{ padding: '8px 10px', textAlign: 'center', color: '#666' }}>{p.sales_30_prev}</td>
+      <td style={{ padding: '8px 10px', color: '#666', fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.notes || '—'}</td>
+      <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+        {isEditing ? (
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => saveEdit(p)}>保存</button>
+            <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => setEditingId(null)}>取消</button>
+          </div>
+        ) : (
+          <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => startEdit(p)}>編集</button>
+        )}
+      </td>
+    </tr>
   )
 }
