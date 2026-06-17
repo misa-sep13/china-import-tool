@@ -434,6 +434,10 @@ export default function RakutenProductsPage() {
               <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>🛒 楽天管理情報</h3>
               <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
                 <div className="form-group">
+                  <label>楽天商品管理番号（商品URL）</label>
+                  <input {...f('rakuten_item_url')} placeholder="例: s08-2" />
+                </div>
+                <div className="form-group">
                   <label>規定在庫数</label>
                   <input type="number" min={0} {...f('standard_stock', 'number')} />
                 </div>
