@@ -450,11 +450,18 @@ def get_all_products_order(db: Session = Depends(get_db)):
             stockout_days_90=getattr(p, 'stockout_days_90', None) or 0,
             s=s,
         )
+        sc_parsed = []
+        if p.set_components:
+            try:
+                sc_parsed = json.loads(p.set_components) if isinstance(p.set_components, str) else (p.set_components or [])
+            except Exception:
+                sc_parsed = []
         items.append({
             "product_id":      p.id,
             "sku":             p.sku or "",
             "name":            p.name or "",
             "buy_url":         p.buy_url or "",
+            "set_components":  sc_parsed,
             "stock":           p.stock or 0,
             "inbound":         p.inbound or 0,
             "ordered":         ordered,

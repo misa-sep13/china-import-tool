@@ -544,6 +544,7 @@ export default function RakutenOrderPage() {
                       const needsOrder = item.needs_order
                       const rowBg = needsOrder ? '#fff7ed' : 'transparent'
                       const inputVal = orderInputs[item.sku] ?? (item.order_qty > 0 ? item.order_qty : 0)
+                      const comps = item.set_components || []
                       return (
                         <tr key={item.sku} style={{ borderBottom: '1px solid #f0f2f8', background: rowBg }}>
                           <td style={{ padding: '10px 12px', minWidth: 160 }}>
@@ -551,6 +552,19 @@ export default function RakutenOrderPage() {
                             <div style={{ color: '#999', fontSize: 11 }}>{item.sku}</div>
                             {item.buy_url && (
                               <a href={item.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#e94560' }}>仕入れURL</a>
+                            )}
+                            {comps.length > 0 && (
+                              <div style={{ marginTop: 4, paddingLeft: 8, borderLeft: '2px solid #e2e8f0' }}>
+                                {comps.map((c, i) => (
+                                  <div key={i} style={{ fontSize: 11, color: '#666', lineHeight: 1.6 }}>
+                                    └ {c.supplier_spec || c.notes || c.sku}
+                                    {c.price ? <span style={{ color: '#999', marginLeft: 4 }}>{c.price}元</span> : null}
+                                    {c.buy_url && (
+                                      <a href={c.buy_url} target="_blank" rel="noreferrer" style={{ color: '#e94560', marginLeft: 4 }}>URL</a>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
                             )}
                           </td>
                           <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600 }}>{item.stock}</td>
