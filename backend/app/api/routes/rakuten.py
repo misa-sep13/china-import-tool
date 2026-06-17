@@ -16,6 +16,26 @@ from app.services.rakuten_calc import calc_rakuten_order, RakutenCalcSettings
 router = APIRouter(prefix="/rakuten", tags=["rakuten"])
 
 
+@router.post("/migrate-show-in-orders")
+def migrate_show_in_orders(db: Session = Depends(get_db)):
+    """一時マイグレーション: show_in_ordersカラム追加＋初期値設定（実行後に削除予定）"""
+    from sqlalchemy import text
+    try:
+        db.execute(text("ALTER TABLE rakuten_products ADD COLUMN show_in_orders BOOLEAN DEFAULT TRUE"))
+        db.commit()
+        added = True
+    except Exception as e:
+        db.rollback()
+        if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+            added = False
+        else:
+            raise HTTPException(500, str(e))
+    count = db.query(RakutenProduct).filter(RakutenProduct.is_component == True).count()
+    db.execute(text("UPDATE rakuten_products SET show_in_orders = FALSE WHERE is_component = TRUE"))
+    db.commit()
+    return {"column_added": added, "updated_count": count}
+
+
 def _clean_set_components(sc: Optional[str]) -> Optional[str]:
     """set_componentsのJSON文字列から空エントリ（sku/buy_url/supplier_specが全て空）を除去。全削除なら None を返す。"""
     if not sc:
@@ -358,6 +378,10 @@ def get_recommendations(db: Session = Depends(get_db)):
             stockout_days_90=p.stockout_days_90 or 0,
             s=s,
         )
+        try:
+            sc_parsed = json.loads(p.set_components) if p.set_components else []
+        except Exception:
+            sc_parsed = []
         items.append({
             "product_id":      p.id,
             "sku":             p.sku or "",
@@ -365,6 +389,7 @@ def get_recommendations(db: Session = Depends(get_db)):
             "jan_code":        p.jan_code or "",
             "buy_url":         p.buy_url or "",
             "set_size":        p.set_size or 1,
+            "set_components":  sc_parsed,
             "stock":           p.stock or 0,
             "inbound":         p.inbound or 0,
             "ordered":         ordered,
@@ -404,10 +429,11 @@ def get_all_products_order(db: Session = Depends(get_db)):
         RakutenProduct.is_active == True,
     ).all()
 
-    # buy_urlあり・set_componentsなし（セット組は除外）
+    # is_component=False・buy_urlあり・set_componentsなし（内部SKU・セット組は除外）
     targets = [
         p for p in all_products
-        if (p.buy_url or "").strip()
+        if not p.is_component
+        and (p.buy_url or "").strip()
         and not p.set_components
     ]
     items = []
