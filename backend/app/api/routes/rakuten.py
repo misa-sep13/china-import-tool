@@ -225,12 +225,56 @@ async def update_product(product_id: int, data: RakutenProductIn, db: Session = 
             settings = db.query(RakutenSettings).first()
             if settings and settings.rms_service_secret and settings.rms_license_key:
                 from app.services.rakuten_rms import push_inventory_to_rms
+                rms_items = []
+
+                # 自分自身をRMSに反映
                 manage_number = p.rakuten_item_url or p.sku.split("_")[0]
-                await push_inventory_to_rms(
-                    settings.rms_service_secret,
-                    settings.rms_license_key,
-                    [{"manage_number": manage_number, "variant_id": p.sku, "quantity": p.stock}],
-                )
+                rms_items.append({"manage_number": manage_number, "variant_id": p.sku, "quantity": p.stock})
+
+                # この単品を参照しているセット商品の在庫も自動計算して反映
+                if p.is_component:
+                    all_products = db.query(RakutenProduct).filter(
+                        RakutenProduct.is_active == True,
+                        RakutenProduct.is_component == False,
+                        RakutenProduct.set_components != None,
+                    ).all()
+
+                    # 各単品SKUの現在在庫をまとめて取得
+                    component_skus = db.query(RakutenProduct).filter(
+                        RakutenProduct.is_active == True,
+                        RakutenProduct.is_component == True,
+                    ).all()
+                    sku_stock = {cp.sku: (cp.stock or 0) for cp in component_skus}
+                    sku_stock[p.sku] = p.stock  # 今回更新した値で上書き
+
+                    for sp in all_products:
+                        try:
+                            comps = json.loads(sp.set_components or "[]")
+                        except Exception:
+                            continue
+                        if not comps:
+                            continue
+                        # このセット商品が今回更新した単品を含む場合のみ計算
+                        if not any(c.get("sku") == p.sku for c in comps):
+                            continue
+                        # セット在庫 = min(単品在庫 ÷ 使用数) の切り捨て
+                        set_qty = None
+                        for c in comps:
+                            c_sku = c.get("sku")
+                            c_qty = c.get("qty") or 1
+                            if not c_sku:
+                                continue
+                            avail = sku_stock.get(c_sku, 0) // c_qty
+                            set_qty = avail if set_qty is None else min(set_qty, avail)
+
+                        if set_qty is not None:
+                            sp.stock = set_qty
+                            sp_manage = sp.rakuten_item_url or sp.sku.split("_")[0]
+                            rms_items.append({"manage_number": sp_manage, "variant_id": sp.sku, "quantity": set_qty})
+
+                    db.commit()
+
+                await push_inventory_to_rms(settings.rms_service_secret, settings.rms_license_key, rms_items)
         except Exception as e:
             import logging
             logging.getLogger("rakuten").warning(f"RMS在庫反映エラー ({p.sku}): {e}")
