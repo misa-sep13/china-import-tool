@@ -107,11 +107,11 @@ import logging
 logger = logging.getLogger("scheduler")
 
 async def _sync_rakuten_stock():
-    """1分ごと: RMSから在庫数を取得してDBに保存"""
+    """1分ごと: 直近2分の受注差分で在庫を減算する（全商品取得不要でメモリ節約）"""
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
-    from app.services.rakuten_rms import fetch_inventory_from_rms
+    from app.services.rakuten_rms import fetch_recent_orders
 
     db = SessionLocal()
     try:
@@ -119,26 +119,19 @@ async def _sync_rakuten_stock():
         if not settings or not settings.rms_service_secret or not settings.rms_license_key:
             return
 
-        products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True, RakutenProduct.sku != None).all()
-        items = []
-        sku_to_product = {}
-        for p in products:
-            sku = p.sku or ""
-            if not sku:
-                continue
-            manage_number = p.rakuten_item_url or sku.split("_")[0]
-            items.append({"manage_number": manage_number, "variant_id": sku})
-            sku_to_product[sku] = p
-
-        if not items:
+        sold = await fetch_recent_orders(settings.rms_service_secret, settings.rms_license_key, minutes=2)
+        if not sold:
             return
 
-        rms_stock = await fetch_inventory_from_rms(settings.rms_service_secret, settings.rms_license_key, items)
-        for sku, p in sku_to_product.items():
-            if sku in rms_stock:
-                p.stock = rms_stock[sku]
+        updated = 0
+        for sku, qty in sold.items():
+            p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
+            if p and p.stock is not None:
+                p.stock = max(0, p.stock - qty)
+                updated += 1
         db.commit()
-        logger.info(f"[scheduler] 在庫同期完了: {len(rms_stock)}件")
+        if updated:
+            logger.info(f"[scheduler] 在庫差分更新: {updated}件 sold={sold}")
     except Exception as e:
         logger.warning(f"[scheduler] 在庫同期エラー: {e}")
     finally:

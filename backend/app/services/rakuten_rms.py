@@ -228,6 +228,71 @@ async def push_inventory_to_rms(
     return {"ok": ok, "fail": fail, "errors": errors}
 
 
+async def fetch_recent_orders(
+    service_secret: str,
+    license_key: str,
+    minutes: int = 3,
+) -> dict:
+    """
+    直近N分の注文を取得し、SKUごとの販売数量を返す。
+    戻り値: {"y76_black": 2, "y48_pink-s": 1, ...}
+    """
+    headers = _auth_header(service_secret, license_key)
+    now = datetime.now()
+    start = now - timedelta(minutes=minutes)
+    body = {
+        "dateType": 1,
+        "startDatetime": start.strftime("%Y-%m-%dT%H:%M:%S+0900"),
+        "endDatetime":   now.strftime("%Y-%m-%dT%H:%M:%S+0900"),
+        "PaginationRequestModel": {"requestRecordsAmount": 100, "requestPage": 1},
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.post(
+            f"{RMS_BASE}/2.0/order/searchOrder",
+            headers={**headers, "Content-Type": "application/json; charset=utf-8"},
+            content=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        )
+        if not res.is_success:
+            return {}
+        data = res.json()
+
+    order_numbers = []
+    for item in (data.get("orderNumberList") or []):
+        num = item if isinstance(item, str) else (
+            item.get("orderNumber") or item.get("order_number") or ""
+        )
+        if num:
+            order_numbers.append(str(num))
+
+    if not order_numbers:
+        return {}
+
+    sku_qty: dict[str, int] = {}
+    for i in range(0, len(order_numbers), BATCH_SIZE):
+        batch = order_numbers[i:i + BATCH_SIZE]
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.post(
+                f"{RMS_BASE}/2.0/order/getOrder",
+                headers={**headers, "Content-Type": "application/json; charset=utf-8"},
+                content=json.dumps({"orderNumberList": batch}, ensure_ascii=False).encode("utf-8"),
+            )
+            if not res.is_success:
+                continue
+            detail = res.json()
+        for order in detail.get("orderModelList", []):
+            if order.get("orderProgress", 0) == 900:
+                continue
+            for package in order.get("PackageModelList", []):
+                for item in package.get("ItemModelList", []):
+                    sku = item.get("manageNumber", "") or item.get("itemNumber", "")
+                    if not sku:
+                        continue
+                    qty = item.get("units", 1) or 1
+                    sku_qty[sku] = sku_qty.get(sku, 0) + qty
+
+    return sku_qty
+
+
 async def test_connection(service_secret: str, license_key: str) -> dict:
     """接続テスト - 注文検索APIで確認"""
     headers = _auth_header(service_secret, license_key)
