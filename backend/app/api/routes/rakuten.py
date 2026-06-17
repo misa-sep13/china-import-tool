@@ -429,12 +429,11 @@ def get_all_products_order(db: Session = Depends(get_db)):
         RakutenProduct.is_active == True,
     ).all()
 
-    # is_component=False・buy_urlあり・set_componentsなし（内部SKU・セット組は除外）
+    # is_component=False・buy_urlあり（内部SKUのみ除外、セット組・本体はすべて表示）
     targets = [
         p for p in all_products
         if not p.is_component
         and (p.buy_url or "").strip()
-        and not p.set_components
     ]
     items = []
     for p in targets:
