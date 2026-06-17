@@ -201,7 +201,7 @@ def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):
     return p
 
 @router.put("/products/{product_id}", response_model=RakutenProductOut)
-def update_product(product_id: int, data: RakutenProductIn, db: Session = Depends(get_db)):
+async def update_product(product_id: int, data: RakutenProductIn, db: Session = Depends(get_db)):
     if "set_components" in data.model_fields_set:
         data.set_components = _clean_set_components(data.set_components)
     p = db.query(RakutenProduct).filter(RakutenProduct.id == product_id).first()
@@ -212,10 +212,29 @@ def update_product(product_id: int, data: RakutenProductIn, db: Session = Depend
     ).first()
     if dup:
         raise HTTPException(400, "SKUが既に存在します")
+
+    old_stock = p.stock
     for k, v in data.model_dump(exclude_unset=True).items():
         setattr(p, k, v)
     db.commit()
     db.refresh(p)
+
+    # 在庫数が変更された場合はRMSにも反映
+    if "stock" in data.model_fields_set and p.stock != old_stock and p.sku:
+        try:
+            settings = db.query(RakutenSettings).first()
+            if settings and settings.rms_service_secret and settings.rms_license_key:
+                from app.services.rakuten_rms import push_inventory_to_rms
+                manage_number = p.rakuten_item_url or p.sku.split("_")[0]
+                await push_inventory_to_rms(
+                    settings.rms_service_secret,
+                    settings.rms_license_key,
+                    [{"manage_number": manage_number, "variant_id": p.sku, "quantity": p.stock}],
+                )
+        except Exception as e:
+            import logging
+            logging.getLogger("rakuten").warning(f"RMS在庫反映エラー ({p.sku}): {e}")
+
     return p
 
 @router.post("/products/bulk-set-components")
