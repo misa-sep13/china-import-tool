@@ -11,6 +11,7 @@ import RakutenProductsPage from './pages/RakutenProductsPage'
 import RakutenStockPage from './pages/RakutenStockPage'
 import RakutenSettingsPage from './pages/RakutenSettingsPage'
 import RakutenInvoicePage from './pages/RakutenInvoicePage'
+import SyncLogsPage from './pages/SyncLogsPage'
 import './App.css'
 
 function App() {
@@ -59,6 +60,9 @@ function App() {
         <NavLink to="/rakuten/settings" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           ⚙️ 楽天設定
         </NavLink>
+        <NavLink to="/sync-logs" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          🔍 同期ログ
+        </NavLink>
       </nav>
       <main className="main-content">
         <Routes>
@@ -74,6 +78,7 @@ function App() {
           <Route path="/rakuten/products" element={<RakutenProductsPage />} />
           <Route path="/rakuten/invoices" element={<RakutenInvoicePage />} />
           <Route path="/rakuten/settings" element={<RakutenSettingsPage />} />
+          <Route path="/sync-logs" element={<SyncLogsPage />} />
         </Routes>
       </main>
     </div>

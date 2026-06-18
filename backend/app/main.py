@@ -103,8 +103,13 @@ def _migrate():
 from contextlib import asynccontextmanager
 import asyncio
 import logging
+from datetime import datetime as dt
+from collections import deque
 
 logger = logging.getLogger("scheduler")
+
+# 在庫同期ログ履歴（直近100件）
+_sync_logs: deque = deque(maxlen=100)
 
 async def _sync_rakuten_stock():
     """1分ごと: 直近2分の受注差分で在庫を減算する（全商品取得不要でメモリ節約）"""
@@ -170,8 +175,15 @@ async def _sync_rakuten_stock():
         db.commit()
 
         if updated_skus:
+            log_entry = {
+                "time": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "sold": sold,
+                "rms_would_update": rms_would_update,
+            }
+            _sync_logs.appendleft(log_entry)
             logger.warning(f"[scheduler] 在庫差分更新: sold={sold} / RMS反映予定(確認中)={rms_would_update}")
     except Exception as e:
+        _sync_logs.appendleft({"time": dt.now().strftime("%Y-%m-%d %H:%M:%S"), "error": str(e)})
         logger.warning(f"[scheduler] 在庫同期エラー: {e}")
     finally:
         db.close()
@@ -261,5 +273,10 @@ app.include_router(shipment_orders.router, prefix="/api")
 @app.get("/")
 def root():
     return {"message": "中国輸入管理ツール API"}
+
+@app.get("/api/sync-logs")
+def get_sync_logs():
+    """在庫同期ログ履歴（直近100件）"""
+    return {"logs": list(_sync_logs)}
 
 
