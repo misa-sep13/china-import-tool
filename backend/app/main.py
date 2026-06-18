@@ -123,15 +123,54 @@ async def _sync_rakuten_stock():
         if not sold:
             return
 
-        updated = 0
+        import json
+
+        # 全商品の在庫をまとめて取得
+        all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+        sku_stock = {p.sku: (p.stock or 0) for p in all_products}
+        sku_to_product = {p.sku: p for p in all_products}
+
+        # 売れた単品のDB在庫を減算
+        updated_skus = set()
         for sku, qty in sold.items():
-            p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
+            p = sku_to_product.get(sku)
             if p and p.stock is not None:
                 p.stock = max(0, p.stock - qty)
-                updated += 1
+                sku_stock[sku] = p.stock
+                updated_skus.add(sku)
+
+        # セット商品の在庫を再計算（売れた単品を参照しているものだけ）
+        rms_would_update = {}  # ログ用: {sku: quantity}
+        for p in all_products:
+            if not p.set_components:
+                continue
+            try:
+                comps = json.loads(p.set_components)
+            except Exception:
+                continue
+            if not any(c.get("sku") in updated_skus for c in comps):
+                continue
+            set_qty = None
+            for c in comps:
+                c_sku = c.get("sku")
+                c_qty = c.get("qty") or 1
+                if not c_sku:
+                    continue
+                avail = sku_stock.get(c_sku, 0) // c_qty
+                set_qty = avail if set_qty is None else min(set_qty, avail)
+            if set_qty is not None:
+                p.stock = set_qty
+                sku_stock[p.sku] = set_qty
+                rms_would_update[p.sku] = set_qty
+
+        # 売れた単品もRMS反映対象に追加
+        for sku in updated_skus:
+            rms_would_update[sku] = sku_stock[sku]
+
         db.commit()
-        if updated:
-            logger.info(f"[scheduler] 在庫差分更新: {updated}件 sold={sold}")
+
+        if updated_skus:
+            logger.warning(f"[scheduler] 在庫差分更新: sold={sold} / RMS反映予定(確認中)={rms_would_update}")
     except Exception as e:
         logger.warning(f"[scheduler] 在庫同期エラー: {e}")
     finally:
