@@ -120,6 +120,7 @@ async def _sync_rakuten_stock():
             return
 
         sold = await fetch_recent_orders(settings.rms_service_secret, settings.rms_license_key, minutes=2)
+        logger.warning(f"[scheduler] fetch_recent_orders結果: {sold}")
         if not sold:
             return
 
