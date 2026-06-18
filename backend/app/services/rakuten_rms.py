@@ -27,7 +27,7 @@ async def _process_page(
     """注文番号リストの詳細を取得してsku_dailyに集計（メモリ節約のため都度処理）"""
     for i in range(0, len(order_numbers), BATCH_SIZE):
         batch = order_numbers[i:i + BATCH_SIZE]
-        detail_body = {"orderNumberList": batch, "version": 1}
+        detail_body = {"orderNumberList": batch, "version": 10}
         async with httpx.AsyncClient(timeout=30) as client:
             res = await client.post(
                 f"{RMS_BASE}/2.0/order/getOrder",
@@ -38,7 +38,7 @@ async def _process_page(
                 continue
             detail_data = res.json()
 
-        for order in detail_data.get("orderModelList", []):
+        for order in detail_data.get("OrderModelList", []):
             if order.get("orderProgress", 0) == 900:  # キャンセル除外
                 continue
             order_date_str = order.get("orderDatetime", "")
@@ -50,13 +50,18 @@ async def _process_page(
             day_key = order_date.strftime("%Y-%m-%d")
             for package in order.get("PackageModelList", []):
                 for item in package.get("ItemModelList", []):
-                    sku = item.get("manageNumber", "") or item.get("itemNumber", "")
-                    if not sku:
-                        continue
                     qty = item.get("units", 1) or 1
-                    if sku not in sku_daily:
-                        sku_daily[sku] = {}
-                    sku_daily[sku][day_key] = sku_daily[sku].get(day_key, 0) + qty
+                    # version7以降: SkuModelList の variantId を優先
+                    sku_list = item.get("SkuModelList") or []
+                    skus = [s.get("variantId", "") for s in sku_list if s.get("variantId")]
+                    if not skus:
+                        skus = [item.get("manageNumber", "") or item.get("itemNumber", "")]
+                    for sku in skus:
+                        if not sku:
+                            continue
+                        if sku not in sku_daily:
+                            sku_daily[sku] = {}
+                        sku_daily[sku][day_key] = sku_daily[sku].get(day_key, 0) + qty
 
 
 async def fetch_sales_by_sku(
@@ -285,21 +290,26 @@ async def fetch_recent_orders(
             res = await client.post(
                 f"{RMS_BASE}/2.0/order/getOrder",
                 headers={**headers, "Content-Type": "application/json; charset=utf-8"},
-                content=json.dumps({"orderNumberList": batch, "version": 1}, ensure_ascii=False).encode("utf-8"),
+                content=json.dumps({"orderNumberList": batch, "version": 10}, ensure_ascii=False).encode("utf-8"),
             )
             if not res.is_success:
                 continue
             detail = res.json()
-        for order in detail.get("orderModelList", []):
+        for order in detail.get("OrderModelList", []):
             if order.get("orderProgress", 0) == 900:
                 continue
             for package in order.get("PackageModelList", []):
                 for item in package.get("ItemModelList", []):
-                    sku = item.get("manageNumber", "") or item.get("itemNumber", "")
-                    if not sku:
-                        continue
                     qty = item.get("units", 1) or 1
-                    sku_qty[sku] = sku_qty.get(sku, 0) + qty
+                    # version7以降: SkuModelList の variantId を優先
+                    sku_list = item.get("SkuModelList") or []
+                    skus = [s.get("variantId", "") for s in sku_list if s.get("variantId")]
+                    if not skus:
+                        skus = [item.get("manageNumber", "") or item.get("itemNumber", "")]
+                    for sku in skus:
+                        if not sku:
+                            continue
+                        sku_qty[sku] = sku_qty.get(sku, 0) + qty
 
     return sku_qty
 
