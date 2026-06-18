@@ -119,8 +119,7 @@ async def _sync_rakuten_stock():
         if not settings or not settings.rms_service_secret or not settings.rms_license_key:
             return
 
-        sold = await fetch_recent_orders(settings.rms_service_secret, settings.rms_license_key, minutes=180)
-        logger.warning(f"[scheduler] fetch_recent_orders結果: {sold}")
+        sold = await fetch_recent_orders(settings.rms_service_secret, settings.rms_license_key, minutes=2)
         if not sold:
             return
 
@@ -181,7 +180,6 @@ async def _scheduler_loop():
     while True:
         await asyncio.sleep(60)
         tick += 1
-        logger.warning(f"[scheduler] tick={tick} 在庫同期開始")
         await _sync_rakuten_stock()
         if tick % 60 == 0:  # 60分ごと
             await _sync_rakuten_sales()
