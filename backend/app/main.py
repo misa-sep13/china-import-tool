@@ -130,29 +130,48 @@ async def _sync_rakuten_stock():
 
         import json
 
-        # 全商品の在庫をまとめて取得
+        # 全商品の在庫・構成情報をまとめて取得
         all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
         sku_stock = {p.sku: (p.stock or 0) for p in all_products}
         sku_to_product = {p.sku: p for p in all_products}
 
-        # 売れた単品のDB在庫を減算
+        # 各商品のset_componentsをパース
+        def parse_comps(p):
+            try:
+                return json.loads(p.set_components or "[]")
+            except Exception:
+                return []
+
+        # Step1: 売れたSKUがセット商品なら構成品の在庫も減算
         updated_skus = set()
         for sku, qty in sold.items():
             p = sku_to_product.get(sku)
-            if p and p.stock is not None:
+            if not p:
+                continue
+            comps = parse_comps(p)
+            if comps:
+                # セット商品が売れた → 構成品を qty×使用数 ずつ減算
+                for c in comps:
+                    c_sku = c.get("sku")
+                    c_qty = (c.get("qty") or 1) * qty
+                    cp = sku_to_product.get(c_sku)
+                    if cp and cp.stock is not None:
+                        cp.stock = max(0, cp.stock - c_qty)
+                        sku_stock[c_sku] = cp.stock
+                        updated_skus.add(c_sku)
+            # セット商品自身の在庫も減算
+            if p.stock is not None:
                 p.stock = max(0, p.stock - qty)
                 sku_stock[sku] = p.stock
                 updated_skus.add(sku)
 
-        # セット商品の在庫を再計算（売れた単品を参照しているものだけ）
-        rms_would_update = {}  # ログ用: {sku: quantity}
+        # Step2: 更新された単品を参照する全セット商品の在庫を再計算
+        rms_would_update = {}
         for p in all_products:
-            if not p.set_components:
+            comps = parse_comps(p)
+            if not comps:
                 continue
-            try:
-                comps = json.loads(p.set_components)
-            except Exception:
-                continue
+            # この商品の構成品に更新されたSKUが含まれる場合のみ再計算
             if not any(c.get("sku") in updated_skus for c in comps):
                 continue
             set_qty = None
@@ -168,7 +187,7 @@ async def _sync_rakuten_stock():
                 sku_stock[p.sku] = set_qty
                 rms_would_update[p.sku] = set_qty
 
-        # 売れた単品もRMS反映対象に追加
+        # 更新された全SKU（単品・セット）をRMS反映対象に追加
         for sku in updated_skus:
             rms_would_update[sku] = sku_stock[sku]
 
