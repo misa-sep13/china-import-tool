@@ -180,6 +180,7 @@ async def _scheduler_loop():
     while True:
         await asyncio.sleep(60)
         tick += 1
+        logger.warning(f"[scheduler] tick={tick} 在庫同期開始")
         await _sync_rakuten_stock()
         if tick % 60 == 0:  # 60分ごと
             await _sync_rakuten_sales()
