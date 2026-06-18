@@ -1181,7 +1181,7 @@ async def debug_rms_order_detail(db: Session = Depends(get_db)):
         res2 = await client.post(
             "https://api.rms.rakuten.co.jp/es/2.0/order/getOrder",
             headers=headers,
-            content=json.dumps({"orderNumberList": order_numbers[:1]}, ensure_ascii=False).encode("utf-8"),
+            content=json.dumps({"orderNumberList": order_numbers[:1], "version": 2}, ensure_ascii=False).encode("utf-8"),
         )
     return {"status": res2.status_code, "body": res2.json()}
 

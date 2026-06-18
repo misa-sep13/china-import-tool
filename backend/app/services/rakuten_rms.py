@@ -27,7 +27,7 @@ async def _process_page(
     """注文番号リストの詳細を取得してsku_dailyに集計（メモリ節約のため都度処理）"""
     for i in range(0, len(order_numbers), BATCH_SIZE):
         batch = order_numbers[i:i + BATCH_SIZE]
-        detail_body = {"orderNumberList": batch}
+        detail_body = {"orderNumberList": batch, "version": 2}
         async with httpx.AsyncClient(timeout=30) as client:
             res = await client.post(
                 f"{RMS_BASE}/2.0/order/getOrder",
@@ -285,7 +285,7 @@ async def fetch_recent_orders(
             res = await client.post(
                 f"{RMS_BASE}/2.0/order/getOrder",
                 headers={**headers, "Content-Type": "application/json; charset=utf-8"},
-                content=json.dumps({"orderNumberList": batch}, ensure_ascii=False).encode("utf-8"),
+                content=json.dumps({"orderNumberList": batch, "version": 2}, ensure_ascii=False).encode("utf-8"),
             )
             if not res.is_success:
                 continue
