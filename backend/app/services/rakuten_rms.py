@@ -75,7 +75,8 @@ async def fetch_sales_by_sku(
     注文番号は全件メモリに溜めず、ページ取得のたびに即時 getOrder 処理してメモリを節約する。
     """
     headers = _auth_header(service_secret, license_key)
-    now = datetime.now()
+    from datetime import timezone
+    now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=9)))
     cutoff_recent = now - timedelta(days=30)
     cutoff_prev   = now - timedelta(days=60)
 
@@ -254,7 +255,8 @@ async def fetch_recent_orders(
     戻り値: {"y76_black": 2, "y48_pink-s": 1, ...}
     """
     headers = _auth_header(service_secret, license_key)
-    now = datetime.now()
+    from datetime import timezone
+    now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=9)))
     start = now - timedelta(minutes=minutes)
     body = {
         "dateType": 1,
