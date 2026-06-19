@@ -16,6 +16,7 @@ export default function StockPage() {
   const [error, setError] = useState('')
   const [sortKey, setSortKey] = useState('days_left')
   const [sortAsc, setSortAsc] = useState(true)
+  const [search, setSearch] = useState('')
   const pollRef = useRef(null)
 
   const stopPolling = () => {
@@ -79,7 +80,17 @@ export default function StockPage() {
     _idx: i,
   }))
 
-  const sorted = [...items].sort((a, b) => {
+  const q = search.trim().toLowerCase()
+  const filtered = q
+    ? items.filter(item =>
+        (item.sku || '').toLowerCase().includes(q) ||
+        (item.name || '').toLowerCase().includes(q) ||
+        (item.color || '').toLowerCase().includes(q) ||
+        (item.size || '').toLowerCase().includes(q)
+      )
+    : items
+
+  const sorted = [...filtered].sort((a, b) => {
     let va = a[sortKey], vb = b[sortKey]
     if (typeof va === 'string') va = va.toLowerCase()
     if (typeof vb === 'string') vb = vb.toLowerCase()
@@ -198,6 +209,13 @@ export default function StockPage() {
 
       {!isLoading && jobStatus === 'done' && (
         <div className="card">
+          <div style={{ padding: '12px 16px', marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
+            <input
+              type="text" placeholder="SKU・商品名・色/サイズで絞り込み"
+              value={search} onChange={e => setSearch(e.target.value)}
+              style={{ width: 260, flex: '0 0 260px' }}
+            />
+          </div>
           <h2>全在庫（{sorted.length}件）</h2>
           <div style={{ overflowX: 'auto' }}>
             <table>
