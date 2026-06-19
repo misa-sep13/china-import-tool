@@ -1,0 +1,35 @@
+name: Daily Rakuten Sales Sync
+
+on:
+  schedule:
+    # 毎日 18:00 UTC（= JST 3:00）。低負荷帯に1回だけ実行。
+    - cron: '0 18 * * *'
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 売上同期を開始して完了まで待機
+        run: |
+          set -e
+          BASE="${{ secrets.BACKEND_URL }}/api"
+          # バックグラウンドジョブを開始し job_id を取得
+          JOB=$(curl -sf -X POST "$BASE/rakuten/rms/sync/start" \
+                | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
+          echo "job_id=$JOB"
+          # 完了までポーリング（最大約13分）
+          for i in $(seq 1 100); do
+            sleep 8
+            ST=$(curl -sf "$BASE/rakuten/rms/sync/status/$JOB" || echo '{}')
+            if echo "$ST" | grep -q '"status":"done"'; then
+              echo "同期完了: $ST"
+              exit 0
+            fi
+            if echo "$ST" | grep -q '"status":"error"'; then
+              echo "同期エラー: $ST"
+              exit 1
+            fi
+          done
+          echo "タイムアウト（同期がまだ実行中の可能性）"
+          exit 1
