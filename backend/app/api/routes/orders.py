@@ -20,6 +20,20 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 _jobs: dict = {}
 _jobs_lock = threading.Lock()
 
+
+def _prune_jobs():
+    """古い・完了済みのジョブをメモリから掃除する。
+    ジョブは結果（全商品リスト）を保持したまま_jobsに残り続けるため、
+    定期取得(cron)やユーザー操作のたびに溜まってメモリリークになる。
+    フェッチは長くても数分で終わるので、20分より古いものと、上限30件を超えた古い分を削除する。"""
+    now = time.time()
+    with _jobs_lock:
+        for jid in [j for j, v in _jobs.items() if now - v.get("started_at", now) > 1200]:
+            _jobs.pop(jid, None)
+        if len(_jobs) > 30:
+            for jid, _ in sorted(_jobs.items(), key=lambda kv: kv[1].get("started_at", 0))[:-30]:
+                _jobs.pop(jid, None)
+
 class OrderItem(BaseModel):
     product_id: int
     sku: str
@@ -291,6 +305,7 @@ def _run_stock_job(job_id: str):
 @router.post("/stock/start")
 def start_stock(background_tasks: BackgroundTasks, force: bool = False):
     """全在庫一覧取得をバックグラウンドで開始"""
+    _prune_jobs()
     if force:
         from app.services.amazon_api import _cache
         _cache.clear()
@@ -302,6 +317,7 @@ def start_stock(background_tasks: BackgroundTasks, force: bool = False):
 @router.post("/preview/start")
 def start_preview(background_tasks: BackgroundTasks, force: bool = False):
     """SP-APIデータ取得をバックグラウンドで開始し、job_idを返す。force=TrueでキャッシュをクリアしてからAPIを叩く"""
+    _prune_jobs()
     if force:
         from app.services.amazon_api import _cache
         _cache.clear()

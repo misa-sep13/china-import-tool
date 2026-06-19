@@ -10,7 +10,7 @@ _token_cache = {"token": None, "expires_at": 0}
 
 # サーバー側キャッシュ
 _cache: Dict[str, dict] = {}
-_CACHE_TTL = 3600       # 売上データ: 1時間
+_CACHE_TTL = 4200       # 売上データ: 70分（毎時のウォームアップcronに余裕を持たせる）
 _CACHE_TTL_LONG = 86400 # 画像・在庫など: 1日
 
 def _cache_get(key: str):
