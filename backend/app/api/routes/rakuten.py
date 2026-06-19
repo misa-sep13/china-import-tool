@@ -1,13 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional, List
 from datetime import date, datetime
 import csv, io, json
+import uuid, time, threading
 from pydantic import BaseModel
 import asyncio
-from app.core.database import get_db
+from app.core.database import get_db, SessionLocal
 from app.models.rakuten_product import RakutenProduct
 from app.models.rakuten_order import RakutenOrderHistory
 from app.models.rakuten_settings import RakutenSettings
@@ -1449,45 +1450,93 @@ async def import_stock_from_rms(db: Session = Depends(get_db)):
     }
 
 
-@router.post("/rms/sync")
-async def sync_sales_from_rms(db: Session = Depends(get_db)):
-    """楽天RMS APIから受注データを取得し、バリエーション別30日販売数を更新"""
+# ===== 売上同期（バックグラウンドジョブ） =====
+# 受注60日分の取得は数分かかり1リクエストでは502になるため、
+# バックグラウンドで実行し、フロントはjob_idでポーリングする。
+_sync_jobs: dict = {}
+_sync_jobs_lock = threading.Lock()
+
+
+def _prune_sync_jobs():
+    """古い同期ジョブをメモリから掃除（_sync_jobsの肥大化＝メモリリーク防止）"""
+    now = time.time()
+    with _sync_jobs_lock:
+        for jid in [j for j, v in _sync_jobs.items() if now - v.get("started_at", now) > 3600]:
+            _sync_jobs.pop(jid, None)
+        if len(_sync_jobs) > 20:
+            for jid, _ in sorted(_sync_jobs.items(), key=lambda kv: kv[1].get("started_at", 0))[:-20]:
+                _sync_jobs.pop(jid, None)
+
+
+def _run_sales_sync_job(job_id: str, service_secret: str, license_key: str):
+    """バックグラウンドで楽天RMSから受注を取得し、各商品の販売数を更新する"""
+    with _sync_jobs_lock:
+        _sync_jobs[job_id] = {"status": "running", "result": None, "error": None, "started_at": time.time()}
+
     from app.services.rakuten_rms import fetch_sales_by_sku
+    db = SessionLocal()
+    try:
+        sku_sales = asyncio.run(fetch_sales_by_sku(service_secret, license_key, days=60))
+
+        products = db.query(RakutenProduct).filter(
+            RakutenProduct.is_active == True,
+            RakutenProduct.is_component == False,
+        ).all()
+
+        updated = 0
+        for p in products:
+            # 楽天SKU管理番号 または 商品管理番号(sku)で照合
+            sales = sku_sales.get(p.rakuten_sku_id or "") or sku_sales.get(p.sku or "") or {}
+            if sales:
+                p.sales_30_recent  = sales.get("recent", 0)
+                p.sales_30_prev    = sales.get("prev",   0)
+                p.sales_90         = sales.get("total_90", 0)
+                p.stockout_days_90 = sales.get("stockout_days", 0)
+                p.sales_updated_at = datetime.now()
+                updated += 1
+        db.commit()
+
+        with _sync_jobs_lock:
+            _sync_jobs[job_id]["status"] = "done"
+            _sync_jobs[job_id]["result"] = {
+                "synced_skus": len(sku_sales),
+                "updated_products": updated,
+                "last_sync": datetime.now().isoformat(),
+            }
+    except Exception as e:
+        db.rollback()
+        with _sync_jobs_lock:
+            _sync_jobs[job_id]["status"] = "error"
+            _sync_jobs[job_id]["error"] = str(e)
+    finally:
+        db.close()
+
+
+@router.post("/rms/sync/start")
+def start_sales_sync(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """売上同期をバックグラウンドで開始し、job_idを返す（処理は数分かかる）"""
+    _prune_sync_jobs()
     settings = _get_or_create_settings(db)
     if not settings.rms_service_secret or not settings.rms_license_key:
         raise HTTPException(400, "RMS APIキーが設定されていません。楽天設定から登録してください。")
+    job_id = str(uuid.uuid4())
+    background_tasks.add_task(
+        _run_sales_sync_job, job_id,
+        settings.rms_service_secret, settings.rms_license_key,
+    )
+    return {"job_id": job_id}
 
-    try:
-        sku_sales = await fetch_sales_by_sku(
-            settings.rms_service_secret,
-            settings.rms_license_key,
-            days=60,
-        )
-    except Exception as e:
-        raise HTTPException(502, f"楽天APIエラー: {str(e)}")
 
-    # バリエーション商品(is_component=False, set_components あり)の販売数を更新
-    updated = 0
-    products = db.query(RakutenProduct).filter(
-        RakutenProduct.is_active == True,
-        RakutenProduct.is_component == False,
-    ).all()
-
-    for p in products:
-        # 楽天SKU管理番号 または 商品管理番号(sku)で照合
-        sales = sku_sales.get(p.rakuten_sku_id or "") or sku_sales.get(p.sku or "") or {}
-        if sales:
-            p.sales_30_recent  = sales.get("recent", 0)
-            p.sales_30_prev    = sales.get("prev",   0)
-            p.sales_90         = sales.get("total_90", 0)
-            p.stockout_days_90 = sales.get("stockout_days", 0)
-            p.sales_updated_at = datetime.now()
-            updated += 1
-
-    db.commit()
+@router.get("/rms/sync/status/{job_id}")
+def get_sales_sync_status(job_id: str):
+    """売上同期ジョブの状態と結果を返す"""
+    with _sync_jobs_lock:
+        job = _sync_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "ジョブが見つかりません")
     return {
-        "ok": True,
-        "synced_skus": len(sku_sales),
-        "updated_products": updated,
-        "last_sync": datetime.now().isoformat(),
+        "status": job["status"],
+        "result": job["result"],
+        "error": job["error"],
+        "elapsed": round(time.time() - job["started_at"], 1),
     }

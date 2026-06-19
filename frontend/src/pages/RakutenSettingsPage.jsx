@@ -295,11 +295,26 @@ export default function RakutenSettingsPage() {
               style={{ fontSize: 13, background: '#dbeafe', color: '#1e40af' }}
               disabled={syncing}
               onClick={async () => {
-                setSyncing(true); setSyncResult(null)
+                setSyncing(true); setSyncResult('受注データ取得中…（数分かかります）')
                 try {
-                  const r = await api.post('/rakuten/rms/sync')
-                  setSyncResult(`✅ 同期完了: ${r.data.updated_products}件更新（取得SKU: ${r.data.synced_skus}件）`)
-                  qc.invalidateQueries(['rakuten-recommendations'])
+                  const start = await api.post('/rakuten/rms/sync/start')
+                  const jobId = start.data.job_id
+                  // 完了までポーリング（最大15分）
+                  for (let i = 0; i < 180; i++) {
+                    await new Promise(res => setTimeout(res, 5000))
+                    const st = await api.get(`/rakuten/rms/sync/status/${jobId}`)
+                    if (st.data.status === 'done') {
+                      const r = st.data.result
+                      setSyncResult(`✅ 同期完了: ${r.updated_products}件更新（取得SKU: ${r.synced_skus}件）`)
+                      qc.invalidateQueries(['rakuten-recommendations'])
+                      break
+                    } else if (st.data.status === 'error') {
+                      setSyncResult(`❌ ${st.data.error || '同期エラー'}`)
+                      break
+                    } else {
+                      setSyncResult(`受注データ取得中…（${st.data.elapsed}秒経過）`)
+                    }
+                  }
                 } catch (e) {
                   setSyncResult(`❌ ${e.response?.data?.detail || '同期エラー'}`)
                 } finally { setSyncing(false) }
