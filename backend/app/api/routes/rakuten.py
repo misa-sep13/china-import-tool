@@ -1476,7 +1476,9 @@ def _run_sales_sync_job(job_id: str, service_secret: str, license_key: str):
     from app.services.rakuten_rms import fetch_sales_by_sku
     db = SessionLocal()
     try:
-        sku_sales = asyncio.run(fetch_sales_by_sku(service_secret, license_key, days=60))
+        # まずは直近30日のみ取得（軽量・高速）。発注計算はsales_30_recentがあれば
+        # 日販→提案発注数が出る。60日だとRender上で重く落ちるため30日に絞る。
+        sku_sales = asyncio.run(fetch_sales_by_sku(service_secret, license_key, days=30))
 
         products = db.query(RakutenProduct).filter(
             RakutenProduct.is_active == True,
