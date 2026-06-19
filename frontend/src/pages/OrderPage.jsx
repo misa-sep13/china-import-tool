@@ -381,20 +381,12 @@ export default function OrderPage() {
                       <td style={{ whiteSpace: 'nowrap' }}>
                         <button
                           className="btn btn-sm"
-                          style={{ background: '#dcfce7', color: '#166534', marginRight: 6, whiteSpace: 'nowrap' }}
-                          onClick={() => {
-                            if (confirm(`${row.sku} を納品済みにして発注済みリストから外しますか？\n（商品が入荷・FBA納品プラン作成済みの場合に押してください）`))
-                              deleteHistory.mutate(row.id)
-                          }}
-                        >納品</button>
-                        <button
-                          className="btn btn-sm"
                           style={{ background: '#fee2e2', color: '#991b1b', whiteSpace: 'nowrap' }}
                           onClick={() => {
-                            if (confirm(`${row.sku} を発注済みリストから削除しますか？\n（誤発注・キャンセルの場合に押してください）`))
+                            if (confirm(`${row.sku} を発注済みリストから外しますか？\n（入荷して納品済み、または誤発注・キャンセルの場合に押してください）`))
                               deleteHistory.mutate(row.id)
                           }}
-                        >削除</button>
+                        >リストから外す</button>
                       </td>
                     </tr>
                   ))}
