@@ -4,13 +4,15 @@
 """
 import base64
 import json
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 import httpx
 
 
 RMS_BASE = "https://api.rms.rakuten.co.jp/es"
-BATCH_SIZE = 10  # getOrder の1回あたりの件数
+BATCH_SIZE = 100      # getOrder の1回あたりの件数（RMSの上限）
+GETORDER_CONCURRENCY = 6  # getOrder の並列数
 
 
 def _auth_header(service_secret: str, license_key: str) -> dict:
@@ -18,27 +20,32 @@ def _auth_header(service_secret: str, license_key: str) -> dict:
     return {"Authorization": f"ESA {token}"}
 
 
-async def _process_page(
+async def _process_batch(
     headers: dict,
-    order_numbers: list,
+    batch: list,
     sku_daily: dict,
     now: datetime,
+    sem: asyncio.Semaphore,
 ) -> None:
-    """注文番号リストの詳細を取得してsku_dailyに集計（メモリ節約のため都度処理）"""
-    for i in range(0, len(order_numbers), BATCH_SIZE):
-        batch = order_numbers[i:i + BATCH_SIZE]
+    """1バッチ分(最大BATCH_SIZE件)の注文詳細をgetOrderで取得しsku_dailyに集計。
+    並列実行用。HTTP取得時のみawaitし、sku_dailyへの更新はawaitを挟まないため
+    asyncio(単一スレッド)では共有dictを直接更新しても安全。"""
+    async with sem:
         detail_body = {"orderNumberList": batch, "version": 10}
-        async with httpx.AsyncClient(timeout=30) as client:
-            res = await client.post(
-                f"{RMS_BASE}/2.0/order/getOrder",
-                headers={**headers, "Content-Type": "application/json; charset=utf-8"},
-                content=json.dumps(detail_body, ensure_ascii=False).encode("utf-8"),
-            )
-            if not res.is_success:
-                continue
-            detail_data = res.json()
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                res = await client.post(
+                    f"{RMS_BASE}/2.0/order/getOrder",
+                    headers={**headers, "Content-Type": "application/json; charset=utf-8"},
+                    content=json.dumps(detail_body, ensure_ascii=False).encode("utf-8"),
+                )
+                if not res.is_success:
+                    return
+                detail_data = res.json()
+        except Exception:
+            return
 
-        for order in detail_data.get("OrderModelList", []):
+    for order in detail_data.get("OrderModelList", []):
             if order.get("orderProgress", 0) == 900:  # キャンセル除外
                 continue
             order_date_str = order.get("orderDatetime", "")
@@ -82,7 +89,9 @@ async def fetch_sales_by_sku(
 
     sku_daily: dict[str, dict] = {}
     seen_orders: set[str] = set()  # 重複注文番号の除去
+    all_order_numbers: list[str] = []
 
+    # 1) searchOrderで全注文番号を収集（軽量・順次）
     MAX_DAYS = 60
     fetched_days = 0
     while fetched_days < days:
@@ -90,7 +99,6 @@ async def fetch_sales_by_sku(
         chunk_end   = now - timedelta(days=fetched_days)
         chunk_start = now - timedelta(days=fetched_days + chunk)
 
-        # ページネーションで全ページ取得しながら都度getOrder処理
         page = 1
         while True:
             search_body = {
@@ -112,19 +120,14 @@ async def fetch_sales_by_sku(
                     raise Exception(f"searchOrder HTTP {res.status_code}: {res.text}")
                 data = res.json()
 
-            raw_list = data.get("orderNumberList") or []
-            page_numbers = []
-            for item in raw_list:
+            for item in data.get("orderNumberList") or []:
                 num = item if isinstance(item, str) else (
                     item.get("orderNumber") or item.get("order_number") or item.get("id") or ""
                 )
                 num = str(num)
                 if num and num not in seen_orders:
                     seen_orders.add(num)
-                    page_numbers.append(num)
-
-            if page_numbers:
-                await _process_page(headers, page_numbers, sku_daily, now)
+                    all_order_numbers.append(num)
 
             pagination = data.get("PaginationResponseModel") or {}
             if page >= pagination.get("totalPages", 1):
@@ -133,7 +136,12 @@ async def fetch_sales_by_sku(
 
         fetched_days += chunk
 
-    # 集計
+    # 2) getOrderをBATCH_SIZE件ずつ並列取得してsku_dailyへ集計
+    sem = asyncio.Semaphore(GETORDER_CONCURRENCY)
+    batches = [all_order_numbers[i:i + BATCH_SIZE] for i in range(0, len(all_order_numbers), BATCH_SIZE)]
+    await asyncio.gather(*[_process_batch(headers, b, sku_daily, now, sem) for b in batches])
+
+    # 3) 集計
     sku_sales: dict[str, dict] = {}
     for sku, daily in sku_daily.items():
         recent = prev = total = 0
