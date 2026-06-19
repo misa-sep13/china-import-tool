@@ -262,7 +262,7 @@ export default function OrderPage() {
                   </thead>
                   <tbody>
                     {items.map((item) => (
-                      <tr key={item.product_id} style={{ opacity: currentSelected.has(item._idx) ? 1 : 0.4 }}>
+                      <tr key={item.product_id} style={{ background: currentSelected.has(item._idx) ? '#eff6ff' : undefined }}>
                         <td
                           style={{ textAlign: 'center', cursor: 'pointer' }}
                           onClick={() => toggleSelect(item._idx)}
