@@ -1,0 +1,22 @@
+name: Warm SP-API Cache
+
+on:
+  schedule:
+    # 30分ごと。売上キャッシュのTTL(1時間)が切れる前に温め直し、
+    # ユーザーが画面を開いた時には常にキャッシュ済み＝即表示になるようにする。
+    - cron: '*/30 * * * *'
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger SP-API fetch to refresh cache
+        run: |
+          # force=true でキャッシュを取り直す。preview と stock は
+          # 同じ在庫・売上キャッシュを共有するため、preview を温めれば両方カバーできる。
+          curl -X POST "${{ secrets.BACKEND_URL }}/api/orders/preview/start?force=true" \
+            -H "Content-Type: application/json" \
+            --max-time 60 \
+            --retry 2 \
+            -f
