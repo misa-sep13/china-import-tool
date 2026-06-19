@@ -147,13 +147,14 @@ async def fetch_sales_by_sku(
         recent = prev = total = 0
         for day_str, qty in daily.items():
             try:
-                d = datetime.strptime(day_str, "%Y-%m-%d")
+                d = datetime.strptime(day_str, "%Y-%m-%d").date()
             except Exception:
                 continue
             total += qty
-            if d >= cutoff_recent:
+            # cutoffはタイムゾーン付き(JST)なので .date() 同士で比較する
+            if d >= cutoff_recent.date():
                 recent += qty
-            elif d >= cutoff_prev:
+            elif d >= cutoff_prev.date():
                 prev += qty
         sku_sales[sku] = {
             "recent": recent,
