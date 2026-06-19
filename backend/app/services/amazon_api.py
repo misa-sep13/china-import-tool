@@ -169,82 +169,60 @@ def fetch_catalog_info(asin_list: List[str]) -> Dict[str, dict]:
     _cache[cache_key] = {"value": result, "expires_at": time.time() + _CACHE_TTL_LONG}
     return result
 
-def _jst_iso(dt) -> str:
-    """datetime を SP-API が要求する +09:00 形式の ISO 文字列にする"""
-    s = dt.strftime("%Y-%m-%dT%H:%M:%S%z")  # 例: 2024-03-01T00:00:00+0900
-    return s[:-2] + ":" + s[-2:]            # +0900 → +09:00
-
-
-def _fetch_sales_daily_one(asin: str, start_jst, end_jst) -> tuple:
-    """1ASINの日別販売数を granularity=Day で1回だけ取得する。
-    戻り値: (asin, {date: units})。旧実装は期間ごとに別々のAPIを叩いていたが、
-    日別で1回取得して各期間の集計はサーバー側で行うことで呼び出し数を1/5に削減する。"""
-    from datetime import datetime
+def _fetch_sales_one(asin: str, days: int, end_dt) -> tuple:
+    from datetime import timedelta
     mp = "A1VC38T7YXB528"
+    start = end_dt - timedelta(days=days)
     try:
         params = urllib.parse.urlencode({
             "marketplaceIds": mp,
-            "interval": f"{_jst_iso(start_jst)}--{_jst_iso(end_jst)}",
-            "granularity": "Day",
+            "interval": f"{start.strftime('%Y-%m-%dT%H:%M:%SZ')}--{end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+            "granularity": "Total",
             "asin": asin,
         })
         data = _call_sp_api(f"/sales/v1/orderMetrics?{params}")
-        daily = {}
-        for m in data.get("payload", []):
-            start_str = (m.get("interval", "") or "").split("--")[0]
-            try:
-                daily[datetime.fromisoformat(start_str).date()] = m.get("unitCount", 0)
-            except Exception:
-                continue
-        return asin, daily
+        units = sum(m.get("unitCount", 0) for m in data.get("payload", []))
+        return asin, round(units / days, 4)
     except Exception:
-        return asin, {}
+        return asin, 0.0
 
 
 def fetch_all_sales(asin_list: List[str]) -> tuple:
-    """7/15/30/60/90日の日販を取得。各ASINにつき90日分を granularity=Day で
-    1回だけ取得し、各期間の集計はサーバー側で行う（旧実装は期間ごとに別APIを
-    叩いていたため呼び出し数が5倍だった）。日別境界はJST（マーケットプレイスのTZ）で揃える。"""
-    from datetime import datetime, timedelta, timezone
+    """7/15/30/60/90日の売上を全ASIN×全期間で並列一括取得。now()を1回固定して集計期間のブレをなくす"""
+    from datetime import datetime, timezone
     periods = [7, 15, 30, 60, 90]
 
-    # キャッシュチェック（全期間そろっていれば即返す）
+    # キャッシュチェック
     cached_results = {}
-    all_cached = True
+    missing_periods = set()
     for d in periods:
         cached = _cache_get(f"sales_{d}")
         if cached is not None:
             cached_results[d] = cached
         else:
-            all_cached = False
-    if all_cached:
-        return tuple(cached_results[d] for d in periods)
+            missing_periods.add(d)
 
-    # 日別境界をJST 0:00に揃える。end=今日0:00（＝昨日までの完全な日を集計）
-    jst = timezone(timedelta(hours=9))
-    end_jst = datetime.now(jst).replace(hour=0, minute=0, second=0, microsecond=0)
-    start_jst = end_jst - timedelta(days=90)
+    if not missing_periods:
+        return (cached_results[7], cached_results[15], cached_results[30], cached_results[60], cached_results[90])
 
-    # ASINごとに日別販売数 {date: units} を並列取得（1ASIN=1コール）
-    daily_by_asin = {a: {} for a in asin_list}
+    # now()を1回だけ取得して全タスクで共有（期間のブレをなくす）
+    end_dt = datetime.now(timezone.utc)
+
+    period_results = {d: {a: 0.0 for a in asin_list} for d in missing_periods}
+    tasks = [(a, d) for a in asin_list for d in missing_periods]
+
     with ThreadPoolExecutor(max_workers=10) as ex:
-        futures = {ex.submit(_fetch_sales_daily_one, a, start_jst, end_jst): a for a in asin_list}
+        futures = {ex.submit(_fetch_sales_one, a, d, end_dt): (a, d) for a, d in tasks}
         for f in as_completed(futures):
-            asin, daily = f.result()
-            daily_by_asin[asin] = daily
+            asin, val = f.result()
+            a, d = futures[f]
+            period_results[d][a] = val
 
-    # 各期間の日販平均を計算（直近d日分、データのない日は0扱い）
-    results = {d: {} for d in periods}
-    for asin in asin_list:
-        daily = daily_by_asin.get(asin, {})
-        for d in periods:
-            total = sum(daily.get((end_jst - timedelta(days=i)).date(), 0) for i in range(1, d + 1))
-            results[d][asin] = round(total / d, 4)
+    for d in missing_periods:
+        _cache_set(f"sales_{d}", period_results[d])
+        cached_results[d] = period_results[d]
 
-    for d in periods:
-        _cache_set(f"sales_{d}", results[d])
-
-    return tuple(results[d] for d in periods)
+    return (cached_results[7], cached_results[15], cached_results[30], cached_results[60], cached_results[90])
 
 
 def fetch_sales_detail(asin_list: List[str], days: int = 30) -> Dict[str, dict]:
