@@ -227,6 +227,11 @@ export default function StockPage() {
           <button className="btn btn-success" onClick={handleExport} disabled={exporting || checkedCount === 0}>
             {exporting ? '生成中...' : `📥 Excelダウンロード（${checkedCount}件）`}
           </button>
+          <input
+            type="text" placeholder="SKU・商品名・色/サイズで絞り込み"
+            value={search} onChange={e => setSearch(e.target.value)}
+            style={{ width: 260, flex: '0 0 260px' }}
+          />
         </div>
         {error && <p className="error-msg">{error}</p>}
       </div>
@@ -249,13 +254,6 @@ export default function StockPage() {
 
       {!isLoading && jobStatus === 'done' && (
         <div className="card">
-          <div style={{ padding: '12px 16px', marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
-            <input
-              type="text" placeholder="SKU・商品名・色/サイズで絞り込み"
-              value={search} onChange={e => setSearch(e.target.value)}
-              style={{ width: 260, flex: '0 0 260px' }}
-            />
-          </div>
           <h2>全在庫（{sorted.length}件）</h2>
           <div style={{ overflowX: 'auto' }}>
             <table>
