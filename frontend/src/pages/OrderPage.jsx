@@ -378,15 +378,23 @@ export default function OrderPage() {
                           <a href={row.buy_url} target="_blank" rel="noreferrer" style={{ color: '#e94560', fontSize: 12 }}>リンク</a>
                         )}
                       </td>
-                      <td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button
+                          className="btn btn-sm"
+                          style={{ background: '#dcfce7', color: '#166534', marginRight: 6, whiteSpace: 'nowrap' }}
+                          onClick={() => {
+                            if (confirm(`${row.sku} を納品済みにして発注済みリストから外しますか？\n（商品が入荷・FBA納品プラン作成済みの場合に押してください）`))
+                              deleteHistory.mutate(row.id)
+                          }}
+                        >納品</button>
                         <button
                           className="btn btn-sm"
                           style={{ background: '#fee2e2', color: '#991b1b', whiteSpace: 'nowrap' }}
                           onClick={() => {
-                            if (confirm(`${row.sku} の発注済みレコードを削除しますか？\n（FBA納品プラン作成済みの場合に押してください）`))
+                            if (confirm(`${row.sku} を発注済みリストから削除しますか？\n（誤発注・キャンセルの場合に押してください）`))
                               deleteHistory.mutate(row.id)
                           }}
-                        >納品済</button>
+                        >削除</button>
                       </td>
                     </tr>
                   ))}
