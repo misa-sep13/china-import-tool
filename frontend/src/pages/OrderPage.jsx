@@ -11,6 +11,8 @@ export default function OrderPage() {
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
   const [qtyOverrides, setQtyOverrides] = useState({})
+  const [ordering, setOrdering] = useState(null)
+  const [justOrdered, setJustOrdered] = useState(new Set())
 
   // バックグラウンドジョブ管理
   const [jobId, setJobId] = useState(null)
@@ -78,12 +80,6 @@ export default function OrderPage() {
     return () => stopPolling()
   }, [])
 
-  useEffect(() => {
-    if (rawItems.length > 0 && selected === null) {
-      setSelected(new Set(rawItems.map((_, i) => i)))
-    }
-  }, [rawItems])
-
   const items = rawItems.map((item, i) => ({
     ...item,
     qty: qtyOverrides[item.product_id] ?? item.qty,
@@ -105,11 +101,11 @@ export default function OrderPage() {
     setQtyOverrides(prev => ({ ...prev, [productId]: Number(val) }))
   }
 
-  const currentSelected = selected ?? new Set(items.map((_, i) => i))
+  const currentSelected = selected ?? new Set()
 
   const toggleSelect = (idx) => {
     setSelected(prev => {
-      const base = prev ?? new Set(items.map((_, i) => i))
+      const base = prev ?? new Set()
       const next = new Set(base)
       next.has(idx) ? next.delete(idx) : next.add(idx)
       return next
@@ -143,6 +139,25 @@ export default function OrderPage() {
       setError('Excelの出力に失敗しました')
     } finally {
       setExporting(false)
+    }
+  }
+
+  const recordOrder = async (item) => {
+    if (!item.qty || item.qty <= 0) { setError('発注数が0です'); return }
+    setOrdering(item.product_id)
+    setError('')
+    try {
+      await api.post('/orders/order', { items: [{
+        sku: item.sku, name: item.name, color: item.color, size: item.size,
+        qty: item.qty, price: item.price, buy_url: item.buy_url,
+        photo_url: item.photo_url, asin: item.asin, fnsku: item.fnsku, note: item.note,
+      }] })
+      setJustOrdered(prev => new Set(prev).add(item.product_id))
+      qc.invalidateQueries(['orderHistory'])
+    } catch {
+      setError('発注の記録に失敗しました')
+    } finally {
+      setOrdering(null)
     }
   }
 
@@ -181,7 +196,8 @@ export default function OrderPage() {
           <div className="card">
             <p style={{ marginBottom: 14, color: '#555', fontSize: 13 }}>
               Amazon SP-APIから在庫・売上データを取得し、推奨発注数を自動計算します。<br />
-              チェックを入れた商品だけExcelに出力されます。出力すると発注済みリストに記録されます。
+              チェックを入れた商品だけExcelに出力され、発注済みリストに記録されます。<br />
+              個別に発注する場合は各行の「<b>発注</b>」ボタンを押すと、その商品だけが発注済みリストに記録されます。
             </p>
             <div className="top-actions">
               <button className="btn btn-secondary" onClick={handleRefetch} disabled={isLoading}>
@@ -241,6 +257,7 @@ export default function OrderPage() {
                       <th>発注数</th>
                       <th>単価(元)</th>
                       <th>小計(元)</th>
+                      <th>発注</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -280,15 +297,30 @@ export default function OrderPage() {
                         <td style={{ textAlign: 'right', fontWeight: 600 }}>
                           {currentSelected.has(item._idx) ? (item.qty * item.price).toFixed(0) : '-'}
                         </td>
+                        <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                          {justOrdered.has(item.product_id) ? (
+                            <span style={{ color: '#16a34a', fontWeight: 700, fontSize: 12 }}>✓ 発注済</span>
+                          ) : (
+                            <button
+                              className="btn btn-primary"
+                              style={{ padding: '4px 12px', fontSize: 12 }}
+                              disabled={ordering === item.product_id || item.qty <= 0}
+                              onClick={() => recordOrder(item)}
+                            >
+                              {ordering === item.product_id ? '...' : '発注'}
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr>
-                      <td colSpan={9} style={{ textAlign: 'right', fontWeight: 700, paddingTop: 12 }}>合計（選択分）</td>
+                      <td colSpan={10} style={{ textAlign: 'right', fontWeight: 700, paddingTop: 12 }}>合計（選択分）</td>
                       <td style={{ textAlign: 'right', fontWeight: 700 }}>
                         {totalYuan.toFixed(0)} 元
                       </td>
+                      <td></td>
                     </tr>
                   </tfoot>
                 </table>

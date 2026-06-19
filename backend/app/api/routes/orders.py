@@ -53,6 +53,25 @@ class ExportRequest(BaseModel):
     items: List[OrderItem]
 
 
+class OrderRecordItem(BaseModel):
+    """発注ボタン用：発注履歴に記録する最小限の項目"""
+    sku: str
+    name: str = ""
+    color: str = ""
+    size: str = ""
+    qty: int
+    price: float = 0
+    buy_url: str = ""
+    photo_url: str = ""
+    asin: str = ""
+    fnsku: str = ""
+    note: str = ""
+
+
+class OrderRecordRequest(BaseModel):
+    items: List[OrderRecordItem]
+
+
 def _run_preview_job(job_id: str):
     """バックグラウンドでSP-APIデータを取得して推奨発注数を計算"""
     with _jobs_lock:
@@ -452,6 +471,34 @@ def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+
+@router.post("/order")
+def record_order(req: OrderRecordRequest, db: Session = Depends(get_db)):
+    """発注ボタン用：Excelを生成せず、指定商品だけを発注履歴に記録する。
+    （Excelダウンロードは全選択分をまとめて記録するのに対し、こちらは押した商品のみ）"""
+    recorded = 0
+    for item in req.items:
+        if item.qty <= 0:
+            continue
+        db.add(OrderHistory(
+            sku=item.sku,
+            name=item.name,
+            color=item.color,
+            size=item.size,
+            qty=item.qty,
+            price=item.price,
+            buy_url=item.buy_url,
+            photo_url=item.photo_url,
+            asin=item.asin,
+            fnsku=item.fnsku,
+            note=item.note,
+        ))
+        recorded += 1
+    if recorded == 0:
+        raise HTTPException(status_code=400, detail="発注数が1以上の商品がありません")
+    db.commit()
+    return {"recorded": recorded}
 
 
 @router.get("/history")

@@ -17,6 +17,8 @@ export default function StockPage() {
   const [sortKey, setSortKey] = useState('days_left')
   const [sortAsc, setSortAsc] = useState(true)
   const [search, setSearch] = useState('')
+  const [ordering, setOrdering] = useState(null)
+  const [justOrdered, setJustOrdered] = useState(new Set())
   const pollRef = useRef(null)
 
   const stopPolling = () => {
@@ -129,6 +131,25 @@ export default function StockPage() {
 
   const sortIcon = (key) => sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : ''
 
+  const recordOrder = async (item) => {
+    if (!item.qty || item.qty <= 0) { setError('発注数が0です'); return }
+    setOrdering(item.product_id)
+    setError('')
+    try {
+      await api.post('/orders/order', { items: [{
+        sku: item.sku, name: item.name, color: item.color, size: item.size,
+        qty: item.qty, price: item.price, buy_url: item.buy_url,
+        photo_url: item.photo_url, asin: item.asin, fnsku: item.fnsku, note: item.note,
+      }] })
+      setJustOrdered(prev => new Set(prev).add(item.product_id))
+      qc.invalidateQueries(['orderHistory'])
+    } catch {
+      setError('発注の記録に失敗しました')
+    } finally {
+      setOrdering(null)
+    }
+  }
+
   const handleExport = async () => {
     const targets = sorted.filter(item => currentSelected.has(item._idx) && item.qty > 0)
     if (!targets.length) { setError('選択された商品がないか、発注数が0です'); return }
@@ -240,6 +261,7 @@ export default function StockPage() {
                   <th style={{ ...thStyle('recommended_pieces'), textAlign: 'right' }} onClick={() => handleSort('recommended_pieces')}>推奨発注{sortIcon('recommended_pieces')}</th>
                   <th style={{ textAlign: 'right' }}>発注数</th>
                   <th style={{ ...thStyle('price'), textAlign: 'right' }} onClick={() => handleSort('price')}>単価(元){sortIcon('price')}</th>
+                  <th style={{ textAlign: 'center' }}>発注</th>
                 </tr>
               </thead>
               <tbody>
@@ -276,6 +298,20 @@ export default function StockPage() {
                       />
                     </td>
                     <td style={{ textAlign: 'right' }}>{item.price}</td>
+                    <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      {justOrdered.has(item.product_id) ? (
+                        <span style={{ color: '#16a34a', fontWeight: 700, fontSize: 12 }}>✓ 発注済</span>
+                      ) : (
+                        <button
+                          className="btn btn-primary"
+                          style={{ padding: '4px 12px', fontSize: 12 }}
+                          disabled={ordering === item.product_id || item.qty <= 0}
+                          onClick={() => recordOrder(item)}
+                        >
+                          {ordering === item.product_id ? '...' : '発注'}
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
