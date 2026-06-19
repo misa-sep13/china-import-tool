@@ -19,6 +19,7 @@ export default function StockPage() {
   const [search, setSearch] = useState('')
   const [ordering, setOrdering] = useState(null)
   const [justOrdered, setJustOrdered] = useState(new Set())
+  const [hiding, setHiding] = useState(null)
   const pollRef = useRef(null)
 
   const stopPolling = () => {
@@ -130,6 +131,24 @@ export default function StockPage() {
   }
 
   const sortIcon = (key) => sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : ''
+
+  const hideProduct = async (item) => {
+    if (!confirm(`${item.sku} を一覧から非表示にしますか？\n（商品マスタからも外れます。Amazonの出品には影響しません。後で復元可能）`)) return
+    setHiding(item.product_id)
+    setError('')
+    try {
+      await api.delete(`/products/${item.product_id}`)
+      setRawItems(prev => {
+        const next = prev.filter(it => it.product_id !== item.product_id)
+        sessionStorage.setItem('stock_items', JSON.stringify(next))
+        return next
+      })
+    } catch {
+      setError('非表示に失敗しました')
+    } finally {
+      setHiding(null)
+    }
+  }
 
   const recordOrder = async (item) => {
     if (!item.qty || item.qty <= 0) { setError('発注数が0です'); return }
@@ -262,6 +281,7 @@ export default function StockPage() {
                   <th style={{ textAlign: 'right' }}>発注数</th>
                   <th style={{ ...thStyle('price'), textAlign: 'right' }} onClick={() => handleSort('price')}>単価(元){sortIcon('price')}</th>
                   <th style={{ textAlign: 'center' }}>発注</th>
+                  <th style={{ textAlign: 'center' }}>非表示</th>
                 </tr>
               </thead>
               <tbody>
@@ -311,6 +331,16 @@ export default function StockPage() {
                           {ordering === item.product_id ? '...' : '発注'}
                         </button>
                       )}
+                    </td>
+                    <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      <button
+                        className="btn btn-sm"
+                        style={{ background: '#fee2e2', color: '#991b1b', fontSize: 12 }}
+                        disabled={hiding === item.product_id}
+                        onClick={() => hideProduct(item)}
+                      >
+                        {hiding === item.product_id ? '...' : '非表示'}
+                      </button>
                     </td>
                   </tr>
                 ))}
