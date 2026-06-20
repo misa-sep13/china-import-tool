@@ -279,6 +279,76 @@ async def update_product(product_id: int, data: RakutenProductIn, db: Session = 
 
     return p
 
+@router.post("/products/bulk-update-stock")
+async def bulk_update_stock(body: dict, db: Session = Depends(get_db)):
+    """複数商品の在庫をまとめて更新してRMSに一括反映
+    body: {"updates": [{"id": 1, "stock": 10, "inbound": 0, "standard_stock": 5}, ...]}
+    """
+    updates = body.get("updates", [])
+    if not updates:
+        return {"ok": True, "updated": 0}
+
+    settings = _get_or_create_settings(db)
+    all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    id_to_product = {p.id: p for p in all_products}
+    sku_stock = {p.sku: (p.stock or 0) for p in all_products}
+
+    # Step1: DB更新（全件まとめて）
+    updated_skus = set()
+    for u in updates:
+        p = id_to_product.get(u.get("id"))
+        if not p:
+            continue
+        if "stock" in u:
+            p.stock = int(u["stock"])
+            sku_stock[p.sku] = p.stock
+            updated_skus.add(p.sku)
+        if "inbound" in u:
+            p.inbound = int(u["inbound"])
+        if "standard_stock" in u:
+            p.standard_stock = int(u["standard_stock"])
+
+    # Step2: セット商品の在庫を構成品から再計算
+    def _parse(p):
+        try: return json.loads(p.set_components or "[]")
+        except: return []
+
+    rms_items = []
+    for p in all_products:
+        comps = _parse(p)
+        if not comps:
+            continue
+        if not any(c.get("sku") in updated_skus for c in comps):
+            continue
+        req: dict[str, int] = {}
+        for c in comps:
+            c_sku = c.get("sku")
+            c_qty = c.get("qty") or 1
+            if c_sku:
+                req[c_sku] = req.get(c_sku, 0) + c_qty
+        set_qty = None
+        for c_sku, c_qty in req.items():
+            avail = sku_stock.get(c_sku, 0) // c_qty
+            set_qty = avail if set_qty is None else min(set_qty, avail)
+        if set_qty is not None:
+            p.stock = set_qty
+            sku_stock[p.sku] = set_qty
+
+    db.commit()
+
+    # Step3: RMSに一括反映（更新したSKU＋影響したセット商品）
+    if settings and settings.rms_service_secret and settings.rms_license_key:
+        from app.services.rakuten_rms import push_inventory_to_rms
+        for p in all_products:
+            if p.sku in updated_skus or (p.set_components and any(c.get("sku") in updated_skus for c in _parse(p))):
+                manage_number = p.rakuten_item_url or p.sku.split("_")[0]
+                rms_items.append({"manage_number": manage_number, "variant_id": p.sku, "quantity": sku_stock.get(p.sku, 0)})
+        if rms_items:
+            await push_inventory_to_rms(settings.rms_service_secret, settings.rms_license_key, rms_items)
+
+    return {"ok": True, "updated": len(updated_skus), "rms_pushed": len(rms_items)}
+
+
 @router.post("/products/bulk-set-components")
 def bulk_set_components(body: dict, db: Session = Depends(get_db)):
     """SKUをキー、set_componentsをJSONとして受け取り一括更新"""
