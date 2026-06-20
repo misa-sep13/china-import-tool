@@ -214,7 +214,8 @@ export default function RakutenProductsPage() {
       normalize(p.sku).includes(q) ||
       normalize(p.name).includes(q) ||
       (p.jan_code || '').includes(search) ||
-      normalize(p.rakuten_sku_id).includes(q)
+      normalize(p.rakuten_sku_id).includes(q) ||
+      normalize(p.rakuten_item_url).includes(q)
     )
   }
 
@@ -283,7 +284,7 @@ export default function RakutenProductsPage() {
       {/* 検索 */}
       <div className="card" style={{ padding: '12px 16px', marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <input
-          type="text" placeholder="SKU・商品名・JANコード・楽天SKUで絞り込み"
+          type="text" placeholder="SKU・商品名・JANコード・楽天SKU・管理番号で絞り込み"
           value={search} onChange={e => setSearch(e.target.value)}
           style={{ width: 260, flex: '0 0 260px' }}
         />
