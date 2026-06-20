@@ -215,7 +215,7 @@ export default function RakutenProductsPage() {
       normalize(p.name).includes(q) ||
       (p.jan_code || '').includes(search) ||
       normalize(p.rakuten_sku_id).includes(q) ||
-      normalize(p.rakuten_item_url).includes(q)
+      normalize(p.rakuten_item_url || '').includes(q)
     )
   }
 
