@@ -515,6 +515,8 @@ def get_recommendations(db: Session = Depends(get_db)):
             sc_parsed = json.loads(p.set_components) if p.set_components else []
         except Exception:
             sc_parsed = []
+        if not calc.needs_order:
+            continue
         items.append({
             "product_id":      p.id,
             "sku":             p.sku or "",
