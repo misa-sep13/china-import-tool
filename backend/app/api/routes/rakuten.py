@@ -133,9 +133,10 @@ class RakutenProductOut(RakutenProductIn):
     class Config:
         from_attributes = True
 
-@router.get("/products", response_model=List[RakutenProductOut])
+@router.get("/products")
 def list_products(db: Session = Depends(get_db)):
-    return db.query(RakutenProduct).filter(RakutenProduct.is_active == True).order_by(RakutenProduct.sku.asc()).all()
+    products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).order_by(RakutenProduct.sku.asc()).all()
+    return [RakutenProductOut.model_validate(p).model_dump() for p in products]
 
 @router.get("/stock")
 def list_stock(db: Session = Depends(get_db)):
@@ -180,7 +181,7 @@ def list_stock(db: Session = Depends(get_db)):
         })
     return result
 
-@router.post("/products", response_model=RakutenProductOut)
+@router.post("/products")
 def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):
     data.set_components = _clean_set_components(data.set_components)
     existing = db.query(RakutenProduct).filter(RakutenProduct.sku == data.sku).first()
@@ -193,14 +194,14 @@ def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):
         existing.is_active = True
         db.commit()
         db.refresh(existing)
-        return existing
+        return RakutenProductOut.model_validate(existing).model_dump()
     p = RakutenProduct(**data.model_dump())
     db.add(p)
     db.commit()
     db.refresh(p)
-    return p
+    return RakutenProductOut.model_validate(p).model_dump()
 
-@router.put("/products/{product_id}", response_model=RakutenProductOut)
+@router.put("/products/{product_id}")
 async def update_product(product_id: int, data: RakutenProductIn, db: Session = Depends(get_db)):
     if "set_components" in data.model_fields_set:
         data.set_components = _clean_set_components(data.set_components)
@@ -276,7 +277,7 @@ async def update_product(product_id: int, data: RakutenProductIn, db: Session = 
             import logging
             logging.getLogger("rakuten").warning(f"RMS在庫反映エラー ({p.sku}): {e}")
 
-    return p
+    return RakutenProductOut.model_validate(p).model_dump()
 
 @router.post("/products/bulk-update-stock")
 async def bulk_update_stock(body: dict, db: Session = Depends(get_db)):
