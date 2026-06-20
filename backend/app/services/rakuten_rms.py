@@ -292,9 +292,10 @@ async def fetch_recent_orders(
             order_numbers.append(str(num))
 
     if not order_numbers:
-        return {}
+        return {}, []
 
-    sku_qty: dict[str, int] = {}
+    # {order_number: {sku: qty}} 形式で返す
+    orders_by_num: dict[str, dict[str, int]] = {}
     for i in range(0, len(order_numbers), BATCH_SIZE):
         batch = order_numbers[i:i + BATCH_SIZE]
         async with httpx.AsyncClient(timeout=30) as client:
@@ -309,6 +310,8 @@ async def fetch_recent_orders(
         for order in detail.get("OrderModelList", []):
             if order.get("orderProgress", 0) == 900:
                 continue
+            order_num = str(order.get("orderNumber") or "")
+            sku_map: dict[str, int] = {}
             for package in order.get("PackageModelList", []):
                 for item in package.get("ItemModelList", []):
                     qty = item.get("units", 1) or 1
@@ -320,9 +323,11 @@ async def fetch_recent_orders(
                     for sku in skus:
                         if not sku:
                             continue
-                        sku_qty[sku] = sku_qty.get(sku, 0) + qty
+                        sku_map[sku] = sku_map.get(sku, 0) + qty
+            if order_num and sku_map:
+                orders_by_num[order_num] = sku_map
 
-    return sku_qty
+    return orders_by_num, order_numbers
 
 
 async def test_connection(service_secret: str, license_key: str) -> dict:

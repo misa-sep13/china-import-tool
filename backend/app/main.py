@@ -113,6 +113,10 @@ logger = logging.getLogger("scheduler")
 # 在庫同期ログ履歴（直近100件）
 _sync_logs: deque = deque(maxlen=100)
 
+# 処理済み注文番号（重複処理防止。直近200件を保持）
+_processed_order_numbers: set = set()
+_processed_order_numbers_queue: deque = deque(maxlen=200)
+
 async def _sync_rakuten_stock():
     """1分ごと: 直近2分の受注差分で在庫を減算する（全商品取得不要でメモリ節約）"""
     from app.core.database import SessionLocal
@@ -126,9 +130,27 @@ async def _sync_rakuten_stock():
         if not settings or not settings.rms_service_secret or not settings.rms_license_key:
             return
 
-        sold = await fetch_recent_orders(settings.rms_service_secret, settings.rms_license_key, minutes=2)
-        if not sold:
+        orders_by_num, order_nums = await fetch_recent_orders(settings.rms_service_secret, settings.rms_license_key, minutes=2)
+        if not orders_by_num:
             return
+
+        # 処理済み注文番号を除外して重複処理を防ぐ
+        new_order_nums = [n for n in order_nums if n not in _processed_order_numbers]
+        if not new_order_nums:
+            return
+        for n in new_order_nums:
+            _processed_order_numbers.add(n)
+            _processed_order_numbers_queue.append(n)
+        # キューが満杯になった古い注文番号をsetからも削除
+        while len(_processed_order_numbers) > 200:
+            old = _processed_order_numbers_queue.popleft()
+            _processed_order_numbers.discard(old)
+
+        # 新規注文番号分のSKU数量を集計
+        sold: dict[str, int] = {}
+        for n in new_order_nums:
+            for sku, qty in (orders_by_num.get(n) or {}).items():
+                sold[sku] = sold.get(sku, 0) + qty
 
         import json
 
