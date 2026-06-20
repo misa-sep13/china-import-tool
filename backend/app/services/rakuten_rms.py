@@ -201,10 +201,12 @@ async def fetch_inventory_from_rms(
         inventories = data.get("inventories", [])
         import logging as _logging
         _log = _logging.getLogger(__name__)
-        # y69系のvariantIdを確認するデバッグログ
-        y69_items = [inv for inv in inventories if str(inv.get("manageNumber","")).startswith("y69")]
-        if y69_items:
-            _log.info(f"[DEBUG bulk-get] y69 results: {y69_items}")
+        # y69系のリクエストとレスポンスを確認するデバッグログ
+        y69_req = [it for it in chunk if str(it.get("manage_number","")).startswith("y69")]
+        y69_res = [inv for inv in inventories if str(inv.get("manageNumber","")).startswith("y69")]
+        _log.info(f"[DEBUG bulk-get] y69 request({len(y69_req)}): {y69_req}")
+        _log.info(f"[DEBUG bulk-get] y69 response({len(y69_res)}): {y69_res}")
+        _log.info(f"[DEBUG bulk-get] total request={len(chunk)}, total response={len(inventories)}")
         for inv in inventories:
             result[inv["variantId"]] = inv["quantity"]
 
