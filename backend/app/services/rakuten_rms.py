@@ -220,36 +220,37 @@ async def push_inventory_to_rms(
     errors = []
 
     import asyncio
+
+    async def _push_one(client, item):
+        manage_number = item["manage_number"]
+        variant_id = item["variant_id"]
+        quantity = item["quantity"]
+        url = f"{RMS_BASE}/2.0/inventories/manage-numbers/{manage_number}/variants/{variant_id}"
+        body = json.dumps({"mode": "ABSOLUTE", "quantity": quantity}, ensure_ascii=False).encode("utf-8")
+        for attempt in range(4):
+            try:
+                res = await client.put(url, headers=headers, content=body)
+                if res.status_code == 204:
+                    return ("ok", variant_id, None)
+                elif res.status_code == 429:
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    return ("fail", variant_id, f"HTTP {res.status_code}: {res.text[:100]}")
+            except Exception as e:
+                return ("fail", variant_id, str(e))
+        return ("fail", variant_id, "429 too many retries")
+
     async with httpx.AsyncClient(timeout=30) as client:
-        for i, item in enumerate(items):
-            if i > 0:
-                await asyncio.sleep(0.5)  # QPS制限対策
-            manage_number = item["manage_number"]
-            variant_id = item["variant_id"]
-            quantity = item["quantity"]
-            url = f"{RMS_BASE}/2.0/inventories/manage-numbers/{manage_number}/variants/{variant_id}"
-            retry = 0
-            while retry <= 3:
-                try:
-                    res = await client.put(
-                        url,
-                        headers=headers,
-                        content=json.dumps({"mode": "ABSOLUTE", "quantity": quantity}, ensure_ascii=False).encode("utf-8"),
-                    )
-                    if res.status_code == 204:
-                        ok += 1
-                        break
-                    elif res.status_code == 429:
-                        await asyncio.sleep(2 ** retry)
-                        retry += 1
-                    else:
-                        fail += 1
-                        errors.append({"sku": variant_id, "status": res.status_code, "detail": res.text[:100]})
-                        break
-                except Exception as e:
+        # 10件ずつ並列送信
+        for i in range(0, len(items), 10):
+            batch = items[i:i + 10]
+            results = await asyncio.gather(*[_push_one(client, item) for item in batch])
+            for status, sku, detail in results:
+                if status == "ok":
+                    ok += 1
+                else:
                     fail += 1
-                    errors.append({"sku": variant_id, "status": 0, "detail": str(e)})
-                    break
+                    errors.append({"sku": sku, "detail": detail})
 
     return {"ok": ok, "fail": fail, "errors": errors}
 
