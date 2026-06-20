@@ -201,12 +201,15 @@ async def _sync_rakuten_stock():
             # この商品の構成品に更新されたSKUが含まれる場合のみ再計算
             if not any(c.get("sku") in updated_skus for c in comps):
                 continue
-            set_qty = None
+            req: dict[str, int] = {}
             for c in comps:
                 c_sku = c.get("sku")
                 c_qty = c.get("qty") or 1
                 if not c_sku:
                     continue
+                req[c_sku] = req.get(c_sku, 0) + c_qty
+            set_qty = None
+            for c_sku, c_qty in req.items():
                 avail = sku_stock.get(c_sku, 0) // c_qty
                 set_qty = avail if set_qty is None else min(set_qty, avail)
             if set_qty is not None:
@@ -321,12 +324,15 @@ async def _pull_rms_stock():
             comps = parse_comps(p)
             if not comps:
                 continue
-            set_qty = None
+            req: dict[str, int] = {}
             for c in comps:
                 c_sku = c.get("sku")
                 c_qty = c.get("qty") or 1
                 if not c_sku:
                     continue
+                req[c_sku] = req.get(c_sku, 0) + c_qty
+            set_qty = None
+            for c_sku, c_qty in req.items():
                 avail = sku_stock.get(c_sku, 0) // c_qty
                 set_qty = avail if set_qty is None else min(set_qty, avail)
             if set_qty is not None:

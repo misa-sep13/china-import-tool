@@ -1457,12 +1457,16 @@ async def import_stock_from_rms(db: Session = Depends(get_db)):
         comps = _parse_comps(p)
         if not comps:
             continue
-        set_qty = None
+        # 同一SKUが複数エントリある場合はqtyを合算
+        req: dict[str, int] = {}
         for c in comps:
             c_sku = c.get("sku")
             c_qty = c.get("qty") or 1
             if not c_sku:
                 continue
+            req[c_sku] = req.get(c_sku, 0) + c_qty
+        set_qty = None
+        for c_sku, c_qty in req.items():
             avail = sku_stock.get(c_sku, 0) // c_qty
             set_qty = avail if set_qty is None else min(set_qty, avail)
         if set_qty is not None:
