@@ -1522,9 +1522,12 @@ async def import_stock_from_rms(db: Session = Depends(get_db)):
             not_found += 1
 
     # Step2: セット商品の在庫を構成品から再計算
+    # ただしRMSから直接在庫を取得できた商品はスキップ（上書き防止）
     all_products = list(sku_to_product.values())
     sku_stock = {p.sku: (p.stock or 0) for p in all_products}
     for p in all_products:
+        if p.sku in rms_stock:
+            continue  # RMSから取得済みの在庫はセット計算で上書きしない
         comps = _parse_comps(p)
         if not comps:
             continue

@@ -322,8 +322,11 @@ async def _pull_rms_stock():
                 updated += 1
 
         # Step2: セット商品の在庫を構成品から再計算
+        # ただしRMSから直接在庫を取得できた商品はスキップ（上書き防止）
         sku_stock = {p.sku: (p.stock or 0) for p in products}
         for p in products:
+            if p.sku in rms_stock:
+                continue  # RMSから取得済みの在庫はセット計算で上書きしない
             comps = parse_comps(p)
             if not comps:
                 continue
