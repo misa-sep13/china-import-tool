@@ -125,7 +125,6 @@ class RakutenProductIn(BaseModel):
     set_components:   Optional[str] = None  # JSON文字列
     is_component:     bool = False          # 単品（セット構成用内部管理）フラグ
     is_active:        bool = True
-    customer_memo:    Optional[str] = None
 
 class RakutenProductOut(RakutenProductIn):
     id:               int

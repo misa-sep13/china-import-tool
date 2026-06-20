@@ -422,10 +422,10 @@ export default function RakutenOrderPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.length === 0 && (
-                  <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品マスタに商品を登録してください</td></tr>
+                {items.filter(i => i.needs_order).length === 0 && (
+                  <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#999' }}>発注が必要な商品はありません</td></tr>
                 )}
-                {items.map(item => {
+                {items.filter(i => i.needs_order).map(item => {
                   const needsOrder = item.needs_order
                   const rowBg = needsOrder ? '#fff7ed' : 'transparent'
                   const inputVal = orderInputs[item.sku] ?? item.order_qty
