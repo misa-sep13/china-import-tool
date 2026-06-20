@@ -103,7 +103,9 @@ def _migrate():
 from contextlib import asynccontextmanager
 import asyncio
 import logging
-from datetime import datetime as dt
+from datetime import datetime as dt, timezone, timedelta
+
+JST = timezone(timedelta(hours=9))
 from collections import deque
 
 logger = logging.getLogger("scheduler")
@@ -195,14 +197,14 @@ async def _sync_rakuten_stock():
 
         if updated_skus:
             log_entry = {
-                "time": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
                 "sold": sold,
                 "rms_would_update": rms_would_update,
             }
             _sync_logs.appendleft(log_entry)
             logger.warning(f"[scheduler] 在庫差分更新: sold={sold} / RMS反映予定(確認中)={rms_would_update}")
     except Exception as e:
-        _sync_logs.appendleft({"time": dt.now().strftime("%Y-%m-%d %H:%M:%S"), "error": str(e)})
+        _sync_logs.appendleft({"time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"), "error": str(e)})
         logger.warning(f"[scheduler] 在庫同期エラー: {e}")
     finally:
         db.close()
