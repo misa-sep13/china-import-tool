@@ -314,18 +314,13 @@ export default function RakutenOrderPage() {
   const [orderInputs, setOrderInputs] = useState({})
   const [ordering, setOrdering] = useState(null)
   const [downloading, setDownloading] = useState(false)
-  const [allSearch, setAllSearch] = useState('')
+  const [search, setSearch] = useState('')
+  const [onlyRecommended, setOnlyRecommended] = useState(false)
 
-  const { data, isLoading, isFetching, refetch } = useQuery({
-    queryKey: ['rakuten-recommendations'],
-    queryFn: () => api.get('/rakuten/orders/recommendations').then(r => r.data),
-    staleTime: 0,
-  })
-
-  const { data: allData, isLoading: allLoading, isFetching: allFetching, refetch: allRefetch } = useQuery({
+  const { data: allData, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['rakuten-all-products-order'],
     queryFn: () => api.get('/rakuten/orders/all-products').then(r => r.data),
-    enabled: tab === 'all',
+    enabled: tab === 'order',
     staleTime: 0,
   })
 
@@ -338,7 +333,7 @@ export default function RakutenOrderPage() {
   const createOrder = useMutation({
     mutationFn: (body) => api.post('/rakuten/orders/history', body),
     onSuccess: () => {
-      qc.invalidateQueries(['rakuten-recommendations'])
+      qc.invalidateQueries(['rakuten-all-products-order'])
       qc.invalidateQueries(['rakuten-order-history'])
     },
   })
@@ -348,8 +343,8 @@ export default function RakutenOrderPage() {
     onSuccess: () => qc.refetchQueries(['rakuten-order-history']),
   })
 
-  const items = data?.items || []
-  const settings = data?.settings || {}
+  const settings = allData?.settings || {}
+  const thresholdDays = settings.threshold_days ?? 40
 
   const handleOrder = async (item) => {
     const qty = orderInputs[item.sku] ?? item.order_qty
@@ -363,7 +358,7 @@ export default function RakutenOrderPage() {
   }
 
   const handleExcelDownload = async () => {
-    const targets = items
+    const targets = displayItems
       .map(item => ({ sku: item.sku, qty: Number(orderInputs[item.sku] ?? item.order_qty) }))
       .filter(i => i.qty > 0)
     if (targets.length === 0) { alert('発注数が1以上の商品がありません'); return }
@@ -371,14 +366,38 @@ export default function RakutenOrderPage() {
     try { await downloadExcel(targets) } finally { setDownloading(false) }
   }
 
-  if (isLoading && !data) return <div className="loading">読み込み中...</div>
+  const allItems = allData?.items || []
+  const displayItems = allItems.filter(item => {
+    if (onlyRecommended && !item.needs_order) return false
+    if (!search) return true
+    const q = search.toLowerCase()
+    return item.sku.toLowerCase().includes(q) || (item.name || '').toLowerCase().includes(q)
+  })
+
+  const recommendedCount = allItems.filter(i => i.needs_order).length
+
+  if (isLoading && !allData && tab === 'order') return <div className="loading">読み込み中...</div>
+
+  const toggleBtn = (
+    <button
+      onClick={() => setOnlyRecommended(v => !v)}
+      style={{
+        padding: '8px 18px', fontSize: 14, fontWeight: 700, borderRadius: 24, border: 'none', cursor: 'pointer',
+        background: onlyRecommended ? '#ea580c' : '#e2e8f0',
+        color: onlyRecommended ? '#fff' : '#374151',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+      }}
+    >
+      {onlyRecommended ? `発注推奨のみ（${recommendedCount}件）` : `全商品（${allItems.length}件）`}
+    </button>
+  )
 
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         <h1>🛒 楽天 発注管理</h1>
-        <button className="btn" onClick={() => { refetch(); allRefetch() }} disabled={isFetching || allFetching} style={{ fontSize: 13 }}>
-          {(isFetching || allFetching) ? '更新中...' : '🔄 更新'}
+        <button className="btn" onClick={() => refetch()} disabled={isFetching} style={{ fontSize: 13 }}>
+          {isFetching ? '更新中...' : '🔄 更新'}
         </button>
         <button
           className="btn"
@@ -392,28 +411,37 @@ export default function RakutenOrderPage() {
 
       {/* タブ */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <button className={`btn ${tab === 'order' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('order')}>発注推奨リスト</button>
-        <button className={`btn ${tab === 'all' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('all')}>全商品から発注</button>
+        <button className={`btn ${tab === 'order' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('order')}>発注管理</button>
         <button className={`btn ${tab === 'history' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('history')}>発注済みリスト</button>
         <button className={`btn ${tab === 'shipment' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('shipment')}>配送依頼（在庫反映）</button>
       </div>
 
-      {/* ===== 発注推奨リスト ===== */}
+      {/* ===== 発注管理（全商品 + 発注推奨フィルター統合） ===== */}
       {tab === 'order' && (
         <>
-          {/* 設定サマリー */}
-          <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+          {/* 設定サマリー＋フィルタートグル */}
+          <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
             {[
               ['目標販売日数', `${settings.target_days ?? 30}日`,   '#dbeafe', '#1e40af'],
               ['リードタイム', `${settings.lead_days ?? 20}日`,     '#dcfce7', '#166534'],
               ['安全在庫率',  `${((settings.safety_stock_rate ?? 0.10) * 100).toFixed(0)}%`, '#fef9c3', '#854d0e'],
-              ['発注閾値',    `在庫${settings.threshold_days ?? 60}日分以下`, '#fce7f3', '#9d174d'],
+              ['発注閾値',    `在庫${thresholdDays}日分以下`, '#fce7f3', '#9d174d'],
             ].map(([label, val, bg, color]) => (
               <div key={label} style={{ background: bg, borderRadius: 8, padding: '8px 16px', fontSize: 13 }}>
                 <span style={{ color }}>{label}: </span>
                 <span style={{ color, fontWeight: 800 }}>{val}</span>
               </div>
             ))}
+            {toggleBtn}
+          </div>
+
+          {/* 検索 */}
+          <div style={{ marginBottom: 12 }}>
+            <input
+              type="text" placeholder="SKU・商品名で絞り込み"
+              value={search} onChange={e => setSearch(e.target.value)}
+              style={{ width: 280 }}
+            />
           </div>
 
           <div className="card" style={{ padding: 0, overflow: 'auto' }}>
@@ -426,15 +454,16 @@ export default function RakutenOrderPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.filter(i => i.needs_order).length === 0 && (
-                  <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#999' }}>発注が必要な商品はありません</td></tr>
+                {displayItems.length === 0 && (
+                  <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#999' }}>
+                    {onlyRecommended ? '発注が必要な商品はありません' : '商品がありません'}
+                  </td></tr>
                 )}
-                {items.filter(i => i.needs_order).map(item => {
+                {displayItems.map(item => {
                   const needsOrder = item.needs_order
                   const rowBg = needsOrder ? '#fff7ed' : 'transparent'
-                  const inputVal = orderInputs[item.sku] ?? item.order_qty
+                  const inputVal = orderInputs[item.sku] ?? (item.order_qty > 0 ? item.order_qty : 0)
                   const comps = item.set_components || []
-
                   return (
                     <tr key={item.sku} style={{ borderBottom: '1px solid #f0f2f8', background: rowBg }}>
                       <td style={{ padding: '10px 12px', minWidth: 160 }}>
@@ -466,7 +495,7 @@ export default function RakutenOrderPage() {
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                         <span className={`badge ${
-                          item.days_left < (settings.threshold_days ?? 60) ? 'badge-danger'
+                          item.days_left < thresholdDays ? 'badge-danger'
                           : item.days_left < 90 ? 'badge-warn' : 'badge-ok'
                         }`}>
                           {item.days_left >= 9999 ? '∞' : `${item.days_left}日`}
@@ -511,120 +540,13 @@ export default function RakutenOrderPage() {
             </table>
           </div>
           <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
-            ※ <span style={{ color: '#ea580c', fontWeight: 700 }}>オレンジ行</span> = 全在庫が閾値（{settings.threshold_days ?? 60}日分）以下 → 発注タイミング
+            ※ <span style={{ color: '#ea580c', fontWeight: 700 }}>オレンジ行</span> = 全在庫が閾値（{thresholdDays}日分）以下 → 発注タイミング
           </div>
-        </>
-      )}
 
-      {/* ===== 全商品から発注 ===== */}
-      {tab === 'all' && (
-        <>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
-            <input
-              type="text" placeholder="SKU・商品名で絞り込み"
-              value={allSearch} onChange={e => setAllSearch(e.target.value)}
-              style={{ width: 280 }}
-            />
-            <button className="btn" onClick={allRefetch} style={{ fontSize: 13 }}>🔄 更新</button>
+          {/* 右下フローティングトグルボタン */}
+          <div style={{ position: 'fixed', bottom: 32, right: 32, zIndex: 1000 }}>
+            {toggleBtn}
           </div>
-          {allLoading ? <div className="loading">読み込み中...</div> : (
-            <div className="card" style={{ padding: 0, overflow: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-                    {['商品名 / SKU', '実在庫', '輸送中', '発注済', '全在庫', '日販', '在庫日数', '成長率', '提案発注数', '発注'].map(h => (
-                      <th key={h} style={{ padding: '10px 12px', textAlign: 'center', whiteSpace: 'nowrap' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(allData?.items || [])
-                    .filter(item => {
-                      if (!allSearch) return true
-                      const q = allSearch.toLowerCase()
-                      return item.sku.toLowerCase().includes(q) || (item.name || '').toLowerCase().includes(q)
-                    })
-                    .map(item => {
-                      const needsOrder = item.needs_order
-                      const rowBg = needsOrder ? '#fff7ed' : 'transparent'
-                      const inputVal = orderInputs[item.sku] ?? (item.order_qty > 0 ? item.order_qty : 0)
-                      const comps = item.set_components || []
-                      return (
-                        <tr key={item.sku} style={{ borderBottom: '1px solid #f0f2f8', background: rowBg }}>
-                          <td style={{ padding: '10px 12px', minWidth: 160 }}>
-                            <div style={{ fontWeight: 400, color: '#1a1a2e' }}>{item.name || '—'}</div>
-                            <div style={{ color: '#999', fontSize: 11 }}>{item.sku}</div>
-                            {item.buy_url && (
-                              <a href={item.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#e94560' }}>仕入れURL</a>
-                            )}
-                            {comps.length > 0 && (
-                              <div style={{ marginTop: 4, paddingLeft: 8, borderLeft: '2px solid #e2e8f0' }}>
-                                {comps.map((c, i) => (
-                                  <div key={i} style={{ fontSize: 11, color: '#666', lineHeight: 1.6 }}>
-                                    └ {c.supplier_spec || c.notes || c.sku}
-                                    {c.price ? <span style={{ color: '#999', marginLeft: 4 }}>{c.price}元</span> : null}
-                                    {c.buy_url && (
-                                      <a href={c.buy_url} target="_blank" rel="noreferrer" style={{ color: '#e94560', marginLeft: 4 }}>URL</a>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </td>
-                          <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600 }}>{item.stock}</td>
-                          <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{item.inbound}</td>
-                          <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{item.ordered}</td>
-                          <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600 }}>{item.total_stock}</td>
-                          <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>
-                            {item.daily_avg > 0 ? item.daily_avg.toFixed(1) : '—'}
-                          </td>
-                          <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                            <span className={`badge ${
-                              item.days_left < (allData?.settings?.threshold_days ?? 60) ? 'badge-danger'
-                              : item.days_left < 90 ? 'badge-warn' : 'badge-ok'
-                            }`}>
-                              {item.days_left >= 9999 ? '∞' : `${item.days_left}日`}
-                            </span>
-                          </td>
-                          <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                            <span style={{ color: item.growth_rate > 0 ? '#16a34a' : item.growth_rate < 0 ? '#dc2626' : '#666', fontWeight: 600 }}>
-                              {item.growth_rate > 0 ? '+' : ''}{item.growth_rate}%
-                            </span>
-                          </td>
-                          <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                            {needsOrder ? (
-                              <span className="badge badge-danger" style={{ fontSize: 14, padding: '4px 12px' }}>{item.order_qty}</span>
-                            ) : (
-                              <span style={{ color: item.order_qty !== 0 ? (item.order_qty > 0 ? '#16a34a' : '#dc2626') : '#999', fontWeight: 600 }}>
-                                {item.order_qty !== 0 ? item.order_qty : '—'}
-                              </span>
-                            )}
-                          </td>
-                          <td style={{ padding: '10px 12px', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                            <div style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: 'center' }}>
-                              <input
-                                type="number" min={0}
-                                value={inputVal}
-                                onChange={e => setOrderInputs(p => ({ ...p, [item.sku]: e.target.value }))}
-                                style={{ width: 60, textAlign: 'center', padding: '4px 6px', fontSize: 13 }}
-                              />
-                              <button
-                                className="btn btn-primary"
-                                style={{ padding: '4px 10px', fontSize: 12 }}
-                                disabled={ordering === item.sku || !inputVal || Number(inputVal) <= 0}
-                                onClick={() => handleOrder(item)}
-                              >
-                                発注
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                </tbody>
-              </table>
-            </div>
-          )}
         </>
       )}
 
