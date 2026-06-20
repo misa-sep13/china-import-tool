@@ -1561,11 +1561,13 @@ async def import_stock_from_rms(db: Session = Depends(get_db)):
             sku_stock[p.sku] = inferred_qty
 
     db.commit()
+    not_found_skus = [sku for sku in sku_to_product if sku not in rms_stock]
     return {
         "ok": True,
         "updated": updated,
         "not_found": not_found,
         "total_from_rms": len(rms_stock),
+        "not_found_skus": not_found_skus[:50],
     }
 
 
