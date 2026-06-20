@@ -288,7 +288,10 @@ async def _pull_rms_stock():
         if not settings or not settings.rms_service_secret or not settings.rms_license_key:
             return
 
-        products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+        products = db.query(RakutenProduct).filter(
+            RakutenProduct.is_active == True,
+            RakutenProduct.is_component != True,
+        ).all()
         sku_to_product = {p.sku: p for p in products}
 
         def parse_comps(p):

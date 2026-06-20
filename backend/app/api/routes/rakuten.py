@@ -1470,6 +1470,7 @@ async def import_stock_from_rms(db: Session = Depends(get_db)):
     products = db.query(RakutenProduct).filter(
         RakutenProduct.is_active == True,
         RakutenProduct.sku != None,
+        RakutenProduct.is_component != True,
     ).all()
 
     items = []
