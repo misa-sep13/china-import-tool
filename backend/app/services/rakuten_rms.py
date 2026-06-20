@@ -199,6 +199,11 @@ async def fetch_inventory_from_rms(
             data = res.json()
 
         inventories = data.get("inventories", [])
+        # s08系のデバッグ
+        s08_req = [it for it in chunk if str(it.get("variant_id","")) in ("239","240","241","242","243","244")]
+        s08_res = [inv for inv in inventories if str(inv.get("variantId","")) in ("239","240","241","242","243","244")]
+        print(f"[DEBUG] s08 request: {s08_req}", flush=True)
+        print(f"[DEBUG] s08 response: {s08_res}", flush=True)
         for inv in inventories:
             result[inv["variantId"]] = inv["quantity"]
 
