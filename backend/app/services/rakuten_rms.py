@@ -198,7 +198,14 @@ async def fetch_inventory_from_rms(
                 raise Exception(f"bulk-get HTTP {res.status_code}: {res.text[:200]}")
             data = res.json()
 
-        for inv in data.get("inventories", []):
+        inventories = data.get("inventories", [])
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+        # y69系のvariantIdを確認するデバッグログ
+        y69_items = [inv for inv in inventories if str(inv.get("manageNumber","")).startswith("y69")]
+        if y69_items:
+            _log.info(f"[DEBUG bulk-get] y69 results: {y69_items}")
+        for inv in inventories:
             result[inv["variantId"]] = inv["quantity"]
 
     return result
