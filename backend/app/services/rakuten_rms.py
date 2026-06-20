@@ -215,7 +215,12 @@ async def fetch_inventory_from_rms(
             if vi == mn:
                 mn_to_db_sku[mn] = vi
 
-        for inv in data.get("inventories", []):
+        inventories = data.get("inventories", [])
+        y91_req = [it for it in chunk if str(it.get("variant_id","")).startswith("y91")]
+        y91_res = [inv for inv in inventories if str(inv.get("variantId","")).startswith("y91") or str(inv.get("manageNumber","")) == "y91"]
+        print(f"[DEBUG] y91 request({len(y91_req)}): {y91_req}", flush=True)
+        print(f"[DEBUG] y91 response({len(y91_res)}): {y91_res}", flush=True)
+        for inv in inventories:
             rms_mn = inv.get("manageNumber", "")
             rms_vi = inv.get("variantId", "")
             qty = inv["quantity"]
