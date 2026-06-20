@@ -483,12 +483,13 @@ def get_recommendations(db: Session = Depends(get_db)):
             "prev":   (p.sales_30_prev   or 0) + comp_prev,
         }
 
-    # buy_url あり + 親発注品のコンポーネントでない + (内部管理SKU or バリエーションから参照される単品)
+    # buy_url あり + 親発注品のコンポーネントでない + (内部管理SKU or バリエーションから参照される単品 or 通常単品)
     singles = [
         p for p in all_products
-        if (p.is_component or p.sku in referenced_skus)
-        and (p.buy_url or "").strip()
+        if (p.buy_url or "").strip()
         and p.sku not in parent_comp_skus
+        and p.sku not in parent_orders
+        and not (not p.is_component and p.set_components)  # セット販売商品（parent_ordersに入らなかったもの）は除外
     ]
 
     # 通常単品 + 親発注品を合わせて計算
