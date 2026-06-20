@@ -342,16 +342,18 @@ async def _pull_rms_stock():
             comps = parse_comps(p)
             if comps:
                 continue  # セット商品自身もスキップ
-            # このSKUを構成品として持つセット商品を探す
-            max_qty = 0
+            # このSKUを構成品として持つセット商品の在庫から逆算
+            # セット在庫 × 使用数 = このSKUの必要数 → その合計が実在庫の下限
+            inferred_qty = 0
             for sp in products:
                 sp_comps = parse_comps(sp)
                 for c in sp_comps:
                     if c.get("sku") == p.sku:
-                        max_qty = max(max_qty, sku_stock.get(sp.sku, 0) * (c.get("qty") or 1))
-            if max_qty > 0:
-                p.stock = max_qty
-                sku_stock[p.sku] = max_qty
+                        c_qty = c.get("qty") or 1
+                        inferred_qty += sku_stock.get(sp.sku, 0) * c_qty
+            if inferred_qty > 0:
+                p.stock = inferred_qty
+                sku_stock[p.sku] = inferred_qty
 
         db.commit()
         logger.info(f"[scheduler] RMS在庫取得完了: {updated}件更新")
