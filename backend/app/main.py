@@ -246,8 +246,65 @@ async def _sync_rakuten_sales():
         db.close()
 
 
+async def _pull_rms_stock():
+    """RMSから在庫数を取得してDBに上書き（単品のみ。セット商品は構成品から自動再計算）"""
+    from app.core.database import SessionLocal
+    from app.models.rakuten_settings import RakutenSettings
+    from app.models.rakuten_product import RakutenProduct
+    from app.services.rakuten_rms import fetch_inventory_from_rms
+    import json
+
+    db = SessionLocal()
+    try:
+        settings = db.query(RakutenSettings).first()
+        if not settings or not settings.rms_service_secret or not settings.rms_license_key:
+            return
+
+        rms_stock = await fetch_inventory_from_rms(settings.rms_service_secret, settings.rms_license_key)
+        if not rms_stock:
+            return
+
+        products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+        sku_to_product = {p.sku: p for p in products}
+
+        # 単品の在庫をRMSで上書き
+        updated = 0
+        for sku, qty in rms_stock.items():
+            p = sku_to_product.get(sku)
+            if p:
+                p.stock = qty
+                updated += 1
+
+        # セット商品の在庫を構成品から再計算
+        sku_stock = {p.sku: (p.stock or 0) for p in products}
+        for p in products:
+            try:
+                comps = json.loads(p.set_components or "[]")
+            except Exception:
+                comps = []
+            if not comps:
+                continue
+            set_qty = None
+            for c in comps:
+                c_sku = c.get("sku")
+                c_qty = c.get("qty") or 1
+                if not c_sku:
+                    continue
+                avail = sku_stock.get(c_sku, 0) // c_qty
+                set_qty = avail if set_qty is None else min(set_qty, avail)
+            if set_qty is not None:
+                p.stock = set_qty
+
+        db.commit()
+        logger.info(f"[scheduler] RMS在庫取得完了: {updated}件更新")
+    except Exception as e:
+        logger.warning(f"[scheduler] RMS在庫取得エラー: {e}")
+    finally:
+        db.close()
+
+
 async def _scheduler_loop():
-    """1分ごとに在庫同期、1時間ごとに販売数同期を実行"""
+    """1分ごとに在庫同期、1時間ごとに販売数同期・RMS在庫取得を実行"""
     tick = 0
     while True:
         await asyncio.sleep(60)
@@ -255,6 +312,7 @@ async def _scheduler_loop():
         await _sync_rakuten_stock()
         if tick % 60 == 0:  # 60分ごと
             await _sync_rakuten_sales()
+            await _pull_rms_stock()
 
 
 @asynccontextmanager
