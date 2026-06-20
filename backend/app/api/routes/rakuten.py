@@ -565,11 +565,10 @@ def get_all_products_order(db: Session = Depends(get_db)):
     ).all()
 
     # is_component=False・buy_urlあり（内部SKUのみ除外、セット組・本体はすべて表示）
-    targets = [
-        p for p in all_products
-        if not p.is_component
-        and (p.buy_url or "").strip()
-    ]
+    targets = sorted(
+        [p for p in all_products if not p.is_component and (p.buy_url or "").strip()],
+        key=lambda p: p.sku or ""
+    )
     items = []
     for p in targets:
         ordered = ordered_by_sku.get(p.sku, 0) or 0
