@@ -1477,15 +1477,19 @@ async def import_stock_from_rms(db: Session = Depends(get_db)):
     items = []
     sku_to_product = {}
     for p in products:
-        sku = p.sku or ""
+        sku = (p.sku or "").strip()
         if not sku:
             continue
+        # RMSのvariantIdに使えない文字（スペース等）を含むSKUはスキップ
+        if " " in sku or not sku.replace("-", "").replace("_", "").isalnum():
+            # 英数字・ハイフン・アンダースコア以外を含む場合はスキップ
+            import re
+            if not re.match(r'^[a-zA-Z0-9_\-]+$', sku):
+                continue
         # manageNumber: rakuten_item_url優先、なければskuの"_"前
         if p.rakuten_item_url:
-            manage_number = p.rakuten_item_url
+            manage_number = p.rakuten_item_url.strip()
         elif "_" in sku:
-            manage_number = sku.rsplit("_", maxsplit=sku.count("_"))[0].split("_")[0]
-            # y49_pink2 → y49
             manage_number = sku.split("_")[0]
         else:
             manage_number = sku
