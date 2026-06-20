@@ -131,7 +131,7 @@ async def _sync_rakuten_stock():
             return
 
         orders_by_num, order_nums = await fetch_recent_orders(settings.rms_service_secret, settings.rms_license_key, minutes=2)
-        if not orders_by_num:
+        if not order_nums:
             return
 
         # 処理済み注文番号を除外して重複処理を防ぐ
@@ -151,6 +151,9 @@ async def _sync_rakuten_stock():
         for n in new_order_nums:
             for sku, qty in (orders_by_num.get(n) or {}).items():
                 sold[sku] = sold.get(sku, 0) + qty
+
+        if not sold:
+            return
 
         import json
 

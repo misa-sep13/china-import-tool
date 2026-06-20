@@ -294,7 +294,7 @@ async def fetch_recent_orders(
     if not order_numbers:
         return {}, []
 
-    # {order_number: {sku: qty}} 形式で返す
+    # {order_number: {sku: qty}} 形式で返す（呼び出し側で重複排除できるよう注文番号単位）
     orders_by_num: dict[str, dict[str, int]] = {}
     for i in range(0, len(order_numbers), BATCH_SIZE):
         batch = order_numbers[i:i + BATCH_SIZE]
@@ -315,7 +315,6 @@ async def fetch_recent_orders(
             for package in order.get("PackageModelList", []):
                 for item in package.get("ItemModelList", []):
                     qty = item.get("units", 1) or 1
-                    # version7以降: SkuModelList の variantId を優先
                     sku_list = item.get("SkuModelList") or []
                     skus = [s.get("variantId", "") for s in sku_list if s.get("variantId")]
                     if not skus:
@@ -327,6 +326,7 @@ async def fetch_recent_orders(
             if order_num and sku_map:
                 orders_by_num[order_num] = sku_map
 
+    # searchOrderで取得した注文番号リストも返す（重複排除用）
     return orders_by_num, order_numbers
 
 
