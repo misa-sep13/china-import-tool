@@ -1432,6 +1432,15 @@ async def import_stock_from_rms(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(502, f"楽天APIエラー: {str(e)}")
 
+    import json as _json
+
+    def _parse_comps(p):
+        try:
+            return _json.loads(p.set_components or "[]")
+        except Exception:
+            return []
+
+    # Step1: RMSから取得できた在庫を上書き
     updated = 0
     not_found = 0
     for sku, p in sku_to_product.items():
@@ -1440,6 +1449,42 @@ async def import_stock_from_rms(db: Session = Depends(get_db)):
             updated += 1
         else:
             not_found += 1
+
+    # Step2: セット商品の在庫を構成品から再計算
+    all_products = list(sku_to_product.values())
+    sku_stock = {p.sku: (p.stock or 0) for p in all_products}
+    for p in all_products:
+        comps = _parse_comps(p)
+        if not comps:
+            continue
+        set_qty = None
+        for c in comps:
+            c_sku = c.get("sku")
+            c_qty = c.get("qty") or 1
+            if not c_sku:
+                continue
+            avail = sku_stock.get(c_sku, 0) // c_qty
+            set_qty = avail if set_qty is None else min(set_qty, avail)
+        if set_qty is not None:
+            p.stock = set_qty
+            sku_stock[p.sku] = set_qty
+
+    # Step3: RMSにないSKU（単品販売なし）の在庫をセット商品から逆算
+    for p in all_products:
+        if p.sku in rms_stock:
+            continue
+        comps = _parse_comps(p)
+        if comps:
+            continue
+        inferred_qty = 0
+        for sp in all_products:
+            sp_comps = _parse_comps(sp)
+            for c in sp_comps:
+                if c.get("sku") == p.sku:
+                    inferred_qty += sku_stock.get(sp.sku, 0) * (c.get("qty") or 1)
+        if inferred_qty > 0:
+            p.stock = inferred_qty
+            sku_stock[p.sku] = inferred_qty
 
     db.commit()
     return {
