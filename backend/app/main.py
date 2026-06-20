@@ -272,7 +272,7 @@ async def _sync_rakuten_sales():
 
 
 async def _pull_rms_stock():
-    """RMSから在庫数を取得してDBに上書き（単品のみ。セット商品は構成品から自動再計算）"""
+    """RMSから在庫数を取得してDBに上書き。RMSにないSKUはセット商品から逆算"""
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
@@ -285,14 +285,29 @@ async def _pull_rms_stock():
         if not settings or not settings.rms_service_secret or not settings.rms_license_key:
             return
 
-        rms_stock = await fetch_inventory_from_rms(settings.rms_service_secret, settings.rms_license_key)
-        if not rms_stock:
-            return
-
         products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
         sku_to_product = {p.sku: p for p in products}
 
-        # 単品の在庫をRMSで上書き
+        def parse_comps(p):
+            try:
+                return json.loads(p.set_components or "[]")
+            except Exception:
+                return []
+
+        # RMSに問い合わせるitems（set_componentsがある＝セット商品はRMSのSKUで登録済み）
+        items = []
+        for p in products:
+            sku = p.sku or ""
+            if not sku:
+                continue
+            manage_number = p.rakuten_item_url or sku.split("_")[0]
+            items.append({"manage_number": manage_number, "variant_id": sku})
+
+        rms_stock = await fetch_inventory_from_rms(
+            settings.rms_service_secret, settings.rms_license_key, items
+        )
+
+        # Step1: RMSから取得できた在庫を上書き
         updated = 0
         for sku, qty in rms_stock.items():
             p = sku_to_product.get(sku)
@@ -300,13 +315,10 @@ async def _pull_rms_stock():
                 p.stock = qty
                 updated += 1
 
-        # セット商品の在庫を構成品から再計算
+        # Step2: セット商品の在庫を構成品から再計算
         sku_stock = {p.sku: (p.stock or 0) for p in products}
         for p in products:
-            try:
-                comps = json.loads(p.set_components or "[]")
-            except Exception:
-                comps = []
+            comps = parse_comps(p)
             if not comps:
                 continue
             set_qty = None
@@ -319,6 +331,27 @@ async def _pull_rms_stock():
                 set_qty = avail if set_qty is None else min(set_qty, avail)
             if set_qty is not None:
                 p.stock = set_qty
+                sku_stock[p.sku] = set_qty
+
+        # Step3: RMSにないSKU（単品販売なし）の在庫をセット商品から逆算
+        # 例: y77_vivid はRMSに存在しないが、y77_v-v(47)・y77_v-b(11)等の構成品
+        # → このSKUを参照するセット商品の在庫の最大値を使う
+        for p in products:
+            if p.sku in rms_stock:
+                continue  # RMSから取得済みはスキップ
+            comps = parse_comps(p)
+            if comps:
+                continue  # セット商品自身もスキップ
+            # このSKUを構成品として持つセット商品を探す
+            max_qty = 0
+            for sp in products:
+                sp_comps = parse_comps(sp)
+                for c in sp_comps:
+                    if c.get("sku") == p.sku:
+                        max_qty = max(max_qty, sku_stock.get(sp.sku, 0) * (c.get("qty") or 1))
+            if max_qty > 0:
+                p.stock = max_qty
+                sku_stock[p.sku] = max_qty
 
         db.commit()
         logger.info(f"[scheduler] RMS在庫取得完了: {updated}件更新")
