@@ -316,15 +316,17 @@ export default function RakutenOrderPage() {
   const [downloading, setDownloading] = useState(false)
   const [allSearch, setAllSearch] = useState('')
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['rakuten-recommendations'],
     queryFn: () => api.get('/rakuten/orders/recommendations').then(r => r.data),
+    staleTime: 0,
   })
 
-  const { data: allData, isLoading: allLoading, refetch: allRefetch } = useQuery({
+  const { data: allData, isLoading: allLoading, isFetching: allFetching, refetch: allRefetch } = useQuery({
     queryKey: ['rakuten-all-products-order'],
     queryFn: () => api.get('/rakuten/orders/all-products').then(r => r.data),
     enabled: tab === 'all',
+    staleTime: 0,
   })
 
   const { data: history = [] } = useQuery({
@@ -369,13 +371,15 @@ export default function RakutenOrderPage() {
     try { await downloadExcel(targets) } finally { setDownloading(false) }
   }
 
-  if (isLoading) return <div className="loading">読み込み中...</div>
+  if (isLoading && !data) return <div className="loading">読み込み中...</div>
 
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         <h1>🛒 楽天 発注管理</h1>
-        <button className="btn" onClick={() => refetch()} style={{ fontSize: 13 }}>🔄 更新</button>
+        <button className="btn" onClick={() => { refetch(); allRefetch() }} disabled={isFetching || allFetching} style={{ fontSize: 13 }}>
+          {(isFetching || allFetching) ? '更新中...' : '🔄 更新'}
+        </button>
         <button
           className="btn"
           style={{ fontSize: 13, background: '#22c55e', color: '#fff', border: 'none' }}
