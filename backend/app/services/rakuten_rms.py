@@ -173,7 +173,8 @@ async def fetch_inventory_from_rms(
 ) -> dict:
     """
     RMSから在庫数を一括取得する。
-    戻り値: {"{variantId}": quantity, ...}
+    戻り値: {"{db_sku}": quantity, ...}
+    db_skuはitemsのvariant_idと一致する（RMSのvariantIdと異なる場合あり）
     """
     headers = {**_auth_header(service_secret, license_key), "Content-Type": "application/json"}
     result = {}
@@ -181,12 +182,19 @@ async def fetch_inventory_from_rms(
     # 1000件ずつ分割してリクエスト
     for i in range(0, len(items), 1000):
         chunk = items[i:i + 1000]
-        body = json.dumps({
-            "inventories": [
-                {"manageNumber": item["manage_number"], "variantId": item["variant_id"]}
-                for item in chunk
-            ]
-        }, ensure_ascii=False).encode("utf-8")
+        # RMSへのリクエスト: manageNumber単品商品はvariantIdがSKUと異なる場合がある
+        # variant_id == manage_numberの場合（s08-2など）、RMSはvariantIdを無視してmanageNumber配下を全返却する
+        # そのためmanageNumberが同一でvariant_idが異なるケースを追跡するマップを作成
+        # key: (manageNumber, variantId_sent) -> db_sku
+        req_map: dict[tuple, str] = {}
+        rms_items = []
+        for item in chunk:
+            mn = item["manage_number"]
+            vi = item["variant_id"]
+            req_map[(mn, vi)] = vi  # デフォルトはvariant_idをDBのSKUとして使う
+            rms_items.append({"manageNumber": mn, "variantId": vi})
+
+        body = json.dumps({"inventories": rms_items}, ensure_ascii=False).encode("utf-8")
 
         async with httpx.AsyncClient(timeout=30) as client:
             res = await client.post(
@@ -198,14 +206,27 @@ async def fetch_inventory_from_rms(
                 raise Exception(f"bulk-get HTTP {res.status_code}: {res.text[:200]}")
             data = res.json()
 
-        inventories = data.get("inventories", [])
-        # s08系のデバッグ
-        s08_req = [it for it in chunk if str(it.get("variant_id","")) in ("239","240","241","242","243","244")]
-        s08_res = [inv for inv in inventories if str(inv.get("variantId","")) in ("239","240","241","242","243","244")]
-        print(f"[DEBUG] s08 request: {s08_req}", flush=True)
-        print(f"[DEBUG] s08 response: {s08_res}", flush=True)
-        for inv in inventories:
-            result[inv["variantId"]] = inv["quantity"]
+        # manageNumberとvariantIdの両方でDBのSKUを逆引きできるようにする
+        # variant_id == manage_numberのケース（s08-2など）はmanageNumberでマッチ
+        mn_to_db_sku: dict[str, str] = {}
+        for item in chunk:
+            mn = item["manage_number"]
+            vi = item["variant_id"]
+            if vi == mn:
+                mn_to_db_sku[mn] = vi
+
+        for inv in data.get("inventories", []):
+            rms_mn = inv.get("manageNumber", "")
+            rms_vi = inv.get("variantId", "")
+            qty = inv["quantity"]
+            # まずvariantIdで直接マッチ（通常ケース: y49_pink2など）
+            if (rms_mn, rms_vi) in req_map:
+                result[req_map[(rms_mn, rms_vi)]] = qty
+            # variantIdがリクエストと異なるがmanageNumberが一致するケース（s08-2など）
+            elif rms_mn in mn_to_db_sku:
+                result[mn_to_db_sku[rms_mn]] = qty
+            else:
+                result[rms_vi] = qty
 
     return result
 
