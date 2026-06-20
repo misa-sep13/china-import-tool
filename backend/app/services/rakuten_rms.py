@@ -280,7 +280,7 @@ async def fetch_recent_orders(
             content=json.dumps(body, ensure_ascii=False).encode("utf-8"),
         )
         if not res.is_success:
-            return {}
+            return {}, []
         data = res.json()
 
     order_numbers = []
