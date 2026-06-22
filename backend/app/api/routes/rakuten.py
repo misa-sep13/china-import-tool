@@ -202,7 +202,7 @@ def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):
     return RakutenProductOut.model_validate(p).model_dump()
 
 @router.put("/products/{product_id}")
-async def update_product(product_id: int, data: RakutenProductIn, db: Session = Depends(get_db)):
+async def update_product(product_id: int, data: RakutenProductIn, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     if "set_components" in data.model_fields_set:
         data.set_components = _clean_set_components(data.set_components)
     p = db.query(RakutenProduct).filter(RakutenProduct.id == product_id).first()
@@ -272,7 +272,12 @@ async def update_product(product_id: int, data: RakutenProductIn, db: Session = 
 
                 db.commit()
 
-                await push_inventory_to_rms(settings.rms_service_secret, settings.rms_license_key, rms_items)
+                # RMSへのPUTは時間がかかるため、レスポンスを待たせずバックグラウンドで実行する
+                if rms_items:
+                    background_tasks.add_task(
+                        push_inventory_to_rms,
+                        settings.rms_service_secret, settings.rms_license_key, rms_items,
+                    )
         except Exception as e:
             import logging
             logging.getLogger("rakuten").warning(f"RMS在庫反映エラー ({p.sku}): {e}")
@@ -280,9 +285,10 @@ async def update_product(product_id: int, data: RakutenProductIn, db: Session = 
     return RakutenProductOut.model_validate(p).model_dump()
 
 @router.post("/products/bulk-update-stock")
-async def bulk_update_stock(body: dict, db: Session = Depends(get_db)):
+async def bulk_update_stock(body: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """複数商品の在庫をまとめて更新してRMSに一括反映
     body: {"updates": [{"id": 1, "stock": 10, "inbound": 0, "standard_stock": 5}, ...]}
+    RMSへの在庫反映はバックグラウンドで実行し、保存レスポンスは即座に返す。
     """
     updates = body.get("updates", [])
     if not updates:
@@ -336,15 +342,20 @@ async def bulk_update_stock(body: dict, db: Session = Depends(get_db)):
 
     db.commit()
 
-    # Step3: RMSに一括反映（更新したSKU＋影響したセット商品）
-    if settings and settings.rms_service_secret and settings.rms_license_key:
-        from app.services.rakuten_rms import push_inventory_to_rms
+    # Step3: RMSに反映するitemsを組み立て（更新したSKU＋影響したセット商品）。
+    # 実在庫を更新していない場合（輸送中のみ等）はupdated_skusが空なのでpushは発生しない。
+    if settings and settings.rms_service_secret and settings.rms_license_key and updated_skus:
         for p in all_products:
             if p.sku in updated_skus or (p.set_components and any(c.get("sku") in updated_skus for c in _parse(p))):
                 manage_number = p.rakuten_item_url or p.sku.split("_")[0]
                 rms_items.append({"manage_number": manage_number, "variant_id": p.sku, "quantity": sku_stock.get(p.sku, 0)})
         if rms_items:
-            await push_inventory_to_rms(settings.rms_service_secret, settings.rms_license_key, rms_items)
+            # RMSへのPUTは時間がかかるため、保存レスポンスを待たせずバックグラウンドで実行する
+            from app.services.rakuten_rms import push_inventory_to_rms
+            background_tasks.add_task(
+                push_inventory_to_rms,
+                settings.rms_service_secret, settings.rms_license_key, rms_items,
+            )
 
     return {"ok": True, "updated": len(updated_skus), "rms_pushed": len(rms_items)}
 
