@@ -198,6 +198,12 @@ function StockRow({ p, commissionRate, edits, setEdit, isChild }) {
   const profitRate = (sp && profit !== null) ? (profit / sp * 100).toFixed(1) : null
   const rowBg = isDirty ? '#fffbeb' : isChild ? '#f8faff' : '#fff'
 
+  // 数値入力欄にフォーカスしたとき、中身が0なら全選択して上書き入力できるようにする
+  // （0が残って「030」のように入力されるのを防ぐ）
+  const selectIfZero = (ev) => {
+    if (Number(ev.target.value) === 0) ev.target.select()
+  }
+
   return (
     <tr style={{ borderBottom: '1px solid #e5e7eb', background: rowBg }}>
       <td style={{ padding: '8px 10px', paddingLeft: isChild ? 26 : 10, fontFamily: 'monospace', fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>
@@ -224,6 +230,7 @@ function StockRow({ p, commissionRate, edits, setEdit, isChild }) {
         <input
           type="number"
           value={stock}
+          onFocus={selectIfZero}
           onChange={e => setEdit(p.id, 'stock', e.target.value)}
           style={{ width: 60, textAlign: 'center', border: isDirty ? '1px solid #d97706' : '1px solid #e2e8f0', borderRadius: 4, padding: '3px 4px', fontWeight: 600 }}
         />
@@ -232,6 +239,7 @@ function StockRow({ p, commissionRate, edits, setEdit, isChild }) {
         <input
           type="number"
           value={inbound}
+          onFocus={selectIfZero}
           onChange={e => setEdit(p.id, 'inbound', e.target.value)}
           style={{ width: 60, textAlign: 'center', border: '1px solid #e2e8f0', borderRadius: 4, padding: '3px 4px' }}
         />
@@ -240,6 +248,7 @@ function StockRow({ p, commissionRate, edits, setEdit, isChild }) {
         <input
           type="number"
           value={standardStock}
+          onFocus={selectIfZero}
           onChange={e => setEdit(p.id, 'standard_stock', e.target.value)}
           style={{ width: 60, textAlign: 'center', border: '1px solid #e2e8f0', borderRadius: 4, padding: '3px 4px' }}
         />
