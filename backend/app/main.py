@@ -327,15 +327,17 @@ async def _pull_rms_stock():
 
 
 async def _scheduler_loop():
-    """1分ごとに在庫同期、1時間ごとに販売数同期・RMS在庫取得を実行"""
+    """1分ごとに受注差分の在庫同期＋RMS在庫取得、1時間ごとに販売数同期を実行"""
+    # 起動直後にRMS在庫を1回取得しておく（デプロイ/再起動後すぐ最新にする）
+    await _pull_rms_stock()
     tick = 0
     while True:
         await asyncio.sleep(60)
         tick += 1
         await _sync_rakuten_stock()
-        if tick % 60 == 0:  # 60分ごと
+        await _pull_rms_stock()  # 1分ごと: RMSから最新在庫を取得
+        if tick % 60 == 0:  # 60分ごと: 販売数同期（60日分の受注取得で重いため低頻度）
             await _sync_rakuten_sales()
-            await _pull_rms_stock()
 
 
 @asynccontextmanager
