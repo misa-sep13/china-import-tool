@@ -1466,27 +1466,29 @@ async def import_stock_from_rms(db: Session = Depends(get_db)):
     if not settings.rms_service_secret or not settings.rms_license_key:
         raise HTTPException(400, "RMS APIキーが設定されていません。")
 
-    # manageNumberが設定されている商品を対象にする
-    # manageNumber = skuの "_" より前の部分（例: y49_pink2 → y49）
-    # ただしrakuten_item_urlが設定されていればそちらを優先
+    # 在庫計算には内部SKU（is_component=True: 構成品）も含めた全商品が必要。
+    # 内部SKUはRMSに在庫が無い（発注→入荷処理でDBにのみ在庫が入る）ため、
+    # RMS問い合わせ対象(items)からは除外しつつ、セット計算用のsku_to_productには含める。
     products = db.query(RakutenProduct).filter(
         RakutenProduct.is_active == True,
         RakutenProduct.sku != None,
-        RakutenProduct.is_component != True,
     ).all()
 
+    import re
     items = []
     sku_to_product = {}
     for p in products:
         sku = (p.sku or "").strip()
         if not sku:
             continue
-        # RMSのvariantIdに使えない文字（スペース等）を含むSKUはスキップ
-        if " " in sku or not sku.replace("-", "").replace("_", "").isalnum():
-            # 英数字・ハイフン・アンダースコア以外を含む場合はスキップ
-            import re
-            if not re.match(r'^[a-zA-Z0-9_\-]+$', sku):
-                continue
+        sku_to_product[sku] = p
+        # 内部SKU（構成品）はRMSに在庫が無いので問い合わせ対象から除外
+        # （DBの在庫＝入荷処理でカウントされた値をそのまま使う）
+        if p.is_component:
+            continue
+        # RMSのvariantIdに使えない文字（スペース等）を含むSKUは問い合わせ対象から除外
+        if not re.match(r'^[a-zA-Z0-9_\-]+$', sku):
+            continue
         # manageNumber: rakuten_item_url優先、なければskuの"_"前
         if p.rakuten_item_url:
             manage_number = p.rakuten_item_url.strip()
@@ -1495,7 +1497,6 @@ async def import_stock_from_rms(db: Session = Depends(get_db)):
         else:
             manage_number = sku
         items.append({"manage_number": manage_number, "variant_id": sku})
-        sku_to_product[sku] = p
 
     if not items:
         raise HTTPException(400, "対象商品がありません。")
@@ -1509,69 +1510,27 @@ async def import_stock_from_rms(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(502, f"楽天APIエラー: {str(e)}")
 
-    import json as _json
-
-    def _parse_comps(p):
-        try:
-            return _json.loads(p.set_components or "[]")
-        except Exception:
-            return []
-
-    # Step1: RMSから取得できた在庫を上書き
+    # Step1: RMSから取得できた在庫を上書き（内部SKUはRMS対象外なのでDB在庫を保持）
     updated = 0
-    not_found = 0
-    for sku, p in sku_to_product.items():
-        if sku in rms_stock:
-            p.stock = rms_stock[sku]
+    for sku, qty in rms_stock.items():
+        p = sku_to_product.get(sku)
+        if p:
+            p.stock = qty
             updated += 1
-        else:
-            not_found += 1
+    # RMS問い合わせ対象だったのに在庫が返らなかった販売SKU数
+    not_found = sum(
+        1 for sku, p in sku_to_product.items()
+        if not p.is_component and sku not in rms_stock
+    )
 
-    # Step2: セット商品の在庫を構成品から再計算
-    # ただしRMSから直接在庫を取得できた商品はスキップ（上書き防止）
-    all_products = list(sku_to_product.values())
-    sku_stock = {p.sku: (p.stock or 0) for p in all_products}
-    for p in all_products:
-        if p.sku in rms_stock:
-            continue  # RMSから取得済みの在庫はセット計算で上書きしない
-        comps = _parse_comps(p)
-        if not comps:
-            continue
-        # 同一SKUが複数エントリある場合はqtyを合算
-        req: dict[str, int] = {}
-        for c in comps:
-            c_sku = c.get("sku")
-            c_qty = c.get("qty") or 1
-            if not c_sku:
-                continue
-            req[c_sku] = req.get(c_sku, 0) + c_qty
-        set_qty = None
-        for c_sku, c_qty in req.items():
-            avail = sku_stock.get(c_sku, 0) // c_qty
-            set_qty = avail if set_qty is None else min(set_qty, avail)
-        if set_qty is not None:
-            p.stock = set_qty
-            sku_stock[p.sku] = set_qty
-
-    # Step3: RMSにないSKU（単品販売なし）の在庫をセット商品から逆算
-    for p in all_products:
-        if p.sku in rms_stock:
-            continue
-        comps = _parse_comps(p)
-        if comps:
-            continue
-        inferred_qty = 0
-        for sp in all_products:
-            sp_comps = _parse_comps(sp)
-            for c in sp_comps:
-                if c.get("sku") == p.sku:
-                    inferred_qty += sku_stock.get(sp.sku, 0) * (c.get("qty") or 1)
-        if inferred_qty > 0:
-            p.stock = inferred_qty
-            sku_stock[p.sku] = inferred_qty
-
+    # セット販売SKU（is_component=false）の在庫はRMSが基盤（Step1で上書き済み）。
+    # 内部SKU（is_component=true）の在庫はRMSに無く、入荷処理で入ったDB在庫をそのまま維持する。
+    # → 構成品⇔セット間の在庫計算（旧Step2/Step3）は、RMSの正値を潰すため廃止。
     db.commit()
-    not_found_skus = [sku for sku in sku_to_product if sku not in rms_stock]
+    not_found_skus = [
+        sku for sku, p in sku_to_product.items()
+        if not p.is_component and sku not in rms_stock
+    ]
     return {
         "ok": True,
         "updated": updated,

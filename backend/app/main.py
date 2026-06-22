@@ -275,12 +275,11 @@ async def _sync_rakuten_sales():
 
 
 async def _pull_rms_stock():
-    """RMSから在庫数を取得してDBに上書き。RMSにないSKUはセット商品から逆算"""
+    """RMSから在庫数を取得してDBに上書き。内部SKU（構成品）はRMS対象外でDB在庫を維持する。"""
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
     from app.services.rakuten_rms import fetch_inventory_from_rms
-    import json
 
     db = SessionLocal()
     try:
@@ -288,23 +287,20 @@ async def _pull_rms_stock():
         if not settings or not settings.rms_service_secret or not settings.rms_license_key:
             return
 
+        # is_componentに関わらず全有効商品を取得。
+        # セット販売SKU（is_component=false）の在庫はRMSが基盤、
+        # 内部SKU（is_component=true: 構成品）はRMSに在庫が無く（発注→入荷処理でDBに在庫が入る）、
+        # そのDB在庫をそのまま維持する。
         products = db.query(RakutenProduct).filter(
             RakutenProduct.is_active == True,
-            RakutenProduct.is_component != True,
         ).all()
         sku_to_product = {p.sku: p for p in products}
 
-        def parse_comps(p):
-            try:
-                return json.loads(p.set_components or "[]")
-            except Exception:
-                return []
-
-        # RMSに問い合わせるitems（set_componentsがある＝セット商品はRMSのSKUで登録済み）
+        # RMSに問い合わせるのは内部SKU以外（内部SKUを送ると無効variantIdで弾かれる）
         items = []
         for p in products:
             sku = p.sku or ""
-            if not sku:
+            if not sku or p.is_component:
                 continue
             manage_number = p.rakuten_item_url or sku.split("_")[0]
             items.append({"manage_number": manage_number, "variant_id": sku})
@@ -313,59 +309,14 @@ async def _pull_rms_stock():
             settings.rms_service_secret, settings.rms_license_key, items
         )
 
-        # Step1: RMSから取得できた在庫を上書き
+        # RMSから取得できた在庫を上書き（内部SKUはRMS対象外なのでDB在庫を保持）。
+        # 構成品⇔セット間の在庫計算はRMSの正値を潰すため行わない。
         updated = 0
         for sku, qty in rms_stock.items():
             p = sku_to_product.get(sku)
             if p:
                 p.stock = qty
                 updated += 1
-
-        # Step2: セット商品の在庫を構成品から再計算
-        # ただしRMSから直接在庫を取得できた商品はスキップ（上書き防止）
-        sku_stock = {p.sku: (p.stock or 0) for p in products}
-        for p in products:
-            if p.sku in rms_stock:
-                continue  # RMSから取得済みの在庫はセット計算で上書きしない
-            comps = parse_comps(p)
-            if not comps:
-                continue
-            req: dict[str, int] = {}
-            for c in comps:
-                c_sku = c.get("sku")
-                c_qty = c.get("qty") or 1
-                if not c_sku:
-                    continue
-                req[c_sku] = req.get(c_sku, 0) + c_qty
-            set_qty = None
-            for c_sku, c_qty in req.items():
-                avail = sku_stock.get(c_sku, 0) // c_qty
-                set_qty = avail if set_qty is None else min(set_qty, avail)
-            if set_qty is not None:
-                p.stock = set_qty
-                sku_stock[p.sku] = set_qty
-
-        # Step3: RMSにないSKU（単品販売なし）の在庫をセット商品から逆算
-        # 例: y77_vivid はRMSに存在しないが、y77_v-v(47)・y77_v-b(11)等の構成品
-        # → このSKUを参照するセット商品の在庫の最大値を使う
-        for p in products:
-            if p.sku in rms_stock:
-                continue  # RMSから取得済みはスキップ
-            comps = parse_comps(p)
-            if comps:
-                continue  # セット商品自身もスキップ
-            # このSKUを構成品として持つセット商品の在庫から逆算
-            # セット在庫 × 使用数 = このSKUの必要数 → その合計が実在庫の下限
-            inferred_qty = 0
-            for sp in products:
-                sp_comps = parse_comps(sp)
-                for c in sp_comps:
-                    if c.get("sku") == p.sku:
-                        c_qty = c.get("qty") or 1
-                        inferred_qty += sku_stock.get(sp.sku, 0) * c_qty
-            if inferred_qty > 0:
-                p.stock = inferred_qty
-                sku_stock[p.sku] = inferred_qty
 
         db.commit()
         logger.info(f"[scheduler] RMS在庫取得完了: {updated}件更新")
