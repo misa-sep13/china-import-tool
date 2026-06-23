@@ -1270,54 +1270,6 @@ async def debug_rms_order_detail(db: Session = Depends(get_db)):
     return {"status": res2.status_code, "body": res2.json()}
 
 
-@router.get("/rms/debug-s03")
-async def debug_s03(db: Session = Depends(get_db)):
-    """一時調査用: s03-3配下のvariant構造と、normal-inventory(スペース無)での在庫を確認する。"""
-    import json, base64, httpx
-    settings = _get_or_create_settings(db)
-    if not settings.rms_service_secret or not settings.rms_license_key:
-        raise HTTPException(400, "APIキーが設定されていません")
-    token = base64.b64encode(f"{settings.rms_service_secret}:{settings.rms_license_key}".encode()).decode()
-    headers = {"Authorization": f"ESA {token}"}
-
-    out = {}
-    # 1) items/search で s03-3 のvariant一覧
-    async with httpx.AsyncClient(timeout=60) as client:
-        res = await client.get(
-            "https://api.rms.rakuten.co.jp/es/2.0/items/search",
-            headers=headers, params={"manageNumber": "s03-3"},
-        )
-        try:
-            sdata = res.json()
-        except Exception:
-            sdata = {"raw": res.text[:500]}
-    variants = []
-    for entry in (sdata.get("results") or []):
-        item = entry.get("item", {})
-        variants.append({
-            "manageNumber": item.get("manageNumber"),
-            "variants": list((item.get("variants") or {}).keys()),
-        })
-    out["search_status"] = res.status_code
-    out["s03-3_variants"] = variants
-
-    # 2) bulk-get: いくつかの候補variantIdで在庫問い合わせ
-    candidates = [
-        {"manageNumber": "s03-3", "variantId": "normal-inventory"},
-    ]
-    async with httpx.AsyncClient(timeout=30) as client:
-        res2 = await client.post(
-            "https://api.rms.rakuten.co.jp/es/2.0/inventories/bulk-get",
-            headers={**headers, "Content-Type": "application/json; charset=utf-8"},
-            content=json.dumps({"inventories": candidates}, ensure_ascii=False).encode("utf-8"),
-        )
-        try:
-            out["bulk_get"] = res2.json()
-        except Exception:
-            out["bulk_get"] = {"raw": res2.text[:500]}
-    return out
-
-
 @router.post("/rms/test")
 async def test_rms_connection(db: Session = Depends(get_db)):
     """RMS API 接続テスト"""
