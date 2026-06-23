@@ -1644,3 +1644,107 @@ def get_sales_sync_status(job_id: str):
         "error": job["error"],
         "elapsed": round(time.time() - job["started_at"], 1),
     }
+
+
+# ============ スーパーセール(SS)販売数の集計・保存 ============
+
+def _run_ss_sync_job(job_id: str, service_secret: str, license_key: str, period_key: str,
+                     ss_start, ss_end):
+    """SS期間の販売数を集計してrakuten_ss_salesに保存する（バックグラウンド）"""
+    from app.services.rakuten_rms import fetch_ss_sales
+    from app.models.rakuten_ss_sales import RakutenSsSales
+    with _sync_jobs_lock:
+        _sync_jobs[job_id] = {"status": "running", "result": None, "error": None, "started_at": time.time()}
+    db = SessionLocal()
+    try:
+        sku_qty = asyncio.run(fetch_ss_sales(service_secret, license_key, ss_start, ss_end))
+
+        # 表示対象商品（is_component=False）のSKUに紐付けて保存
+        products = db.query(RakutenProduct).filter(
+            RakutenProduct.is_active == True,
+            RakutenProduct.is_component == False,
+        ).all()
+
+        saved = 0
+        for p in products:
+            qty = sku_qty.get(p.rakuten_sku_id or "")
+            if qty is None:
+                qty = sku_qty.get(p.sku or "")
+            if qty is None:
+                continue
+            row = db.query(RakutenSsSales).filter(
+                RakutenSsSales.sku == p.sku,
+                RakutenSsSales.ss_period == period_key,
+            ).first()
+            if row:
+                row.qty = qty
+            else:
+                db.add(RakutenSsSales(sku=p.sku, ss_period=period_key, qty=qty))
+            saved += 1
+        db.commit()
+
+        with _sync_jobs_lock:
+            _sync_jobs[job_id]["status"] = "done"
+            _sync_jobs[job_id]["result"] = {
+                "period": period_key,
+                "matched_skus": len(sku_qty),
+                "saved_products": saved,
+            }
+    except Exception as e:
+        db.rollback()
+        with _sync_jobs_lock:
+            _sync_jobs[job_id]["status"] = "error"
+            _sync_jobs[job_id]["error"] = str(e)
+    finally:
+        db.close()
+
+
+@router.post("/rms/ss-sync/start")
+def start_ss_sync(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """直近に終了したSS期間の販売数を集計・保存するジョブを開始する。
+    SS期間は3/6/9/12月の4日20:00〜11日2:00固定。楽天APIは63日前までしか遡れないため、
+    SS終了後63日以内に実行する必要がある。"""
+    from app.services.rakuten_rms import ss_period_for
+    _prune_sync_jobs()
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません。楽天設定から登録してください。")
+
+    from datetime import timezone, timedelta
+    jst = timezone(timedelta(hours=9))
+    now = datetime.now(jst)
+    period = ss_period_for(now)
+    if not period:
+        raise HTTPException(400, "対象となるSS期間が見つかりません。")
+    period_key, ss_start, ss_end = period
+
+    # SS終了から63日を超えていたらAPIで遡れない
+    if (now - ss_end).days > 62:
+        raise HTTPException(
+            400,
+            f"直近SS({period_key})は終了から63日を超えているため、楽天APIで遡れません。",
+        )
+
+    job_id = str(uuid.uuid4())
+    background_tasks.add_task(
+        _run_ss_sync_job, job_id,
+        settings.rms_service_secret, settings.rms_license_key,
+        period_key, ss_start, ss_end,
+    )
+    return {"job_id": job_id, "period": period_key}
+
+
+@router.get("/ss-sales")
+def get_ss_sales(period: Optional[str] = None, db: Session = Depends(get_db)):
+    """保存済みのSS販売数を返す。period省略時は最新期間。
+    戻り値: {"period": "2026-06", "sales": {sku: qty, ...}}"""
+    from app.models.rakuten_ss_sales import RakutenSsSales
+    if not period:
+        latest = db.query(RakutenSsSales.ss_period).order_by(
+            RakutenSsSales.ss_period.desc()
+        ).first()
+        period = latest[0] if latest else None
+    if not period:
+        return {"period": None, "sales": {}}
+    rows = db.query(RakutenSsSales).filter(RakutenSsSales.ss_period == period).all()
+    return {"period": period, "sales": {r.sku: r.qty for r in rows}}

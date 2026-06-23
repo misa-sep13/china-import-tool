@@ -71,6 +71,105 @@ async def _process_batch(
                         sku_daily[sku][day_key] = sku_daily[sku].get(day_key, 0) + qty
 
 
+async def _collect_order_numbers(
+    headers: dict,
+    range_start: datetime,
+    range_end: datetime,
+) -> list[str]:
+    """指定期間[range_start, range_end]の注文番号を searchOrder で収集して返す。
+    楽天APIは1リクエスト最大63日のため60日ずつに分割する。"""
+    seen_orders: set[str] = set()
+    all_order_numbers: list[str] = []
+
+    MAX_DAYS = 60
+    cursor_end = range_end
+    while cursor_end > range_start:
+        cursor_start = max(range_start, cursor_end - timedelta(days=MAX_DAYS))
+        page = 1
+        while True:
+            search_body = {
+                "dateType": 1,
+                "startDatetime": cursor_start.strftime("%Y-%m-%dT%H:%M:%S+0900"),
+                "endDatetime":   cursor_end.strftime("%Y-%m-%dT%H:%M:%S+0900"),
+                "PaginationRequestModel": {
+                    "requestRecordsAmount": 100,
+                    "requestPage": page,
+                },
+            }
+            async with httpx.AsyncClient(timeout=30) as client:
+                res = await client.post(
+                    f"{RMS_BASE}/2.0/order/searchOrder",
+                    headers={**headers, "Content-Type": "application/json; charset=utf-8"},
+                    content=json.dumps(search_body, ensure_ascii=False).encode("utf-8"),
+                )
+                if not res.is_success:
+                    raise Exception(f"searchOrder HTTP {res.status_code}: {res.text}")
+                data = res.json()
+
+            for item in data.get("orderNumberList") or []:
+                num = item if isinstance(item, str) else (
+                    item.get("orderNumber") or item.get("order_number") or item.get("id") or ""
+                )
+                num = str(num)
+                if num and num not in seen_orders:
+                    seen_orders.add(num)
+                    all_order_numbers.append(num)
+
+            pagination = data.get("PaginationResponseModel") or {}
+            if page >= pagination.get("totalPages", 1):
+                break
+            page += 1
+
+        cursor_end = cursor_start
+
+    return all_order_numbers
+
+
+def ss_period_for(d: datetime) -> Optional[tuple]:
+    """指定日が属する直近（過去）のSS期間を返す。
+    スーパーセールは 3/6/9/12月の 4日20:00 〜 11日02:00（JST）固定。
+    戻り値: (period_key:"YYYY-MM", start:datetime, end:datetime) / 無ければNone"""
+    from datetime import timezone as _tz
+    jst = _tz(timedelta(hours=9))
+    year = d.year
+    # SS開催月（降順）で、dより前に始まったSSのうち最も新しいものを探す
+    candidates = []
+    for y in (year, year - 1):
+        for m in (12, 9, 6, 3):
+            start = datetime(y, m, 4, 20, 0, 0, tzinfo=jst)
+            end = datetime(y, m, 11, 2, 0, 0, tzinfo=jst)
+            candidates.append((f"{y}-{m:02d}", start, end))
+    candidates.sort(key=lambda c: c[1], reverse=True)
+    for key, start, end in candidates:
+        if start <= d:
+            return (key, start, end)
+    return None
+
+
+async def fetch_ss_sales(
+    service_secret: str,
+    license_key: str,
+    ss_start: datetime,
+    ss_end: datetime,
+) -> dict:
+    """SS期間[ss_start, ss_end]のSKU別販売数を集計して返す。
+    戻り値: {sku: qty, ...}"""
+    headers = _auth_header(service_secret, license_key)
+    order_numbers = await _collect_order_numbers(headers, ss_start, ss_end)
+
+    sku_daily: dict[str, dict] = {}
+    sem = asyncio.Semaphore(GETORDER_CONCURRENCY)
+    batches = [order_numbers[i:i + BATCH_SIZE] for i in range(0, len(order_numbers), BATCH_SIZE)]
+    now = datetime.now()
+    await asyncio.gather(*[_process_batch(headers, b, sku_daily, now, sem) for b in batches])
+
+    # 期間内の合計のみ集計（_process_batchは注文日で日別格納するが、収集対象が期間内注文のため全合算でよい）
+    sku_qty: dict[str, int] = {}
+    for sku, daily in sku_daily.items():
+        sku_qty[sku] = sum(daily.values())
+    return sku_qty
+
+
 async def fetch_sales_by_sku(
     service_secret: str,
     license_key: str,

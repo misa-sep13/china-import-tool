@@ -8,6 +8,8 @@ export default function RakutenStockPage() {
   const [supplierFilter, setSupplierFilter] = useState('')
   const [importingStock, setImportingStock] = useState(false)
   const [importStockResult, setImportStockResult] = useState(null)
+  const [ssSyncing, setSsSyncing] = useState(false)
+  const [ssSyncResult, setSsSyncResult] = useState(null)
   // { [id]: { stock, inbound, standard_stock, selling_price, shipping_fee } }
   const [edits, setEdits] = useState({})
   const [saving, setSaving] = useState(false)
@@ -28,6 +30,34 @@ export default function RakutenStockPage() {
     }
   }
 
+  const handleSsSync = async () => {
+    if (!window.confirm('直近のスーパーセール期間(3/6/9/12月 4日20時〜11日2時)の販売数をRMSから集計して保存します。よろしいですか？')) return
+    setSsSyncing(true)
+    setSsSyncResult(null)
+    try {
+      const start = await api.post('/rakuten/rms/ss-sync/start')
+      const jobId = start.data.job_id
+      // 完了までポーリング（最大3分）
+      for (let i = 0; i < 90; i++) {
+        await new Promise(r => setTimeout(r, 2000))
+        const st = await api.get(`/rakuten/rms/sync/status/${jobId}`)
+        if (st.data.status === 'done') {
+          setSsSyncResult(st.data.result)
+          qc.invalidateQueries(['rakuten-ss-sales'])
+          break
+        }
+        if (st.data.status === 'error') {
+          setSsSyncResult({ error: st.data.error || 'SS集計でエラーが発生しました' })
+          break
+        }
+      }
+    } catch (err) {
+      setSsSyncResult({ error: err.response?.data?.detail || 'SS集計エラーが発生しました' })
+    } finally {
+      setSsSyncing(false)
+    }
+  }
+
   const { data: items = [], isLoading } = useQuery({
     queryKey: ['rakuten-stock'],
     queryFn: () => api.get('/rakuten/stock').then(r => r.data),
@@ -42,6 +72,13 @@ export default function RakutenStockPage() {
     queryKey: ['rakuten-settings'],
     queryFn: () => api.get('/rakuten/settings').then(r => r.data),
   })
+
+  const { data: ssSales } = useQuery({
+    queryKey: ['rakuten-ss-sales'],
+    queryFn: () => api.get('/rakuten/ss-sales').then(r => r.data),
+  })
+  const ssPeriod = ssSales?.period
+  const ssMap = ssSales?.sales ?? {}
 
   const commissionRate = settings?.commission_rate ?? 0.09
 
@@ -99,7 +136,7 @@ export default function RakutenStockPage() {
 
   if (isLoading) return <div className="loading">読み込み中...</div>
 
-  const rowProps = { commissionRate, edits, setEdit }
+  const rowProps = { commissionRate, edits, setEdit, ssMap }
 
   return (
     <div>
@@ -112,6 +149,14 @@ export default function RakutenStockPage() {
         {importStockResult && (
           <span style={{ fontSize: 12, color: importStockResult.error ? '#e53e3e' : '#38a169' }}>
             {importStockResult.error || `${importStockResult.updated}件更新・${importStockResult.not_found}件未登録`}
+          </span>
+        )}
+        <button className="btn" style={{ fontSize: 13 }} onClick={handleSsSync} disabled={ssSyncing}>
+          {ssSyncing ? 'SS集計中...' : '🛒 SS販売数取得'}
+        </button>
+        {ssSyncResult && (
+          <span style={{ fontSize: 12, color: ssSyncResult.error ? '#e53e3e' : '#9333ea' }}>
+            {ssSyncResult.error || `SS(${ssSyncResult.period}) ${ssSyncResult.saved_products}件保存`}
           </span>
         )}
         <button
@@ -141,14 +186,14 @@ export default function RakutenStockPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-              {['SKU', '商品名', '仕様', 'お客様専用メモ', '仕入原価(元)', '販売価格(円)', '送料', '手数料', '利益額', '利益率', '実在庫', '輸送中', '規定在庫', '直近30日', '前30日', '備考'].map(h => (
+              {['SKU', '商品名', '仕様', 'お客様専用メモ', '仕入原価(元)', '販売価格(円)', '送料', '手数料', '利益額', '利益率', '実在庫', '輸送中', '規定在庫', '直近30日', '前30日', ssPeriod ? `SS(${ssPeriod})` : 'SS', '備考'].map(h => (
                 <th key={h} style={{ padding: '10px 10px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700, fontSize: 12 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {displayCount === 0 && (
-              <tr><td colSpan={16} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
+              <tr><td colSpan={17} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
             )}
             {parents.map(p => {
               const childList = getVariantChildren(p.sku).filter(searchMatch)
@@ -183,7 +228,7 @@ export default function RakutenStockPage() {
   )
 }
 
-function StockRow({ p, commissionRate, edits, setEdit, isChild }) {
+function StockRow({ p, commissionRate, edits, setEdit, isChild, ssMap }) {
   const e = edits[p.id] || {}
   const sp = e.selling_price !== undefined ? (e.selling_price !== '' ? Number(e.selling_price) : null) : p.selling_price
   const shippingFee = e.shipping_fee !== undefined ? Number(e.shipping_fee) : (p.shipping_fee ?? 180)
@@ -255,6 +300,9 @@ function StockRow({ p, commissionRate, edits, setEdit, isChild }) {
       </td>
       <td style={{ padding: '8px 10px', textAlign: 'center', color: '#2563eb', fontWeight: 600 }}>{p.sales_30_recent}</td>
       <td style={{ padding: '8px 10px', textAlign: 'center', color: '#666' }}>{p.sales_30_prev}</td>
+      <td style={{ padding: '8px 10px', textAlign: 'center', color: '#9333ea', fontWeight: 600 }}>
+        {ssMap && ssMap[p.sku] != null ? ssMap[p.sku] : '—'}
+      </td>
       <td style={{ padding: '8px 10px', color: '#666', fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.notes || '—'}</td>
     </tr>
   )
