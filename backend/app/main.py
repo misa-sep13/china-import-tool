@@ -326,8 +326,19 @@ async def _pull_rms_stock():
 
         db.commit()
         logger.info(f"[scheduler] RMS在庫取得完了: {updated}件更新")
+        _sync_logs.appendleft({
+            "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
+            "type": "rms_stock",
+            "updated": updated,
+            "sent": len(items),
+        })
     except Exception as e:
         logger.warning(f"[scheduler] RMS在庫取得エラー: {e}")
+        _sync_logs.appendleft({
+            "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
+            "type": "rms_stock",
+            "error": str(e),
+        })
     finally:
         db.close()
 
