@@ -89,23 +89,16 @@ export default function RakutenStockPage() {
   const internalSkus = new Set(allProducts.filter(p => p.is_component).map(p => p.sku))
   const parseComps = (p) => { try { return JSON.parse(p.set_components || '[]') } catch { return [] } }
   const compSkus = (p) => parseComps(p).map(c => c.sku).filter(Boolean)
-  // 色バリエーション子 = 構成品がちょうど2つ（例: y77/y83 の「2組セット」2色組み合わせ）。
-  // 単品+セット型（239=243×2本 など構成品1つ）や味アソート（s02-1=4味 など構成品3つ以上）は
-  // 折りたたみ対象にせず、ベタ表示する。
+  // バリエーション/セット子 = set_componentsに通常SKU（非内部管理）を含む商品（商品マスタと同じ判定）。
+  // 例: 239=243×2本セット、y77_b-b=2色組み合わせ、s02-1=4味アソート すべて子として親に折りたたむ。
   const isVariantChild = (p) =>
-    !p.is_component &&
-    compSkus(p).length === 2 &&
-    compSkus(p).some(s => !internalSkus.has(s))
+    !p.is_component && compSkus(p).some(s => !internalSkus.has(s))
 
   const variantParentSkus = new Set(
     allProducts.filter(isVariantChild).flatMap(p => compSkus(p).filter(s => !internalSkus.has(s)))
   )
   const stockCompSkus = (p) => {
-    try {
-      const comps = JSON.parse(p.set_components || '[]')
-      if (comps.length !== 2) return []  // 色バリエ子のみ対象（構成品がちょうど2つ）
-      return comps.map(c => c.sku).filter(Boolean)
-    } catch { return [] }
+    try { return JSON.parse(p.set_components || '[]').map(c => c.sku).filter(Boolean) } catch { return [] }
   }
   const getVariantChildren = (sku) => items.filter(p => stockCompSkus(p).includes(sku))
 
@@ -289,7 +282,18 @@ function StockRow({ p, commissionRate, edits, setEdit, isChild, ssMap, childCoun
           </button>
         )}
       </td>
-      <td style={{ padding: '8px 10px', minWidth: 140, color: isChild ? '#555' : '#1a1a2e' }}>{p.name || '—'}</td>
+      <td style={{ padding: '8px 10px', minWidth: 140, color: isChild ? '#555' : '#1a1a2e' }}>
+        {isChild && (
+          <span style={{
+            display: 'inline-block', marginRight: 6, fontSize: 10, fontWeight: 700,
+            color: '#7c3aed', background: '#f3e8ff', border: '1px solid #e9d5ff',
+            borderRadius: 3, padding: '1px 5px', verticalAlign: 'middle',
+          }}>
+            バリエーション
+          </span>
+        )}
+        {p.name || '—'}
+      </td>
       <td style={{ padding: '8px 10px', color: '#666', fontSize: 12 }}>{p.spec || '—'}</td>
       <td style={{ padding: '8px 10px', textAlign: 'right', color: '#666' }}>{cost ? `¥${cost}` : '—'}</td>
       <td style={{ padding: '8px 10px', textAlign: 'right' }}>
