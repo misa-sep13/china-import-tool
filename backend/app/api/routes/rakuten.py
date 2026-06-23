@@ -1304,8 +1304,6 @@ async def debug_s03(db: Session = Depends(get_db)):
     # 2) bulk-get: いくつかの候補variantIdで在庫問い合わせ
     candidates = [
         {"manageNumber": "s03-3", "variantId": "normal-inventory"},
-        {"manageNumber": "s03-3", "variantId": "s03-3"},
-        {"manageNumber": "s03-3"},
     ]
     async with httpx.AsyncClient(timeout=30) as client:
         res2 = await client.post(
