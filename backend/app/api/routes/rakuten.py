@@ -1270,6 +1270,64 @@ async def debug_rms_order_detail(db: Session = Depends(get_db)):
     return {"status": res2.status_code, "body": res2.json()}
 
 
+@router.get("/rms/debug-variants/{manage_number}")
+async def debug_rms_variants(manage_number: str, db: Session = Depends(get_db)):
+    """デバッグ用: 指定manageNumberのRMS上のvariant構造と在庫を返す。
+    items/search と inventories/bulk-get の生データを照合して原因調査する。"""
+    import json, base64, httpx
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "APIキーが設定されていません")
+    token = base64.b64encode(f"{settings.rms_service_secret}:{settings.rms_license_key}".encode()).decode()
+    headers = {"Authorization": f"ESA {token}"}
+
+    # 1) items/search で variant 一覧（variantId=variant_key, merchantDefinedSkuId）
+    variants_info = []
+    async with httpx.AsyncClient(timeout=60) as client:
+        res = await client.get(
+            "https://api.rms.rakuten.co.jp/es/2.0/items/search",
+            headers=headers,
+            params={"manageNumber": manage_number},
+        )
+        search_status = res.status_code
+        try:
+            sdata = res.json()
+        except Exception:
+            sdata = {"raw": res.text[:500]}
+        for entry in (sdata.get("results") or []):
+            item = entry.get("item", {})
+            if item.get("manageNumber") != manage_number:
+                continue
+            for vkey, vdata in (item.get("variants") or {}).items():
+                variants_info.append({
+                    "variantId": vkey,
+                    "merchantDefinedSkuId": vdata.get("merchantDefinedSkuId"),
+                })
+
+    # 2) bulk-get で在庫を取得（variantId指定なしでmanageNumber全体）
+    inv_body = json.dumps(
+        {"inventories": [{"manageNumber": manage_number}]},
+        ensure_ascii=False,
+    ).encode("utf-8")
+    async with httpx.AsyncClient(timeout=30) as client:
+        res2 = await client.post(
+            "https://api.rms.rakuten.co.jp/es/2.0/inventories/bulk-get",
+            headers={**headers, "Content-Type": "application/json; charset=utf-8"},
+            content=inv_body,
+        )
+        try:
+            idata = res2.json()
+        except Exception:
+            idata = {"raw": res2.text[:500]}
+
+    return {
+        "manage_number": manage_number,
+        "items_search_status": search_status,
+        "variants_from_search": variants_info,
+        "inventories_from_bulk_get": idata.get("inventories", idata),
+    }
+
+
 @router.post("/rms/test")
 async def test_rms_connection(db: Session = Depends(get_db)):
     """RMS API 接続テスト"""
