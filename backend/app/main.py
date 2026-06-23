@@ -298,12 +298,17 @@ async def _pull_rms_stock():
         sku_to_product = {p.sku: p for p in products}
 
         # RMSに問い合わせるのは内部SKU以外（内部SKUを送ると無効variantIdで弾かれる）
+        # variantIdに使えない文字（スペース・日本語等）を含むSKUは除外する。
+        # 1件でも不正なvariantIdが混ざるとbulk-getがエラーを返し、取得全体が失敗するため。
+        import re as _re
         items = []
         for p in products:
-            sku = p.sku or ""
+            sku = (p.sku or "").strip()
             if not sku or p.is_component:
                 continue
-            manage_number = p.rakuten_item_url or sku.split("_")[0]
+            if not _re.match(r'^[a-zA-Z0-9_\-]+$', sku):
+                continue
+            manage_number = (p.rakuten_item_url or sku.split("_")[0]).strip()
             items.append({"manage_number": manage_number, "variant_id": sku})
 
         rms_stock = await fetch_inventory_from_rms(
