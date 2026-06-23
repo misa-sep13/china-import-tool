@@ -89,13 +89,23 @@ export default function RakutenStockPage() {
   const internalSkus = new Set(allProducts.filter(p => p.is_component).map(p => p.sku))
   const parseComps = (p) => { try { return JSON.parse(p.set_components || '[]') } catch { return [] } }
   const compSkus = (p) => parseComps(p).map(c => c.sku).filter(Boolean)
-  const isVariantChild = (p) => !p.is_component && compSkus(p).some(s => !internalSkus.has(s))
+  // 色バリエーション子 = 構成品がちょうど2つ（例: y77/y83 の「2組セット」2色組み合わせ）。
+  // 単品+セット型（239=243×2本 など構成品1つ）や味アソート（s02-1=4味 など構成品3つ以上）は
+  // 折りたたみ対象にせず、ベタ表示する。
+  const isVariantChild = (p) =>
+    !p.is_component &&
+    compSkus(p).length === 2 &&
+    compSkus(p).some(s => !internalSkus.has(s))
 
   const variantParentSkus = new Set(
     allProducts.filter(isVariantChild).flatMap(p => compSkus(p).filter(s => !internalSkus.has(s)))
   )
   const stockCompSkus = (p) => {
-    try { return JSON.parse(p.set_components || '[]').map(c => c.sku).filter(Boolean) } catch { return [] }
+    try {
+      const comps = JSON.parse(p.set_components || '[]')
+      if (comps.length !== 2) return []  // 色バリエ子のみ対象（構成品がちょうど2つ）
+      return comps.map(c => c.sku).filter(Boolean)
+    } catch { return [] }
   }
   const getVariantChildren = (sku) => items.filter(p => stockCompSkus(p).includes(sku))
 
