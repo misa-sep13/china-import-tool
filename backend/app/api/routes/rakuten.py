@@ -1331,6 +1331,63 @@ async def debug_rms_variants(manage_number: str, db: Session = Depends(get_db)):
     }
 
 
+@router.get("/rms/debug-bulkget-count")
+async def debug_bulkget_count(db: Session = Depends(get_db)):
+    """デバッグ用: import-stockと同じ全SKUリストでbulk-getし、
+    送信件数・返却件数・返らなかったSKUを確認する（在庫上限切り捨ての検証）。"""
+    import json, base64, httpx, re
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "APIキーが設定されていません")
+    token = base64.b64encode(f"{settings.rms_service_secret}:{settings.rms_license_key}".encode()).decode()
+    headers = {"Authorization": f"ESA {token}", "Content-Type": "application/json"}
+
+    products = db.query(RakutenProduct).filter(
+        RakutenProduct.is_active == True, RakutenProduct.sku != None,
+    ).all()
+    rms_items = []
+    sent_skus = []
+    for p in products:
+        sku = (p.sku or "").strip()
+        if not sku or p.is_component:
+            continue
+        if not re.match(r'^[a-zA-Z0-9_\-]+$', sku):
+            continue
+        if p.rakuten_item_url:
+            mn = p.rakuten_item_url.strip()
+        elif "_" in sku:
+            mn = sku.split("_")[0]
+        else:
+            mn = sku
+        rms_items.append({"manageNumber": mn, "variantId": sku})
+        sent_skus.append(sku)
+
+    body = json.dumps({"inventories": rms_items}, ensure_ascii=False).encode("utf-8")
+    async with httpx.AsyncClient(timeout=60) as client:
+        res = await client.post(
+            "https://api.rms.rakuten.co.jp/es/2.0/inventories/bulk-get",
+            headers=headers, content=body,
+        )
+        status = res.status_code
+        try:
+            data = res.json()
+        except Exception:
+            data = {"raw": res.text[:500]}
+
+    returned = data.get("inventories", []) if isinstance(data, dict) else []
+    returned_skus = {inv.get("variantId", "") for inv in returned}
+    missing = [s for s in sent_skus if s not in returned_skus]
+    return {
+        "status": status,
+        "sent_count": len(rms_items),
+        "returned_count": len(returned),
+        "errors": data.get("errors") if isinstance(data, dict) else None,
+        "missing_count": len(missing),
+        "missing_skus_sample": missing[:60],
+        "y69_flower_returned": "y69_flower" in returned_skus,
+    }
+
+
 @router.post("/rms/test")
 async def test_rms_connection(db: Session = Depends(get_db)):
     """RMS API 接続テスト"""
