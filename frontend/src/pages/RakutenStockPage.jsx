@@ -10,6 +10,10 @@ export default function RakutenStockPage() {
   const [importStockResult, setImportStockResult] = useState(null)
   const [ssSyncing, setSsSyncing] = useState(false)
   const [ssSyncResult, setSsSyncResult] = useState(null)
+  const [expanded, setExpanded] = useState({})  // {parentSku: true} 展開中の親
+  const toggleExpand = useCallback((sku) => {
+    setExpanded(prev => ({ ...prev, [sku]: !prev[sku] }))
+  }, [])
   // { [id]: { stock, inbound, standard_stock, selling_price, shipping_fee } }
   const [edits, setEdits] = useState({})
   const [saving, setSaving] = useState(false)
@@ -197,9 +201,16 @@ export default function RakutenStockPage() {
             )}
             {parents.map(p => {
               const childList = getVariantChildren(p.sku).filter(searchMatch)
+              // 検索中は自動展開、それ以外は展開状態に従う
+              const isOpen = !!search || !!expanded[p.sku]
               return [
-                <StockRow key={p.id} p={p} {...rowProps} />,
-                ...childList.map(c => <StockRow key={c.id} p={c} isChild {...rowProps} />)
+                <StockRow
+                  key={p.id} p={p} {...rowProps}
+                  childCount={childList.length}
+                  isExpanded={isOpen}
+                  onToggle={() => toggleExpand(p.sku)}
+                />,
+                ...(isOpen ? childList.map(c => <StockRow key={c.id} p={c} isChild {...rowProps} />) : [])
               ]
             })}
             {others.map(p => <StockRow key={p.id} p={p} {...rowProps} />)}
@@ -228,7 +239,7 @@ export default function RakutenStockPage() {
   )
 }
 
-function StockRow({ p, commissionRate, edits, setEdit, isChild, ssMap }) {
+function StockRow({ p, commissionRate, edits, setEdit, isChild, ssMap, childCount = 0, isExpanded, onToggle }) {
   const e = edits[p.id] || {}
   const sp = e.selling_price !== undefined ? (e.selling_price !== '' ? Number(e.selling_price) : null) : p.selling_price
   const shippingFee = e.shipping_fee !== undefined ? Number(e.shipping_fee) : (p.shipping_fee ?? 180)
@@ -255,6 +266,18 @@ function StockRow({ p, commissionRate, edits, setEdit, isChild, ssMap }) {
         {isChild && <span style={{ color: '#cbd5e1', marginRight: 4 }}>└</span>}
         {p.sku}
         {isDirty && <span style={{ color: '#d97706', marginLeft: 4, fontSize: 10 }}>●</span>}
+        {childCount > 0 && (
+          <button
+            onClick={onToggle}
+            style={{
+              marginLeft: 8, fontSize: 11, padding: '2px 7px', cursor: 'pointer',
+              background: isExpanded ? '#dbeafe' : '#f1f5f9', color: '#1e40af',
+              border: `1px solid ${isExpanded ? '#93c5fd' : '#e2e8f0'}`, borderRadius: 4, whiteSpace: 'nowrap',
+            }}
+          >
+            {isExpanded ? '▲' : '▼'} {childCount}件
+          </button>
+        )}
       </td>
       <td style={{ padding: '8px 10px', minWidth: 140, color: isChild ? '#555' : '#1a1a2e' }}>{p.name || '—'}</td>
       <td style={{ padding: '8px 10px', color: '#666', fontSize: 12 }}>{p.spec || '—'}</td>
