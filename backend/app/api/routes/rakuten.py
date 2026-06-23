@@ -1304,11 +1304,14 @@ async def debug_rms_variants(manage_number: str, db: Session = Depends(get_db)):
                     "merchantDefinedSkuId": vdata.get("merchantDefinedSkuId"),
                 })
 
-    # 2) bulk-get で在庫を取得（variantId指定なしでmanageNumber全体）
-    inv_body = json.dumps(
-        {"inventories": [{"manageNumber": manage_number}]},
-        ensure_ascii=False,
-    ).encode("utf-8")
+    # 2) bulk-get で在庫を取得（search で見つけた各variantIdを明示指定）
+    inv_query = [
+        {"manageNumber": manage_number, "variantId": v["variantId"]}
+        for v in variants_info
+    ]
+    if not inv_query:
+        inv_query = [{"manageNumber": manage_number}]
+    inv_body = json.dumps({"inventories": inv_query}, ensure_ascii=False).encode("utf-8")
     async with httpx.AsyncClient(timeout=30) as client:
         res2 = await client.post(
             "https://api.rms.rakuten.co.jp/es/2.0/inventories/bulk-get",
