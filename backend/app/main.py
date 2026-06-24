@@ -119,7 +119,8 @@ _processed_order_numbers: set = set()
 _processed_order_numbers_queue: deque = deque(maxlen=200)
 
 async def _sync_rakuten_stock():
-    """1分ごと: 直近2分の受注差分で在庫を減算する（全商品取得不要でメモリ節約）"""
+    """1分ごと: 直近2分の受注を検知してログに残す。
+    在庫の更新は行わない（在庫は _pull_rms_stock が楽天実数で一元管理）。"""
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
@@ -156,82 +157,19 @@ async def _sync_rakuten_stock():
         if not sold:
             return
 
-        import json
-
-        # 全商品の在庫・構成情報をまとめて取得
-        all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
-        sku_stock = {p.sku: (p.stock or 0) for p in all_products}
-        sku_to_product = {p.sku: p for p in all_products}
-
-        # 各商品のset_componentsをパース
-        def parse_comps(p):
-            try:
-                return json.loads(p.set_components or "[]")
-            except Exception:
-                return []
-
-        # Step1: 売れたSKUがセット商品なら構成品の在庫も減算
-        updated_skus = set()
-        for sku, qty in sold.items():
-            p = sku_to_product.get(sku)
-            if not p:
-                continue
-            comps = parse_comps(p)
-            if comps:
-                # セット商品が売れた → 構成品を qty×使用数 ずつ減算
-                for c in comps:
-                    c_sku = c.get("sku")
-                    c_qty = (c.get("qty") or 1) * qty
-                    cp = sku_to_product.get(c_sku)
-                    if cp and cp.stock is not None:
-                        cp.stock = max(0, cp.stock - c_qty)
-                        sku_stock[c_sku] = cp.stock
-                        updated_skus.add(c_sku)
-            # セット商品自身の在庫も減算
-            if p.stock is not None:
-                p.stock = max(0, p.stock - qty)
-                sku_stock[sku] = p.stock
-                updated_skus.add(sku)
-
-        # Step2: 更新された単品を参照する全セット商品の在庫を再計算
-        rms_would_update = {}
-        for p in all_products:
-            comps = parse_comps(p)
-            if not comps:
-                continue
-            # この商品の構成品に更新されたSKUが含まれる場合のみ再計算
-            if not any(c.get("sku") in updated_skus for c in comps):
-                continue
-            req: dict[str, int] = {}
-            for c in comps:
-                c_sku = c.get("sku")
-                c_qty = c.get("qty") or 1
-                if not c_sku:
-                    continue
-                req[c_sku] = req.get(c_sku, 0) + c_qty
-            set_qty = None
-            for c_sku, c_qty in req.items():
-                avail = sku_stock.get(c_sku, 0) // c_qty
-                set_qty = avail if set_qty is None else min(set_qty, avail)
-            if set_qty is not None:
-                p.stock = set_qty
-                sku_stock[p.sku] = set_qty
-                rms_would_update[p.sku] = set_qty
-
-        # 更新された全SKU（単品・セット）をRMS反映対象に追加
-        for sku in updated_skus:
-            rms_would_update[sku] = sku_stock[sku]
-
-        db.commit()
-
-        if updated_skus:
-            log_entry = {
-                "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
-                "sold": sold,
-                "rms_would_update": rms_would_update,
-            }
-            _sync_logs.appendleft(log_entry)
-            logger.warning(f"[scheduler] 在庫差分更新: sold={sold} / RMS反映予定(確認中)={rms_would_update}")
+        # 受注を検知してもDB在庫は書き換えない（受注分の自前減算・セット再計算は廃止）。
+        #
+        # 【廃止理由】在庫は楽天RMSが管理しており、毎分の _pull_rms_stock が
+        # 楽天の実在庫（単品・セットとも独立管理）をそのままDBに反映している。
+        # 受注分を別途自前で減算・再計算すると、pullした楽天実数と矛盾して
+        # 二重計上・ズレを生む（例: セット239が楽天269なのに自前計算で268に化ける）。
+        # → 在庫の正は常に楽天pull一本に統一する。ここでは受注の検知ログのみ残す。
+        _sync_logs.appendleft({
+            "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
+            "sold": sold,
+            "note": "受注検知のみ（在庫は楽天pullで反映。自前減算は廃止）",
+        })
+        logger.info(f"[scheduler] 受注検知（在庫はpullで反映）: sold={sold}")
     except Exception as e:
         _sync_logs.appendleft({"time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"), "error": str(e)})
         logger.warning(f"[scheduler] 在庫同期エラー: {e}")
