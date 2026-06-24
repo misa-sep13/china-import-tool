@@ -2,6 +2,7 @@
 楽天RMS API サービス
 受注データを取得してバリエーション別30日販売数を集計する
 """
+import os
 import base64
 import json
 import asyncio
@@ -13,6 +14,12 @@ import httpx
 RMS_BASE = "https://api.rms.rakuten.co.jp/es"
 BATCH_SIZE = 100      # getOrder の1回あたりの件数（RMSの上限）
 GETORDER_CONCURRENCY = 6  # getOrder の並列数
+
+# 楽天RMSへの在庫書き込み（push）の有効/無効。
+# 本番連動を正式に開始するまでは書き込まない（デフォルト無効＝安全側）。
+# china-import-tool側の値で楽天の実在庫を誤って上書きする事故を防ぐため。
+# 本番連動を始めるときに環境変数 RMS_PUSH_ENABLED=true を設定して有効化する。
+RMS_PUSH_ENABLED = os.environ.get("RMS_PUSH_ENABLED", "false").lower() == "true"
 
 
 def _auth_header(service_secret: str, license_key: str) -> dict:
@@ -340,6 +347,16 @@ async def push_inventory_to_rms(
     items: manage_number, variant_id, quantity を含む辞書のリスト
     戻り値: {"ok": int, "fail": int, "errors": [...]}
     """
+    # 本番連動を開始するまでは楽天RMSへ書き込まない（RMS_PUSH_ENABLED=false）。
+    # 書き込もうとした内容はログに残し、実際のPUTはスキップする。
+    if not RMS_PUSH_ENABLED:
+        import logging
+        logging.getLogger("rakuten").warning(
+            f"[RMS push 無効化中] 楽天への在庫書き込みをスキップしました（{len(items)}件）。"
+            f"有効化するには環境変数 RMS_PUSH_ENABLED=true を設定してください。"
+        )
+        return {"ok": 0, "fail": 0, "errors": [], "skipped": len(items), "push_disabled": True}
+
     headers = {**_auth_header(service_secret, license_key), "Content-Type": "application/json"}
     ok = 0
     fail = 0
