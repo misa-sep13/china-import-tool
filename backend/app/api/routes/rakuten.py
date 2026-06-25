@@ -1270,6 +1270,60 @@ async def debug_rms_order_detail(db: Session = Depends(get_db)):
     return {"status": res2.status_code, "body": res2.json()}
 
 
+@router.get("/rms/debug-inventory")
+async def debug_rms_inventory(
+    manage_number: str = "s08",
+    db: Session = Depends(get_db),
+):
+    """デバッグ用: 指定manageNumber配下の在庫bulk-get生レスポンスを返す（DB書き換えなし・読み取り専用）。
+
+    ツールが実際に送る形（variantId=DBのsku）と、variantIdを送らずmanageNumberだけ送る形の
+    両方で楽天に問い合わせ、楽天が返す実variantIdと数量を生のまま表示する。
+    これにより「DBのsku(244)が楽天のvariantId(シトラスミント)と食い違うときpullが取れているか」を確定できる。
+    """
+    import json, base64, httpx
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "APIキーが設定されていません")
+    token = base64.b64encode(f"{settings.rms_service_secret}:{settings.rms_license_key}".encode()).decode()
+    headers = {"Authorization": f"ESA {token}", "Content-Type": "application/json"}
+    url = "https://api.rms.rakuten.co.jp/es/2.0/inventories/bulk-get"
+
+    # この manageNumber に紐づくDB商品（送っているvariantId=skuを把握するため）
+    db_products = db.query(RakutenProduct).filter(
+        RakutenProduct.rakuten_item_url == manage_number,
+        RakutenProduct.is_active == True,
+    ).all()
+    db_rows = [
+        {"id": p.id, "sku": p.sku, "rakuten_sku_id": p.rakuten_sku_id, "db_stock": p.stock}
+        for p in db_products
+    ]
+    sent_variant_ids = [p.sku for p in db_products if p.sku]
+
+    async def _call(inventories: list[dict]):
+        body = json.dumps({"inventories": inventories}, ensure_ascii=False).encode("utf-8")
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.post(url, headers=headers, content=body)
+        try:
+            parsed = res.json()
+        except Exception:
+            parsed = res.text[:500]
+        return {"status": res.status_code, "body": parsed}
+
+    # ① ツールが実際に送る形: variantId=DBのsku（244など）
+    as_sent = await _call([{"manageNumber": manage_number, "variantId": vid} for vid in sent_variant_ids]) if sent_variant_ids else {"skipped": "DBにこのmanageNumberのskuなし"}
+    # ② variantIdを送らずmanageNumberだけ（楽天が配下全variantを返すか確認）
+    mn_only = await _call([{"manageNumber": manage_number}])
+
+    return {
+        "manage_number": manage_number,
+        "db_products": db_rows,
+        "sent_variant_ids": sent_variant_ids,
+        "result_as_tool_sends": as_sent,
+        "result_manage_number_only": mn_only,
+    }
+
+
 @router.post("/rms/test")
 async def test_rms_connection(db: Session = Depends(get_db)):
     """RMS API 接続テスト"""
