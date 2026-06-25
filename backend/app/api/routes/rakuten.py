@@ -1324,6 +1324,61 @@ async def debug_rms_inventory(
     }
 
 
+@router.get("/rms/debug-pull-missing")
+async def debug_rms_pull_missing(db: Session = Depends(get_db)):
+    """デバッグ用: pull対象の全SKUを楽天へ問い合わせ、楽天が返さないSKU（取りこぼし）を一覧する。
+    DB書き換えなし・読み取り専用。_pull_rms_stock と同じitems組み立てで、sent/returned/missingの差分を返す。
+    """
+    import re as _re
+    from app.services.rakuten_rms import fetch_inventory_from_rms
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "APIキーが設定されていません")
+
+    products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    sku_to_product = {p.sku: p for p in products}
+
+    # _pull_rms_stock と同一ロジックで送信items を組み立てる
+    items = []
+    for p in products:
+        sku = (p.sku or "").strip()
+        if not sku or p.is_component:
+            continue
+        if not _re.match(r'^[a-zA-Z0-9_\-]+$', sku):
+            continue
+        manage_number = (p.rakuten_item_url or sku.split("_")[0]).strip()
+        items.append({"manage_number": manage_number, "variant_id": sku})
+
+    rms_stock = await fetch_inventory_from_rms(
+        settings.rms_service_secret, settings.rms_license_key, items
+    )
+
+    sent_skus = {it["variant_id"] for it in items}
+    returned_skus = set(rms_stock.keys())
+    missing_skus = sent_skus - returned_skus
+    # 楽天は返したがDBにそのskuが無い（マッチ先がない）ケースも拾う
+    unmatched_returned = returned_skus - {p.sku for p in products}
+
+    missing_detail = []
+    for sku in sorted(missing_skus):
+        p = sku_to_product.get(sku)
+        missing_detail.append({
+            "sku": sku,
+            "manage_number": (p.rakuten_item_url or sku.split("_")[0]) if p else None,
+            "rakuten_sku_id": p.rakuten_sku_id if p else None,
+            "db_stock": p.stock if p else None,
+            "name": p.name if p else None,
+        })
+
+    return {
+        "sent": len(sent_skus),
+        "returned": len(returned_skus),
+        "missing_count": len(missing_skus),
+        "missing": missing_detail,
+        "unmatched_returned": sorted(unmatched_returned),
+    }
+
+
 @router.post("/rms/test")
 async def test_rms_connection(db: Session = Depends(get_db)):
     """RMS API 接続テスト"""
