@@ -402,10 +402,13 @@ async def fetch_recent_orders(
     service_secret: str,
     license_key: str,
     minutes: int = 3,
-) -> dict:
+) -> tuple[dict, list, set]:
     """
-    直近N分の注文を取得し、SKUごとの販売数量を返す。
-    戻り値: {"y76_black": 2, "y48_pink-s": 1, ...}
+    直近N分の注文を取得し、注文番号別のSKU数量とキャンセル注文番号を返す。
+    戻り値: (orders_by_num, order_numbers, cancelled_order_numbers)
+      orders_by_num: {order_number: {sku: qty}} — キャンセル含む全注文のSKU数量
+      order_numbers: searchOrderが返した全注文番号リスト
+      cancelled_order_numbers: orderProgress==900のキャンセル注文番号セット
     """
     headers = _auth_header(service_secret, license_key)
     from datetime import timezone
@@ -424,7 +427,7 @@ async def fetch_recent_orders(
             content=json.dumps(body, ensure_ascii=False).encode("utf-8"),
         )
         if not res.is_success:
-            return {}, []
+            return {}, [], set()
         data = res.json()
 
     order_numbers = []
@@ -436,10 +439,10 @@ async def fetch_recent_orders(
             order_numbers.append(str(num))
 
     if not order_numbers:
-        return {}, []
+        return {}, [], set()
 
-    # {order_number: {sku: qty}} 形式で返す（呼び出し側で重複排除できるよう注文番号単位）
     orders_by_num: dict[str, dict[str, int]] = {}
+    cancelled_order_numbers: set[str] = set()
     for i in range(0, len(order_numbers), BATCH_SIZE):
         batch = order_numbers[i:i + BATCH_SIZE]
         async with httpx.AsyncClient(timeout=30) as client:
@@ -452,9 +455,10 @@ async def fetch_recent_orders(
                 continue
             detail = res.json()
         for order in detail.get("OrderModelList", []):
-            if order.get("orderProgress", 0) == 900:
-                continue
             order_num = str(order.get("orderNumber") or "")
+            is_cancelled = order.get("orderProgress", 0) == 900
+            if is_cancelled:
+                cancelled_order_numbers.add(order_num)
             sku_map: dict[str, int] = {}
             for package in order.get("PackageModelList", []):
                 for item in package.get("ItemModelList", []):
@@ -470,8 +474,7 @@ async def fetch_recent_orders(
             if order_num and sku_map:
                 orders_by_num[order_num] = sku_map
 
-    # searchOrderで取得した注文番号リストも返す（重複排除用）
-    return orders_by_num, order_numbers
+    return orders_by_num, order_numbers, cancelled_order_numbers
 
 
 async def test_connection(service_secret: str, license_key: str) -> dict:

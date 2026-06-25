@@ -114,17 +114,36 @@ logger = logging.getLogger("scheduler")
 # 在庫同期ログ履歴（直近100件）
 _sync_logs: deque = deque(maxlen=100)
 
-# 処理済み注文番号（重複処理防止。直近200件を保持）
-_processed_order_numbers: set = set()
-_processed_order_numbers_queue: deque = deque(maxlen=200)
+# 処理済み注文番号と状態（重複処理防止＋キャンセル状態遷移追跡）
+# {order_number: "active" | "cancelled"} — 直近500件を保持
+_processed_orders: dict[str, str] = {}
+_processed_orders_queue: deque = deque(maxlen=500)
+
+def _get_component_parent_skus(products) -> set:
+    """セット商品（set_components有り）の構成品SKUを全て収集して返す"""
+    import json as _json
+    parent_skus = set()
+    for p in products:
+        if not p.set_components:
+            continue
+        try:
+            comps = _json.loads(p.set_components)
+        except Exception:
+            continue
+        for c in comps:
+            c_sku = c.get("sku")
+            if c_sku:
+                parent_skus.add(c_sku)
+    return parent_skus
 
 async def _sync_rakuten_stock():
-    """1分ごと: 直近2分の受注を検知してログに残す。
-    在庫の更新は行わない（在庫は _pull_rms_stock が楽天実数で一元管理）。"""
+    """1分ごと: 受注を検知し、単品在庫を減算（キャンセルは戻す）、セット在庫を再計算する。
+    pushは別途 RMS_PUSH_ENABLED で制御。ここではDB在庫の更新のみ。"""
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
     from app.services.rakuten_rms import fetch_recent_orders
+    import json as _json
 
     db = SessionLocal()
     try:
@@ -132,44 +151,143 @@ async def _sync_rakuten_stock():
         if not settings or not settings.rms_service_secret or not settings.rms_license_key:
             return
 
-        orders_by_num, order_nums = await fetch_recent_orders(settings.rms_service_secret, settings.rms_license_key, minutes=2)
+        orders_by_num, order_nums, cancelled_nums = await fetch_recent_orders(
+            settings.rms_service_secret, settings.rms_license_key, minutes=2
+        )
         if not order_nums:
             return
 
-        # 処理済み注文番号を除外して重複処理を防ぐ
-        new_order_nums = [n for n in order_nums if n not in _processed_order_numbers]
-        if not new_order_nums:
+        # 差分を計算: 新規受注(減算)、新規キャンセル(加算)、状態遷移
+        new_sold: dict[str, int] = {}       # 新規有効受注のSKU数量
+        new_cancelled: dict[str, int] = {}  # 新規キャンセルのSKU数量（戻す）
+        processed_new = 0
+
+        for n in order_nums:
+            prev_state = _processed_orders.get(n)
+            is_cancelled = n in cancelled_nums
+            cur_state = "cancelled" if is_cancelled else "active"
+
+            if prev_state == cur_state:
+                continue  # 前回と同じ状態 → 処理済み
+
+            skus = orders_by_num.get(n) or {}
+            if not skus:
+                continue
+
+            if prev_state is None and cur_state == "active":
+                # 新規有効受注 → 減算
+                for sku, qty in skus.items():
+                    new_sold[sku] = new_sold.get(sku, 0) + qty
+            elif prev_state is None and cur_state == "cancelled":
+                pass  # 初見でキャンセル済み → 減算も加算もしない
+            elif prev_state == "active" and cur_state == "cancelled":
+                # 有効→キャンセルに遷移 → 減算分を戻す
+                for sku, qty in skus.items():
+                    new_cancelled[sku] = new_cancelled.get(sku, 0) + qty
+
+            _processed_orders[n] = cur_state
+            _processed_orders_queue.append(n)
+            processed_new += 1
+
+        # キューが満杯時、古い注文をdictからも削除
+        while len(_processed_orders) > 500:
+            old = _processed_orders_queue.popleft()
+            _processed_orders.pop(old, None)
+
+        if not new_sold and not new_cancelled:
+            if processed_new > 0:
+                _sync_logs.appendleft({
+                    "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
+                    "note": f"受注{processed_new}件処理（在庫変動なし）",
+                })
             return
-        for n in new_order_nums:
-            _processed_order_numbers.add(n)
-            _processed_order_numbers_queue.append(n)
-        # キューが満杯になった古い注文番号をsetからも削除
-        while len(_processed_order_numbers) > 200:
-            old = _processed_order_numbers_queue.popleft()
-            _processed_order_numbers.discard(old)
 
-        # 新規注文番号分のSKU数量を集計
-        sold: dict[str, int] = {}
-        for n in new_order_nums:
-            for sku, qty in (orders_by_num.get(n) or {}).items():
-                sold[sku] = sold.get(sku, 0) + qty
+        # 全商品取得・SKU→商品マップ構築
+        all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+        sku_to_product = {p.sku: p for p in all_products}
+        sku_stock = {p.sku: (p.stock or 0) for p in all_products}
 
-        if not sold:
-            return
+        def parse_comps(p):
+            try:
+                return _json.loads(p.set_components or "[]")
+            except Exception:
+                return []
 
-        # 受注を検知してもDB在庫は書き換えない（受注分の自前減算・セット再計算は廃止）。
-        #
-        # 【廃止理由】在庫は楽天RMSが管理しており、毎分の _pull_rms_stock が
-        # 楽天の実在庫（単品・セットとも独立管理）をそのままDBに反映している。
-        # 受注分を別途自前で減算・再計算すると、pullした楽天実数と矛盾して
-        # 二重計上・ズレを生む（例: セット239が楽天269なのに自前計算で268に化ける）。
-        # → 在庫の正は常に楽天pull一本に統一する。ここでは受注の検知ログのみ残す。
+        # Step1: 売れたSKUの在庫を減算（セット商品なら構成品を展開して減算）
+        updated_skus = set()
+        for sku, qty in new_sold.items():
+            p = sku_to_product.get(sku)
+            if not p:
+                continue
+            comps = parse_comps(p)
+            if comps:
+                # セット商品 → 構成品の単品在庫を減算
+                for c in comps:
+                    c_sku = c.get("sku")
+                    c_qty = (c.get("qty") or 1) * qty
+                    cp = sku_to_product.get(c_sku)
+                    if cp and cp.stock is not None:
+                        cp.stock = max(0, cp.stock - c_qty)
+                        sku_stock[c_sku] = cp.stock
+                        updated_skus.add(c_sku)
+            else:
+                # 単品 → 自分自身を減算
+                if p.stock is not None:
+                    p.stock = max(0, p.stock - qty)
+                    sku_stock[sku] = p.stock
+                    updated_skus.add(sku)
+
+        # Step2: キャンセル分を戻す（セット商品なら構成品を展開して加算）
+        for sku, qty in new_cancelled.items():
+            p = sku_to_product.get(sku)
+            if not p:
+                continue
+            comps = parse_comps(p)
+            if comps:
+                for c in comps:
+                    c_sku = c.get("sku")
+                    c_qty = (c.get("qty") or 1) * qty
+                    cp = sku_to_product.get(c_sku)
+                    if cp and cp.stock is not None:
+                        cp.stock = cp.stock + c_qty
+                        sku_stock[c_sku] = cp.stock
+                        updated_skus.add(c_sku)
+            else:
+                if p.stock is not None:
+                    p.stock = p.stock + qty
+                    sku_stock[sku] = p.stock
+                    updated_skus.add(sku)
+
+        # Step3: 更新された単品を参照する全セット商品の在庫を再計算
+        for p in all_products:
+            comps = parse_comps(p)
+            if not comps:
+                continue
+            if not any(c.get("sku") in updated_skus for c in comps):
+                continue
+            req: dict[str, int] = {}
+            for c in comps:
+                c_sku = c.get("sku")
+                c_qty = c.get("qty") or 1
+                if c_sku:
+                    req[c_sku] = req.get(c_sku, 0) + c_qty
+            set_qty = None
+            for c_sku, c_qty in req.items():
+                avail = sku_stock.get(c_sku, 0) // c_qty
+                set_qty = avail if set_qty is None else min(set_qty, avail)
+            if set_qty is not None:
+                p.stock = set_qty
+                sku_stock[p.sku] = set_qty
+
+        db.commit()
+
         _sync_logs.appendleft({
             "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
-            "sold": sold,
-            "note": "受注検知のみ（在庫は楽天pullで反映。自前減算は廃止）",
+            "sold": new_sold if new_sold else None,
+            "cancelled": new_cancelled if new_cancelled else None,
+            "updated_skus": list(updated_skus),
         })
-        logger.info(f"[scheduler] 受注検知（在庫はpullで反映）: sold={sold}")
+        logger.info(f"[scheduler] 在庫更新: sold={new_sold} cancelled={new_cancelled} updated={updated_skus}")
     except Exception as e:
         _sync_logs.appendleft({"time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"), "error": str(e)})
         logger.warning(f"[scheduler] 在庫同期エラー: {e}")
@@ -214,7 +332,9 @@ async def _sync_rakuten_sales():
 
 
 async def _pull_rms_stock():
-    """RMSから在庫数を取得してDBに上書き。内部SKU（構成品）はRMS対象外でDB在庫を維持する。"""
+    """RMSから在庫数を取得してDBに上書き。
+    ただし「セットの構成品になっている単品SKU」はpullで上書きしない。
+    単品在庫はツールが受注減算で管理し、セット在庫は楽天から取得する。"""
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
@@ -226,18 +346,14 @@ async def _pull_rms_stock():
         if not settings or not settings.rms_service_secret or not settings.rms_license_key:
             return
 
-        # is_componentに関わらず全有効商品を取得。
-        # セット販売SKU（is_component=false）の在庫はRMSが基盤、
-        # 内部SKU（is_component=true: 構成品）はRMSに在庫が無く（発注→入荷処理でDBに在庫が入る）、
-        # そのDB在庫をそのまま維持する。
         products = db.query(RakutenProduct).filter(
             RakutenProduct.is_active == True,
         ).all()
         sku_to_product = {p.sku: p for p in products}
 
-        # RMSに問い合わせるのは内部SKU以外（内部SKUを送ると無効variantIdで弾かれる）
-        # variantIdに使えない文字（スペース・日本語等）を含むSKUは除外する。
-        # 1件でも不正なvariantIdが混ざるとbulk-getがエラーを返し、取得全体が失敗するため。
+        # セットの構成品になっているSKUを特定（pullで上書きしない対象）
+        component_parent_skus = _get_component_parent_skus(products)
+
         import re as _re
         items = []
         for p in products:
@@ -253,22 +369,27 @@ async def _pull_rms_stock():
             settings.rms_service_secret, settings.rms_license_key, items
         )
 
-        # RMSから取得できた在庫を上書き（内部SKUはRMS対象外なのでDB在庫を保持）。
-        # 構成品⇔セット間の在庫計算はRMSの正値を潰すため行わない。
         updated = 0
+        skipped = 0
         for sku, qty in rms_stock.items():
             p = sku_to_product.get(sku)
-            if p:
-                p.stock = qty
-                updated += 1
+            if not p:
+                continue
+            # セットの構成品になっている単品はpullで上書きしない（受注減算で管理）
+            if sku in component_parent_skus:
+                skipped += 1
+                continue
+            p.stock = qty
+            updated += 1
 
         db.commit()
-        logger.info(f"[scheduler] RMS在庫取得完了: {updated}件更新")
+        logger.info(f"[scheduler] RMS在庫取得完了: {updated}件更新, {skipped}件スキップ(単品管理)")
         _sync_logs.appendleft({
             "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
             "type": "rms_stock",
             "updated": updated,
             "sent": len(items),
+            "skipped_component_parents": skipped,
         })
     except Exception as e:
         logger.warning(f"[scheduler] RMS在庫取得エラー: {e}")
