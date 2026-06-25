@@ -11,6 +11,7 @@ from app.models import rakuten_order as rakuten_order_models
 from app.models import rakuten_settings as rakuten_settings_models
 from app.models import shipment_order as shipment_order_models
 from app.models import rakuten_ss_sales as rakuten_ss_sales_models
+from app.models import processed_order as processed_order_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -114,10 +115,36 @@ logger = logging.getLogger("scheduler")
 # 在庫同期ログ履歴（直近100件）
 _sync_logs: deque = deque(maxlen=100)
 
-# 処理済み注文番号と状態（重複処理防止＋キャンセル状態遷移追跡）
-# {order_number: "active" | "cancelled"} — 直近500件を保持
-_processed_orders: dict[str, str] = {}
-_processed_orders_queue: deque = deque(maxlen=500)
+def _load_processed_orders(db) -> dict[str, str]:
+    """DBから処理済み注文を読み込む"""
+    from app.models.processed_order import ProcessedOrder
+    rows = db.query(ProcessedOrder).all()
+    return {r.order_number: r.state for r in rows}
+
+
+def _save_processed_order(db, order_number: str, state: str):
+    """DBに処理済み注文を保存/更新"""
+    from app.models.processed_order import ProcessedOrder
+    existing = db.query(ProcessedOrder).filter(ProcessedOrder.order_number == order_number).first()
+    if existing:
+        existing.state = state
+    else:
+        db.add(ProcessedOrder(order_number=order_number, state=state))
+
+
+def _cleanup_old_processed_orders(db, keep_days=7):
+    """古い処理済み注文を削除。active注文はkeep_days日間保持、cancelledは30日超で削除"""
+    from app.models.processed_order import ProcessedOrder
+    cutoff_cancelled = dt.now(JST) - timedelta(days=30)
+    cutoff_active = dt.now(JST) - timedelta(days=keep_days)
+    db.query(ProcessedOrder).filter(
+        ProcessedOrder.state == "cancelled",
+        ProcessedOrder.updated_at < cutoff_cancelled,
+    ).delete(synchronize_session=False)
+    db.query(ProcessedOrder).filter(
+        ProcessedOrder.state == "active",
+        ProcessedOrder.updated_at < cutoff_active,
+    ).delete(synchronize_session=False)
 
 def _get_component_parent_skus(products) -> set:
     """セット商品（set_components有り）の構成品SKUを全て収集して返す"""
@@ -138,11 +165,12 @@ def _get_component_parent_skus(products) -> set:
 
 async def _sync_rakuten_stock():
     """1分ごと: 受注を検知し、単品在庫を減算（キャンセルは戻す）、セット在庫を再計算する。
-    pushは別途 RMS_PUSH_ENABLED で制御。ここではDB在庫の更新のみ。"""
+    処理済み注文はDBに永続化（再起動時の二重減算を防止）。
+    RMS_PUSH_ENABLED=trueの場合、在庫変更をRMSにpushする。"""
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
-    from app.services.rakuten_rms import fetch_recent_orders
+    from app.services.rakuten_rms import fetch_recent_orders, push_inventory_to_rms
     import json as _json
 
     db = SessionLocal()
@@ -157,52 +185,47 @@ async def _sync_rakuten_stock():
         if not order_nums:
             return
 
-        # 差分を計算: 新規受注(減算)、新規キャンセル(加算)、状態遷移
-        new_sold: dict[str, int] = {}       # 新規有効受注のSKU数量
-        new_cancelled: dict[str, int] = {}  # 新規キャンセルのSKU数量（戻す）
+        processed_orders = _load_processed_orders(db)
+
+        new_sold: dict[str, int] = {}
+        new_cancelled: dict[str, int] = {}
         processed_new = 0
 
         for n in order_nums:
-            prev_state = _processed_orders.get(n)
+            prev_state = processed_orders.get(n)
             is_cancelled = n in cancelled_nums
             cur_state = "cancelled" if is_cancelled else "active"
 
             if prev_state == cur_state:
-                continue  # 前回と同じ状態 → 処理済み
+                continue
 
             skus = orders_by_num.get(n) or {}
             if not skus:
                 continue
 
             if prev_state is None and cur_state == "active":
-                # 新規有効受注 → 減算
                 for sku, qty in skus.items():
                     new_sold[sku] = new_sold.get(sku, 0) + qty
             elif prev_state is None and cur_state == "cancelled":
-                pass  # 初見でキャンセル済み → 減算も加算もしない
+                pass
             elif prev_state == "active" and cur_state == "cancelled":
-                # 有効→キャンセルに遷移 → 減算分を戻す
                 for sku, qty in skus.items():
                     new_cancelled[sku] = new_cancelled.get(sku, 0) + qty
 
-            _processed_orders[n] = cur_state
-            _processed_orders_queue.append(n)
+            _save_processed_order(db, n, cur_state)
             processed_new += 1
 
-        # キューが満杯時、古い注文をdictからも削除
-        while len(_processed_orders) > 500:
-            old = _processed_orders_queue.popleft()
-            _processed_orders.pop(old, None)
+        _cleanup_old_processed_orders(db)
 
         if not new_sold and not new_cancelled:
             if processed_new > 0:
+                db.commit()
                 _sync_logs.appendleft({
                     "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
                     "note": f"受注{processed_new}件処理（在庫変動なし）",
                 })
             return
 
-        # 全商品取得・SKU→商品マップ構築
         all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
         sku_to_product = {p.sku: p for p in all_products}
         sku_stock = {p.sku: (p.stock or 0) for p in all_products}
@@ -213,7 +236,6 @@ async def _sync_rakuten_stock():
             except Exception:
                 return []
 
-        # Step1: 売れたSKUの在庫を減算（セット商品なら構成品を展開して減算）
         updated_skus = set()
         for sku, qty in new_sold.items():
             p = sku_to_product.get(sku)
@@ -221,7 +243,6 @@ async def _sync_rakuten_stock():
                 continue
             comps = parse_comps(p)
             if comps:
-                # セット商品 → 構成品の単品在庫を減算
                 for c in comps:
                     c_sku = c.get("sku")
                     c_qty = (c.get("qty") or 1) * qty
@@ -231,13 +252,11 @@ async def _sync_rakuten_stock():
                         sku_stock[c_sku] = cp.stock
                         updated_skus.add(c_sku)
             else:
-                # 単品 → 自分自身を減算
                 if p.stock is not None:
                     p.stock = max(0, p.stock - qty)
                     sku_stock[sku] = p.stock
                     updated_skus.add(sku)
 
-        # Step2: キャンセル分を戻す（セット商品なら構成品を展開して加算）
         for sku, qty in new_cancelled.items():
             p = sku_to_product.get(sku)
             if not p:
@@ -258,7 +277,7 @@ async def _sync_rakuten_stock():
                     sku_stock[sku] = p.stock
                     updated_skus.add(sku)
 
-        # Step3: 更新された単品を参照する全セット商品の在庫を再計算
+        updated_set_skus = set()
         for p in all_products:
             comps = parse_comps(p)
             if not comps:
@@ -278,19 +297,211 @@ async def _sync_rakuten_stock():
             if set_qty is not None:
                 p.stock = set_qty
                 sku_stock[p.sku] = set_qty
+                updated_set_skus.add(p.sku)
 
         db.commit()
+
+        # RMS_PUSH_ENABLED=trueの場合、変更されたSKUの在庫をRMSにpush
+        all_changed = updated_skus | updated_set_skus
+        if all_changed:
+            import re as _re
+            push_items = []
+            for sku in all_changed:
+                p = sku_to_product.get(sku)
+                if not p or p.is_component:
+                    continue
+                s = (p.sku or "").strip()
+                if not s or not _re.match(r'^[a-zA-Z0-9_\-]+$', s):
+                    continue
+                manage_number = (p.rakuten_item_url or s.split("_")[0]).strip()
+                push_items.append({
+                    "manage_number": manage_number,
+                    "variant_id": s,
+                    "quantity": p.stock or 0,
+                })
+            if push_items:
+                try:
+                    result = await push_inventory_to_rms(
+                        settings.rms_service_secret, settings.rms_license_key, push_items
+                    )
+                    logger.info(f"[scheduler] push結果: {result}")
+                except Exception as pe:
+                    logger.warning(f"[scheduler] push失敗: {pe}")
 
         _sync_logs.appendleft({
             "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
             "sold": new_sold if new_sold else None,
             "cancelled": new_cancelled if new_cancelled else None,
             "updated_skus": list(updated_skus),
+            "updated_sets": list(updated_set_skus),
         })
-        logger.info(f"[scheduler] 在庫更新: sold={new_sold} cancelled={new_cancelled} updated={updated_skus}")
+        logger.info(f"[scheduler] 在庫更新: sold={new_sold} cancelled={new_cancelled} updated={updated_skus} sets={updated_set_skus}")
     except Exception as e:
         _sync_logs.appendleft({"time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"), "error": str(e)})
         logger.warning(f"[scheduler] 在庫同期エラー: {e}")
+    finally:
+        db.close()
+
+
+async def _check_delayed_cancellations():
+    """30分ごと: DB内のactive注文をRMSで再確認し、遅延キャンセルを検出して在庫を戻す"""
+    from app.core.database import SessionLocal
+    from app.models.rakuten_settings import RakutenSettings
+    from app.models.rakuten_product import RakutenProduct
+    from app.models.processed_order import ProcessedOrder
+    from app.services.rakuten_rms import push_inventory_to_rms
+    import json as _json
+    import httpx
+
+    db = SessionLocal()
+    try:
+        settings = db.query(RakutenSettings).first()
+        if not settings or not settings.rms_service_secret or not settings.rms_license_key:
+            return
+
+        active_orders = db.query(ProcessedOrder).filter(ProcessedOrder.state == "active").all()
+        if not active_orders:
+            return
+
+        from app.services.rakuten_rms import _auth_header, RMS_BASE
+        import json
+        headers = {**_auth_header(settings.rms_service_secret, settings.rms_license_key),
+                   "Content-Type": "application/json; charset=utf-8"}
+
+        order_numbers = [o.order_number for o in active_orders]
+        BATCH = 100
+        newly_cancelled: dict[str, dict[str, int]] = {}
+
+        for i in range(0, len(order_numbers), BATCH):
+            batch = order_numbers[i:i + BATCH]
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    res = await client.post(
+                        f"{RMS_BASE}/2.0/order/getOrder",
+                        headers=headers,
+                        content=json.dumps({"orderNumberList": batch, "version": 10}, ensure_ascii=False).encode("utf-8"),
+                    )
+                    if not res.is_success:
+                        continue
+                    detail = res.json()
+                for order in detail.get("OrderModelList", []):
+                    order_num = str(order.get("orderNumber") or "")
+                    if order.get("orderProgress", 0) != 900:
+                        continue
+                    sku_map: dict[str, int] = {}
+                    for package in order.get("PackageModelList", []):
+                        for item in package.get("ItemModelList", []):
+                            qty = item.get("units", 1) or 1
+                            sku_list = item.get("SkuModelList") or []
+                            skus = [s.get("variantId", "") for s in sku_list if s.get("variantId")]
+                            if not skus:
+                                skus = [item.get("manageNumber", "") or item.get("itemNumber", "")]
+                            for sku in skus:
+                                if sku:
+                                    sku_map[sku] = sku_map.get(sku, 0) + qty
+                    if order_num and sku_map:
+                        newly_cancelled[order_num] = sku_map
+            except Exception as e:
+                logger.warning(f"[scheduler] キャンセル再チェックAPI失敗: {e}")
+                continue
+
+        if not newly_cancelled:
+            return
+
+        all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+        sku_to_product = {p.sku: p for p in all_products}
+        sku_stock = {p.sku: (p.stock or 0) for p in all_products}
+
+        def parse_comps(p):
+            try:
+                return _json.loads(p.set_components or "[]")
+            except Exception:
+                return []
+
+        updated_skus = set()
+        for order_num, sku_map in newly_cancelled.items():
+            for sku, qty in sku_map.items():
+                p = sku_to_product.get(sku)
+                if not p:
+                    continue
+                comps = parse_comps(p)
+                if comps:
+                    for c in comps:
+                        c_sku = c.get("sku")
+                        c_qty = (c.get("qty") or 1) * qty
+                        cp = sku_to_product.get(c_sku)
+                        if cp and cp.stock is not None:
+                            cp.stock = cp.stock + c_qty
+                            sku_stock[c_sku] = cp.stock
+                            updated_skus.add(c_sku)
+                else:
+                    if p.stock is not None:
+                        p.stock = p.stock + qty
+                        sku_stock[sku] = p.stock
+                        updated_skus.add(sku)
+
+            _save_processed_order(db, order_num, "cancelled")
+
+        updated_set_skus = set()
+        for p in all_products:
+            comps = parse_comps(p)
+            if not comps:
+                continue
+            if not any(c.get("sku") in updated_skus for c in comps):
+                continue
+            req: dict[str, int] = {}
+            for c in comps:
+                c_sku = c.get("sku")
+                c_qty = c.get("qty") or 1
+                if c_sku:
+                    req[c_sku] = req.get(c_sku, 0) + c_qty
+            set_qty = None
+            for c_sku, c_qty in req.items():
+                avail = sku_stock.get(c_sku, 0) // c_qty
+                set_qty = avail if set_qty is None else min(set_qty, avail)
+            if set_qty is not None:
+                p.stock = set_qty
+                sku_stock[p.sku] = set_qty
+                updated_set_skus.add(p.sku)
+
+        db.commit()
+
+        all_changed = updated_skus | updated_set_skus
+        if all_changed:
+            import re as _re
+            push_items = []
+            for sku in all_changed:
+                p = sku_to_product.get(sku)
+                if not p or p.is_component:
+                    continue
+                s = (p.sku or "").strip()
+                if not s or not _re.match(r'^[a-zA-Z0-9_\-]+$', s):
+                    continue
+                manage_number = (p.rakuten_item_url or s.split("_")[0]).strip()
+                push_items.append({
+                    "manage_number": manage_number,
+                    "variant_id": s,
+                    "quantity": p.stock or 0,
+                })
+            if push_items:
+                try:
+                    result = await push_inventory_to_rms(
+                        settings.rms_service_secret, settings.rms_license_key, push_items
+                    )
+                    logger.info(f"[scheduler] キャンセル戻しpush結果: {result}")
+                except Exception as pe:
+                    logger.warning(f"[scheduler] キャンセル戻しpush失敗: {pe}")
+
+        cancelled_nums = list(newly_cancelled.keys())
+        _sync_logs.appendleft({
+            "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
+            "type": "delayed_cancellation",
+            "cancelled_orders": cancelled_nums,
+            "updated_skus": list(updated_skus),
+        })
+        logger.info(f"[scheduler] 遅延キャンセル検出: {len(cancelled_nums)}件 updated={updated_skus}")
+    except Exception as e:
+        logger.warning(f"[scheduler] キャンセル再チェックエラー: {e}")
     finally:
         db.close()
 
@@ -402,17 +613,135 @@ async def _pull_rms_stock():
         db.close()
 
 
+async def _seed_processed_orders():
+    """初回起動時: processed_ordersが空なら過去7日分の注文を在庫操作なしでseedする。
+    これにより既に旧プロセスで処理済みの注文を二重減算しない。"""
+    from app.core.database import SessionLocal
+    from app.models.rakuten_settings import RakutenSettings
+    from app.models.processed_order import ProcessedOrder
+    from app.services.rakuten_rms import _auth_header, RMS_BASE
+    import httpx, json
+
+    db = SessionLocal()
+    try:
+        existing_count = db.query(ProcessedOrder).count()
+        if existing_count > 0:
+            logger.info(f"[scheduler] seed不要: processed_orders={existing_count}件")
+            return
+
+        settings = db.query(RakutenSettings).first()
+        if not settings or not settings.rms_service_secret or not settings.rms_license_key:
+            return
+
+        headers = {**_auth_header(settings.rms_service_secret, settings.rms_license_key),
+                   "Content-Type": "application/json; charset=utf-8"}
+        now = dt.now(JST)
+        seed_end = now - timedelta(minutes=5)
+
+        seen: set[str] = set()
+        all_order_numbers: list[str] = []
+        for days_ago in range(7):
+            start = (now - timedelta(days=days_ago + 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            if days_ago == 0:
+                end = seed_end
+            else:
+                end = (now - timedelta(days=days_ago)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+            if start >= end:
+                continue
+
+            page = 1
+            while True:
+                body = {
+                    "dateType": 1,
+                    "startDatetime": start.strftime("%Y-%m-%dT%H:%M:%S+0900"),
+                    "endDatetime": end.strftime("%Y-%m-%dT%H:%M:%S+0900"),
+                    "PaginationRequestModel": {"requestRecordsAmount": 100, "requestPage": page},
+                }
+                try:
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        res = await client.post(
+                            f"{RMS_BASE}/2.0/order/searchOrder",
+                            headers=headers,
+                            content=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                        )
+                        if not res.is_success:
+                            break
+                        data = res.json()
+                except Exception:
+                    break
+
+                page_orders = []
+                for item in (data.get("orderNumberList") or []):
+                    num = item if isinstance(item, str) else (
+                        item.get("orderNumber") or item.get("order_number") or ""
+                    )
+                    if num and str(num) not in seen:
+                        seen.add(str(num))
+                        page_orders.append(str(num))
+
+                all_order_numbers.extend(page_orders)
+                if len(page_orders) < 100 or page >= 10:
+                    break
+                page += 1
+
+        if not all_order_numbers:
+            logger.info("[scheduler] seed: 過去7日の注文なし")
+            return
+
+        BATCH = 100
+        seeded = 0
+        for i in range(0, len(all_order_numbers), BATCH):
+            batch = all_order_numbers[i:i + BATCH]
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    res = await client.post(
+                        f"{RMS_BASE}/2.0/order/getOrder",
+                        headers=headers,
+                        content=json.dumps({"orderNumberList": batch, "version": 10}, ensure_ascii=False).encode("utf-8"),
+                    )
+                    if not res.is_success:
+                        continue
+                    detail = res.json()
+                for order in detail.get("OrderModelList", []):
+                    order_num = str(order.get("orderNumber") or "")
+                    if not order_num:
+                        continue
+                    is_cancelled = order.get("orderProgress", 0) == 900
+                    state = "cancelled" if is_cancelled else "active"
+                    _save_processed_order(db, order_num, state)
+                    seeded += 1
+            except Exception as e:
+                logger.warning(f"[scheduler] seed getOrder失敗: {e}")
+                continue
+
+        db.commit()
+        _sync_logs.appendleft({
+            "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
+            "type": "seed",
+            "seeded": seeded,
+            "total_searched": len(all_order_numbers),
+        })
+        logger.info(f"[scheduler] 初回seed完了: {seeded}件（在庫操作なし）")
+    except Exception as e:
+        logger.warning(f"[scheduler] seedエラー: {e}")
+    finally:
+        db.close()
+
+
 async def _scheduler_loop():
-    """1分ごとに受注差分の在庫同期＋RMS在庫取得、1時間ごとに販売数同期を実行"""
-    # 起動直後にRMS在庫を1回取得しておく（デプロイ/再起動後すぐ最新にする）
+    """1分ごとに受注差分の在庫同期＋RMS在庫取得、30分ごとにキャンセル再チェック、1時間ごとに販売数同期を実行"""
+    await _seed_processed_orders()
     await _pull_rms_stock()
     tick = 0
     while True:
         await asyncio.sleep(60)
         tick += 1
         await _sync_rakuten_stock()
-        await _pull_rms_stock()  # 1分ごと: RMSから最新在庫を取得
-        if tick % 60 == 0:  # 60分ごと: 販売数同期（60日分の受注取得で重いため低頻度）
+        await _pull_rms_stock()
+        if tick % 30 == 0:
+            await _check_delayed_cancellations()
+        if tick % 60 == 0:
             await _sync_rakuten_sales()
 
 

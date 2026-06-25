@@ -414,29 +414,39 @@ async def fetch_recent_orders(
     from datetime import timezone
     now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=9)))
     start = now - timedelta(minutes=minutes)
-    body = {
-        "dateType": 1,
-        "startDatetime": start.strftime("%Y-%m-%dT%H:%M:%S+0900"),
-        "endDatetime":   now.strftime("%Y-%m-%dT%H:%M:%S+0900"),
-        "PaginationRequestModel": {"requestRecordsAmount": 100, "requestPage": 1},
-    }
-    async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.post(
-            f"{RMS_BASE}/2.0/order/searchOrder",
-            headers={**headers, "Content-Type": "application/json; charset=utf-8"},
-            content=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-        )
-        if not res.is_success:
-            return {}, [], set()
-        data = res.json()
 
     order_numbers = []
-    for item in (data.get("orderNumberList") or []):
-        num = item if isinstance(item, str) else (
-            item.get("orderNumber") or item.get("order_number") or ""
-        )
-        if num:
-            order_numbers.append(str(num))
+    page = 1
+    while True:
+        body = {
+            "dateType": 1,
+            "startDatetime": start.strftime("%Y-%m-%dT%H:%M:%S+0900"),
+            "endDatetime":   now.strftime("%Y-%m-%dT%H:%M:%S+0900"),
+            "PaginationRequestModel": {"requestRecordsAmount": 100, "requestPage": page},
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.post(
+                f"{RMS_BASE}/2.0/order/searchOrder",
+                headers={**headers, "Content-Type": "application/json; charset=utf-8"},
+                content=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            )
+            if not res.is_success:
+                break
+            data = res.json()
+
+        page_orders = []
+        for item in (data.get("orderNumberList") or []):
+            num = item if isinstance(item, str) else (
+                item.get("orderNumber") or item.get("order_number") or ""
+            )
+            if num:
+                page_orders.append(str(num))
+
+        order_numbers.extend(page_orders)
+
+        if len(page_orders) < 100 or page >= 10:
+            break
+        page += 1
 
     if not order_numbers:
         return {}, [], set()
