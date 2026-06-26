@@ -1861,78 +1861,147 @@ def get_ss_sales(period: Optional[str] = None, db: Session = Depends(get_db)):
 
 # ===== 段階的push検証（段階2） =====
 
+
+def _resolve_push_group(component_sku: str, db: Session) -> dict:
+    """単品SKUを起点に、関連セットを探索し、単品在庫からセット在庫を再計算する。
+    戻り値: {
+      "component": {"sku", "stock", "manage_number", "name"},
+      "sets": [{"sku", "db_stock", "calculated_stock", "manage_number", "name", "components"}, ...],
+    }
+    """
+    import re as _re
+    all_products = db.query(RakutenProduct).filter(
+        RakutenProduct.is_active == True,
+    ).all()
+    sku_to_product = {p.sku: p for p in all_products}
+
+    comp_product = sku_to_product.get(component_sku)
+    if not comp_product:
+        return None
+
+    comp_stock = comp_product.stock or 0
+
+    def parse_comps(p):
+        try:
+            return json.loads(p.set_components or "[]")
+        except Exception:
+            return []
+
+    sets = []
+    for p in all_products:
+        comps = parse_comps(p)
+        if not comps:
+            continue
+        comp_skus_in_set = [c.get("sku") for c in comps]
+        if component_sku not in comp_skus_in_set:
+            continue
+        if p.is_component:
+            continue
+        s = (p.sku or "").strip()
+        if not s or not _re.match(r'^[a-zA-Z0-9_\-]+$', s):
+            continue
+
+        set_qty = None
+        for c in comps:
+            c_sku = c.get("sku")
+            c_qty = c.get("qty") or 1
+            avail = (sku_to_product.get(c_sku).stock or 0) // c_qty if sku_to_product.get(c_sku) else 0
+            set_qty = avail if set_qty is None else min(set_qty, avail)
+
+        manage_number = (p.rakuten_item_url or s.split("_")[0]).strip()
+        sets.append({
+            "sku": s,
+            "db_stock": p.stock or 0,
+            "calculated_stock": set_qty if set_qty is not None else 0,
+            "manage_number": manage_number,
+            "name": p.name,
+            "components": comps,
+        })
+
+    comp_mn = (comp_product.rakuten_item_url or component_sku.split("_")[0]).strip()
+    return {
+        "component": {
+            "sku": component_sku,
+            "stock": comp_stock,
+            "manage_number": comp_mn,
+            "name": comp_product.name,
+        },
+        "sets": sets,
+    }
+
+
 @router.get("/rms/debug-push-preview")
 async def debug_push_preview(
-    skus: str = "",
+    component_sku: str = "",
     db: Session = Depends(get_db),
 ):
-    """指定SKUのDB在庫と楽天実在庫を並べて比較する（読み取り専用）。
-    skus: カンマ区切りのSKU一覧（例: y14_brown,y14_natural）。空なら全SKU。
+    """単品SKUを指定 → 関連セットを自動探索 → 単品在庫からセット在庫を再計算して楽天値と比較。
+    component_sku: 単品SKU（例: 244）。関連セットは自動で含まれる。
     """
     import re as _re
     from app.services.rakuten_rms import fetch_inventory_from_rms
+
+    if not component_sku.strip():
+        raise HTTPException(400, "component_sku を指定してください（例: 244）")
+
     settings = _get_or_create_settings(db)
     if not settings.rms_service_secret or not settings.rms_license_key:
         raise HTTPException(400, "APIキーが設定されていません")
 
-    sku_list = [s.strip() for s in skus.split(",") if s.strip()] if skus.strip() else []
+    group = _resolve_push_group(component_sku.strip(), db)
+    if not group:
+        raise HTTPException(404, f"SKU '{component_sku}' が見つかりません")
 
-    query = db.query(RakutenProduct).filter(
-        RakutenProduct.is_active == True,
-        RakutenProduct.is_component == False,
-    )
-    if sku_list:
-        query = query.filter(RakutenProduct.sku.in_(sku_list))
-    products = query.all()
+    comp = group["component"]
+    sets = group["sets"]
 
-    if not products:
-        raise HTTPException(404, "対象SKUが見つかりません")
-
-    items = []
-    sku_to_product = {}
-    for p in products:
-        s = (p.sku or "").strip()
-        if not s or not _re.match(r'^[a-zA-Z0-9_\-]+$', s):
-            continue
-        manage_number = (p.rakuten_item_url or s.split("_")[0]).strip()
-        items.append({"manage_number": manage_number, "variant_id": s})
-        sku_to_product[s] = p
+    fetch_items = [{"manage_number": comp["manage_number"], "variant_id": comp["sku"]}]
+    for s in sets:
+        fetch_items.append({"manage_number": s["manage_number"], "variant_id": s["sku"]})
 
     rms_stock = await fetch_inventory_from_rms(
-        settings.rms_service_secret, settings.rms_license_key, items
+        settings.rms_service_secret, settings.rms_license_key, fetch_items
     )
 
-    comparison = []
-    for item in items:
-        s = item["variant_id"]
-        p = sku_to_product[s]
-        rms_qty = rms_stock.get(s)
-        db_qty = p.stock or 0
-        comparison.append({
-            "sku": s,
-            "manage_number": item["manage_number"],
-            "name": p.name,
-            "db_stock": db_qty,
+    rms_comp = rms_stock.get(comp["sku"])
+    comp_result = {
+        "sku": comp["sku"],
+        "manage_number": comp["manage_number"],
+        "name": comp["name"],
+        "role": "component",
+        "db_stock": comp["stock"],
+        "push_value": comp["stock"],
+        "rms_stock": rms_comp,
+        "diff": comp["stock"] - rms_comp if rms_comp is not None else None,
+    }
+
+    set_results = []
+    for s in sets:
+        rms_qty = rms_stock.get(s["sku"])
+        set_results.append({
+            "sku": s["sku"],
+            "manage_number": s["manage_number"],
+            "name": s["name"],
+            "role": "set",
+            "db_stock": s["db_stock"],
+            "push_value": s["calculated_stock"],
             "rms_stock": rms_qty,
-            "diff": db_qty - rms_qty if rms_qty is not None else None,
-            "match": db_qty == rms_qty if rms_qty is not None else None,
+            "diff": s["calculated_stock"] - rms_qty if rms_qty is not None else None,
+            "components": s["components"],
         })
 
-    matched = sum(1 for c in comparison if c["match"] is True)
-    mismatched = sum(1 for c in comparison if c["match"] is False)
-    missing = sum(1 for c in comparison if c["rms_stock"] is None)
-
     return {
-        "total": len(comparison),
-        "matched": matched,
-        "mismatched": mismatched,
-        "missing_from_rms": missing,
-        "items": comparison,
+        "component": comp_result,
+        "sets": set_results,
+        "summary": {
+            "total_push_targets": 1 + len(set_results),
+            "component_db_vs_rms": f"{comp['stock']} vs {rms_comp}",
+        },
     }
 
 
 class DebugPushRequest(BaseModel):
-    skus: list[str]
+    component_sku: str
 
 
 @router.post("/rms/debug-push-execute")
@@ -1940,54 +2009,54 @@ async def debug_push_execute(
     req: DebugPushRequest,
     db: Session = Depends(get_db),
 ):
-    """指定SKUだけRMSに在庫pushする（RMS_PUSH_ENABLEDフラグを無視）。
-    段階2の検証用: 1〜数SKUの手動push。最大10SKUまで。
+    """単品SKUを指定 → 関連セットを再計算 → 単品+セットをまとめてRMSにpush。
+    RMS_PUSH_ENABLEDフラグを無視。push前後の楽天値と時刻を記録。
     """
-    import re as _re, base64, httpx, asyncio
+    import re as _re, base64, httpx
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
 
-    if len(req.skus) > 10:
-        raise HTTPException(400, "一度にpushできるのは最大10SKUです")
-    if not req.skus:
-        raise HTTPException(400, "SKUを1つ以上指定してください")
+    component_sku = req.component_sku.strip()
+    if not component_sku:
+        raise HTTPException(400, "component_sku を指定してください")
 
     settings = _get_or_create_settings(db)
     if not settings.rms_service_secret or not settings.rms_license_key:
         raise HTTPException(400, "APIキーが設定されていません")
 
-    sku_list = [s.strip() for s in req.skus if s.strip()]
-    products = db.query(RakutenProduct).filter(
-        RakutenProduct.is_active == True,
-        RakutenProduct.sku.in_(sku_list),
-    ).all()
-    sku_to_product = {p.sku: p for p in products}
+    group = _resolve_push_group(component_sku, db)
+    if not group:
+        raise HTTPException(404, f"SKU '{component_sku}' が見つかりません")
 
-    not_found = [s for s in sku_list if s not in sku_to_product]
-    if not_found:
-        raise HTTPException(404, f"DBに存在しないSKU: {not_found}")
+    comp = group["component"]
+    sets = group["sets"]
+
+    push_items = [{
+        "manage_number": comp["manage_number"],
+        "variant_id": comp["sku"],
+        "quantity": comp["stock"],
+        "role": "component",
+    }]
+    for s in sets:
+        push_items.append({
+            "manage_number": s["manage_number"],
+            "variant_id": s["sku"],
+            "quantity": s["calculated_stock"],
+            "role": "set",
+        })
+
+    if len(push_items) > 30:
+        raise HTTPException(400, f"push対象が{len(push_items)}件と多すぎます（上限30）")
 
     from app.services.rakuten_rms import fetch_inventory_from_rms
 
-    push_items = []
-    for s in sku_list:
-        p = sku_to_product[s]
-        if p.is_component:
-            raise HTTPException(400, f"{s} は内部SKU（is_component=True）のためpush不可")
-        if not _re.match(r'^[a-zA-Z0-9_\-]+$', s):
-            raise HTTPException(400, f"{s} はRMS variantIdに使えない文字を含みます")
-        manage_number = (p.rakuten_item_url or s.split("_")[0]).strip()
-        push_items.append({
-            "manage_number": manage_number,
-            "variant_id": s,
-            "quantity": p.stock or 0,
-        })
-
-    # push前の楽天在庫を記録
     fetch_items = [{"manage_number": i["manage_number"], "variant_id": i["variant_id"]} for i in push_items]
     rms_before = await fetch_inventory_from_rms(
         settings.rms_service_secret, settings.rms_license_key, fetch_items
     )
 
-    # RMS_PUSH_ENABLEDを無視して直接pushする
+    jst = _tz(_td(hours=9))
+    time_before = _dt.now(jst).strftime("%Y-%m-%d %H:%M:%S")
+
     token = base64.b64encode(
         f"{settings.rms_service_secret}:{settings.rms_license_key}".encode()
     ).decode()
@@ -2006,6 +2075,7 @@ async def debug_push_execute(
                 results.append({
                     "sku": vid,
                     "manage_number": mn,
+                    "role": item["role"],
                     "pushed_qty": qty,
                     "rms_before": rms_before.get(vid),
                     "http_status": res.status_code,
@@ -2016,6 +2086,7 @@ async def debug_push_execute(
                 results.append({
                     "sku": vid,
                     "manage_number": mn,
+                    "role": item["role"],
                     "pushed_qty": qty,
                     "rms_before": rms_before.get(vid),
                     "http_status": None,
@@ -2023,9 +2094,22 @@ async def debug_push_execute(
                     "detail": str(e),
                 })
 
+    time_after = _dt.now(jst).strftime("%Y-%m-%d %H:%M:%S")
+
+    rms_after = await fetch_inventory_from_rms(
+        settings.rms_service_secret, settings.rms_license_key, fetch_items
+    )
+    time_verified = _dt.now(jst).strftime("%Y-%m-%d %H:%M:%S")
+
+    for r in results:
+        r["rms_after"] = rms_after.get(r["sku"])
+
     ok_count = sum(1 for r in results if r["ok"])
     return {
         "ok": ok_count,
         "fail": len(results) - ok_count,
+        "time_before_push": time_before,
+        "time_after_push": time_after,
+        "time_verified": time_verified,
         "results": results,
     }
