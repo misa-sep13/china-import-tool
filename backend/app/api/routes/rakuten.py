@@ -1857,3 +1857,175 @@ def get_ss_sales(period: Optional[str] = None, db: Session = Depends(get_db)):
         return {"period": None, "sales": {}}
     rows = db.query(RakutenSsSales).filter(RakutenSsSales.ss_period == period).all()
     return {"period": period, "sales": {r.sku: r.qty for r in rows}}
+
+
+# ===== 段階的push検証（段階2） =====
+
+@router.get("/rms/debug-push-preview")
+async def debug_push_preview(
+    skus: str = "",
+    db: Session = Depends(get_db),
+):
+    """指定SKUのDB在庫と楽天実在庫を並べて比較する（読み取り専用）。
+    skus: カンマ区切りのSKU一覧（例: y14_brown,y14_natural）。空なら全SKU。
+    """
+    import re as _re
+    from app.services.rakuten_rms import fetch_inventory_from_rms
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "APIキーが設定されていません")
+
+    sku_list = [s.strip() for s in skus.split(",") if s.strip()] if skus.strip() else []
+
+    query = db.query(RakutenProduct).filter(
+        RakutenProduct.is_active == True,
+        RakutenProduct.is_component == False,
+    )
+    if sku_list:
+        query = query.filter(RakutenProduct.sku.in_(sku_list))
+    products = query.all()
+
+    if not products:
+        raise HTTPException(404, "対象SKUが見つかりません")
+
+    items = []
+    sku_to_product = {}
+    for p in products:
+        s = (p.sku or "").strip()
+        if not s or not _re.match(r'^[a-zA-Z0-9_\-]+$', s):
+            continue
+        manage_number = (p.rakuten_item_url or s.split("_")[0]).strip()
+        items.append({"manage_number": manage_number, "variant_id": s})
+        sku_to_product[s] = p
+
+    rms_stock = await fetch_inventory_from_rms(
+        settings.rms_service_secret, settings.rms_license_key, items
+    )
+
+    comparison = []
+    for item in items:
+        s = item["variant_id"]
+        p = sku_to_product[s]
+        rms_qty = rms_stock.get(s)
+        db_qty = p.stock or 0
+        comparison.append({
+            "sku": s,
+            "manage_number": item["manage_number"],
+            "name": p.name,
+            "db_stock": db_qty,
+            "rms_stock": rms_qty,
+            "diff": db_qty - rms_qty if rms_qty is not None else None,
+            "match": db_qty == rms_qty if rms_qty is not None else None,
+        })
+
+    matched = sum(1 for c in comparison if c["match"] is True)
+    mismatched = sum(1 for c in comparison if c["match"] is False)
+    missing = sum(1 for c in comparison if c["rms_stock"] is None)
+
+    return {
+        "total": len(comparison),
+        "matched": matched,
+        "mismatched": mismatched,
+        "missing_from_rms": missing,
+        "items": comparison,
+    }
+
+
+class DebugPushRequest(BaseModel):
+    skus: list[str]
+
+
+@router.post("/rms/debug-push-execute")
+async def debug_push_execute(
+    req: DebugPushRequest,
+    db: Session = Depends(get_db),
+):
+    """指定SKUだけRMSに在庫pushする（RMS_PUSH_ENABLEDフラグを無視）。
+    段階2の検証用: 1〜数SKUの手動push。最大10SKUまで。
+    """
+    import re as _re, base64, httpx, asyncio
+
+    if len(req.skus) > 10:
+        raise HTTPException(400, "一度にpushできるのは最大10SKUです")
+    if not req.skus:
+        raise HTTPException(400, "SKUを1つ以上指定してください")
+
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "APIキーが設定されていません")
+
+    sku_list = [s.strip() for s in req.skus if s.strip()]
+    products = db.query(RakutenProduct).filter(
+        RakutenProduct.is_active == True,
+        RakutenProduct.sku.in_(sku_list),
+    ).all()
+    sku_to_product = {p.sku: p for p in products}
+
+    not_found = [s for s in sku_list if s not in sku_to_product]
+    if not_found:
+        raise HTTPException(404, f"DBに存在しないSKU: {not_found}")
+
+    from app.services.rakuten_rms import fetch_inventory_from_rms
+
+    push_items = []
+    for s in sku_list:
+        p = sku_to_product[s]
+        if p.is_component:
+            raise HTTPException(400, f"{s} は内部SKU（is_component=True）のためpush不可")
+        if not _re.match(r'^[a-zA-Z0-9_\-]+$', s):
+            raise HTTPException(400, f"{s} はRMS variantIdに使えない文字を含みます")
+        manage_number = (p.rakuten_item_url or s.split("_")[0]).strip()
+        push_items.append({
+            "manage_number": manage_number,
+            "variant_id": s,
+            "quantity": p.stock or 0,
+        })
+
+    # push前の楽天在庫を記録
+    fetch_items = [{"manage_number": i["manage_number"], "variant_id": i["variant_id"]} for i in push_items]
+    rms_before = await fetch_inventory_from_rms(
+        settings.rms_service_secret, settings.rms_license_key, fetch_items
+    )
+
+    # RMS_PUSH_ENABLEDを無視して直接pushする
+    token = base64.b64encode(
+        f"{settings.rms_service_secret}:{settings.rms_license_key}".encode()
+    ).decode()
+    headers = {"Authorization": f"ESA {token}", "Content-Type": "application/json"}
+
+    results = []
+    async with httpx.AsyncClient(timeout=30) as client:
+        for item in push_items:
+            mn = item["manage_number"]
+            vid = item["variant_id"]
+            qty = item["quantity"]
+            url = f"https://api.rms.rakuten.co.jp/es/2.0/inventories/manage-numbers/{mn}/variants/{vid}"
+            body = json.dumps({"mode": "ABSOLUTE", "quantity": qty}, ensure_ascii=False).encode("utf-8")
+            try:
+                res = await client.put(url, headers=headers, content=body)
+                results.append({
+                    "sku": vid,
+                    "manage_number": mn,
+                    "pushed_qty": qty,
+                    "rms_before": rms_before.get(vid),
+                    "http_status": res.status_code,
+                    "ok": res.status_code == 204,
+                    "detail": None if res.status_code == 204 else res.text[:200],
+                })
+            except Exception as e:
+                results.append({
+                    "sku": vid,
+                    "manage_number": mn,
+                    "pushed_qty": qty,
+                    "rms_before": rms_before.get(vid),
+                    "http_status": None,
+                    "ok": False,
+                    "detail": str(e),
+                })
+
+    ok_count = sum(1 for r in results if r["ok"])
+    return {
+        "ok": ok_count,
+        "fail": len(results) - ok_count,
+        "results": results,
+    }
