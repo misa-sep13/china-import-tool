@@ -1901,11 +1901,14 @@ def _resolve_push_group(component_sku: str, db: Session) -> dict:
         if not s or not _re.match(r'^[a-zA-Z0-9_\-]+$', s):
             continue
 
-        set_qty = None
+        merged = {}
         for c in comps:
             c_sku = c.get("sku")
             c_qty = c.get("qty") or 1
-            avail = (sku_to_product.get(c_sku).stock or 0) // c_qty if sku_to_product.get(c_sku) else 0
+            merged[c_sku] = merged.get(c_sku, 0) + c_qty
+        set_qty = None
+        for c_sku, total_qty in merged.items():
+            avail = (sku_to_product.get(c_sku).stock or 0) // total_qty if sku_to_product.get(c_sku) else 0
             set_qty = avail if set_qty is None else min(set_qty, avail)
 
         manage_number = (p.rakuten_item_url or s.split("_")[0]).strip()
