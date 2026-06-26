@@ -1944,11 +1944,16 @@ async def debug_push_preview(
     if not component_sku.strip():
         raise HTTPException(400, "component_sku を指定してください（例: 244）")
 
+    sku_val = component_sku.strip()
+    check_p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku_val, RakutenProduct.is_active == True).first()
+    if check_p and check_p.set_components and check_p.set_components != "[]":
+        raise HTTPException(400, f"'{sku_val}' はセットSKUです。構成品の単品SKUを指定してください")
+
     settings = _get_or_create_settings(db)
     if not settings.rms_service_secret or not settings.rms_license_key:
         raise HTTPException(400, "APIキーが設定されていません")
 
-    group = _resolve_push_group(component_sku.strip(), db)
+    group = _resolve_push_group(sku_val, db)
     if not group:
         raise HTTPException(404, f"SKU '{component_sku}' が見つかりません")
 
@@ -2018,6 +2023,10 @@ async def debug_push_execute(
     component_sku = req.component_sku.strip()
     if not component_sku:
         raise HTTPException(400, "component_sku を指定してください")
+
+    check_p = db.query(RakutenProduct).filter(RakutenProduct.sku == component_sku, RakutenProduct.is_active == True).first()
+    if check_p and check_p.set_components and check_p.set_components != "[]":
+        raise HTTPException(400, f"'{component_sku}' はセットSKUです。構成品の単品SKUを指定してください")
 
     settings = _get_or_create_settings(db)
     if not settings.rms_service_secret or not settings.rms_license_key:
