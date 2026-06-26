@@ -2017,7 +2017,7 @@ async def debug_push_execute(
     """単品SKUを指定 → 関連セットを再計算 → 単品+セットをまとめてRMSにpush。
     RMS_PUSH_ENABLEDフラグを無視。push前後の楽天値と時刻を記録。
     """
-    import re as _re, base64, httpx
+    import re as _re, base64, httpx, asyncio
     from datetime import datetime as _dt, timezone as _tz, timedelta as _td
 
     component_sku = req.component_sku.strip()
@@ -2073,35 +2073,47 @@ async def debug_push_execute(
 
     results = []
     async with httpx.AsyncClient(timeout=30) as client:
-        for item in push_items:
+        for idx, item in enumerate(push_items):
+            if idx > 0:
+                await asyncio.sleep(0.5)
             mn = item["manage_number"]
             vid = item["variant_id"]
             qty = item["quantity"]
             url = f"https://api.rms.rakuten.co.jp/es/2.0/inventories/manage-numbers/{mn}/variants/{vid}"
             body = json.dumps({"mode": "ABSOLUTE", "quantity": qty}, ensure_ascii=False).encode("utf-8")
-            try:
-                res = await client.put(url, headers=headers, content=body)
-                results.append({
-                    "sku": vid,
-                    "manage_number": mn,
-                    "role": item["role"],
-                    "pushed_qty": qty,
-                    "rms_before": rms_before.get(vid),
-                    "http_status": res.status_code,
-                    "ok": res.status_code == 204,
-                    "detail": None if res.status_code == 204 else res.text[:200],
-                })
-            except Exception as e:
-                results.append({
-                    "sku": vid,
-                    "manage_number": mn,
-                    "role": item["role"],
-                    "pushed_qty": qty,
-                    "rms_before": rms_before.get(vid),
-                    "http_status": None,
-                    "ok": False,
-                    "detail": str(e),
-                })
+            attempts = 0
+            last_status = None
+            last_detail = None
+            ok = False
+            for attempt in range(4):
+                attempts = attempt + 1
+                try:
+                    res = await client.put(url, headers=headers, content=body)
+                    last_status = res.status_code
+                    if res.status_code == 204:
+                        ok = True
+                        last_detail = None
+                        break
+                    elif res.status_code == 429:
+                        last_detail = "429 Rate Limit"
+                        await asyncio.sleep(2 ** attempt)
+                    else:
+                        last_detail = res.text[:200]
+                        break
+                except Exception as e:
+                    last_detail = str(e)
+                    break
+            results.append({
+                "sku": vid,
+                "manage_number": mn,
+                "role": item["role"],
+                "pushed_qty": qty,
+                "rms_before": rms_before.get(vid),
+                "http_status": last_status,
+                "ok": ok,
+                "attempts": attempts,
+                "detail": last_detail,
+            })
 
     time_after = _dt.now(jst).strftime("%Y-%m-%d %H:%M:%S")
 
