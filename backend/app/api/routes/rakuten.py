@@ -1918,6 +1918,7 @@ def _resolve_push_group(component_sku: str, db: Session) -> dict:
             "components": comps,
         })
 
+    comp_has_rms = bool((comp_product.rakuten_item_url or "").strip())
     comp_mn = (comp_product.rakuten_item_url or component_sku.split("_")[0]).strip()
     return {
         "component": {
@@ -1925,6 +1926,7 @@ def _resolve_push_group(component_sku: str, db: Session) -> dict:
             "stock": comp_stock,
             "manage_number": comp_mn,
             "name": comp_product.name,
+            "is_rms_sku": comp_has_rms,
         },
         "sets": sets,
     }
@@ -1959,27 +1961,32 @@ async def debug_push_preview(
 
     comp = group["component"]
     sets = group["sets"]
+    comp_is_rms = comp["is_rms_sku"]
 
-    fetch_items = [{"manage_number": comp["manage_number"], "variant_id": comp["sku"]}]
+    fetch_items = []
+    if comp_is_rms:
+        fetch_items.append({"manage_number": comp["manage_number"], "variant_id": comp["sku"]})
     for s in sets:
         fetch_items.append({"manage_number": s["manage_number"], "variant_id": s["sku"]})
 
     rms_stock = await fetch_inventory_from_rms(
         settings.rms_service_secret, settings.rms_license_key, fetch_items
-    )
+    ) if fetch_items else {}
 
-    rms_comp = rms_stock.get(comp["sku"])
+    rms_comp = rms_stock.get(comp["sku"]) if comp_is_rms else None
     comp_result = {
         "sku": comp["sku"],
         "manage_number": comp["manage_number"],
         "name": comp["name"],
-        "role": "component",
+        "role": "component (RMS販売SKU)" if comp_is_rms else "component (内部構成品・push対象外)",
+        "is_rms_sku": comp_is_rms,
         "db_stock": comp["stock"],
-        "push_value": comp["stock"],
+        "push_value": comp["stock"] if comp_is_rms else None,
         "rms_stock": rms_comp,
-        "diff": comp["stock"] - rms_comp if rms_comp is not None else None,
+        "diff": comp["stock"] - rms_comp if comp_is_rms and rms_comp is not None else None,
     }
 
+    push_count = (1 if comp_is_rms else 0) + len(sets)
     set_results = []
     for s in sets:
         rms_qty = rms_stock.get(s["sku"])
@@ -1999,8 +2006,8 @@ async def debug_push_preview(
         "component": comp_result,
         "sets": set_results,
         "summary": {
-            "total_push_targets": 1 + len(set_results),
-            "component_db_vs_rms": f"{comp['stock']} vs {rms_comp}",
+            "total_push_targets": push_count,
+            "component_pushable": comp_is_rms,
         },
     }
 
@@ -2038,13 +2045,16 @@ async def debug_push_execute(
 
     comp = group["component"]
     sets = group["sets"]
+    comp_is_rms = comp["is_rms_sku"]
 
-    push_items = [{
-        "manage_number": comp["manage_number"],
-        "variant_id": comp["sku"],
-        "quantity": comp["stock"],
-        "role": "component",
-    }]
+    push_items = []
+    if comp_is_rms:
+        push_items.append({
+            "manage_number": comp["manage_number"],
+            "variant_id": comp["sku"],
+            "quantity": comp["stock"],
+            "role": "component",
+        })
     for s in sets:
         push_items.append({
             "manage_number": s["manage_number"],
@@ -2053,6 +2063,8 @@ async def debug_push_execute(
             "role": "set",
         })
 
+    if not push_items:
+        raise HTTPException(400, "push対象がありません（内部構成品で関連セットもなし）")
     if len(push_items) > 30:
         raise HTTPException(400, f"push対象が{len(push_items)}件と多すぎます（上限30）")
 
