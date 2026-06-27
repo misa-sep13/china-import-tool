@@ -65,30 +65,41 @@ def _parse_excel(content: bytes):
         for row in ws.iter_rows(min_row=header_row_idx + 1, values_only=True):
             if all(c is None for c in row):
                 continue
-            name_cn = str(row[col("商品名")] or "").strip() if col("商品名") >= 0 else ""
+            def cell(name):
+                idx = col(name)
+                if idx < 0 or idx >= len(row):
+                    return None
+                return row[idx]
+
+            name_cn = str(cell("商品名") or "").strip()
             if not name_cn:
                 continue
-            buy_url = str(row[col("商品URL")] or "").strip() if col("商品URL") >= 0 else ""
+            buy_url = str(cell("商品URL") or "").strip()
             if "?" in buy_url:
                 buy_url = buy_url.split("?")[0]
             try:
-                units = int(float(row[col("数量")] or 0)) if col("数量") >= 0 else 0
+                units = int(float(cell("数量") or 0))
             except Exception:
                 units = 0
             if units <= 0:
                 continue
+            remaining_raw = cell("残")
+            try:
+                remaining_units = int(float(remaining_raw)) if remaining_raw not in (None, "") else None
+            except Exception:
+                remaining_units = None
             parsed.append({
                 "sheet": ws.title,
-                "order_date": str(row[col("発注時間")] or "").strip()[:10] if col("発注時間") >= 0 else "",
-                "order_no": str(row[col("オーダー番号")] or "").strip() if col("オーダー番号") >= 0 else "",
+                "order_date": str(cell("発注時間") or "").strip()[:10],
+                "order_no": str(cell("オーダー番号") or "").strip(),
                 "name_cn": name_cn,
-                "supplier_spec": str(row[col("色")] or "").strip() if col("色") >= 0 else "",
-                "size": str(row[col("サイズ")] or "").strip() if col("サイズ") >= 0 else "",
+                "supplier_spec": str(cell("色") or "").strip(),
+                "size": str(cell("サイズ") or "").strip(),
                 "buy_url": buy_url,
                 "units": units,
-                "instruction": str(row[col("指示")] or "").strip() if col("指示") >= 0 else "",
-                "note": str(row[col("備考")] or "").strip() if col("備考") >= 0 else "",
-                "remaining_units": int(float(row[col("残")] or 0)) if col("残") >= 0 and row[col("残")] not in (None, "") else None,
+                "instruction": str(cell("指示") or "").strip(),
+                "note": str(cell("備考") or "").strip(),
+                "remaining_units": remaining_units,
             })
     return parsed
 
