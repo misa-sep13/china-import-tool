@@ -7,6 +7,15 @@ const fmtDate = (v) => {
   try { return new Date(v).toLocaleDateString('ja-JP') } catch { return v }
 }
 
+const fmtWorkDate = (row) => {
+  if (row.order_date) return fmtDate(row.order_date)
+  const sheet = String(row.source_sheet || '').trim()
+  if (/^\d{2}$/.test(sheet)) return `${Number(sheet.slice(0, 1))}/${Number(sheet.slice(1))}`
+  if (/^\d{3}$/.test(sheet)) return `${Number(sheet.slice(0, 1))}/${Number(sheet.slice(1))}`
+  if (/^\d{4}$/.test(sheet)) return `${Number(sheet.slice(0, 2))}/${Number(sheet.slice(2))}`
+  return sheet || '-'
+}
+
 export default function WelfareWorkPublicPage() {
   const [search, setSearch] = useState('')
 
@@ -89,7 +98,7 @@ export default function WelfareWorkPublicPage() {
                 <tbody>
                   {visibleRows.map(row => (
                     <tr key={row.id}>
-                      <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(row.order_date)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{fmtWorkDate(row)}</td>
                       <td>{row.source_order_no || '-'}</td>
                       <td style={{ minWidth: 240, fontWeight: 600 }}>{row.name_jp || '未照合'}</td>
                       <td style={{ minWidth: 180 }}>{row.supplier_spec || '-'}</td>

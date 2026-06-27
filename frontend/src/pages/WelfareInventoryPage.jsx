@@ -7,6 +7,15 @@ const fmtDate = (v) => {
   try { return new Date(v).toLocaleString('ja-JP') } catch { return '-' }
 }
 
+const fmtWorkDate = (row) => {
+  if (row.order_date) return row.order_date
+  const sheet = String(row.source_sheet || '').trim()
+  if (/^\d{2}$/.test(sheet)) return `${Number(sheet.slice(0, 1))}/${Number(sheet.slice(1))}`
+  if (/^\d{3}$/.test(sheet)) return `${Number(sheet.slice(0, 1))}/${Number(sheet.slice(1))}`
+  if (/^\d{4}$/.test(sheet)) return `${Number(sheet.slice(0, 2))}/${Number(sheet.slice(2))}`
+  return sheet || '-'
+}
+
 export default function WelfareInventoryPage() {
   const qc = useQueryClient()
   const fileRef = useRef(null)
@@ -276,7 +285,7 @@ export default function WelfareInventoryPage() {
                   const dirty = instruction !== row.instruction || remaining !== row.remaining_qty || note !== row.note
                   return (
                     <tr key={row.id}>
-                      <td style={{ whiteSpace: 'nowrap' }}>{row.order_date || '-'}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{fmtWorkDate(row)}</td>
                       <td>{row.source_order_no || '-'}</td>
                       <td style={{ fontWeight: 700 }}>{row.sku || '未照合'}</td>
                       <td style={{ minWidth: 220 }}>{row.name_jp || '未照合'}</td>

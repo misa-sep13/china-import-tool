@@ -215,7 +215,7 @@ def list_work_instructions(q: Optional[str] = None, db: Session = Depends(get_db
     rows = query.order_by(
         WelfareWorkInstruction.order_date.desc(),
         WelfareWorkInstruction.id.desc(),
-    ).limit(500).all()
+    ).limit(2000).all()
     return [_work_out(r) for r in rows]
 
 
