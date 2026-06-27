@@ -86,6 +86,9 @@ def _parse_excel(content: bytes):
                 "size": str(row[col("サイズ")] or "").strip() if col("サイズ") >= 0 else "",
                 "buy_url": buy_url,
                 "units": units,
+                "instruction": str(row[col("指示")] or "").strip() if col("指示") >= 0 else "",
+                "note": str(row[col("備考")] or "").strip() if col("備考") >= 0 else "",
+                "remaining_units": int(float(row[col("残")] or 0)) if col("残") >= 0 and row[col("残")] not in (None, "") else None,
             })
     return parsed
 
@@ -234,6 +237,25 @@ async def preview_excel(file: UploadFile = File(...), db: Session = Depends(get_
 @router.post("/import-excel")
 async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
     rows = _parse_excel(await file.read())
+    return _import_rows(rows, db, source_file=file.filename, clear_existing=False)
+
+
+class WelfareGoogleImportIn(BaseModel):
+    url: str
+    clear_existing: bool = False
+
+
+def _clear_welfare_data(db: Session):
+    db.query(WelfareWorkInstruction).delete()
+    db.query(WelfareInventoryMovement).delete()
+    db.query(WelfareInventoryItem).delete()
+
+
+def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_existing: bool = False):
+    if clear_existing:
+        _clear_welfare_data(db)
+        db.flush()
+
     by_url_spec, unique_url = _product_indexes(db)
     now = datetime.now(timezone.utc)
     imported = 0
@@ -264,6 +286,8 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
             unmatched += 1
         unit = _unit_per_set(product)
         qty = row["units"] // unit
+        remaining_units = row.get("remaining_units")
+        remaining_qty = qty if remaining_units is None else remaining_units // unit
         if product and qty <= 0:
             continue
         key = _import_key(product, row)
@@ -272,9 +296,13 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
 
         if not already_work:
             remainder = row["units"] % unit
-            note = "未照合" if not product else None
+            note_parts = []
+            if row.get("note"):
+                note_parts.append(row["note"])
+            if not product:
+                note_parts.append("未照合")
             if remainder:
-                note = f"{note + ' / ' if note else ''}余り{remainder}個"
+                note_parts.append(f"余り{remainder}個")
             db.add(WelfareWorkInstruction(
                 product_id=product.id if product else None,
                 sku=product.sku if product else None,
@@ -288,9 +316,9 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
                 units=row["units"],
                 unit_per_set=unit,
                 qty=qty,
-                instruction="",
-                remaining_qty=qty,
-                note=note,
+                instruction=row.get("instruction") or "",
+                remaining_qty=remaining_qty,
+                note=" / ".join(note_parts) if note_parts else None,
             ))
             work_imported += 1
         if not product:
@@ -323,7 +351,7 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
         item.unit_per_set = unit
         item.total_received_units = (item.total_received_units or 0) + row["units"]
         item.total_received_qty = (item.total_received_qty or 0) + qty
-        item.remaining_qty = (item.remaining_qty or 0) + qty
+        item.remaining_qty = (item.remaining_qty or 0) + remaining_qty
         item.last_received_at = now
 
         db.add(WelfareInventoryMovement(
@@ -331,7 +359,7 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
             product_id=item.product_id,
             sku=item.sku,
             movement_type="import",
-            source_file=file.filename,
+            source_file=source_file,
             source_order_no=row.get("order_no"),
             name_cn=row.get("name_cn"),
             supplier_spec=row.get("supplier_spec"),
@@ -344,6 +372,39 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
         imported += 1
     db.commit()
     return {"imported": imported, "work_imported": work_imported, "unmatched": unmatched}
+
+
+@router.post("/import-google-sheet")
+async def import_google_sheet(data: WelfareGoogleImportIn, db: Session = Depends(get_db)):
+    import re
+    import httpx
+
+    m = re.search(r"/spreadsheets/d/([^/]+)", data.url or "")
+    if not m:
+        raise HTTPException(status_code=400, detail="GoogleスプレッドシートURLを指定してください")
+    sheet_id = m.group(1)
+    export_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
+    try:
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+            res = await client.get(export_url)
+        res.raise_for_status()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Googleスプレッドシート取得エラー: {str(e)}")
+    rows = _parse_excel(res.content)
+    return _import_rows(rows, db, source_file="google-sheet", clear_existing=data.clear_existing)
+
+
+class WelfareClearIn(BaseModel):
+    confirm: str
+
+
+@router.post("/clear")
+def clear_welfare(data: WelfareClearIn, db: Session = Depends(get_db)):
+    if data.confirm != "CLEAR":
+        raise HTTPException(status_code=400, detail="confirm に CLEAR を指定してください")
+    _clear_welfare_data(db)
+    db.commit()
+    return {"ok": True}
 
 
 class WelfareMemoIn(BaseModel):
