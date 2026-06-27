@@ -1,4 +1,4 @@
-import { Routes, Route, NavLink } from 'react-router-dom'
+import { Routes, Route, NavLink, useLocation } from 'react-router-dom'
 import OrderPage from './pages/OrderPage'
 import ProductsPage from './pages/ProductsPage'
 import SettingsPage from './pages/SettingsPage'
@@ -13,9 +13,19 @@ import RakutenSettingsPage from './pages/RakutenSettingsPage'
 import RakutenInvoicePage from './pages/RakutenInvoicePage'
 import SyncLogsPage from './pages/SyncLogsPage'
 import WelfareInventoryPage from './pages/WelfareInventoryPage'
+import WelfareWorkPublicPage from './pages/WelfareWorkPublicPage'
 import './App.css'
 
 function App() {
+  const location = useLocation()
+  if (location.pathname === '/welfare/work-public') {
+    return (
+      <Routes>
+        <Route path="/welfare/work-public" element={<WelfareWorkPublicPage />} />
+      </Routes>
+    )
+  }
+
   return (
     <div className="app">
       <nav className="sidebar">
@@ -88,6 +98,7 @@ function App() {
           <Route path="/rakuten/settings" element={<RakutenSettingsPage />} />
           <Route path="/sync-logs" element={<SyncLogsPage />} />
           <Route path="/welfare/inventory" element={<WelfareInventoryPage />} />
+          <Route path="/welfare/work-public" element={<WelfareWorkPublicPage />} />
         </Routes>
       </main>
     </div>
