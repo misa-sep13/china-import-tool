@@ -318,7 +318,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 product_id=product.id if product else None,
                 sku=product.sku if product else None,
                 order_date=row.get("order_date") or None,
-                source_file=file.filename,
+                source_file=source_file,
                 source_sheet=row.get("sheet"),
                 source_order_no=row.get("order_no"),
                 name_jp=product.name if product else None,
