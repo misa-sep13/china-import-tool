@@ -180,7 +180,7 @@ async def _sync_rakuten_stock():
             return
 
         orders_by_num, order_nums, cancelled_nums = await fetch_recent_orders(
-            settings.rms_service_secret, settings.rms_license_key, minutes=2
+            settings.rms_service_secret, settings.rms_license_key, minutes=15
         )
         if not order_nums:
             return
@@ -190,6 +190,7 @@ async def _sync_rakuten_stock():
         new_sold: dict[str, int] = {}
         new_cancelled: dict[str, int] = {}
         processed_new = 0
+        skipped_processed = 0
 
         for n in order_nums:
             prev_state = processed_orders.get(n)
@@ -197,6 +198,7 @@ async def _sync_rakuten_stock():
             cur_state = "cancelled" if is_cancelled else "active"
 
             if prev_state == cur_state:
+                skipped_processed += 1
                 continue
 
             skus = orders_by_num.get(n) or {}
@@ -220,10 +222,14 @@ async def _sync_rakuten_stock():
         if not new_sold and not new_cancelled:
             if processed_new > 0:
                 db.commit()
-                _sync_logs.appendleft({
-                    "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
-                    "note": f"受注{processed_new}件処理（在庫変動なし）",
-                })
+            _sync_logs.appendleft({
+                "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
+                "type": "sync",
+                "searched_orders": len(order_nums),
+                "skipped_processed": skipped_processed,
+                "processed_new": processed_new,
+                "note": "在庫変動なし" if processed_new == 0 else f"受注{processed_new}件処理（在庫変動なし）",
+            })
             return
 
         all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
@@ -330,6 +336,10 @@ async def _sync_rakuten_stock():
 
         _sync_logs.appendleft({
             "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
+            "type": "sync",
+            "searched_orders": len(order_nums),
+            "skipped_processed": skipped_processed,
+            "processed_new": processed_new,
             "sold": new_sold if new_sold else None,
             "cancelled": new_cancelled if new_cancelled else None,
             "updated_skus": list(updated_skus),
