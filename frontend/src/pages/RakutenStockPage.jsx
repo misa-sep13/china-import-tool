@@ -193,7 +193,7 @@ export default function RakutenStockPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-              {['SKU', '商品名', '仕様', '仕入原価(元)', '販売価格(円)', '送料', '手数料', '利益額', '利益率', '実在庫', '輸送中', '規定在庫', '直近30日', '前30日', ssPeriod ? `SS(${ssPeriod})` : 'SS', '備考'].map(h => (
+              {['SKU', '商品名', '仕様', '仕入原価(円)', '販売価格(円)', '送料', '手数料', '利益額', '利益率', '実在庫', '輸送中', '規定在庫', '直近30日', '前30日', ssPeriod ? `SS(${ssPeriod})` : 'SS', '備考'].map(h => (
                 <th key={h} style={{ padding: '10px 10px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700, fontSize: 12 }}>{h}</th>
               ))}
             </tr>
