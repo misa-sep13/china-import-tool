@@ -329,16 +329,18 @@ async def _sync_rakuten_stock():
                     "variant_id": s,
                     "quantity": p.stock or 0,
                 })
+            push_result = None
             if push_items:
                 try:
-                    result = await push_inventory_to_rms(
+                    push_result = await push_inventory_to_rms(
                         settings.rms_service_secret, settings.rms_license_key, push_items
                     )
-                    logger.info(f"[scheduler] push結果: {result}")
+                    logger.info(f"[scheduler] push結果: {push_result}")
                 except Exception as pe:
+                    push_result = {"ok": 0, "fail": len(push_items), "errors": [{"sku": "all", "detail": str(pe)}], "details": []}
                     logger.warning(f"[scheduler] push失敗: {pe}")
 
-        _sync_logs.appendleft({
+        log_entry = {
             "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
             "type": "sync",
             "searched_orders": len(order_nums),
@@ -348,7 +350,17 @@ async def _sync_rakuten_stock():
             "cancelled": new_cancelled if new_cancelled else None,
             "updated_skus": list(updated_skus),
             "updated_sets": list(updated_set_skus),
-        })
+        }
+        if push_result:
+            log_entry["push"] = {
+                "ok": push_result.get("ok", 0),
+                "fail": push_result.get("fail", 0),
+                "targets": push_result.get("details", []),
+                "errors": push_result.get("errors", []),
+            }
+        if not new_sold and not new_cancelled and not updated_skus:
+            log_entry["note"] = "在庫変動なし"
+        _sync_logs.appendleft(log_entry)
         logger.info(f"[scheduler] 在庫更新: sold={new_sold} cancelled={new_cancelled} updated={updated_skus} sets={updated_set_skus}")
     except Exception as e:
         _sync_logs.appendleft({"time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"), "error": str(e)})
@@ -501,22 +513,32 @@ async def _check_delayed_cancellations():
                     "variant_id": s,
                     "quantity": p.stock or 0,
                 })
+            push_result = None
             if push_items:
                 try:
-                    result = await push_inventory_to_rms(
+                    push_result = await push_inventory_to_rms(
                         settings.rms_service_secret, settings.rms_license_key, push_items
                     )
-                    logger.info(f"[scheduler] キャンセル戻しpush結果: {result}")
+                    logger.info(f"[scheduler] キャンセル戻しpush結果: {push_result}")
                 except Exception as pe:
+                    push_result = {"ok": 0, "fail": len(push_items), "errors": [{"sku": "all", "detail": str(pe)}], "details": []}
                     logger.warning(f"[scheduler] キャンセル戻しpush失敗: {pe}")
 
         cancelled_nums = list(newly_cancelled.keys())
-        _sync_logs.appendleft({
+        log_entry = {
             "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
             "type": "delayed_cancellation",
             "cancelled_orders": cancelled_nums,
             "updated_skus": list(updated_skus),
-        })
+        }
+        if push_result:
+            log_entry["push"] = {
+                "ok": push_result.get("ok", 0),
+                "fail": push_result.get("fail", 0),
+                "targets": push_result.get("details", []),
+                "errors": push_result.get("errors", []),
+            }
+        _sync_logs.appendleft(log_entry)
         logger.info(f"[scheduler] 遅延キャンセル検出: {len(cancelled_nums)}件 updated={updated_skus}")
     except Exception as e:
         logger.warning(f"[scheduler] キャンセル再チェックエラー: {e}")

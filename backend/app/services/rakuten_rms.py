@@ -361,6 +361,7 @@ async def push_inventory_to_rms(
     ok = 0
     fail = 0
     errors = []
+    details = []
 
     import asyncio
 
@@ -374,28 +375,28 @@ async def push_inventory_to_rms(
             try:
                 res = await client.put(url, headers=headers, content=body)
                 if res.status_code == 204:
-                    return ("ok", variant_id, None)
+                    return ("ok", variant_id, quantity, 204, None)
                 elif res.status_code == 429:
                     await asyncio.sleep(2 ** attempt)
                 else:
-                    return ("fail", variant_id, f"HTTP {res.status_code}: {res.text[:100]}")
+                    return ("fail", variant_id, quantity, res.status_code, res.text[:100])
             except Exception as e:
-                return ("fail", variant_id, str(e))
-        return ("fail", variant_id, "429 too many retries")
+                return ("fail", variant_id, quantity, None, str(e))
+        return ("fail", variant_id, quantity, 429, "too many retries")
 
     async with httpx.AsyncClient(timeout=30) as client:
-        # 10件ずつ並列送信
         for i in range(0, len(items), 10):
             batch = items[i:i + 10]
             results = await asyncio.gather(*[_push_one(client, item) for item in batch])
-            for status, sku, detail in results:
+            for status, sku, qty, http_status, detail in results:
+                details.append({"sku": sku, "qty": qty, "http": http_status, "ok": status == "ok"})
                 if status == "ok":
                     ok += 1
                 else:
                     fail += 1
                     errors.append({"sku": sku, "detail": detail})
 
-    return {"ok": ok, "fail": fail, "errors": errors}
+    return {"ok": ok, "fail": fail, "errors": errors, "details": details}
 
 
 async def fetch_recent_orders(
