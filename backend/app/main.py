@@ -308,6 +308,7 @@ async def _sync_rakuten_stock():
         db.commit()
 
         # RMS_PUSH_ENABLED=trueの場合、変更されたSKUの在庫をRMSにpush
+        push_result = None
         all_changed = updated_skus | updated_set_skus
         if all_changed:
             import re as _re
@@ -329,7 +330,6 @@ async def _sync_rakuten_stock():
                     "variant_id": s,
                     "quantity": p.stock or 0,
                 })
-            push_result = None
             if push_items:
                 try:
                     push_result = await push_inventory_to_rms(
@@ -492,6 +492,7 @@ async def _check_delayed_cancellations():
 
         db.commit()
 
+        push_result = None
         all_changed = updated_skus | updated_set_skus
         if all_changed:
             import re as _re
@@ -513,7 +514,6 @@ async def _check_delayed_cancellations():
                     "variant_id": s,
                     "quantity": p.stock or 0,
                 })
-            push_result = None
             if push_items:
                 try:
                     push_result = await push_inventory_to_rms(
