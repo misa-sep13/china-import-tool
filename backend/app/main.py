@@ -18,6 +18,7 @@ def _migrate():
     import logging
     logger = logging.getLogger("migrate")
 
+    import app.models.inventory_event  # noqa: F401
     Base.metadata.create_all(bind=engine)
 
     migrations = [
@@ -115,6 +116,38 @@ logger = logging.getLogger("scheduler")
 
 # 在庫同期ログ履歴（直近100件）
 _sync_logs: deque = deque(maxlen=100)
+
+
+def _save_inventory_event(db, *, event_type: str, event_time,
+                          order_numbers=None, sold=None, changed=None,
+                          recalculated=None, pushed=None, push_ok=None,
+                          push_fail=None, errors=None,
+                          stock_before=None, stock_after=None):
+    import json as _j
+    from app.models.inventory_event import InventoryEvent
+    try:
+        db.add(InventoryEvent(
+            event_time=event_time,
+            event_type=event_type,
+            order_numbers=_j.dumps(order_numbers, ensure_ascii=False) if order_numbers else None,
+            sold=_j.dumps(sold, ensure_ascii=False) if sold else None,
+            changed=_j.dumps(changed, ensure_ascii=False) if changed else None,
+            recalculated=_j.dumps(recalculated, ensure_ascii=False) if recalculated else None,
+            pushed=_j.dumps(pushed, ensure_ascii=False) if pushed else None,
+            push_ok=push_ok,
+            push_fail=push_fail,
+            errors=_j.dumps(errors, ensure_ascii=False) if errors else None,
+            stock_before=_j.dumps(stock_before, ensure_ascii=False) if stock_before else None,
+            stock_after=_j.dumps(stock_after, ensure_ascii=False) if stock_after else None,
+        ))
+        db.commit()
+    except Exception as e:
+        logger.warning(f"[inventory_event] DB保存失敗: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
 
 def _load_processed_orders(db) -> dict[str, str]:
     """DBから処理済み注文を読み込む"""
@@ -236,6 +269,7 @@ async def _sync_rakuten_stock():
         all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
         sku_to_product = {p.sku: p for p in all_products}
         sku_stock = {p.sku: (p.stock or 0) for p in all_products}
+        sku_stock_before = dict(sku_stock)
 
         def parse_comps(p):
             try:
@@ -363,6 +397,40 @@ async def _sync_rakuten_stock():
             log_entry["note"] = "在庫変動なし"
         _sync_logs.appendleft(log_entry)
         logger.info(f"[scheduler] 在庫更新: sold={new_sold} cancelled={new_cancelled} updated={updated_skus} sets={updated_set_skus}")
+
+        if new_sold or new_cancelled:
+            ev_time = dt.now(JST)
+            sold_order_nums = [n for n in order_nums if n not in cancelled_nums and processed_orders.get(n) is None]
+            cancel_order_nums = [n for n in order_nums if n in cancelled_nums and processed_orders.get(n) == "active"]
+            order_nums_list = sold_order_nums + cancel_order_nums
+            changed = {}
+            if new_sold:
+                for s, q in new_sold.items():
+                    changed[s] = changed.get(s, 0) - q
+            if new_cancelled:
+                for s, q in new_cancelled.items():
+                    changed[s] = changed.get(s, 0) + q
+            recalc = {s: sku_stock.get(s, 0) for s in updated_set_skus} if updated_set_skus else None
+            pushed_list = None
+            push_errors = None
+            p_ok = None
+            p_fail = None
+            if push_result:
+                pushed_list = push_result.get("details", [])
+                push_errors = push_result.get("errors", []) or None
+                p_ok = push_result.get("ok", 0)
+                p_fail = push_result.get("fail", 0)
+            sb = {s: sku_stock_before[s] for s in all_changed if s in sku_stock_before}
+            sa = {s: sku_stock.get(s, 0) for s in all_changed}
+            evt = "order_sold" if new_sold else "cancel_restore"
+            _save_inventory_event(
+                db, event_type=evt, event_time=ev_time,
+                order_numbers=order_nums_list or None,
+                sold=new_sold or None, changed=changed or None,
+                recalculated=recalc, pushed=pushed_list,
+                push_ok=p_ok, push_fail=p_fail, errors=push_errors,
+                stock_before=sb or None, stock_after=sa or None,
+            )
     except Exception as e:
         _sync_logs.appendleft({"time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"), "error": str(e)})
         logger.warning(f"[scheduler] 在庫同期エラー: {e}")
@@ -438,6 +506,7 @@ async def _check_delayed_cancellations():
         all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
         sku_to_product = {p.sku: p for p in all_products}
         sku_stock = {p.sku: (p.stock or 0) for p in all_products}
+        sku_stock_before = dict(sku_stock)
 
         def parse_comps(p):
             try:
@@ -541,6 +610,31 @@ async def _check_delayed_cancellations():
             }
         _sync_logs.appendleft(log_entry)
         logger.info(f"[scheduler] 遅延キャンセル検出: {len(cancelled_nums)}件 updated={updated_skus}")
+
+        cancel_changed = {}
+        for order_num, sku_map in newly_cancelled.items():
+            for sku, qty in sku_map.items():
+                cancel_changed[sku] = cancel_changed.get(sku, 0) + qty
+        recalc = {s: sku_stock.get(s, 0) for s in updated_set_skus} if updated_set_skus else None
+        pushed_list = None
+        push_errors = None
+        p_ok = None
+        p_fail = None
+        if push_result:
+            pushed_list = push_result.get("details", [])
+            push_errors = push_result.get("errors", []) or None
+            p_ok = push_result.get("ok", 0)
+            p_fail = push_result.get("fail", 0)
+        sb = {s: sku_stock_before[s] for s in all_changed if s in sku_stock_before}
+        sa = {s: sku_stock.get(s, 0) for s in all_changed}
+        _save_inventory_event(
+            db, event_type="cancel_restore", event_time=dt.now(JST),
+            order_numbers=cancelled_nums,
+            changed=cancel_changed or None,
+            recalculated=recalc, pushed=pushed_list,
+            push_ok=p_ok, push_fail=p_fail, errors=push_errors,
+            stock_before=sb or None, stock_after=sa or None,
+        )
     except Exception as e:
         logger.warning(f"[scheduler] キャンセル再チェックエラー: {e}")
     finally:
@@ -828,5 +922,44 @@ def root():
 def get_sync_logs():
     """在庫同期ログ履歴（直近100件）"""
     return {"logs": list(_sync_logs)}
+
+
+@app.get("/api/inventory-events")
+def get_inventory_events():
+    """inventory_events テーブルから最新100件を返す"""
+    import json as _j
+    from app.core.database import SessionLocal
+    from app.models.inventory_event import InventoryEvent
+    db = SessionLocal()
+    try:
+        rows = db.query(InventoryEvent).order_by(InventoryEvent.id.desc()).limit(100).all()
+        def _parse(v):
+            if v is None:
+                return None
+            try:
+                return _j.loads(v)
+            except Exception:
+                return v
+        result = []
+        for r in rows:
+            result.append({
+                "id": r.id,
+                "event_time": r.event_time.strftime("%Y-%m-%d %H:%M:%S") if r.event_time else None,
+                "event_type": r.event_type,
+                "order_numbers": _parse(r.order_numbers),
+                "sold": _parse(r.sold),
+                "changed": _parse(r.changed),
+                "recalculated": _parse(r.recalculated),
+                "pushed": _parse(r.pushed),
+                "push_ok": r.push_ok,
+                "push_fail": r.push_fail,
+                "errors": _parse(r.errors),
+                "stock_before": _parse(r.stock_before),
+                "stock_after": _parse(r.stock_after),
+                "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else None,
+            })
+        return {"events": result}
+    finally:
+        db.close()
 
 

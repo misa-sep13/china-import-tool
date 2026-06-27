@@ -2150,6 +2150,31 @@ async def debug_push_execute(
         r["rms_after"] = rms_after.get(r["sku"])
 
     ok_count = sum(1 for r in results if r["ok"])
+
+    try:
+        import json as _json_ie
+        from app.models.inventory_event import InventoryEvent
+        pushed_list = [{"sku": r["sku"], "qty": r["pushed_qty"], "http": r["http_status"], "ok": r["ok"]} for r in results]
+        sb = {r["sku"]: r["rms_before"] for r in results if r["rms_before"] is not None}
+        sa = {r["sku"]: r["rms_after"] for r in results if r["rms_after"] is not None}
+        errs = [{"sku": r["sku"], "detail": r["detail"]} for r in results if r["detail"]]
+        db.add(InventoryEvent(
+            event_time=_dt.now(jst),
+            event_type="debug_push",
+            pushed=_json_ie.dumps(pushed_list, ensure_ascii=False),
+            push_ok=ok_count,
+            push_fail=len(results) - ok_count,
+            errors=_json_ie.dumps(errs, ensure_ascii=False) if errs else None,
+            stock_before=_json_ie.dumps(sb, ensure_ascii=False) if sb else None,
+            stock_after=_json_ie.dumps(sa, ensure_ascii=False) if sa else None,
+        ))
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
     return {
         "ok": ok_count,
         "fail": len(results) - ok_count,
