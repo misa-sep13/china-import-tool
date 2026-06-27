@@ -16,6 +16,7 @@ export default function WelfareInventoryPage() {
   const [withdrawing, setWithdrawing] = useState(null)
   const [withdrawQty, setWithdrawQty] = useState(1)
   const [withdrawNote, setWithdrawNote] = useState('')
+  const [remainingDrafts, setRemainingDrafts] = useState({})
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: ['welfare-inventory', search],
@@ -60,6 +61,22 @@ export default function WelfareInventoryPage() {
       setWithdrawing(null)
       setWithdrawQty(1)
       setWithdrawNote('')
+      qc.invalidateQueries(['welfare-inventory'])
+      qc.invalidateQueries(['welfare-movements'])
+    },
+  })
+
+  const adjustMutation = useMutation({
+    mutationFn: ({ id, remaining_qty }) => api.post(`/welfare/inventory/${id}/adjust`, {
+      remaining_qty,
+      note: '画面から残量直接修正',
+    }).then(r => r.data),
+    onSuccess: (_data, vars) => {
+      setRemainingDrafts(prev => {
+        const next = { ...prev }
+        delete next[vars.id]
+        return next
+      })
       qc.invalidateQueries(['welfare-inventory'])
       qc.invalidateQueries(['welfare-movements'])
     },
@@ -156,7 +173,26 @@ export default function WelfareInventoryPage() {
                     <td>{item.total_received_units}</td>
                     <td>{item.unit_per_set}個で1</td>
                     <td>{item.total_received_qty}</td>
-                    <td style={{ fontSize: 18, fontWeight: 700 }}>{item.remaining_qty}</td>
+                    <td style={{ minWidth: 120 }}>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <input
+                          type="number"
+                          min="0"
+                          value={remainingDrafts[item.id] ?? item.remaining_qty}
+                          onChange={e => setRemainingDrafts(prev => ({ ...prev, [item.id]: Number(e.target.value) }))}
+                          style={{ width: 72, fontSize: 16, fontWeight: 700, textAlign: 'right' }}
+                        />
+                        {(remainingDrafts[item.id] ?? item.remaining_qty) !== item.remaining_qty && (
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => adjustMutation.mutate({ id: item.id, remaining_qty: remainingDrafts[item.id] })}
+                            disabled={adjustMutation.isPending}
+                          >
+                            保存
+                          </button>
+                        )}
+                      </div>
+                    </td>
                     <td style={{ minWidth: 160 }}>{item.instruction || '-'}</td>
                     <td style={{ minWidth: 160 }}>{item.note || '-'}</td>
                     <td style={{ whiteSpace: 'nowrap', color: '#64748b', fontSize: 12 }}>{fmtDate(item.last_received_at)}</td>
@@ -194,7 +230,7 @@ export default function WelfareInventoryPage() {
               {movements.slice(0, 20).map(m => (
                 <tr key={m.id}>
                   <td>{fmtDate(m.created_at)}</td>
-                  <td>{m.movement_type === 'withdraw' ? '減算' : '取込'}</td>
+                  <td>{m.movement_type === 'withdraw' ? '減算' : m.movement_type === 'adjust' ? '修正' : '取込'}</td>
                   <td>{m.sku || '-'}</td>
                   <td>{m.qty}</td>
                   <td>{m.units}</td>

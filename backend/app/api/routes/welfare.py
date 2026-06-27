@@ -267,6 +267,11 @@ class WelfareWithdrawIn(BaseModel):
     note: Optional[str] = None
 
 
+class WelfareAdjustIn(BaseModel):
+    remaining_qty: int
+    note: Optional[str] = None
+
+
 @router.post("/inventory/{item_id}/withdraw")
 def withdraw_inventory(item_id: int, data: WelfareWithdrawIn, db: Session = Depends(get_db)):
     item = db.query(WelfareInventoryItem).filter(WelfareInventoryItem.id == item_id).first()
@@ -289,6 +294,38 @@ def withdraw_inventory(item_id: int, data: WelfareWithdrawIn, db: Session = Depe
         units=data.qty * (item.unit_per_set or 1),
         qty=-data.qty,
         note=data.note,
+    ))
+    db.commit()
+    db.refresh(item)
+    return _out(item)
+
+
+@router.post("/inventory/{item_id}/adjust")
+def adjust_inventory(item_id: int, data: WelfareAdjustIn, db: Session = Depends(get_db)):
+    item = db.query(WelfareInventoryItem).filter(WelfareInventoryItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="就労支援在庫が見つかりません")
+    if data.remaining_qty < 0:
+        raise HTTPException(status_code=400, detail="残量は0以上で入力してください")
+
+    before = item.remaining_qty or 0
+    after = data.remaining_qty
+    diff = after - before
+    if diff == 0:
+        return _out(item)
+
+    item.remaining_qty = after
+    db.add(WelfareInventoryMovement(
+        item_id=item.id,
+        product_id=item.product_id,
+        sku=item.sku,
+        movement_type="adjust",
+        name_cn=item.name_cn,
+        supplier_spec=item.supplier_spec,
+        buy_url=item.buy_url,
+        units=diff * (item.unit_per_set or 1),
+        qty=diff,
+        note=data.note or f"残量修正: {before} -> {after}",
     ))
     db.commit()
     db.refresh(item)
