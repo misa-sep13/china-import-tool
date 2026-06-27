@@ -11,12 +11,14 @@ export default function WelfareInventoryPage() {
   const qc = useQueryClient()
   const fileRef = useRef(null)
   const [search, setSearch] = useState('')
+  const [activeTab, setActiveTab] = useState('inventory')
   const [importResult, setImportResult] = useState(null)
   const [editing, setEditing] = useState(null)
   const [withdrawing, setWithdrawing] = useState(null)
   const [withdrawQty, setWithdrawQty] = useState(1)
   const [withdrawNote, setWithdrawNote] = useState('')
   const [remainingDrafts, setRemainingDrafts] = useState({})
+  const [workDrafts, setWorkDrafts] = useState({})
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: ['welfare-inventory', search],
@@ -26,6 +28,11 @@ export default function WelfareInventoryPage() {
   const { data: movements = [] } = useQuery({
     queryKey: ['welfare-movements'],
     queryFn: () => api.get('/welfare/movements').then(r => r.data),
+  })
+
+  const { data: workInstructions = [], isLoading: workLoading } = useQuery({
+    queryKey: ['welfare-work-instructions', search],
+    queryFn: () => api.get('/welfare/work-instructions', { params: search ? { q: search } : {} }).then(r => r.data),
   })
 
   const totals = useMemo(() => ({
@@ -44,6 +51,7 @@ export default function WelfareInventoryPage() {
       setImportResult(data)
       qc.invalidateQueries(['welfare-inventory'])
       qc.invalidateQueries(['welfare-movements'])
+      qc.invalidateQueries(['welfare-work-instructions'])
     },
   })
 
@@ -63,6 +71,18 @@ export default function WelfareInventoryPage() {
       setWithdrawNote('')
       qc.invalidateQueries(['welfare-inventory'])
       qc.invalidateQueries(['welfare-movements'])
+    },
+  })
+
+  const workSaveMutation = useMutation({
+    mutationFn: ({ id, payload }) => api.patch(`/welfare/work-instructions/${id}`, payload).then(r => r.data),
+    onSuccess: (_data, vars) => {
+      setWorkDrafts(prev => {
+        const next = { ...prev }
+        delete next[vars.id]
+        return next
+      })
+      qc.invalidateQueries(['welfare-work-instructions'])
     },
   })
 
@@ -103,12 +123,27 @@ export default function WelfareInventoryPage() {
           style={{ maxWidth: 320 }}
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="SKU・商品名・中国名で検索"
+          placeholder="SKU・商品名・仕様で検索"
         />
         <button className="btn btn-primary" onClick={() => fileRef.current?.click()} disabled={importMutation.isPending}>
           Excel取込
         </button>
         <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handleFile} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <button
+          className={`btn ${activeTab === 'inventory' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setActiveTab('inventory')}
+        >
+          就労支援在庫
+        </button>
+        <button
+          className={`btn ${activeTab === 'work' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setActiveTab('work')}
+        >
+          作業指示
+        </button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 16 }}>
@@ -128,11 +163,11 @@ export default function WelfareInventoryPage() {
 
       {importResult && (
         <div className="card" style={{ borderLeft: importResult.unmatched ? '4px solid #d97706' : '4px solid #16a34a' }}>
-          取込完了: {importResult.imported}行 / 未照合 {importResult.unmatched}行
+          取込完了: 在庫 {importResult.imported}行 / 作業指示 {importResult.work_imported ?? importResult.imported}行 / 未照合 {importResult.unmatched}行
         </div>
       )}
 
-      <div className="card">
+      {activeTab === 'inventory' && <div className="card">
         {isLoading ? (
           <div className="loading">読み込み中...</div>
         ) : items.length === 0 ? (
@@ -146,8 +181,7 @@ export default function WelfareInventoryPage() {
                 <tr>
                   <th>SKU</th>
                   <th>日本語名</th>
-                  <th>中国名 / 仕様</th>
-                  <th>URL</th>
+                  <th>URL / 仕様</th>
                   <th>単品数</th>
                   <th>換算</th>
                   <th>入荷数</th>
@@ -164,11 +198,8 @@ export default function WelfareInventoryPage() {
                     <td style={{ fontWeight: 700 }}>{item.sku || '-'}</td>
                     <td style={{ minWidth: 220 }}>{item.name_jp || '-'}</td>
                     <td style={{ minWidth: 240 }}>
-                      <div>{item.name_cn}</div>
+                      <div>{item.buy_url ? <a href={item.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</div>
                       <div style={{ color: '#64748b', fontSize: 12 }}>{item.supplier_spec}</div>
-                    </td>
-                    <td>
-                      {item.buy_url ? <a href={item.buy_url} target="_blank" rel="noreferrer">開く</a> : '-'}
                     </td>
                     <td>{item.total_received_units}</td>
                     <td>{item.unit_per_set}個で1</td>
@@ -208,9 +239,101 @@ export default function WelfareInventoryPage() {
             </table>
           </div>
         )}
-      </div>
+      </div>}
 
-      <div className="card">
+      {activeTab === 'work' && <div className="card">
+        {workLoading ? (
+          <div className="loading">読み込み中...</div>
+        ) : workInstructions.length === 0 ? (
+          <div className="empty-state">
+            <p>作業指示がありません。Excelを取り込むと表示されます。</p>
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>日付</th>
+                  <th>注文</th>
+                  <th>SKU</th>
+                  <th>商品名</th>
+                  <th>URL / 仕様</th>
+                  <th>単品数</th>
+                  <th>換算</th>
+                  <th>数量</th>
+                  <th>指示</th>
+                  <th>残</th>
+                  <th>備考</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {workInstructions.map(row => {
+                  const draft = workDrafts[row.id] || {}
+                  const instruction = draft.instruction ?? row.instruction
+                  const remaining = draft.remaining_qty ?? row.remaining_qty
+                  const note = draft.note ?? row.note
+                  const dirty = instruction !== row.instruction || remaining !== row.remaining_qty || note !== row.note
+                  return (
+                    <tr key={row.id}>
+                      <td style={{ whiteSpace: 'nowrap' }}>{row.order_date || '-'}</td>
+                      <td>{row.source_order_no || '-'}</td>
+                      <td style={{ fontWeight: 700 }}>{row.sku || '未照合'}</td>
+                      <td style={{ minWidth: 220 }}>{row.name_jp || '未照合'}</td>
+                      <td style={{ minWidth: 180 }}>
+                        <div>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</div>
+                        <div style={{ color: '#64748b', fontSize: 12 }}>{row.supplier_spec || '-'}</div>
+                      </td>
+                      <td>{row.units}</td>
+                      <td>{row.unit_per_set}個で1</td>
+                      <td>{row.qty}</td>
+                      <td style={{ minWidth: 160 }}>
+                        <input
+                          value={instruction}
+                          onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, instruction: e.target.value } }))}
+                          placeholder="作業保管 / 保管 など"
+                        />
+                      </td>
+                      <td style={{ minWidth: 86 }}>
+                        <input
+                          type="number"
+                          min="0"
+                          value={remaining}
+                          onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, remaining_qty: Number(e.target.value) } }))}
+                          style={{ width: 72, textAlign: 'right', fontWeight: 700 }}
+                        />
+                      </td>
+                      <td style={{ minWidth: 160 }}>
+                        <input
+                          value={note}
+                          onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, note: e.target.value } }))}
+                          placeholder="備考"
+                        />
+                      </td>
+                      <td>
+                        {dirty && (
+                          <button
+                            className="btn btn-primary btn-sm"
+                            disabled={workSaveMutation.isPending}
+                            onClick={() => workSaveMutation.mutate({
+                              id: row.id,
+                              payload: { instruction, remaining_qty: remaining, note },
+                            })}
+                          >
+                            保存
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>}
+
+      {activeTab === 'inventory' && <div className="card">
         <h2>最近の入出庫</h2>
         {movements.length === 0 ? (
           <div style={{ color: '#64748b' }}>履歴はまだありません。</div>
@@ -240,7 +363,7 @@ export default function WelfareInventoryPage() {
             </tbody>
           </table>
         )}
-      </div>
+      </div>}
 
       {editing && (
         <div className="modal-overlay">

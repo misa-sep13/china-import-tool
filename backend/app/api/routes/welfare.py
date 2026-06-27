@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.rakuten_product import RakutenProduct
-from app.models.welfare import WelfareInventoryItem, WelfareInventoryMovement
+from app.models.welfare import WelfareInventoryItem, WelfareInventoryMovement, WelfareWorkInstruction
 
 
 router = APIRouter(prefix="/welfare", tags=["welfare"])
@@ -79,6 +79,7 @@ def _parse_excel(content: bytes):
                 continue
             parsed.append({
                 "sheet": ws.title,
+                "order_date": str(row[col("発注時間")] or "").strip()[:10] if col("発注時間") >= 0 else "",
                 "order_no": str(row[col("オーダー番号")] or "").strip() if col("オーダー番号") >= 0 else "",
                 "name_cn": name_cn,
                 "supplier_spec": str(row[col("色")] or "").strip() if col("色") >= 0 else "",
@@ -117,6 +118,16 @@ def _match_product(row: dict, by_url_spec: dict, unique_url: dict):
     return None, None
 
 
+def _import_key(product: RakutenProduct | None, row: dict):
+    return (
+        product.sku if product else None,
+        _norm_url(row.get("buy_url")),
+        row.get("order_no") or "",
+        row.get("supplier_spec") or "",
+        int(row.get("units") or 0),
+    )
+
+
 def _out(item: WelfareInventoryItem):
     return {
         "id": item.id,
@@ -153,6 +164,47 @@ def list_inventory(q: Optional[str] = None, db: Session = Depends(get_db)):
     return [_out(r) for r in rows]
 
 
+def _work_out(row: WelfareWorkInstruction):
+    return {
+        "id": row.id,
+        "product_id": row.product_id,
+        "sku": row.sku,
+        "order_date": row.order_date,
+        "source_file": row.source_file,
+        "source_sheet": row.source_sheet,
+        "source_order_no": row.source_order_no,
+        "name_jp": row.name_jp,
+        "supplier_spec": row.supplier_spec,
+        "buy_url": row.buy_url,
+        "units": row.units or 0,
+        "unit_per_set": row.unit_per_set or 1,
+        "qty": row.qty or 0,
+        "instruction": row.instruction or "",
+        "remaining_qty": row.remaining_qty or 0,
+        "note": row.note or "",
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.get("/work-instructions")
+def list_work_instructions(q: Optional[str] = None, db: Session = Depends(get_db)):
+    query = db.query(WelfareWorkInstruction)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            (WelfareWorkInstruction.sku.ilike(like)) |
+            (WelfareWorkInstruction.name_jp.ilike(like)) |
+            (WelfareWorkInstruction.supplier_spec.ilike(like)) |
+            (WelfareWorkInstruction.source_order_no.ilike(like))
+        )
+    rows = query.order_by(
+        WelfareWorkInstruction.order_date.desc(),
+        WelfareWorkInstruction.id.desc(),
+    ).limit(500).all()
+    return [_work_out(r) for r in rows]
+
+
 @router.post("/preview-excel")
 async def preview_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
     rows = _parse_excel(await file.read())
@@ -186,14 +238,64 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
     now = datetime.now(timezone.utc)
     imported = 0
     unmatched = 0
+    work_imported = 0
+    existing_movement_keys = set()
+    for m in db.query(WelfareInventoryMovement).filter(WelfareInventoryMovement.movement_type == "import").all():
+        existing_movement_keys.add((
+            m.sku,
+            _norm_url(m.buy_url),
+            m.source_order_no or "",
+            m.supplier_spec or "",
+            int(m.units or 0),
+        ))
+    existing_work_keys = set()
+    for w in db.query(WelfareWorkInstruction).all():
+        existing_work_keys.add((
+            w.sku,
+            _norm_url(w.buy_url),
+            w.source_order_no or "",
+            w.supplier_spec or "",
+            int(w.units or 0),
+        ))
+
     for row in rows:
         product, _match_type = _match_product(row, by_url_spec, unique_url)
         if not product:
             unmatched += 1
-            continue
         unit = _unit_per_set(product)
         qty = row["units"] // unit
-        if qty <= 0:
+        if product and qty <= 0:
+            continue
+        key = _import_key(product, row)
+        already_imported = key in existing_movement_keys
+        already_work = key in existing_work_keys
+
+        if not already_work:
+            remainder = row["units"] % unit
+            note = "未照合" if not product else None
+            if remainder:
+                note = f"{note + ' / ' if note else ''}余り{remainder}個"
+            db.add(WelfareWorkInstruction(
+                product_id=product.id if product else None,
+                sku=product.sku if product else None,
+                order_date=row.get("order_date") or None,
+                source_file=file.filename,
+                source_sheet=row.get("sheet"),
+                source_order_no=row.get("order_no"),
+                name_jp=product.name if product else None,
+                supplier_spec=row.get("supplier_spec"),
+                buy_url=row.get("buy_url"),
+                units=row["units"],
+                unit_per_set=unit,
+                qty=qty,
+                instruction="",
+                remaining_qty=qty,
+                note=note,
+            ))
+            work_imported += 1
+        if not product:
+            continue
+        if already_imported:
             continue
 
         item = None
@@ -238,9 +340,10 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
             qty=qty,
             note=f"{row.get('sheet', '')} から取込",
         ))
+        existing_movement_keys.add(key)
         imported += 1
     db.commit()
-    return {"imported": imported, "unmatched": unmatched}
+    return {"imported": imported, "work_imported": work_imported, "unmatched": unmatched}
 
 
 class WelfareMemoIn(BaseModel):
@@ -269,6 +372,12 @@ class WelfareWithdrawIn(BaseModel):
 
 class WelfareAdjustIn(BaseModel):
     remaining_qty: int
+    note: Optional[str] = None
+
+
+class WelfareWorkInstructionIn(BaseModel):
+    instruction: Optional[str] = None
+    remaining_qty: Optional[int] = None
     note: Optional[str] = None
 
 
@@ -330,6 +439,24 @@ def adjust_inventory(item_id: int, data: WelfareAdjustIn, db: Session = Depends(
     db.commit()
     db.refresh(item)
     return _out(item)
+
+
+@router.patch("/work-instructions/{instruction_id}")
+def update_work_instruction(instruction_id: int, data: WelfareWorkInstructionIn, db: Session = Depends(get_db)):
+    row = db.query(WelfareWorkInstruction).filter(WelfareWorkInstruction.id == instruction_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="作業指示が見つかりません")
+    if data.instruction is not None:
+        row.instruction = data.instruction
+    if data.remaining_qty is not None:
+        if data.remaining_qty < 0:
+            raise HTTPException(status_code=400, detail="残は0以上で入力してください")
+        row.remaining_qty = data.remaining_qty
+    if data.note is not None:
+        row.note = data.note
+    db.commit()
+    db.refresh(row)
+    return _work_out(row)
 
 
 @router.get("/movements")
