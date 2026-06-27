@@ -314,12 +314,16 @@ async def _sync_rakuten_stock():
             push_items = []
             for sku in all_changed:
                 p = sku_to_product.get(sku)
-                if not p or p.is_component:
+                if not p:
+                    continue
+                if p.is_component and not p.rakuten_item_url:
                     continue
                 s = (p.sku or "").strip()
                 if not s or not _re.match(r'^[a-zA-Z0-9_\-]+$', s):
                     continue
                 manage_number = (p.rakuten_item_url or s.split("_")[0]).strip()
+                if not manage_number:
+                    continue
                 push_items.append({
                     "manage_number": manage_number,
                     "variant_id": s,
@@ -482,12 +486,16 @@ async def _check_delayed_cancellations():
             push_items = []
             for sku in all_changed:
                 p = sku_to_product.get(sku)
-                if not p or p.is_component:
+                if not p:
+                    continue
+                if p.is_component and not p.rakuten_item_url:
                     continue
                 s = (p.sku or "").strip()
                 if not s or not _re.match(r'^[a-zA-Z0-9_\-]+$', s):
                     continue
                 manage_number = (p.rakuten_item_url or s.split("_")[0]).strip()
+                if not manage_number:
+                    continue
                 push_items.append({
                     "manage_number": manage_number,
                     "variant_id": s,

@@ -1342,11 +1342,15 @@ async def debug_rms_pull_missing(db: Session = Depends(get_db)):
     items = []
     for p in products:
         sku = (p.sku or "").strip()
-        if not sku or p.is_component:
+        if not sku:
+            continue
+        if p.is_component and not p.rakuten_item_url:
             continue
         if not _re.match(r'^[a-zA-Z0-9_\-]+$', sku):
             continue
         manage_number = (p.rakuten_item_url or sku.split("_")[0]).strip()
+        if not manage_number:
+            continue
         items.append({"manage_number": manage_number, "variant_id": sku})
 
     rms_stock = await fetch_inventory_from_rms(
@@ -1602,9 +1606,7 @@ async def import_stock_from_rms(db: Session = Depends(get_db)):
         if not sku:
             continue
         sku_to_product[sku] = p
-        # 内部SKU（構成品）はRMSに在庫が無いので問い合わせ対象から除外
-        # （DBの在庫＝入荷処理でカウントされた値をそのまま使う）
-        if p.is_component:
+        if p.is_component and not p.rakuten_item_url:
             continue
         # RMSのvariantIdに使えない文字（スペース等）を含むSKUは問い合わせ対象から除外
         if not re.match(r'^[a-zA-Z0-9_\-]+$', sku):
