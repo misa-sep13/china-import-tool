@@ -813,7 +813,7 @@ def download_csv_template():
         "https://item.taobao.com/xxx", "12.5",
         "1", "https://item.rakuten.co.jp/shop/xxx/", "12345678-A", "タオタロウ", "50",
         "100", "0", "45", "40",
-        "お客様専用メモ例", "備考例", "内部メモ例",
+        "お客様専用メモ例", "備考例", "内部メモ例", "", "", "FALSE",
     ])
     output.seek(0)
     # BOM付きUTF-8でExcelで文字化けしないように
