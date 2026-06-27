@@ -9,7 +9,7 @@ const EMPTY = {
   sales_30_recent: 0, sales_30_prev: 0,
   cost_jpy: null, selling_price: null, shipping_fee: 180,
   customer_memo: '', notes: '', memo: '',
-  set_components: '', is_component: false, is_active: true,
+  set_components: '', purchase_components: '', is_component: false, is_active: true,
 }
 
 const BASE_URL = api.defaults.baseURL || ''
@@ -513,15 +513,28 @@ export default function RakutenProductsPage() {
               </div>
             </div>
 
-            {/* セット構成（単品管理） */}
+            {/* セット構成（在庫連動用） */}
             <div style={{ borderTop: '1px solid #e2e8f0', margin: '0 0 16px', paddingTop: 14 }}>
-              <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 4 }}>🔗 セット構成（単品管理）</h3>
+              <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 4 }}>セット構成（在庫連動用）</h3>
               <p style={{ fontSize: 12, color: '#475569', marginBottom: 10 }}>
-                セット商品の場合、構成する単品SKUと数量をJSON形式で入力します。
+                在庫連動用。受注時に構成品在庫を増減し、RMS在庫再計算に使われます。
               </p>
               <SetComponentsEditor
                 value={form.set_components || ''}
                 onChange={v => setForm(p => ({ ...p, set_components: v }))}
+                allProducts={products}
+              />
+            </div>
+
+            {/* 発注用付属品（在庫連動しない） */}
+            <div style={{ borderTop: '1px solid #e2e8f0', margin: '0 0 16px', paddingTop: 14 }}>
+              <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 4 }}>発注用付属品（在庫連動しない）</h3>
+              <p style={{ fontSize: 12, color: '#475569', marginBottom: 10 }}>
+                発注・仕入れ用メモ。RMS在庫連動には使われません。
+              </p>
+              <SetComponentsEditor
+                value={form.purchase_components || ''}
+                onChange={v => setForm(p => ({ ...p, purchase_components: v }))}
                 allProducts={products}
               />
             </div>

@@ -36,8 +36,10 @@ class RakutenProduct(Base):
     notes         = Column(Text)                # 備考（タオタロウH列）
     memo          = Column(Text)                # 内部メモ
     invoice_note  = Column(Text)                # 商品内訳メモ（楽天専用・インボイス振り分け用・TAO太郎ASIN欄に出力）
-    # セット構成（単品管理）: JSON文字列 "[{\"sku\":\"ITEM-001\",\"qty\":2}]"
+    # セット構成（在庫連動用）: JSON文字列 "[{\"sku\":\"ITEM-001\",\"qty\":2}]"
     set_components = Column(Text)
+    # 発注用付属品（在庫連動しない）: JSON文字列 "[{\"sku\":\"ITEM-002\",\"qty\":1,\"memo\":\"付属フィルム\"}]"
+    purchase_components = Column(Text)
     is_component = Column(Boolean, default=False)  # 単品（セット構成用内部管理）フラグ
     is_active    = Column(Boolean, default=True)
     created_at   = Column(DateTime, server_default=func.now())

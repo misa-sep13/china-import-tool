@@ -122,7 +122,8 @@ class RakutenProductIn(BaseModel):
     customer_memo:    Optional[str] = None
     notes:            Optional[str] = None
     memo:             Optional[str] = None
-    set_components:   Optional[str] = None  # JSON文字列
+    set_components:   Optional[str] = None  # JSON文字列（在庫連動用）
+    purchase_components: Optional[str] = None  # JSON文字列（発注用付属品・在庫連動しない）
     is_component:     bool = False          # 単品（セット構成用内部管理）フラグ
     is_active:        bool = True
 
@@ -720,13 +721,16 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
                 "customer_memo": p.customer_memo or "",
                 "notes":         p.notes or "",
             })
-        # set_componentsを展開して追加行として出力
-        # set_components内のbuy_url/supplier_spec/priceを優先、なければ商品マスタから取得
+        # set_components + purchase_componentsを展開して追加行として出力
         try:
             comps = json.loads(p.set_components or "[]")
         except Exception:
             comps = []
-        for comp in comps:
+        try:
+            pcomps = json.loads(getattr(p, 'purchase_components', None) or "[]")
+        except Exception:
+            pcomps = []
+        for comp in comps + pcomps:
             comp_sku = comp.get("sku")
             comp_qty = comp.get("qty", 1)
             # set_components内に直接情報がある場合はそちらを使う
@@ -768,7 +772,7 @@ CSV_COLUMNS = [
     "sku", "name", "jan_code", "spec", "buy_url", "supplier_spec", "price",
     "set_size", "rakuten_item_url", "rakuten_sku_id", "supplier", "standard_stock",
     "stock", "inbound", "sales_30_recent", "sales_30_prev",
-    "customer_memo", "notes", "memo", "set_components", "is_component",
+    "customer_memo", "notes", "memo", "set_components", "purchase_components", "is_component",
 ]
 
 CSV_COLUMN_LABELS = {
@@ -791,7 +795,8 @@ CSV_COLUMN_LABELS = {
     "customer_memo":    "お客様専用メモ",
     "notes":            "備考",
     "memo":             "内部メモ",
-    "set_components":   "セット構成JSON",
+    "set_components":   "セット構成JSON(在庫連動用)",
+    "purchase_components": "発注用付属品JSON(在庫連動しない)",
     "is_component":     "単品フラグ(TRUE/FALSE)",
 }
 
@@ -842,6 +847,7 @@ def export_products_csv(db: Session = Depends(get_db)):
             getattr(p, 'notes', '') or "",
             p.memo or "",
             p.set_components or "",
+            getattr(p, 'purchase_components', '') or "",
             "TRUE" if p.is_component else "FALSE",
         ])
     output.seek(0)
@@ -922,6 +928,7 @@ def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_
             "notes":            normalized.get("notes") or None,
             "memo":             normalized.get("memo") or None,
             "set_components":   normalized.get("set_components") or None,
+            "purchase_components": normalized.get("purchase_components") or None,
             "is_component":     is_component,
         }
 
