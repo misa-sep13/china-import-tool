@@ -12,6 +12,7 @@ import RakutenStockPage from './pages/RakutenStockPage'
 import RakutenSettingsPage from './pages/RakutenSettingsPage'
 import RakutenInvoicePage from './pages/RakutenInvoicePage'
 import SyncLogsPage from './pages/SyncLogsPage'
+import WelfareInventoryPage from './pages/WelfareInventoryPage'
 import './App.css'
 
 function App() {
@@ -63,6 +64,13 @@ function App() {
         <NavLink to="/sync-logs" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🔍 同期ログ
         </NavLink>
+
+        <div style={{ borderTop: '1px solid #2d3748', margin: '16px 0 8px', paddingTop: 8, fontSize: 11, color: '#475569', fontWeight: 700, letterSpacing: 1, paddingLeft: 16 }}>
+          就労支援
+        </div>
+        <NavLink to="/welfare/inventory" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          📦 就労支援在庫
+        </NavLink>
       </nav>
       <main className="main-content">
         <Routes>
@@ -79,6 +87,7 @@ function App() {
           <Route path="/rakuten/invoices" element={<RakutenInvoicePage />} />
           <Route path="/rakuten/settings" element={<RakutenSettingsPage />} />
           <Route path="/sync-logs" element={<SyncLogsPage />} />
+          <Route path="/welfare/inventory" element={<WelfareInventoryPage />} />
         </Routes>
       </main>
     </div>

@@ -1,0 +1,318 @@
+from datetime import datetime, timezone
+import io
+import json
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.models.rakuten_product import RakutenProduct
+from app.models.welfare import WelfareInventoryItem, WelfareInventoryMovement
+
+
+router = APIRouter(prefix="/welfare", tags=["welfare"])
+
+
+def _norm_url(url: str | None) -> str:
+    if not url:
+        return ""
+    return str(url).split("?")[0].rstrip("/").lower()
+
+
+def _unit_per_set(product: RakutenProduct | None) -> int:
+    if not product:
+        return 1
+    if product.set_size and product.set_size > 1:
+        return int(product.set_size)
+    try:
+        comps = json.loads(product.set_components or "[]")
+    except Exception:
+        comps = []
+    if len(comps) == 1:
+        qty = comps[0].get("qty") or 1
+        try:
+            return max(1, int(qty))
+        except Exception:
+            return 1
+    return 1
+
+
+def _parse_excel(content: bytes):
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Excel読み込みエラー: {str(e)}")
+
+    parsed = []
+    for ws in wb.worksheets:
+        header_row_idx = None
+        col_map = {}
+        for i, row in enumerate(ws.iter_rows(values_only=True), 1):
+            vals = [str(c).strip() if c is not None else "" for c in row]
+            if "商品名" in vals and "数量" in vals:
+                header_row_idx = i
+                col_map = {v: idx for idx, v in enumerate(vals) if v}
+                break
+        if header_row_idx is None:
+            continue
+
+        def col(name):
+            return col_map.get(name, -1)
+
+        for row in ws.iter_rows(min_row=header_row_idx + 1, values_only=True):
+            if all(c is None for c in row):
+                continue
+            name_cn = str(row[col("商品名")] or "").strip() if col("商品名") >= 0 else ""
+            if not name_cn:
+                continue
+            buy_url = str(row[col("商品URL")] or "").strip() if col("商品URL") >= 0 else ""
+            if "?" in buy_url:
+                buy_url = buy_url.split("?")[0]
+            try:
+                units = int(float(row[col("数量")] or 0)) if col("数量") >= 0 else 0
+            except Exception:
+                units = 0
+            if units <= 0:
+                continue
+            parsed.append({
+                "sheet": ws.title,
+                "order_no": str(row[col("オーダー番号")] or "").strip() if col("オーダー番号") >= 0 else "",
+                "name_cn": name_cn,
+                "supplier_spec": str(row[col("色")] or "").strip() if col("色") >= 0 else "",
+                "size": str(row[col("サイズ")] or "").strip() if col("サイズ") >= 0 else "",
+                "buy_url": buy_url,
+                "units": units,
+            })
+    return parsed
+
+
+def _product_indexes(db: Session):
+    products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    by_url_spec = {}
+    by_url = {}
+    url_counts = {}
+    for p in products:
+        url = _norm_url(p.buy_url)
+        if not url:
+            continue
+        spec = (p.supplier_spec or "").strip()
+        if spec:
+            by_url_spec[(url, spec)] = p
+        url_counts[url] = url_counts.get(url, 0) + 1
+        by_url[url] = p
+    unique_url = {url: p for url, p in by_url.items() if url_counts.get(url) == 1}
+    return by_url_spec, unique_url
+
+
+def _match_product(row: dict, by_url_spec: dict, unique_url: dict):
+    url = _norm_url(row.get("buy_url"))
+    spec = (row.get("supplier_spec") or "").strip()
+    if url and spec and (url, spec) in by_url_spec:
+        return by_url_spec[(url, spec)], "url+spec"
+    if url and url in unique_url:
+        return unique_url[url], "url"
+    return None, None
+
+
+def _out(item: WelfareInventoryItem):
+    return {
+        "id": item.id,
+        "product_id": item.product_id,
+        "sku": item.sku,
+        "name_jp": item.name_jp,
+        "name_cn": item.name_cn,
+        "supplier_spec": item.supplier_spec,
+        "buy_url": item.buy_url,
+        "unit_per_set": item.unit_per_set or 1,
+        "total_received_units": item.total_received_units or 0,
+        "total_received_qty": item.total_received_qty or 0,
+        "withdrawn_qty": item.withdrawn_qty or 0,
+        "remaining_qty": item.remaining_qty or 0,
+        "instruction": item.instruction or "",
+        "note": item.note or "",
+        "last_received_at": item.last_received_at.isoformat() if item.last_received_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+
+@router.get("/inventory")
+def list_inventory(q: Optional[str] = None, db: Session = Depends(get_db)):
+    query = db.query(WelfareInventoryItem)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            (WelfareInventoryItem.sku.ilike(like)) |
+            (WelfareInventoryItem.name_jp.ilike(like)) |
+            (WelfareInventoryItem.name_cn.ilike(like)) |
+            (WelfareInventoryItem.supplier_spec.ilike(like))
+        )
+    rows = query.order_by(WelfareInventoryItem.remaining_qty.desc(), WelfareInventoryItem.sku.asc()).all()
+    return [_out(r) for r in rows]
+
+
+@router.post("/preview-excel")
+async def preview_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    rows = _parse_excel(await file.read())
+    by_url_spec, unique_url = _product_indexes(db)
+    result = []
+    matched = 0
+    for row in rows:
+        product, match_type = _match_product(row, by_url_spec, unique_url)
+        unit = _unit_per_set(product)
+        qty = row["units"] // unit
+        if product:
+            matched += 1
+        result.append({
+            **row,
+            "matched": bool(product),
+            "match_type": match_type,
+            "product_id": product.id if product else None,
+            "sku": product.sku if product else None,
+            "name_jp": product.name if product else None,
+            "unit_per_set": unit,
+            "qty": qty,
+            "remainder_units": row["units"] % unit,
+        })
+    return {"rows": result, "matched": matched, "unmatched": len(result) - matched}
+
+
+@router.post("/import-excel")
+async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    rows = _parse_excel(await file.read())
+    by_url_spec, unique_url = _product_indexes(db)
+    now = datetime.now(timezone.utc)
+    imported = 0
+    unmatched = 0
+    for row in rows:
+        product, _match_type = _match_product(row, by_url_spec, unique_url)
+        if not product:
+            unmatched += 1
+            continue
+        unit = _unit_per_set(product)
+        qty = row["units"] // unit
+        if qty <= 0:
+            continue
+
+        item = None
+        item = db.query(WelfareInventoryItem).filter(WelfareInventoryItem.product_id == product.id).first()
+        if not item:
+            item = WelfareInventoryItem(
+                product_id=product.id,
+                sku=product.sku,
+                name_jp=product.name,
+                name_cn=row["name_cn"],
+                supplier_spec=row.get("supplier_spec"),
+                buy_url=row.get("buy_url"),
+                unit_per_set=unit,
+                total_received_units=0,
+                total_received_qty=0,
+                withdrawn_qty=0,
+                remaining_qty=0,
+            )
+            db.add(item)
+            db.flush()
+
+        item.name_cn = row["name_cn"] or item.name_cn
+        item.supplier_spec = row.get("supplier_spec") or item.supplier_spec
+        item.buy_url = row.get("buy_url") or item.buy_url
+        item.unit_per_set = unit
+        item.total_received_units = (item.total_received_units or 0) + row["units"]
+        item.total_received_qty = (item.total_received_qty or 0) + qty
+        item.remaining_qty = (item.remaining_qty or 0) + qty
+        item.last_received_at = now
+
+        db.add(WelfareInventoryMovement(
+            item_id=item.id,
+            product_id=item.product_id,
+            sku=item.sku,
+            movement_type="import",
+            source_file=file.filename,
+            source_order_no=row.get("order_no"),
+            name_cn=row.get("name_cn"),
+            supplier_spec=row.get("supplier_spec"),
+            buy_url=row.get("buy_url"),
+            units=row["units"],
+            qty=qty,
+            note=f"{row.get('sheet', '')} から取込",
+        ))
+        imported += 1
+    db.commit()
+    return {"imported": imported, "unmatched": unmatched}
+
+
+class WelfareMemoIn(BaseModel):
+    instruction: Optional[str] = None
+    note: Optional[str] = None
+
+
+@router.patch("/inventory/{item_id}")
+def update_inventory_item(item_id: int, data: WelfareMemoIn, db: Session = Depends(get_db)):
+    item = db.query(WelfareInventoryItem).filter(WelfareInventoryItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="就労支援在庫が見つかりません")
+    if data.instruction is not None:
+        item.instruction = data.instruction
+    if data.note is not None:
+        item.note = data.note
+    db.commit()
+    db.refresh(item)
+    return _out(item)
+
+
+class WelfareWithdrawIn(BaseModel):
+    qty: int
+    note: Optional[str] = None
+
+
+@router.post("/inventory/{item_id}/withdraw")
+def withdraw_inventory(item_id: int, data: WelfareWithdrawIn, db: Session = Depends(get_db)):
+    item = db.query(WelfareInventoryItem).filter(WelfareInventoryItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="就労支援在庫が見つかりません")
+    if data.qty <= 0:
+        raise HTTPException(status_code=400, detail="減算数は1以上で入力してください")
+    if data.qty > (item.remaining_qty or 0):
+        raise HTTPException(status_code=400, detail="残量を超えて減算できません")
+    item.remaining_qty = (item.remaining_qty or 0) - data.qty
+    item.withdrawn_qty = (item.withdrawn_qty or 0) + data.qty
+    db.add(WelfareInventoryMovement(
+        item_id=item.id,
+        product_id=item.product_id,
+        sku=item.sku,
+        movement_type="withdraw",
+        name_cn=item.name_cn,
+        supplier_spec=item.supplier_spec,
+        buy_url=item.buy_url,
+        units=data.qty * (item.unit_per_set or 1),
+        qty=-data.qty,
+        note=data.note,
+    ))
+    db.commit()
+    db.refresh(item)
+    return _out(item)
+
+
+@router.get("/movements")
+def list_movements(item_id: Optional[int] = None, db: Session = Depends(get_db)):
+    query = db.query(WelfareInventoryMovement)
+    if item_id:
+        query = query.filter(WelfareInventoryMovement.item_id == item_id)
+    rows = query.order_by(WelfareInventoryMovement.id.desc()).limit(200).all()
+    return [{
+        "id": r.id,
+        "item_id": r.item_id,
+        "sku": r.sku,
+        "movement_type": r.movement_type,
+        "source_file": r.source_file,
+        "source_order_no": r.source_order_no,
+        "name_cn": r.name_cn,
+        "supplier_spec": r.supplier_spec,
+        "buy_url": r.buy_url,
+        "units": r.units,
+        "qty": r.qty,
+        "note": r.note,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+    } for r in rows]
