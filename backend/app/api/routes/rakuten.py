@@ -2158,8 +2158,9 @@ async def debug_push_execute(
         sb = {r["sku"]: r["rms_before"] for r in results if r["rms_before"] is not None}
         sa = {r["sku"]: r["rms_after"] for r in results if r["rms_after"] is not None}
         errs = [{"sku": r["sku"], "detail": r["detail"]} for r in results if r["detail"]]
+        ev_time = _dt.now(jst).replace(tzinfo=None)
         db.add(InventoryEvent(
-            event_time=_dt.now(jst),
+            event_time=ev_time,
             event_type="debug_push",
             pushed=_json_ie.dumps(pushed_list, ensure_ascii=False),
             push_ok=ok_count,

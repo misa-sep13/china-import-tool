@@ -128,6 +128,8 @@ def _save_inventory_event(db, *, event_type: str, event_time,
     import json as _j
     from app.models.inventory_event import InventoryEvent
     try:
+        if hasattr(event_time, 'tzinfo') and event_time.tzinfo is not None:
+            event_time = event_time.replace(tzinfo=None)
         db.add(InventoryEvent(
             event_time=event_time,
             event_type=event_type,
