@@ -9,6 +9,7 @@ from app.models.product import Product
 
 router = APIRouter(prefix="/products", tags=["products"])
 
+
 class ProductCreate(BaseModel):
     sku: str
     fnsku: Optional[str] = ""
@@ -28,6 +29,19 @@ class ProductCreate(BaseModel):
     set_size: Optional[int] = 1
     extra_stock: Optional[int] = 0
     amazon_fee_rate: Optional[float] = 0.1
+
+def _restore_deleted_product(existing: Product, data: ProductCreate, db: Session) -> Product:
+    for k, v in data.model_dump().items():
+        setattr(existing, k, v)
+    existing.is_active = True
+    if existing.no is None:
+        existing.no = db.query(Product).count() + 1
+    db.commit()
+    db.refresh(existing)
+    return existing
+
+def _retire_deleted_sku(product: Product):
+    product.sku = f"__deleted__{product.id}__{product.sku or 'sku'}"
 
 class ProductUpdate(BaseModel):
     sku: Optional[str] = None
@@ -117,14 +131,7 @@ def create_product(data: ProductCreate, db: Session = Depends(get_db)):
     if existing:
         if existing.is_active:
             raise HTTPException(status_code=400, detail="SKUが既に存在します")
-        for k, v in data.model_dump().items():
-            setattr(existing, k, v)
-        existing.is_active = True
-        if existing.no is None:
-            existing.no = db.query(Product).count() + 1
-        db.commit()
-        db.refresh(existing)
-        return existing
+        return _restore_deleted_product(existing, data, db)
     max_no = db.query(Product).count()
     p = Product(**data.model_dump(), no=max_no + 1)
     db.add(p)
@@ -136,6 +143,15 @@ def create_product(data: ProductCreate, db: Session = Depends(get_db)):
     db.refresh(p)
     return p
 
+@router.post("/restore", response_model=ProductOut)
+def restore_product(data: ProductCreate, db: Session = Depends(get_db)):
+    existing = db.query(Product).filter(Product.sku == data.sku).first()
+    if not existing:
+        return create_product(data, db)
+    if existing.is_active:
+        raise HTTPException(status_code=400, detail="SKUが既に存在します")
+    return _restore_deleted_product(existing, data, db)
+
 @router.put("/{product_id}", response_model=ProductOut)
 def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(get_db)):
     p = db.query(Product).filter(Product.id == product_id).first()
@@ -145,7 +161,9 @@ def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(g
     if updates.get("sku") and updates["sku"] != p.sku:
         existing = db.query(Product).filter(Product.sku == updates["sku"], Product.id != product_id).first()
         if existing:
-            raise HTTPException(status_code=400, detail="SKUが既に存在します")
+            if existing.is_active:
+                raise HTTPException(status_code=400, detail="SKUが既に存在します")
+            _retire_deleted_sku(existing)
     for k, v in updates.items():
         setattr(p, k, v)
     try:
