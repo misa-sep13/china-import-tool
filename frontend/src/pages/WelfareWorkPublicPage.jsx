@@ -157,20 +157,20 @@ export default function WelfareWorkPublicPage() {
                 ))}
               </div>
               <div style={{ overflowX: 'auto' }}>
-                <table className="welfare-work-table" style={{ width: 790, minWidth: 790 }}>
+                <table className="welfare-work-table" style={{ width: 1010, minWidth: 1010 }}>
                   <thead>
                     <tr>
-                      <th style={{ width: 48 }}>写真</th>
-                      <th style={{ width: 118 }}>商品名</th>
-                      <th style={{ width: 82 }}>色</th>
-                      <th style={{ width: 66 }}>サイズ</th>
-                      <th style={{ width: 42 }}>URL</th>
-                      <th style={{ width: 54 }}>単品数</th>
-                      <th style={{ width: 56 }}>換算</th>
-                      <th style={{ width: 58 }}>残</th>
-                      <th style={{ width: 58 }}>指示</th>
-                      <th style={{ width: 130 }}>備考</th>
-                      <th style={{ width: 72 }}>発注時間</th>
+                      <th style={{ width: 58 }}>写真</th>
+                      <th style={{ width: 170 }}>商品名</th>
+                      <th style={{ width: 105 }}>色</th>
+                      <th style={{ width: 82 }}>サイズ</th>
+                      <th style={{ width: 54 }}>URL</th>
+                      <th style={{ width: 64 }}>単品数</th>
+                      <th style={{ width: 64 }}>換算</th>
+                      <th style={{ width: 74 }}>残</th>
+                      <th style={{ width: 86 }}>指示</th>
+                      <th style={{ width: 170 }}>備考</th>
+                      <th style={{ width: 90 }}>発注時間</th>
                     </tr>
                   </thead>
                   <tbody>

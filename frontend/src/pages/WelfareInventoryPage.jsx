@@ -337,22 +337,22 @@ export default function WelfareInventoryPage() {
               ))}
             </div>
             <div style={{ overflowX: 'auto' }}>
-              <table className="welfare-work-table" style={{ width: 930, minWidth: 930 }}>
+              <table className="welfare-work-table" style={{ width: 1120, minWidth: 1120 }}>
                 <thead>
                   <tr>
-                    <th style={{ width: 48 }}></th>
-                    <th style={{ width: 48 }}>写真</th>
-                    <th style={{ width: 118 }}>商品名</th>
-                    <th style={{ width: 82 }}>色</th>
-                    <th style={{ width: 66 }}>サイズ</th>
-                    <th style={{ width: 42 }}>URL</th>
-                    <th style={{ width: 54 }}>単品数</th>
-                    <th style={{ width: 56 }}>換算</th>
-                    <th style={{ width: 60 }}>残</th>
-                    <th style={{ width: 58 }}>指示</th>
-                    <th style={{ width: 130 }}>備考</th>
-                    <th style={{ width: 52 }}></th>
-                    <th style={{ width: 72 }}>発注時間</th>
+                    <th style={{ width: 56 }}></th>
+                    <th style={{ width: 58 }}>写真</th>
+                    <th style={{ width: 170 }}>商品名</th>
+                    <th style={{ width: 105 }}>色</th>
+                    <th style={{ width: 82 }}>サイズ</th>
+                    <th style={{ width: 54 }}>URL</th>
+                    <th style={{ width: 64 }}>単品数</th>
+                    <th style={{ width: 64 }}>換算</th>
+                    <th style={{ width: 74 }}>残</th>
+                    <th style={{ width: 86 }}>指示</th>
+                    <th style={{ width: 170 }}>備考</th>
+                    <th style={{ width: 64 }}></th>
+                    <th style={{ width: 90 }}>発注時間</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -367,7 +367,7 @@ export default function WelfareInventoryPage() {
                         <td style={{ whiteSpace: 'nowrap' }}>
                           <button
                             className="btn btn-secondary btn-sm"
-                            style={{ color: '#e11d48', padding: '4px 6px' }}
+                            style={{ color: '#e11d48', padding: '5px 8px' }}
                             disabled={workDeleteMutation.isPending}
                             onClick={() => {
                               if (window.confirm('この作業指示を削除しますか？')) {
@@ -391,7 +391,7 @@ export default function WelfareInventoryPage() {
                           min="0"
                           value={remaining}
                             onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, remaining_qty: Number(e.target.value) } }))}
-                            style={{ width: 50, textAlign: 'right', fontWeight: 700 }}
+                            style={{ width: 58, textAlign: 'right', fontWeight: 700 }}
                           />
                         </td>
                         <td style={{ ...instructionCellStyle(instruction), padding: 6 }}>
@@ -399,7 +399,7 @@ export default function WelfareInventoryPage() {
                             list="work-instruction-options"
                             value={instruction}
                             onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, instruction: e.target.value } }))}
-                            style={{ width: 48, minWidth: 0, background: 'transparent', border: '1px solid #cbd5e1', borderRadius: 6 }}
+                            style={{ width: 72, minWidth: 0, background: 'transparent', border: '1px solid #cbd5e1', borderRadius: 6 }}
                           />
                         </td>
                         <td>

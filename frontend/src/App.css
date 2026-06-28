@@ -101,12 +101,12 @@ tr:hover td { background: #fafbff; }
 }
 .welfare-work-table th,
 .welfare-work-table td {
-  padding: 6px 6px;
+  padding: 8px 8px;
   font-size: 12px;
 }
 .welfare-work-table input,
 .welfare-work-table select {
-  padding: 5px 5px;
+  padding: 6px 7px;
   font-size: 12px;
 }
 
