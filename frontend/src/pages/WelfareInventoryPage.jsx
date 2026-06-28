@@ -46,6 +46,24 @@ const workRemainingQty = (row) => row.remaining_qty ?? 0
 
 const WORK_INSTRUCTION_OPTIONS = ['作業保管', '保管', '戻し']
 const DELETE_UNDO_MS = 8000
+const JA_SORT_OPTIONS = { numeric: true, sensitivity: 'base' }
+
+const workDisplayName = (row) => String(row.source_product_name || row.name_jp || row.sku || '').trim()
+
+const compareWorkInstructions = (a, b) => {
+  const name = workDisplayName(a).localeCompare(workDisplayName(b), 'ja', JA_SORT_OPTIONS)
+  if (name) return name
+
+  const specA = String(a.color || a.supplier_spec || '').trim()
+  const specB = String(b.color || b.supplier_spec || '').trim()
+  const spec = specA.localeCompare(specB, 'ja', JA_SORT_OPTIONS)
+  if (spec) return spec
+
+  const size = String(a.size || '').trim().localeCompare(String(b.size || '').trim(), 'ja', JA_SORT_OPTIONS)
+  if (size) return size
+
+  return (b.id || 0) - (a.id || 0)
+}
 
 const instructionCellStyle = (value) => {
   const v = String(value || '')
@@ -124,7 +142,12 @@ export default function WelfareInventoryPage() {
   }, [activeWorkInstructions])
 
   const visibleWorkInstructions = useMemo(
-    () => activeWorkDate ? activeWorkInstructions.filter(row => fmtWorkDate(row) === activeWorkDate) : activeWorkInstructions,
+    () => {
+      const rows = activeWorkDate
+        ? activeWorkInstructions.filter(row => fmtWorkDate(row) === activeWorkDate)
+        : activeWorkInstructions
+      return [...rows].sort(compareWorkInstructions)
+    },
     [activeWorkDate, activeWorkInstructions]
   )
 
