@@ -76,7 +76,8 @@ export default function ProductsPage() {
     setRefreshing(true)
     try {
       const res = await api.post('/products/refresh-fees')
-      alert(`更新完了！${res.data.updated}件の価格・手数料を更新しました。`)
+      const d = res.data
+      alert(`更新完了！${d.updated}件を確認しました。\n価格取得: ${d.price_updated ?? '-'}件 / FBA手数料取得: ${d.fee_updated ?? '-'}件\n未取得: 価格${d.price_missing ?? 0}件・FBA${d.fee_missing ?? 0}件`)
       qc.invalidateQueries(['products'])
     } catch (e) {
       alert('更新失敗: ' + (e.response?.data?.detail || e.message))

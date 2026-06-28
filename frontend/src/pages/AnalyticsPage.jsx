@@ -232,7 +232,8 @@ export default function AnalyticsPage() {
                   {th('revenue', '売上')}
                   {th('vine_revenue', 'VINE売上')}
                   {th('avg_price', '平均単価')}
-                  {th('fba_fee', 'FBA手数料')}
+                  {th('fba_fee_unit', 'FBA/個')}
+                  {th('fba_fee', 'FBA合計')}
                   {th('amazon_fee', 'Amazon手数料')}
                   {th('cost_jpy', '仕入原価')}
                   {th('profit', '粗利益')}
@@ -287,6 +288,7 @@ export default function AnalyticsPage() {
                       {item.vine_revenue > 0 ? yen(item.vine_revenue) : '-'}
                     </td>
                     <td style={{ textAlign: 'right' }}>{yen(item.avg_price)}</td>
+                    <td style={{ textAlign: 'right', color: item.fba_fee_unit == null ? '#aaa' : '#555' }}>{yen(item.fba_fee_unit)}</td>
                     <td style={{ textAlign: 'right', color: '#555' }}>{yen(item.fba_fee)}</td>
                     <td style={{ textAlign: 'right', color: '#555' }}>{yen(item.amazon_fee)}</td>
                     <td style={{ textAlign: 'right', color: '#555' }}>{yen(item.cost_jpy)}</td>

@@ -146,23 +146,53 @@ def refresh_fees(db: Session = Depends(get_db)):
         return {"updated": 0}
 
     from app.services.amazon_api import fetch_prices_and_fees
-    fees_map = fetch_prices_and_fees(sku_list)
+    asin_map = {p.sku: p.asin for p in products if p.sku and p.asin}
+    fallback_prices = {
+        p.sku: p.selling_price
+        for p in products
+        if p.sku and p.selling_price and p.selling_price > 0
+    }
+    fees_map = fetch_prices_and_fees(
+        sku_list,
+        asin_map=asin_map,
+        fallback_prices=fallback_prices,
+    )
 
     now = datetime.now(timezone.utc)
     updated = 0
+    price_updated = 0
+    fee_updated = 0
+    price_missing = 0
+    fee_missing = 0
+    price_sources = {}
     for p in products:
         info = fees_map.get(p.sku)
         if not info:
             continue
         if info["selling_price"] is not None:
             p.selling_price = info["selling_price"]
+            price_updated += 1
+        else:
+            price_missing += 1
         if info["fba_fee"] is not None:
             p.fba_fee = info["fba_fee"]
+            fee_updated += 1
+        else:
+            fee_missing += 1
+        source = info.get("price_source") or "missing"
+        price_sources[source] = price_sources.get(source, 0) + 1
         p.fees_updated_at = now
         updated += 1
 
     db.commit()
-    return {"updated": updated}
+    return {
+        "updated": updated,
+        "price_updated": price_updated,
+        "fee_updated": fee_updated,
+        "price_missing": price_missing,
+        "fee_missing": fee_missing,
+        "price_sources": price_sources,
+    }
 
 
 @router.delete("/{product_id}")

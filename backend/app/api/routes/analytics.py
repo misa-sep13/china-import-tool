@@ -115,7 +115,8 @@ def _run_analytics_job(job_id: str, days: int):
             normal_revenue = max(revenue - vine_revenue, 0)
 
             # 手数料計算（VINE分を除外）
-            fba_fee      = (p.fba_fee or 0) * normal_units
+            fba_fee_unit = p.fba_fee
+            fba_fee      = (fba_fee_unit or 0) * normal_units
             amazon_fee   = round(normal_revenue * (p.amazon_fee_rate or amazon_fee_rate), 0)
             cost_jpy     = round((p.price or 0) * normal_units, 0)
             total_cost   = fba_fee + amazon_fee + cost_jpy
@@ -197,6 +198,7 @@ def _run_analytics_job(job_id: str, days: int):
                 "is_new_product": is_new_product,
                 "elapsed_days":  elapsed_days if elapsed_days is not None and elapsed_days < 9999 else None,
                 # コスト
+                "fba_fee_unit": fba_fee_unit,
                 "fba_fee":      fba_fee,
                 "amazon_fee":   amazon_fee,
                 "cost_jpy":     cost_jpy,

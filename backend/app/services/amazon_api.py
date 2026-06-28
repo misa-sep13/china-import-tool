@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 import urllib.parse
 import urllib.request
 import json
@@ -338,26 +338,74 @@ def fetch_new_product_info(asin_list: List[str]) -> Dict[str, dict]:
     return result
 
 
-def _fetch_price_and_fee_one(sku: str) -> tuple:
-    """1SKUの出品価格とFBA手数料を取得。戻り値: (sku, selling_price, fba_fee)"""
+def _positive_float(value) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        num = float(value)
+        return num if num > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_listing_price(pricing_item: dict) -> Optional[float]:
+    offers = pricing_item.get("Product", {}).get("Offers", []) or []
+    for offer in offers:
+        price = (
+            offer.get("BuyingPrice", {})
+            .get("ListingPrice", {})
+            .get("Amount")
+        )
+        parsed = _positive_float(price)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _fetch_price_from_pricing_api(mp: str, item_type: str, value: str) -> Optional[float]:
+    if not value:
+        return None
+    key = "Skus" if item_type == "Sku" else "Asins"
+    params = urllib.parse.urlencode({"MarketplaceId": mp, key: value})
+    data = _call_sp_api(f"/products/pricing/v0/price?ItemType={item_type}&{params}")
+    for item in data.get("payload", []) or []:
+        if item.get("status") == "Success":
+            price = _extract_listing_price(item)
+            if price is not None:
+                return price
+    return None
+
+
+def _fetch_price_and_fee_one(sku: str, asin: str = "", fallback_price: Optional[float] = None) -> tuple:
+    """1SKUの出品価格とFBA手数料を取得。戻り値: (sku, selling_price, fba_fee, price_source)"""
     mp = "A1VC38T7YXB528"
     selling_price = None
     fba_fee = None
+    price_source = None
 
-    # 出品価格取得
+    # 出品価格取得。SKU価格が取れない場合はASIN価格、最後にDB保存済み価格を使う。
     try:
-        params = urllib.parse.urlencode({"MarketplaceId": mp, "Skus": sku})
-        data = _call_sp_api(f"/products/pricing/v0/price?ItemType=Sku&{params}")
-        items = data.get("payload", [])
-        if items and items[0].get("status") == "Success":
-            offers = items[0].get("Product", {}).get("Offers", [])
-            if offers:
-                selling_price = offers[0].get("BuyingPrice", {}).get("ListingPrice", {}).get("Amount")
+        selling_price = _fetch_price_from_pricing_api(mp, "Sku", sku)
+        if selling_price is not None:
+            price_source = "sku"
     except Exception:
         pass
 
+    if selling_price is None and asin:
+        try:
+            selling_price = _fetch_price_from_pricing_api(mp, "Asin", asin)
+            if selling_price is not None:
+                price_source = "asin"
+        except Exception:
+            pass
+
+    if selling_price is None:
+        selling_price = _positive_float(fallback_price)
+        if selling_price is not None:
+            price_source = "db"
+
     # FBA手数料取得（出品価格が取れた場合のみ）
-    if selling_price:
+    if selling_price is not None:
         try:
             body = json.dumps({
                 "FeesEstimateRequest": {
@@ -392,7 +440,7 @@ def _fetch_price_and_fee_one(sku: str) -> tuple:
         except Exception:
             pass
 
-    return sku, selling_price, fba_fee
+    return sku, selling_price, fba_fee, price_source
 
 
 def fetch_sales_period(days: int, offset_days: int, asin_list: List[str]) -> Dict[str, float]:
@@ -485,14 +533,32 @@ def update_listing_price(sku: str, price: float) -> tuple:
         return False, str(ex)
 
 
-def fetch_prices_and_fees(sku_list: List[str]) -> Dict[str, dict]:
+def fetch_prices_and_fees(
+    sku_list: List[str],
+    asin_map: Optional[Dict[str, str]] = None,
+    fallback_prices: Optional[Dict[str, float]] = None,
+) -> Dict[str, dict]:
     """全SKUの出品価格・FBA手数料を並列取得。戻り値: {sku: {selling_price, fba_fee}}"""
     result = {}
+    asin_map = asin_map or {}
+    fallback_prices = fallback_prices or {}
     with ThreadPoolExecutor(max_workers=5) as ex:
-        futures = {ex.submit(_fetch_price_and_fee_one, sku): sku for sku in sku_list}
+        futures = {
+            ex.submit(
+                _fetch_price_and_fee_one,
+                sku,
+                asin_map.get(sku, ""),
+                fallback_prices.get(sku),
+            ): sku
+            for sku in sku_list
+        }
         for f in as_completed(futures):
-            sku, selling_price, fba_fee = f.result()
-            result[sku] = {"selling_price": selling_price, "fba_fee": fba_fee}
+            sku, selling_price, fba_fee, price_source = f.result()
+            result[sku] = {
+                "selling_price": selling_price,
+                "fba_fee": fba_fee,
+                "price_source": price_source,
+            }
     return result
 
 
