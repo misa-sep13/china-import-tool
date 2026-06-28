@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import base64
 import io
 import json
 from typing import Optional
@@ -47,6 +48,29 @@ def _cell_text(value) -> str:
     return str(value).strip()
 
 
+def _image_data_url(image) -> str:
+    try:
+        raw = image._data()
+    except Exception:
+        return ""
+    if not raw:
+        return ""
+    fmt = (getattr(image, "format", "") or "").lower()
+    mime = "image/jpeg" if fmt in ("jpeg", "jpg") else f"image/{fmt or 'png'}"
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def _sheet_images_by_row(ws) -> dict[int, str]:
+    images = {}
+    for image in getattr(ws, "_images", []):
+        try:
+            row_no = image.anchor._from.row + 1
+        except Exception:
+            continue
+        images.setdefault(row_no, _image_data_url(image))
+    return {row_no: data for row_no, data in images.items() if data}
+
+
 def _parse_excel(content: bytes):
     try:
         import openpyxl
@@ -56,6 +80,7 @@ def _parse_excel(content: bytes):
 
     parsed = []
     for ws in wb.worksheets:
+        image_by_row = _sheet_images_by_row(ws)
         header_row_idx = None
         col_map = {}
         for i, row in enumerate(ws.iter_rows(values_only=True), 1):
@@ -70,7 +95,7 @@ def _parse_excel(content: bytes):
         def col(name):
             return col_map.get(name, -1)
 
-        for row in ws.iter_rows(min_row=header_row_idx + 1, values_only=True):
+        for row_idx, row in enumerate(ws.iter_rows(min_row=header_row_idx + 1, values_only=True), header_row_idx + 1):
             if all(c is None for c in row):
                 continue
             def cell(name):
@@ -104,10 +129,11 @@ def _parse_excel(content: bytes):
                 "supplier_spec": _cell_text(cell("色")),
                 "size": _cell_text(cell("サイズ")),
                 "buy_url": buy_url,
+                "image_data_url": image_by_row.get(row_idx, ""),
                 "unit_price": _cell_text(cell("単価")),
                 "units": units,
                 "instruction": _cell_text(cell("指示")),
-                "note": _cell_text(cell("備考")),
+                "note": "",
                 "remaining_units": remaining_units,
             })
     return parsed
@@ -160,6 +186,7 @@ def _out(item: WelfareInventoryItem):
         "name_cn": item.name_cn,
         "supplier_spec": item.supplier_spec,
         "buy_url": item.buy_url,
+        "image_data_url": item.image_data_url,
         "unit_per_set": item.unit_per_set or 1,
         "total_received_units": item.total_received_units or 0,
         "total_received_qty": item.total_received_qty or 0,
@@ -202,6 +229,7 @@ def _work_out(row: WelfareWorkInstruction):
         "size": row.size,
         "supplier_spec": row.supplier_spec,
         "buy_url": row.buy_url,
+        "image_data_url": row.image_data_url,
         "unit_price": row.unit_price,
         "units": row.units or 0,
         "unit_per_set": row.unit_per_set or 1,
@@ -324,14 +352,6 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
         already_work = key in existing_work_keys
 
         if not already_work:
-            remainder = row["units"] % unit
-            note_parts = []
-            if row.get("note"):
-                note_parts.append(row["note"])
-            if not product:
-                note_parts.append("未照合")
-            if remainder:
-                note_parts.append(f"余り{remainder}個")
             db.add(WelfareWorkInstruction(
                 product_id=product.id if product else None,
                 sku=product.sku if product else None,
@@ -345,6 +365,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 size=row.get("size"),
                 supplier_spec=row.get("supplier_spec"),
                 buy_url=row.get("buy_url"),
+                image_data_url=row.get("image_data_url"),
                 unit_price=row.get("unit_price"),
                 units=row["units"],
                 unit_per_set=unit,
@@ -352,7 +373,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 instruction=row.get("instruction") or "",
                 remaining_units=remaining_units_value,
                 remaining_qty=remaining_qty,
-                note=" / ".join(note_parts) if note_parts else None,
+                note=None,
             ))
             work_imported += 1
         if not product:
@@ -370,6 +391,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 name_cn=row["name_cn"],
                 supplier_spec=row.get("supplier_spec"),
                 buy_url=row.get("buy_url"),
+                image_data_url=row.get("image_data_url"),
                 unit_per_set=unit,
                 total_received_units=0,
                 total_received_qty=0,
@@ -382,6 +404,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
         item.name_cn = row["name_cn"] or item.name_cn
         item.supplier_spec = row.get("supplier_spec") or item.supplier_spec
         item.buy_url = row.get("buy_url") or item.buy_url
+        item.image_data_url = row.get("image_data_url") or item.image_data_url
         item.unit_per_set = unit
         item.total_received_units = (item.total_received_units or 0) + row["units"]
         item.total_received_qty = (item.total_received_qty or 0) + qty

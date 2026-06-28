@@ -46,6 +46,19 @@ const workRemainingUnits = (row) => (
   row.remaining_units ?? ((row.remaining_qty || 0) * (row.unit_per_set || 1))
 )
 
+const WORK_INSTRUCTION_OPTIONS = ['', '作業保管', '保管', '戻し', '30戻し']
+
+const instructionCellStyle = (value) => {
+  const v = String(value || '')
+  if (v.includes('作業保管')) return { background: '#dbeafe' }
+  if (v.includes('戻し')) return { background: '#fef3c7' }
+  return { background: '#fff' }
+}
+
+const imageThumb = (src) => (
+  src ? <img src={src} alt="" style={{ width: 42, height: 42, objectFit: 'cover', borderRadius: 4, display: 'block' }} /> : '-'
+)
+
 export default function WelfareInventoryPage() {
   const qc = useQueryClient()
   const fileRef = useRef(null)
@@ -241,6 +254,7 @@ export default function WelfareInventoryPage() {
               <thead>
                 <tr>
                   <th>SKU</th>
+                  <th>写真</th>
                   <th>日本語名</th>
                   <th>URL / 仕様</th>
                   <th>単品数</th>
@@ -257,6 +271,7 @@ export default function WelfareInventoryPage() {
                 {items.map(item => (
                   <tr key={item.id}>
                     <td style={{ fontWeight: 700 }}>{item.sku || '-'}</td>
+                    <td>{imageThumb(item.image_data_url)}</td>
                     <td style={{ minWidth: 220 }}>{item.name_jp || '-'}</td>
                     <td style={{ minWidth: 240 }}>
                       <div>{item.buy_url ? <a href={item.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</div>
@@ -327,16 +342,18 @@ export default function WelfareInventoryPage() {
               <table style={{ minWidth: 1040, width: '100%', tableLayout: 'fixed' }}>
                 <thead>
                   <tr>
-                    <th style={{ width: 82 }}>発注時間</th>
-                    <th style={{ width: 135 }}>商品名</th>
-                    <th style={{ width: 95 }}>色</th>
-                    <th style={{ width: 82 }}>サイズ</th>
-                    <th style={{ width: 64 }}>商品URL</th>
-                    <th style={{ width: 60 }}>数量</th>
-                    <th style={{ width: 180 }}>指示</th>
-                    <th style={{ width: 90 }}>残</th>
-                    <th style={{ width: 160 }}>備考</th>
-                    <th style={{ width: 120 }}></th>
+                    <th style={{ width: 54 }}></th>
+                    <th style={{ width: 78 }}>発注時間</th>
+                    <th style={{ width: 58 }}>写真</th>
+                    <th style={{ width: 120 }}>商品名</th>
+                    <th style={{ width: 90 }}>色</th>
+                    <th style={{ width: 78 }}>サイズ</th>
+                    <th style={{ width: 56 }}>URL</th>
+                    <th style={{ width: 54 }}>数量</th>
+                    <th style={{ width: 118 }}>指示</th>
+                    <th style={{ width: 80 }}>残</th>
+                    <th style={{ width: 130 }}>備考</th>
+                    <th style={{ width: 62 }}></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -346,20 +363,40 @@ export default function WelfareInventoryPage() {
                     const remaining = draft.remaining_units ?? workRemainingUnits(row)
                     const note = draft.note ?? row.note
                     const dirty = instruction !== row.instruction || remaining !== workRemainingUnits(row) || note !== row.note
+                    const instructionOptions = WORK_INSTRUCTION_OPTIONS.includes(instruction)
+                      ? WORK_INSTRUCTION_OPTIONS
+                      : [instruction, ...WORK_INSTRUCTION_OPTIONS]
                     return (
                       <tr key={row.id}>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            style={{ color: '#e11d48', padding: '6px 8px' }}
+                            disabled={workDeleteMutation.isPending}
+                            onClick={() => {
+                              if (window.confirm('この作業指示を削除しますか？')) {
+                                workDeleteMutation.mutate(row.id)
+                              }
+                            }}
+                          >
+                            削除
+                          </button>
+                        </td>
                         <td style={{ whiteSpace: 'nowrap' }}>{row.order_date || fmtWorkDate(row)}</td>
+                        <td>{imageThumb(row.image_data_url)}</td>
                         <td style={{ wordBreak: 'break-word' }}>{row.source_product_name || row.name_jp || '未照合'}</td>
                         <td style={{ color: '#e11d48' }}>{row.color || row.supplier_spec || '-'}</td>
                         <td style={{ color: '#e11d48' }}>{row.size || '-'}</td>
                         <td>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</td>
                         <td style={{ color: '#e11d48', fontWeight: 700 }}>{row.units}</td>
-                        <td style={{ minWidth: 160 }}>
-                          <input
+                        <td style={{ ...instructionCellStyle(instruction), padding: 6 }}>
+                          <select
                             value={instruction}
                             onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, instruction: e.target.value } }))}
-                            placeholder="作業保管 / 保管 など"
-                          />
+                            style={{ width: '100%', minWidth: 0, background: 'transparent', border: '1px solid #cbd5e1', borderRadius: 6, padding: '6px 4px' }}
+                          >
+                            {instructionOptions.map(opt => <option key={opt} value={opt}>{opt || '-'}</option>)}
+                          </select>
                         </td>
                         <td style={{ minWidth: 86 }}>
                           <input
@@ -390,18 +427,6 @@ export default function WelfareInventoryPage() {
                               保存
                             </button>
                           )}
-                          <button
-                            className="btn btn-secondary btn-sm"
-                            style={{ marginLeft: dirty ? 6 : 0, color: '#e11d48' }}
-                            disabled={workDeleteMutation.isPending}
-                            onClick={() => {
-                              if (window.confirm('この作業指示を削除しますか？')) {
-                                workDeleteMutation.mutate(row.id)
-                              }
-                            }}
-                          >
-                            削除
-                          </button>
                         </td>
                       </tr>
                     )

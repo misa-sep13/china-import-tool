@@ -46,6 +46,17 @@ const workRemainingUnits = (row) => (
   row.remaining_units ?? ((row.remaining_qty || 0) * (row.unit_per_set || 1))
 )
 
+const instructionCellStyle = (value) => {
+  const v = String(value || '')
+  if (v.includes('作業保管')) return { background: '#dbeafe' }
+  if (v.includes('戻し')) return { background: '#fef3c7' }
+  return { background: '#fff' }
+}
+
+const imageThumb = (src) => (
+  src ? <img src={src} alt="" style={{ width: 42, height: 42, objectFit: 'cover', borderRadius: 4, display: 'block' }} /> : '-'
+)
+
 export default function WelfareWorkPublicPage() {
   const [search, setSearch] = useState('')
   const [activeWorkDate, setActiveWorkDate] = useState('')
@@ -152,12 +163,13 @@ export default function WelfareWorkPublicPage() {
                   <thead>
                     <tr>
                       <th style={{ width: 82 }}>発注時間</th>
-                      <th style={{ width: 135 }}>商品名</th>
-                      <th style={{ width: 95 }}>色</th>
-                      <th style={{ width: 82 }}>サイズ</th>
-                      <th style={{ width: 64 }}>商品URL</th>
-                      <th style={{ width: 60 }}>数量</th>
-                      <th style={{ width: 180 }}>指示</th>
+                      <th style={{ width: 58 }}>写真</th>
+                      <th style={{ width: 120 }}>商品名</th>
+                      <th style={{ width: 90 }}>色</th>
+                      <th style={{ width: 78 }}>サイズ</th>
+                      <th style={{ width: 56 }}>URL</th>
+                      <th style={{ width: 54 }}>数量</th>
+                      <th style={{ width: 118 }}>指示</th>
                       <th style={{ width: 70 }}>残</th>
                       <th style={{ width: 150 }}>備考</th>
                     </tr>
@@ -166,12 +178,13 @@ export default function WelfareWorkPublicPage() {
                     {selectedRows.map(row => (
                       <tr key={row.id}>
                         <td style={{ whiteSpace: 'nowrap' }}>{row.order_date || fmtWorkDate(row)}</td>
+                        <td>{imageThumb(row.image_data_url)}</td>
                         <td style={{ wordBreak: 'break-word', fontWeight: 600 }}>{row.source_product_name || row.name_jp || '未照合'}</td>
                         <td style={{ color: '#e11d48' }}>{row.color || row.supplier_spec || '-'}</td>
                         <td style={{ color: '#e11d48' }}>{row.size || '-'}</td>
                         <td>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</td>
                         <td style={{ color: '#e11d48', fontWeight: 700 }}>{row.units}</td>
-                        <td style={{ minWidth: 180 }}>{row.instruction || '-'}</td>
+                        <td style={{ ...instructionCellStyle(row.instruction), fontWeight: 600 }}>{row.instruction || '-'}</td>
                         <td style={{ fontWeight: 700 }}>{workRemainingUnits(row)}</td>
                         <td style={{ minWidth: 180 }}>{row.note || '-'}</td>
                       </tr>
