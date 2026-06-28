@@ -88,12 +88,26 @@ export default function WelfareInventoryPage() {
   const [withdrawing, setWithdrawing] = useState(null)
   const [withdrawQty, setWithdrawQty] = useState(1)
   const [withdrawNote, setWithdrawNote] = useState('')
+  const [inventoryDrafts, setInventoryDrafts] = useState({})
   const [remainingDrafts, setRemainingDrafts] = useState({})
   const [workDrafts, setWorkDrafts] = useState({})
   const [activeWorkDate, setActiveWorkDate] = useState('')
   const [pendingWorkDeletes, setPendingWorkDeletes] = useState([])
 
+  const getInventoryDraftValue = (item, draft = {}) => ({
+    name_jp: draft.name_jp ?? item.name_jp ?? '',
+  })
+
+  const updateInventoryDraft = (item, patch) => {
+    setInventoryDrafts(prev => {
+      const current = getInventoryDraftValue(item, prev[item.id] || {})
+      return { ...prev, [item.id]: { ...current, ...patch } }
+    })
+  }
+
   const getWorkDraftValue = (row, draft = {}) => ({
+    name_jp: draft.name_jp ?? row.name_jp ?? '',
+    source_product_name: draft.source_product_name ?? row.source_product_name ?? row.name_jp ?? '',
     instruction: draft.instruction ?? row.instruction ?? '',
     remaining_qty: draft.remaining_qty ?? workRemainingQty(row),
     note: draft.note ?? row.note ?? '',
@@ -184,6 +198,20 @@ export default function WelfareInventoryPage() {
     },
   })
 
+  const inventoryNameSaveMutation = useMutation({
+    mutationFn: ({ id, payload }) => api.patch(`/welfare/inventory/${id}`, payload).then(r => r.data),
+    onSuccess: (_data, vars) => {
+      setInventoryDrafts(prev => {
+        const current = prev[vars.id]
+        if (current && current.name_jp !== vars.payload.name_jp) return prev
+        const next = { ...prev }
+        delete next[vars.id]
+        return next
+      })
+      qc.invalidateQueries(['welfare-inventory'])
+    },
+  })
+
   const withdrawMutation = useMutation({
     mutationFn: ({ id, qty, note }) => api.post(`/welfare/inventory/${id}/withdraw`, { qty, note }).then(r => r.data),
     onSuccess: () => {
@@ -202,7 +230,9 @@ export default function WelfareInventoryPage() {
         const current = prev[vars.id]
         if (
           current &&
-          (current.instruction !== vars.payload.instruction ||
+          (current.name_jp !== vars.payload.name_jp ||
+            current.source_product_name !== vars.payload.source_product_name ||
+            current.instruction !== vars.payload.instruction ||
             current.remaining_qty !== vars.payload.remaining_qty ||
             current.note !== vars.payload.note)
         ) {
@@ -281,6 +311,26 @@ export default function WelfareInventoryPage() {
 
   useEffect(() => {
     const timers = []
+    Object.entries(inventoryDrafts).forEach(([id, draft]) => {
+      const item = items.find(row => String(row.id) === String(id))
+      if (!item) return
+
+      const value = getInventoryDraftValue(item, draft)
+      const base = getInventoryDraftValue(item)
+      if (value.name_jp === base.name_jp) return
+
+      timers.push(setTimeout(() => {
+        inventoryNameSaveMutation.mutate({
+          id: item.id,
+          payload: value,
+        })
+      }, 800))
+    })
+    return () => timers.forEach(clearTimeout)
+  }, [inventoryDrafts, items])
+
+  useEffect(() => {
+    const timers = []
     Object.entries(workDrafts).forEach(([id, draft]) => {
       const row = workInstructions.find(item => String(item.id) === String(id))
       if (!row) return
@@ -288,6 +338,8 @@ export default function WelfareInventoryPage() {
       const value = getWorkDraftValue(row, draft)
       const base = getWorkDraftValue(row)
       const dirty =
+        value.name_jp !== base.name_jp ||
+        value.source_product_name !== base.source_product_name ||
         value.instruction !== base.instruction ||
         value.remaining_qty !== base.remaining_qty ||
         value.note !== base.note
@@ -400,49 +452,60 @@ export default function WelfareInventoryPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.map(item => (
-                  <tr key={item.id}>
-                    <td style={{ fontWeight: 700 }}>{item.sku || '-'}</td>
-                    <td>{imageThumb(item.image_data_url)}</td>
-                    <td style={{ minWidth: 220 }}>{item.name_jp || '-'}</td>
-                    <td style={{ minWidth: 240 }}>
-                      <div>{item.buy_url ? <a href={item.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</div>
-                      <div style={{ color: '#64748b', fontSize: 12 }}>{item.supplier_spec}</div>
-                    </td>
-                    <td>{item.total_received_units}</td>
-                    <td>{item.unit_per_set}個で1</td>
-                    <td>{item.total_received_qty}</td>
-                    <td style={{ minWidth: 120 }}>
-                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                {items.map(item => {
+                  const draft = inventoryDrafts[item.id] || {}
+                  const { name_jp: itemName } = getInventoryDraftValue(item, draft)
+                  return (
+                    <tr key={item.id}>
+                      <td style={{ fontWeight: 700 }}>{item.sku || '-'}</td>
+                      <td>{imageThumb(item.image_data_url)}</td>
+                      <td style={{ minWidth: 220 }}>
                         <input
-                          type="number"
-                          min="0"
-                          value={remainingDrafts[item.id] ?? item.remaining_qty}
-                          onChange={e => setRemainingDrafts(prev => ({ ...prev, [item.id]: Number(e.target.value) }))}
-                          style={{ width: 72, fontSize: 16, fontWeight: 700, textAlign: 'right' }}
+                          value={itemName}
+                          onChange={e => updateInventoryDraft(item, { name_jp: e.target.value })}
+                          placeholder="日本語名"
+                          style={{ width: '100%', minWidth: 180 }}
                         />
-                        {(remainingDrafts[item.id] ?? item.remaining_qty) !== item.remaining_qty && (
-                          <button
-                            className="btn btn-primary btn-sm"
-                            onClick={() => adjustMutation.mutate({ id: item.id, remaining_qty: remainingDrafts[item.id] })}
-                            disabled={adjustMutation.isPending}
-                          >
-                            保存
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                    <td style={{ minWidth: 160 }}>{item.instruction || '-'}</td>
-                    <td style={{ minWidth: 160 }}>{item.note || '-'}</td>
-                    <td style={{ whiteSpace: 'nowrap', color: '#64748b', fontSize: 12 }}>{fmtDate(item.last_received_at)}</td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      <button className="btn btn-secondary btn-sm" onClick={() => openEdit(item)}>編集</button>
-                      <button className="btn btn-primary btn-sm" style={{ marginLeft: 6 }} onClick={() => setWithdrawing(item)} disabled={!item.remaining_qty}>
-                        減算
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td style={{ minWidth: 240 }}>
+                        <div>{item.buy_url ? <a href={item.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</div>
+                        <div style={{ color: '#64748b', fontSize: 12 }}>{item.supplier_spec}</div>
+                      </td>
+                      <td>{item.total_received_units}</td>
+                      <td>{item.unit_per_set}個で1</td>
+                      <td>{item.total_received_qty}</td>
+                      <td style={{ minWidth: 120 }}>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <input
+                            type="number"
+                            min="0"
+                            value={remainingDrafts[item.id] ?? item.remaining_qty}
+                            onChange={e => setRemainingDrafts(prev => ({ ...prev, [item.id]: Number(e.target.value) }))}
+                            style={{ width: 72, fontSize: 16, fontWeight: 700, textAlign: 'right' }}
+                          />
+                          {(remainingDrafts[item.id] ?? item.remaining_qty) !== item.remaining_qty && (
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={() => adjustMutation.mutate({ id: item.id, remaining_qty: remainingDrafts[item.id] })}
+                              disabled={adjustMutation.isPending}
+                            >
+                              保存
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                      <td style={{ minWidth: 160 }}>{item.instruction || '-'}</td>
+                      <td style={{ minWidth: 160 }}>{item.note || '-'}</td>
+                      <td style={{ whiteSpace: 'nowrap', color: '#64748b', fontSize: 12 }}>{fmtDate(item.last_received_at)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button className="btn btn-secondary btn-sm" onClick={() => openEdit(item)}>編集</button>
+                        <button className="btn btn-primary btn-sm" style={{ marginLeft: 6 }} onClick={() => setWithdrawing(item)} disabled={!item.remaining_qty}>
+                          減算
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -491,7 +554,7 @@ export default function WelfareInventoryPage() {
                 <tbody>
                   {visibleWorkInstructions.map(row => {
                     const draft = workDrafts[row.id] || {}
-                    const { instruction, remaining_qty: remaining, note } = getWorkDraftValue(row, draft)
+                    const { source_product_name: productName, instruction, remaining_qty: remaining, note } = getWorkDraftValue(row, draft)
                     return (
                       <tr key={row.id}>
                         <td style={{ whiteSpace: 'nowrap' }}>
@@ -505,7 +568,14 @@ export default function WelfareInventoryPage() {
                           </button>
                         </td>
                         <td>{imageThumb(row.image_data_url)}</td>
-                        <td style={{ wordBreak: 'break-word' }}>{row.source_product_name || row.name_jp || '未照合'}</td>
+                        <td style={{ padding: 6 }}>
+                          <input
+                            value={productName}
+                            onChange={e => updateWorkDraft(row, { name_jp: e.target.value, source_product_name: e.target.value })}
+                            placeholder="商品名"
+                            style={{ width: '100%', minWidth: 0 }}
+                          />
+                        </td>
                         <td style={{ color: '#e11d48' }}>{row.color || row.supplier_spec || '-'}</td>
                         <td style={{ color: '#e11d48' }}>{row.size || '-'}</td>
                         <td>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</td>

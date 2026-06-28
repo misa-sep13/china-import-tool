@@ -465,6 +465,7 @@ def clear_welfare(data: WelfareClearIn, db: Session = Depends(get_db)):
 
 
 class WelfareMemoIn(BaseModel):
+    name_jp: Optional[str] = None
     instruction: Optional[str] = None
     note: Optional[str] = None
 
@@ -474,6 +475,8 @@ def update_inventory_item(item_id: int, data: WelfareMemoIn, db: Session = Depen
     item = db.query(WelfareInventoryItem).filter(WelfareInventoryItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="就労支援在庫が見つかりません")
+    if data.name_jp is not None:
+        item.name_jp = data.name_jp
     if data.instruction is not None:
         item.instruction = data.instruction
     if data.note is not None:
@@ -494,6 +497,8 @@ class WelfareAdjustIn(BaseModel):
 
 
 class WelfareWorkInstructionIn(BaseModel):
+    name_jp: Optional[str] = None
+    source_product_name: Optional[str] = None
     instruction: Optional[str] = None
     remaining_units: Optional[int] = None
     remaining_qty: Optional[int] = None
@@ -565,6 +570,10 @@ def update_work_instruction(instruction_id: int, data: WelfareWorkInstructionIn,
     row = db.query(WelfareWorkInstruction).filter(WelfareWorkInstruction.id == instruction_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="作業指示が見つかりません")
+    if data.name_jp is not None:
+        row.name_jp = data.name_jp
+    if data.source_product_name is not None:
+        row.source_product_name = data.source_product_name
     if data.instruction is not None:
         row.instruction = data.instruction
     if data.remaining_units is not None:
