@@ -40,6 +40,16 @@ const formatApiError = (e) => {
   return e.message || '保存に失敗しました'
 }
 
+const SORT_OPTIONS = { numeric: true, sensitivity: 'base' }
+
+const compareProducts = (a, b) => {
+  const sku = String(a.sku || '').localeCompare(String(b.sku || ''), 'ja', SORT_OPTIONS)
+  if (sku) return sku
+  const name = String(a.name || '').localeCompare(String(b.name || ''), 'ja', SORT_OPTIONS)
+  if (name) return name
+  return (a.id || 0) - (b.id || 0)
+}
+
 function calcProfit(p) {
   if (!p.selling_price || !p.price) return null
   const amazonFee = p.selling_price * (p.amazon_fee_rate ?? 0.1)
@@ -175,7 +185,7 @@ export default function ProductsPage() {
     const q = normalize(search)
     return normalize(p.sku).includes(q) || normalize(p.name).includes(q) ||
       (p.asin || '').toLowerCase().includes(q) || normalize(p.fnsku).includes(q)
-  })
+  }).sort(compareProducts)
 
   // 最終更新日時（全商品で最新のもの）
   const lastUpdated = products
