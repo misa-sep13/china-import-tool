@@ -7,6 +7,38 @@ const EMPTY = {
   color: '', size: '', spec: '', customer_memo: '', price: '', repack: '', note: '',
   set_size: 1, extra_stock: 0, amazon_fee_rate: 0.1,
 }
+const EDITABLE_FIELDS = Object.keys(EMPTY)
+
+const toNumber = (value, fallback) => {
+  if (value === '' || value == null) return fallback
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
+const buildFormData = (source) => {
+  const data = {}
+  EDITABLE_FIELDS.forEach(key => {
+    data[key] = source[key] ?? ''
+  })
+  data.price = toNumber(source.price, 0)
+  data.set_size = Math.max(1, Math.trunc(toNumber(source.set_size, 1)))
+  data.extra_stock = Math.max(0, Math.trunc(toNumber(source.extra_stock, 0)))
+  data.amazon_fee_rate = toNumber(source.amazon_fee_rate, 0.1)
+  return data
+}
+
+const formatApiError = (e) => {
+  const detail = e.response?.data?.detail
+  if (Array.isArray(detail)) {
+    return detail.map(item => {
+      const loc = Array.isArray(item.loc) ? item.loc.join('.') : ''
+      return [loc, item.msg].filter(Boolean).join(': ')
+    }).join(' / ') || '保存に失敗しました'
+  }
+  if (typeof detail === 'string') return detail
+  if (detail) return JSON.stringify(detail)
+  return e.message || '保存に失敗しました'
+}
 
 function calcProfit(p) {
   if (!p.selling_price || !p.price) return null
@@ -22,6 +54,7 @@ export default function ProductsPage() {
   const [modal, setModal] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(EMPTY)
+  const [initialForm, setInitialForm] = useState(EMPTY)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [supplierFilter, setSupplierFilter] = useState('')
@@ -46,7 +79,7 @@ export default function ProductsPage() {
       ? api.put(`/products/${editing.id}`, d)
       : api.post('/products/', d),
     onSuccess: () => { qc.invalidateQueries(['products']); closeModal() },
-    onError: (e) => setError(e.response?.data?.detail || '保存に失敗しました'),
+    onError: (e) => setError(formatApiError(e)),
   })
 
   const del = useMutation({
@@ -86,25 +119,38 @@ export default function ProductsPage() {
     }
   }
 
-  const openNew = () => { setEditing(null); setForm(EMPTY); setError(''); setModal(true) }
-  const openEdit = (p) => {
-    setEditing(p)
-    setForm({ ...EMPTY, ...p })
+  const openNew = () => {
+    const next = { ...EMPTY }
+    setEditing(null)
+    setForm(next)
+    setInitialForm(next)
     setError('')
     setModal(true)
   }
-  const closeModal = () => setModal(false)
+  const openEdit = (p) => {
+    const next = { ...EMPTY, ...p }
+    setEditing(p)
+    setForm(next)
+    setInitialForm(next)
+    setError('')
+    setModal(true)
+  }
+  const closeModal = () => {
+    setModal(false)
+    setError('')
+  }
+  const hasUnsavedChanges = () => (
+    JSON.stringify(buildFormData(form)) !== JSON.stringify(buildFormData(initialForm))
+  )
+  const handleModalClose = () => {
+    if (save.isPending) return
+    if (hasUnsavedChanges() && !confirm('保存されていない変更があります。閉じますか？')) return
+    closeModal()
+  }
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    const data = {
-      ...form,
-      price: Number(form.price) || 0,
-      set_size: Number(form.set_size) || 1,
-      extra_stock: Number(form.extra_stock) || 0,
-      amazon_fee_rate: Number(form.amazon_fee_rate) || 0.1,
-    }
-    save.mutate(data)
+    save.mutate(buildFormData(form))
   }
 
   const f = (k) => ({ value: form[k] ?? '', onChange: e => setForm(p => ({ ...p, [k]: e.target.value })) })
@@ -306,11 +352,11 @@ export default function ProductsPage() {
       )}
 
       {modal && (
-        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && closeModal()}>
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && handleModalClose()}>
           <div className="modal">
             <div className="modal-header">
               <h2>{editing ? '商品を編集' : '商品を追加'}</h2>
-              <button className="modal-close" onClick={closeModal}>✕</button>
+              <button className="modal-close" onClick={handleModalClose}>✕</button>
             </div>
             <form onSubmit={handleSubmit}>
               <div className="form-grid">
@@ -378,7 +424,7 @@ export default function ProductsPage() {
               </div>
               {error && <p className="error-msg">{error}</p>}
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
-                <button type="button" className="btn btn-secondary" onClick={closeModal}>キャンセル</button>
+                <button type="button" className="btn btn-secondary" onClick={handleModalClose}>キャンセル</button>
                 <button type="submit" className="btn btn-primary" disabled={save.isPending}>
                   {save.isPending ? '保存中...' : '保存'}
                 </button>

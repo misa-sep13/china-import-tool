@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
@@ -127,9 +128,18 @@ def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(g
     p = db.query(Product).filter(Product.id == product_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="商品が見つかりません")
-    for k, v in data.model_dump(exclude_none=True).items():
+    updates = data.model_dump(exclude_none=True)
+    if updates.get("sku") and updates["sku"] != p.sku:
+        existing = db.query(Product).filter(Product.sku == updates["sku"], Product.id != product_id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="SKUが既に存在します")
+    for k, v in updates.items():
         setattr(p, k, v)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="SKUが既に存在します")
     db.refresh(p)
     return p
 
