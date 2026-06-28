@@ -45,6 +45,7 @@ const workDateSortValue = (date) => {
 const workRemainingQty = (row) => row.remaining_qty ?? 0
 
 const WORK_INSTRUCTION_OPTIONS = ['作業保管', '保管', '戻し']
+const DELETE_UNDO_MS = 8000
 
 const instructionCellStyle = (value) => {
   const v = String(value || '')
@@ -60,6 +61,8 @@ const imageThumb = (src) => (
 export default function WelfareInventoryPage() {
   const qc = useQueryClient()
   const fileRef = useRef(null)
+  const deleteTimersRef = useRef(new Map())
+  const pendingWorkDeleteRowsRef = useRef(new Map())
   const [search, setSearch] = useState('')
   const [activeTab, setActiveTab] = useState('inventory')
   const [importResult, setImportResult] = useState(null)
@@ -70,6 +73,7 @@ export default function WelfareInventoryPage() {
   const [remainingDrafts, setRemainingDrafts] = useState({})
   const [workDrafts, setWorkDrafts] = useState({})
   const [activeWorkDate, setActiveWorkDate] = useState('')
+  const [pendingWorkDeletes, setPendingWorkDeletes] = useState([])
 
   const getWorkDraftValue = (row, draft = {}) => ({
     instruction: draft.instruction ?? row.instruction ?? '',
@@ -99,19 +103,29 @@ export default function WelfareInventoryPage() {
     queryFn: () => api.get('/welfare/work-instructions', { params: search ? { q: search } : {} }).then(r => r.data),
   })
 
+  const pendingWorkDeleteIds = useMemo(
+    () => new Set(pendingWorkDeletes.map(item => item.id)),
+    [pendingWorkDeletes]
+  )
+
+  const activeWorkInstructions = useMemo(
+    () => workInstructions.filter(row => !pendingWorkDeleteIds.has(row.id)),
+    [pendingWorkDeleteIds, workInstructions]
+  )
+
   const workDateTabs = useMemo(() => {
     const counts = new Map()
-    workInstructions.forEach(row => {
+    activeWorkInstructions.forEach(row => {
       const date = fmtWorkDate(row)
       counts.set(date, (counts.get(date) || 0) + 1)
     })
     return Array.from(counts, ([date, count]) => ({ date, count }))
       .sort((a, b) => workDateSortValue(b.date) - workDateSortValue(a.date) || String(b.date).localeCompare(String(a.date), 'ja'))
-  }, [workInstructions])
+  }, [activeWorkInstructions])
 
   const visibleWorkInstructions = useMemo(
-    () => activeWorkDate ? workInstructions.filter(row => fmtWorkDate(row) === activeWorkDate) : workInstructions,
-    [activeWorkDate, workInstructions]
+    () => activeWorkDate ? activeWorkInstructions.filter(row => fmtWorkDate(row) === activeWorkDate) : activeWorkInstructions,
+    [activeWorkDate, activeWorkInstructions]
   )
 
   useEffect(() => {
@@ -182,6 +196,7 @@ export default function WelfareInventoryPage() {
   const workDeleteMutation = useMutation({
     mutationFn: (id) => api.delete(`/welfare/work-instructions/${id}`).then(r => r.data),
     onSuccess: (_data, id) => {
+      pendingWorkDeleteRowsRef.current.delete(id)
       setWorkDrafts(prev => {
         const next = { ...prev }
         delete next[id]
@@ -189,7 +204,57 @@ export default function WelfareInventoryPage() {
       })
       qc.invalidateQueries(['welfare-work-instructions'])
     },
+    onError: (_error, id) => {
+      pendingWorkDeleteRowsRef.current.delete(id)
+      setPendingWorkDeletes(prev => prev.filter(item => item.id !== id))
+      qc.invalidateQueries(['welfare-work-instructions'])
+    },
   })
+
+  const removeWorkInstructionFromCache = (id) => {
+    qc.setQueriesData({ queryKey: ['welfare-work-instructions'] }, old => {
+      if (!Array.isArray(old)) return old
+      return old.filter(row => row.id !== id)
+    })
+  }
+
+  const handleWorkDelete = (row) => {
+    if (deleteTimersRef.current.has(row.id)) return
+    pendingWorkDeleteRowsRef.current.set(row.id, row)
+    setPendingWorkDeletes(prev => [{ id: row.id, row }, ...prev.filter(item => item.id !== row.id)])
+    setWorkDrafts(prev => {
+      const next = { ...prev }
+      delete next[row.id]
+      return next
+    })
+    removeWorkInstructionFromCache(row.id)
+    const timer = setTimeout(() => {
+      deleteTimersRef.current.delete(row.id)
+      setPendingWorkDeletes(prev => prev.filter(item => item.id !== row.id))
+      workDeleteMutation.mutate(row.id)
+    }, DELETE_UNDO_MS)
+    deleteTimersRef.current.set(row.id, timer)
+  }
+
+  const undoWorkDelete = (id) => {
+    const timer = deleteTimersRef.current.get(id)
+    if (timer) clearTimeout(timer)
+    deleteTimersRef.current.delete(id)
+    pendingWorkDeleteRowsRef.current.delete(id)
+    setPendingWorkDeletes(prev => prev.filter(item => item.id !== id))
+    qc.invalidateQueries(['welfare-work-instructions'])
+  }
+
+  useEffect(() => {
+    return () => {
+      deleteTimersRef.current.forEach((timer, id) => {
+        clearTimeout(timer)
+        api.delete(`/welfare/work-instructions/${id}`).catch(() => {})
+      })
+      deleteTimersRef.current.clear()
+      pendingWorkDeleteRowsRef.current.clear()
+    }
+  }, [])
 
   useEffect(() => {
     const timers = []
@@ -411,11 +476,7 @@ export default function WelfareInventoryPage() {
                             className="btn btn-secondary btn-sm"
                             style={{ color: '#e11d48', padding: '5px 8px' }}
                             disabled={workDeleteMutation.isPending}
-                            onClick={() => {
-                              if (window.confirm('この作業指示を削除しますか？')) {
-                                workDeleteMutation.mutate(row.id)
-                              }
-                            }}
+                            onClick={() => handleWorkDelete(row)}
                           >
                             削除
                           </button>
@@ -464,6 +525,46 @@ export default function WelfareInventoryPage() {
           </div>
         )}
       </div>}
+
+      {pendingWorkDeletes.length > 0 && (
+        <div style={{
+          position: 'fixed',
+          right: 24,
+          bottom: 24,
+          zIndex: 260,
+          display: 'grid',
+          gap: 8,
+          width: 'min(360px, calc(100vw - 48px))',
+        }}>
+          {pendingWorkDeletes.map(({ id, row }) => (
+            <div key={id} style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              background: '#1f2937',
+              color: '#fff',
+              padding: '10px 12px',
+              borderRadius: 8,
+              boxShadow: '0 8px 30px rgba(15, 23, 42, 0.25)',
+            }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>削除しました</div>
+                <div style={{ fontSize: 12, color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {row.source_product_name || row.name_jp || row.sku || '作業指示'}
+                </div>
+              </div>
+              <button
+                className="btn btn-sm"
+                style={{ background: '#fff', color: '#111827', flex: '0 0 auto' }}
+                onClick={() => undoWorkDelete(id)}
+              >
+                元に戻す
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {activeTab === 'inventory' && <div className="card">
         <h2>最近の入出庫</h2>
