@@ -93,6 +93,7 @@ export default function WelfareInventoryPage() {
   const [workDrafts, setWorkDrafts] = useState({})
   const [activeWorkDate, setActiveWorkDate] = useState('')
   const [pendingWorkDeletes, setPendingWorkDeletes] = useState([])
+  const [committingWorkDeleteIds, setCommittingWorkDeleteIds] = useState([])
 
   const getInventoryDraftValue = (item, draft = {}) => ({
     name_jp: draft.name_jp ?? item.name_jp ?? '',
@@ -136,8 +137,8 @@ export default function WelfareInventoryPage() {
   })
 
   const pendingWorkDeleteIds = useMemo(
-    () => new Set(pendingWorkDeletes.map(item => item.id)),
-    [pendingWorkDeletes]
+    () => new Set([...pendingWorkDeletes.map(item => item.id), ...committingWorkDeleteIds]),
+    [committingWorkDeleteIds, pendingWorkDeletes]
   )
 
   const activeWorkInstructions = useMemo(
@@ -250,6 +251,8 @@ export default function WelfareInventoryPage() {
     mutationFn: (id) => api.delete(`/welfare/work-instructions/${id}`).then(r => r.data),
     onSuccess: (_data, id) => {
       pendingWorkDeleteRowsRef.current.delete(id)
+      setPendingWorkDeletes(prev => prev.filter(item => item.id !== id))
+      setCommittingWorkDeleteIds(prev => prev.filter(itemId => itemId !== id))
       setWorkDrafts(prev => {
         const next = { ...prev }
         delete next[id]
@@ -260,6 +263,7 @@ export default function WelfareInventoryPage() {
     onError: (_error, id) => {
       pendingWorkDeleteRowsRef.current.delete(id)
       setPendingWorkDeletes(prev => prev.filter(item => item.id !== id))
+      setCommittingWorkDeleteIds(prev => prev.filter(itemId => itemId !== id))
       qc.invalidateQueries(['welfare-work-instructions'])
     },
   })
@@ -272,7 +276,7 @@ export default function WelfareInventoryPage() {
   }
 
   const handleWorkDelete = (row) => {
-    if (deleteTimersRef.current.has(row.id)) return
+    if (deleteTimersRef.current.has(row.id) || pendingWorkDeleteRowsRef.current.has(row.id)) return
     pendingWorkDeleteRowsRef.current.set(row.id, row)
     setPendingWorkDeletes(prev => [{ id: row.id, row }, ...prev.filter(item => item.id !== row.id)])
     setWorkDrafts(prev => {
@@ -283,6 +287,7 @@ export default function WelfareInventoryPage() {
     removeWorkInstructionFromCache(row.id)
     const timer = setTimeout(() => {
       deleteTimersRef.current.delete(row.id)
+      setCommittingWorkDeleteIds(prev => (prev.includes(row.id) ? prev : [...prev, row.id]))
       setPendingWorkDeletes(prev => prev.filter(item => item.id !== row.id))
       workDeleteMutation.mutate(row.id)
     }, DELETE_UNDO_MS)
@@ -295,6 +300,7 @@ export default function WelfareInventoryPage() {
     deleteTimersRef.current.delete(id)
     pendingWorkDeleteRowsRef.current.delete(id)
     setPendingWorkDeletes(prev => prev.filter(item => item.id !== id))
+    setCommittingWorkDeleteIds(prev => prev.filter(itemId => itemId !== id))
     qc.invalidateQueries(['welfare-work-instructions'])
   }
 
