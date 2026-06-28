@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../api/client'
 
@@ -16,8 +16,18 @@ const fmtWorkDate = (row) => {
   return sheet || '-'
 }
 
+const workDateSortValue = (date) => {
+  const s = String(date || '')
+  const iso = s.match(/^\d{4}\/(\d{1,2})\/(\d{1,2})/)
+  if (iso) return Number(iso[1]) * 100 + Number(iso[2])
+  const slash = s.match(/^(\d{1,2})\/(\d{1,2})$/)
+  if (slash) return Number(slash[1]) * 100 + Number(slash[2])
+  return -1
+}
+
 export default function WelfareWorkPublicPage() {
   const [search, setSearch] = useState('')
+  const [activeWorkDate, setActiveWorkDate] = useState('')
 
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ['welfare-work-public', search],
@@ -32,8 +42,33 @@ export default function WelfareWorkPublicPage() {
     [rows]
   )
 
-  const totalQty = visibleRows.reduce((sum, r) => sum + (r.qty || 0), 0)
-  const totalRemaining = visibleRows.reduce((sum, r) => sum + (r.remaining_qty || 0), 0)
+  const workDateTabs = useMemo(() => {
+    const counts = new Map()
+    visibleRows.forEach(row => {
+      const date = fmtWorkDate(row)
+      counts.set(date, (counts.get(date) || 0) + 1)
+    })
+    return Array.from(counts, ([date, count]) => ({ date, count }))
+      .sort((a, b) => workDateSortValue(b.date) - workDateSortValue(a.date) || String(b.date).localeCompare(String(a.date), 'ja'))
+  }, [visibleRows])
+
+  const selectedRows = useMemo(
+    () => activeWorkDate ? visibleRows.filter(row => fmtWorkDate(row) === activeWorkDate) : visibleRows,
+    [activeWorkDate, visibleRows]
+  )
+
+  useEffect(() => {
+    if (workDateTabs.length === 0) {
+      if (activeWorkDate) setActiveWorkDate('')
+      return
+    }
+    if (!activeWorkDate || !workDateTabs.some(tab => tab.date === activeWorkDate)) {
+      setActiveWorkDate(workDateTabs[0].date)
+    }
+  }, [activeWorkDate, workDateTabs])
+
+  const totalQty = selectedRows.reduce((sum, r) => sum + (r.qty || 0), 0)
+  const totalRemaining = selectedRows.reduce((sum, r) => sum + (r.remaining_qty || 0), 0)
 
   return (
     <div style={{ minHeight: '100vh', background: '#f5f6fa', padding: '28px 36px' }}>
@@ -58,7 +93,7 @@ export default function WelfareWorkPublicPage() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 16 }}>
           <div className="card" style={{ margin: 0 }}>
             <div style={{ fontSize: 12, color: '#64748b' }}>作業行</div>
-            <div style={{ fontSize: 24, fontWeight: 700 }}>{visibleRows.length}</div>
+            <div style={{ fontSize: 24, fontWeight: 700 }}>{selectedRows.length}</div>
           </div>
           <div className="card" style={{ margin: 0 }}>
             <div style={{ fontSize: 12, color: '#64748b' }}>数量合計</div>
@@ -78,41 +113,55 @@ export default function WelfareWorkPublicPage() {
               <p>作業指示はありません。</p>
             </div>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>日付</th>
-                    <th>注文</th>
-                    <th>商品名</th>
-                    <th>仕様</th>
-                    <th>URL</th>
-                    <th>単品数</th>
-                    <th>換算</th>
-                    <th>数量</th>
-                    <th>指示</th>
-                    <th>残</th>
-                    <th>備考</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleRows.map(row => (
-                    <tr key={row.id}>
-                      <td style={{ whiteSpace: 'nowrap' }}>{fmtWorkDate(row)}</td>
-                      <td>{row.source_order_no || '-'}</td>
-                      <td style={{ minWidth: 240, fontWeight: 600 }}>{row.name_jp || '未照合'}</td>
-                      <td style={{ minWidth: 180 }}>{row.supplier_spec || '-'}</td>
-                      <td>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</td>
-                      <td>{row.units}</td>
-                      <td>{row.unit_per_set}個で1</td>
-                      <td style={{ fontWeight: 700 }}>{row.qty}</td>
-                      <td style={{ minWidth: 180 }}>{row.instruction || '-'}</td>
-                      <td style={{ fontWeight: 700 }}>{row.remaining_qty}</td>
-                      <td style={{ minWidth: 180 }}>{row.note || '-'}</td>
+            <div>
+              <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 10, marginBottom: 12 }}>
+                {workDateTabs.map(tab => (
+                  <button
+                    key={tab.date}
+                    className={`btn ${activeWorkDate === tab.date ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setActiveWorkDate(tab.date)}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    {tab.date} ({tab.count})
+                  </button>
+                ))}
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>日付</th>
+                      <th>注文</th>
+                      <th>商品名</th>
+                      <th>仕様</th>
+                      <th>URL</th>
+                      <th>単品数</th>
+                      <th>換算</th>
+                      <th>数量</th>
+                      <th>指示</th>
+                      <th>残</th>
+                      <th>備考</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {selectedRows.map(row => (
+                      <tr key={row.id}>
+                        <td style={{ whiteSpace: 'nowrap' }}>{fmtWorkDate(row)}</td>
+                        <td>{row.source_order_no || '-'}</td>
+                        <td style={{ minWidth: 240, fontWeight: 600 }}>{row.name_jp || '未照合'}</td>
+                        <td style={{ minWidth: 180 }}>{row.supplier_spec || '-'}</td>
+                        <td>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</td>
+                        <td>{row.units}</td>
+                        <td>{row.unit_per_set}個で1</td>
+                        <td style={{ fontWeight: 700 }}>{row.qty}</td>
+                        <td style={{ minWidth: 180 }}>{row.instruction || '-'}</td>
+                        <td style={{ fontWeight: 700 }}>{row.remaining_qty}</td>
+                        <td style={{ minWidth: 180 }}>{row.note || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>

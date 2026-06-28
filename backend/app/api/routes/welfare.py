@@ -531,6 +531,16 @@ def update_work_instruction(instruction_id: int, data: WelfareWorkInstructionIn,
     return _work_out(row)
 
 
+@router.delete("/work-instructions/{instruction_id}")
+def delete_work_instruction(instruction_id: int, db: Session = Depends(get_db)):
+    row = db.query(WelfareWorkInstruction).filter(WelfareWorkInstruction.id == instruction_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="作業指示が見つかりません")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/movements")
 def list_movements(item_id: Optional[int] = None, db: Session = Depends(get_db)):
     query = db.query(WelfareInventoryMovement)

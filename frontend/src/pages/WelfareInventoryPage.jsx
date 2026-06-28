@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 
@@ -16,6 +16,15 @@ const fmtWorkDate = (row) => {
   return sheet || '-'
 }
 
+const workDateSortValue = (date) => {
+  const s = String(date || '')
+  const iso = s.match(/^\d{4}-(\d{2})-(\d{2})/)
+  if (iso) return Number(iso[1]) * 100 + Number(iso[2])
+  const slash = s.match(/^(\d{1,2})\/(\d{1,2})$/)
+  if (slash) return Number(slash[1]) * 100 + Number(slash[2])
+  return -1
+}
+
 export default function WelfareInventoryPage() {
   const qc = useQueryClient()
   const fileRef = useRef(null)
@@ -28,6 +37,7 @@ export default function WelfareInventoryPage() {
   const [withdrawNote, setWithdrawNote] = useState('')
   const [remainingDrafts, setRemainingDrafts] = useState({})
   const [workDrafts, setWorkDrafts] = useState({})
+  const [activeWorkDate, setActiveWorkDate] = useState('')
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: ['welfare-inventory', search],
@@ -44,11 +54,31 @@ export default function WelfareInventoryPage() {
     queryFn: () => api.get('/welfare/work-instructions', { params: search ? { q: search } : {} }).then(r => r.data),
   })
 
-  const totals = useMemo(() => ({
-    count: items.length,
-    remaining: items.reduce((sum, it) => sum + (it.remaining_qty || 0), 0),
-    units: items.reduce((sum, it) => sum + (it.total_received_units || 0), 0),
-  }), [items])
+  const workDateTabs = useMemo(() => {
+    const counts = new Map()
+    workInstructions.forEach(row => {
+      const date = fmtWorkDate(row)
+      counts.set(date, (counts.get(date) || 0) + 1)
+    })
+    return Array.from(counts, ([date, count]) => ({ date, count }))
+      .sort((a, b) => workDateSortValue(b.date) - workDateSortValue(a.date) || String(b.date).localeCompare(String(a.date), 'ja'))
+  }, [workInstructions])
+
+  const visibleWorkInstructions = useMemo(
+    () => activeWorkDate ? workInstructions.filter(row => fmtWorkDate(row) === activeWorkDate) : workInstructions,
+    [activeWorkDate, workInstructions]
+  )
+
+  useEffect(() => {
+    if (activeTab !== 'work') return
+    if (workDateTabs.length === 0) {
+      if (activeWorkDate) setActiveWorkDate('')
+      return
+    }
+    if (!activeWorkDate || !workDateTabs.some(tab => tab.date === activeWorkDate)) {
+      setActiveWorkDate(workDateTabs[0].date)
+    }
+  }, [activeTab, activeWorkDate, workDateTabs])
 
   const importMutation = useMutation({
     mutationFn: async (file) => {
@@ -89,6 +119,18 @@ export default function WelfareInventoryPage() {
       setWorkDrafts(prev => {
         const next = { ...prev }
         delete next[vars.id]
+        return next
+      })
+      qc.invalidateQueries(['welfare-work-instructions'])
+    },
+  })
+
+  const workDeleteMutation = useMutation({
+    mutationFn: (id) => api.delete(`/welfare/work-instructions/${id}`).then(r => r.data),
+    onSuccess: (_data, id) => {
+      setWorkDrafts(prev => {
+        const next = { ...prev }
+        delete next[id]
         return next
       })
       qc.invalidateQueries(['welfare-work-instructions'])
@@ -137,6 +179,10 @@ export default function WelfareInventoryPage() {
         <button className="btn btn-primary" onClick={() => fileRef.current?.click()} disabled={importMutation.isPending}>
           Excel取込
         </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 8, background: '#fff', border: '1px solid #e2e8f0', fontSize: 13 }}>
+          <span style={{ color: '#64748b' }}>登録商品</span>
+          <strong style={{ fontSize: 18 }}>{items.length}</strong>
+        </div>
         <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handleFile} />
       </div>
 
@@ -153,21 +199,6 @@ export default function WelfareInventoryPage() {
         >
           作業指示
         </button>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 16 }}>
-        <div className="card" style={{ margin: 0 }}>
-          <div style={{ fontSize: 12, color: '#64748b' }}>登録商品</div>
-          <div style={{ fontSize: 24, fontWeight: 700 }}>{totals.count}</div>
-        </div>
-        <div className="card" style={{ margin: 0 }}>
-          <div style={{ fontSize: 12, color: '#64748b' }}>残量合計</div>
-          <div style={{ fontSize: 24, fontWeight: 700 }}>{totals.remaining}</div>
-        </div>
-        <div className="card" style={{ margin: 0 }}>
-          <div style={{ fontSize: 12, color: '#64748b' }}>取込単品数</div>
-          <div style={{ fontSize: 24, fontWeight: 700 }}>{totals.units}</div>
-        </div>
       </div>
 
       {importResult && (
@@ -258,86 +289,112 @@ export default function WelfareInventoryPage() {
             <p>作業指示がありません。Excelを取り込むと表示されます。</p>
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>日付</th>
-                  <th>注文</th>
-                  <th>SKU</th>
-                  <th>商品名</th>
-                  <th>URL / 仕様</th>
-                  <th>単品数</th>
-                  <th>換算</th>
-                  <th>数量</th>
-                  <th>指示</th>
-                  <th>残</th>
-                  <th>備考</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {workInstructions.map(row => {
-                  const draft = workDrafts[row.id] || {}
-                  const instruction = draft.instruction ?? row.instruction
-                  const remaining = draft.remaining_qty ?? row.remaining_qty
-                  const note = draft.note ?? row.note
-                  const dirty = instruction !== row.instruction || remaining !== row.remaining_qty || note !== row.note
-                  return (
-                    <tr key={row.id}>
-                      <td style={{ whiteSpace: 'nowrap' }}>{fmtWorkDate(row)}</td>
-                      <td>{row.source_order_no || '-'}</td>
-                      <td style={{ fontWeight: 700 }}>{row.sku || '未照合'}</td>
-                      <td style={{ minWidth: 220 }}>{row.name_jp || '未照合'}</td>
-                      <td style={{ minWidth: 180 }}>
-                        <div>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</div>
-                        <div style={{ color: '#64748b', fontSize: 12 }}>{row.supplier_spec || '-'}</div>
-                      </td>
-                      <td>{row.units}</td>
-                      <td>{row.unit_per_set}個で1</td>
-                      <td>{row.qty}</td>
-                      <td style={{ minWidth: 160 }}>
-                        <input
-                          value={instruction}
-                          onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, instruction: e.target.value } }))}
-                          placeholder="作業保管 / 保管 など"
-                        />
-                      </td>
-                      <td style={{ minWidth: 86 }}>
-                        <input
-                          type="number"
-                          min="0"
-                          value={remaining}
-                          onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, remaining_qty: Number(e.target.value) } }))}
-                          style={{ width: 72, textAlign: 'right', fontWeight: 700 }}
-                        />
-                      </td>
-                      <td style={{ minWidth: 160 }}>
-                        <input
-                          value={note}
-                          onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, note: e.target.value } }))}
-                          placeholder="備考"
-                        />
-                      </td>
-                      <td>
-                        {dirty && (
+          <div>
+            <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 10, marginBottom: 12 }}>
+              {workDateTabs.map(tab => (
+                <button
+                  key={tab.date}
+                  className={`btn ${activeWorkDate === tab.date ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setActiveWorkDate(tab.date)}
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  {tab.date} ({tab.count})
+                </button>
+              ))}
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>日付</th>
+                    <th>注文</th>
+                    <th>SKU</th>
+                    <th>商品名</th>
+                    <th>URL / 仕様</th>
+                    <th>単品数</th>
+                    <th>換算</th>
+                    <th>数量</th>
+                    <th>指示</th>
+                    <th>残</th>
+                    <th>備考</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleWorkInstructions.map(row => {
+                    const draft = workDrafts[row.id] || {}
+                    const instruction = draft.instruction ?? row.instruction
+                    const remaining = draft.remaining_qty ?? row.remaining_qty
+                    const note = draft.note ?? row.note
+                    const dirty = instruction !== row.instruction || remaining !== row.remaining_qty || note !== row.note
+                    return (
+                      <tr key={row.id}>
+                        <td style={{ whiteSpace: 'nowrap' }}>{fmtWorkDate(row)}</td>
+                        <td>{row.source_order_no || '-'}</td>
+                        <td style={{ fontWeight: 700 }}>{row.sku || '未照合'}</td>
+                        <td style={{ minWidth: 220 }}>{row.name_jp || '未照合'}</td>
+                        <td style={{ minWidth: 180 }}>
+                          <div>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</div>
+                          <div style={{ color: '#64748b', fontSize: 12 }}>{row.supplier_spec || '-'}</div>
+                        </td>
+                        <td>{row.units}</td>
+                        <td>{row.unit_per_set}個で1</td>
+                        <td>{row.qty}</td>
+                        <td style={{ minWidth: 160 }}>
+                          <input
+                            value={instruction}
+                            onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, instruction: e.target.value } }))}
+                            placeholder="作業保管 / 保管 など"
+                          />
+                        </td>
+                        <td style={{ minWidth: 86 }}>
+                          <input
+                            type="number"
+                            min="0"
+                            value={remaining}
+                            onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, remaining_qty: Number(e.target.value) } }))}
+                            style={{ width: 72, textAlign: 'right', fontWeight: 700 }}
+                          />
+                        </td>
+                        <td style={{ minWidth: 160 }}>
+                          <input
+                            value={note}
+                            onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, note: e.target.value } }))}
+                            placeholder="備考"
+                          />
+                        </td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          {dirty && (
+                            <button
+                              className="btn btn-primary btn-sm"
+                              disabled={workSaveMutation.isPending}
+                              onClick={() => workSaveMutation.mutate({
+                                id: row.id,
+                                payload: { instruction, remaining_qty: remaining, note },
+                              })}
+                            >
+                              保存
+                            </button>
+                          )}
                           <button
-                            className="btn btn-primary btn-sm"
-                            disabled={workSaveMutation.isPending}
-                            onClick={() => workSaveMutation.mutate({
-                              id: row.id,
-                              payload: { instruction, remaining_qty: remaining, note },
-                            })}
+                            className="btn btn-secondary btn-sm"
+                            style={{ marginLeft: dirty ? 6 : 0, color: '#e11d48' }}
+                            disabled={workDeleteMutation.isPending}
+                            onClick={() => {
+                              if (window.confirm('この作業指示を削除しますか？')) {
+                                workDeleteMutation.mutate(row.id)
+                              }
+                            }}
                           >
-                            保存
+                            削除
                           </button>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>}
