@@ -71,6 +71,19 @@ export default function WelfareInventoryPage() {
   const [workDrafts, setWorkDrafts] = useState({})
   const [activeWorkDate, setActiveWorkDate] = useState('')
 
+  const getWorkDraftValue = (row, draft = {}) => ({
+    instruction: draft.instruction ?? row.instruction ?? '',
+    remaining_qty: draft.remaining_qty ?? workRemainingQty(row),
+    note: draft.note ?? row.note ?? '',
+  })
+
+  const updateWorkDraft = (row, patch) => {
+    setWorkDrafts(prev => {
+      const current = getWorkDraftValue(row, prev[row.id] || {})
+      return { ...prev, [row.id]: { ...current, ...patch } }
+    })
+  }
+
   const { data: items = [], isLoading } = useQuery({
     queryKey: ['welfare-inventory', search],
     queryFn: () => api.get('/welfare/inventory', { params: search ? { q: search } : {} }).then(r => r.data),
@@ -149,6 +162,15 @@ export default function WelfareInventoryPage() {
     mutationFn: ({ id, payload }) => api.patch(`/welfare/work-instructions/${id}`, payload).then(r => r.data),
     onSuccess: (_data, vars) => {
       setWorkDrafts(prev => {
+        const current = prev[vars.id]
+        if (
+          current &&
+          (current.instruction !== vars.payload.instruction ||
+            current.remaining_qty !== vars.payload.remaining_qty ||
+            current.note !== vars.payload.note)
+        ) {
+          return prev
+        }
         const next = { ...prev }
         delete next[vars.id]
         return next
@@ -168,6 +190,30 @@ export default function WelfareInventoryPage() {
       qc.invalidateQueries(['welfare-work-instructions'])
     },
   })
+
+  useEffect(() => {
+    const timers = []
+    Object.entries(workDrafts).forEach(([id, draft]) => {
+      const row = workInstructions.find(item => String(item.id) === String(id))
+      if (!row) return
+
+      const value = getWorkDraftValue(row, draft)
+      const base = getWorkDraftValue(row)
+      const dirty =
+        value.instruction !== base.instruction ||
+        value.remaining_qty !== base.remaining_qty ||
+        value.note !== base.note
+
+      if (!dirty) return
+      timers.push(setTimeout(() => {
+        workSaveMutation.mutate({
+          id: row.id,
+          payload: value,
+        })
+      }, 800))
+    })
+    return () => timers.forEach(clearTimeout)
+  }, [workDrafts, workInstructions])
 
   const adjustMutation = useMutation({
     mutationFn: ({ id, remaining_qty }) => api.post(`/welfare/inventory/${id}/adjust`, {
@@ -337,31 +383,27 @@ export default function WelfareInventoryPage() {
               ))}
             </div>
             <div style={{ overflowX: 'auto' }}>
-              <table className="welfare-work-table" style={{ width: 1120, minWidth: 1120 }}>
+              <table className="welfare-work-table" style={{ width: 1200, minWidth: 1200 }}>
                 <thead>
                   <tr>
                     <th style={{ width: 56 }}></th>
                     <th style={{ width: 58 }}>写真</th>
-                    <th style={{ width: 170 }}>商品名</th>
-                    <th style={{ width: 105 }}>色</th>
-                    <th style={{ width: 82 }}>サイズ</th>
-                    <th style={{ width: 54 }}>URL</th>
+                    <th style={{ width: 240 }}>商品名</th>
+                    <th style={{ width: 110 }}>色</th>
+                    <th style={{ width: 80 }}>サイズ</th>
+                    <th style={{ width: 52 }}>URL</th>
                     <th style={{ width: 64 }}>単品数</th>
                     <th style={{ width: 64 }}>換算</th>
                     <th style={{ width: 74 }}>残</th>
-                    <th style={{ width: 86 }}>指示</th>
-                    <th style={{ width: 170 }}>備考</th>
-                    <th style={{ width: 64 }}></th>
+                    <th style={{ width: 126 }}>指示</th>
+                    <th style={{ width: 180 }}>備考</th>
                     <th style={{ width: 90 }}>発注時間</th>
                   </tr>
                 </thead>
                 <tbody>
                   {visibleWorkInstructions.map(row => {
                     const draft = workDrafts[row.id] || {}
-                    const instruction = draft.instruction ?? row.instruction
-                    const remaining = draft.remaining_qty ?? workRemainingQty(row)
-                    const note = draft.note ?? row.note
-                    const dirty = instruction !== row.instruction || remaining !== workRemainingQty(row) || note !== row.note
+                    const { instruction, remaining_qty: remaining, note } = getWorkDraftValue(row, draft)
                     return (
                       <tr key={row.id}>
                         <td style={{ whiteSpace: 'nowrap' }}>
@@ -390,7 +432,7 @@ export default function WelfareInventoryPage() {
                           type="number"
                           min="0"
                           value={remaining}
-                            onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, remaining_qty: Number(e.target.value) } }))}
+                            onChange={e => updateWorkDraft(row, { remaining_qty: Number(e.target.value) })}
                             style={{ width: 58, textAlign: 'right', fontWeight: 700 }}
                           />
                         </td>
@@ -398,30 +440,16 @@ export default function WelfareInventoryPage() {
                           <input
                             list="work-instruction-options"
                             value={instruction}
-                            onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, instruction: e.target.value } }))}
-                            style={{ width: 72, minWidth: 0, background: 'transparent', border: '1px solid #cbd5e1', borderRadius: 6 }}
+                            onChange={e => updateWorkDraft(row, { instruction: e.target.value })}
+                            style={{ width: 112, minWidth: 0, background: 'transparent', border: '1px solid #cbd5e1', borderRadius: 6 }}
                           />
                         </td>
                         <td>
                           <input
                             value={note}
-                            onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, note: e.target.value } }))}
+                            onChange={e => updateWorkDraft(row, { note: e.target.value })}
                             placeholder="備考"
                           />
-                        </td>
-                        <td style={{ whiteSpace: 'nowrap' }}>
-                          {dirty && (
-                            <button
-                              className="btn btn-primary btn-sm"
-                            disabled={workSaveMutation.isPending}
-                            onClick={() => workSaveMutation.mutate({
-                              id: row.id,
-                              payload: { instruction, remaining_qty: remaining, note },
-                            })}
-                          >
-                              保存
-                            </button>
-                          )}
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}>{row.order_date || fmtWorkDate(row)}</td>
                       </tr>
