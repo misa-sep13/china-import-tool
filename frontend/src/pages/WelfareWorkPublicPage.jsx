@@ -24,6 +24,10 @@ const workDateSortValue = (date) => {
   return -1
 }
 
+const workRemainingUnits = (row) => (
+  row.remaining_units ?? ((row.remaining_qty || 0) * (row.unit_per_set || 1))
+)
+
 export default function WelfareWorkPublicPage() {
   const [search, setSearch] = useState('')
   const [activeWorkDate, setActiveWorkDate] = useState('')
@@ -37,7 +41,7 @@ export default function WelfareWorkPublicPage() {
   })
 
   const visibleRows = useMemo(
-    () => rows.filter(r => (r.remaining_qty ?? 0) > 0),
+    () => rows.filter(r => workRemainingUnits(r) > 0),
     [rows]
   )
 
@@ -66,8 +70,8 @@ export default function WelfareWorkPublicPage() {
     }
   }, [activeWorkDate, workDateTabs])
 
-  const totalQty = selectedRows.reduce((sum, r) => sum + (r.qty || 0), 0)
-  const totalRemaining = selectedRows.reduce((sum, r) => sum + (r.remaining_qty || 0), 0)
+  const totalQty = selectedRows.reduce((sum, r) => sum + (r.units || 0), 0)
+  const totalRemaining = selectedRows.reduce((sum, r) => sum + workRemainingUnits(r), 0)
 
   return (
     <div style={{ minHeight: '100vh', background: '#f5f6fa', padding: '28px 36px' }}>
@@ -126,16 +130,16 @@ export default function WelfareWorkPublicPage() {
                 ))}
               </div>
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ minWidth: 1180, tableLayout: 'fixed' }}>
+                <table style={{ minWidth: 1260, tableLayout: 'fixed' }}>
                   <thead>
                     <tr>
-                      <th style={{ width: 80 }}>日付</th>
+                      <th style={{ width: 90 }}>発注時間</th>
                       <th style={{ width: 100 }}>注文</th>
-                      <th style={{ width: 240 }}>商品名</th>
-                      <th style={{ width: 180 }}>仕様</th>
-                      <th style={{ width: 70 }}>URL</th>
-                      <th style={{ width: 80 }}>単品数</th>
-                      <th style={{ width: 80 }}>換算</th>
+                      <th style={{ width: 250 }}>商品名</th>
+                      <th style={{ width: 110 }}>色</th>
+                      <th style={{ width: 90 }}>サイズ</th>
+                      <th style={{ width: 80 }}>商品URL</th>
+                      <th style={{ width: 70 }}>単価</th>
                       <th style={{ width: 70 }}>数量</th>
                       <th style={{ width: 180 }}>指示</th>
                       <th style={{ width: 70 }}>残</th>
@@ -145,16 +149,16 @@ export default function WelfareWorkPublicPage() {
                   <tbody>
                     {selectedRows.map(row => (
                       <tr key={row.id}>
-                        <td style={{ whiteSpace: 'nowrap' }}>{fmtWorkDate(row)}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{row.order_date || fmtWorkDate(row)}</td>
                         <td>{row.source_order_no || '-'}</td>
-                        <td style={{ minWidth: 240, fontWeight: 600 }}>{row.name_jp || '未照合'}</td>
-                        <td style={{ minWidth: 180 }}>{row.supplier_spec || '-'}</td>
+                        <td style={{ wordBreak: 'break-word', fontWeight: 600 }}>{row.source_product_name || row.name_jp || '未照合'}</td>
+                        <td style={{ color: '#e11d48' }}>{row.color || row.supplier_spec || '-'}</td>
+                        <td style={{ color: '#e11d48' }}>{row.size || '-'}</td>
                         <td>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</td>
-                        <td>{row.units}</td>
-                        <td>{row.unit_per_set}個で1</td>
-                        <td style={{ fontWeight: 700 }}>{row.qty}</td>
+                        <td>{row.unit_price || '-'}</td>
+                        <td style={{ color: '#e11d48', fontWeight: 700 }}>{row.units}</td>
                         <td style={{ minWidth: 180 }}>{row.instruction || '-'}</td>
-                        <td style={{ fontWeight: 700 }}>{row.remaining_qty}</td>
+                        <td style={{ fontWeight: 700 }}>{workRemainingUnits(row)}</td>
                         <td style={{ minWidth: 180 }}>{row.note || '-'}</td>
                       </tr>
                     ))}

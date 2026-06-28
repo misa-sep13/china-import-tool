@@ -39,6 +39,14 @@ def _unit_per_set(product: RakutenProduct | None) -> int:
     return 1
 
 
+def _cell_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
 def _parse_excel(content: bytes):
     try:
         import openpyxl
@@ -71,10 +79,10 @@ def _parse_excel(content: bytes):
                     return None
                 return row[idx]
 
-            name_cn = str(cell("商品名") or "").strip()
+            name_cn = _cell_text(cell("商品名"))
             if not name_cn:
                 continue
-            buy_url = str(cell("商品URL") or "").strip()
+            buy_url = _cell_text(cell("商品URL"))
             if "?" in buy_url:
                 buy_url = buy_url.split("?")[0]
             try:
@@ -90,15 +98,16 @@ def _parse_excel(content: bytes):
                 remaining_units = None
             parsed.append({
                 "sheet": ws.title,
-                "order_date": str(cell("発注時間") or "").strip()[:10],
-                "order_no": str(cell("オーダー番号") or "").strip(),
+                "order_date": _cell_text(cell("発注時間"))[:10],
+                "order_no": _cell_text(cell("オーダー番号")),
                 "name_cn": name_cn,
-                "supplier_spec": str(cell("色") or "").strip(),
-                "size": str(cell("サイズ") or "").strip(),
+                "supplier_spec": _cell_text(cell("色")),
+                "size": _cell_text(cell("サイズ")),
                 "buy_url": buy_url,
+                "unit_price": _cell_text(cell("単価")),
                 "units": units,
-                "instruction": str(cell("指示") or "").strip(),
-                "note": str(cell("備考") or "").strip(),
+                "instruction": _cell_text(cell("指示")),
+                "note": _cell_text(cell("備考")),
                 "remaining_units": remaining_units,
             })
     return parsed
@@ -188,12 +197,17 @@ def _work_out(row: WelfareWorkInstruction):
         "source_sheet": row.source_sheet,
         "source_order_no": row.source_order_no,
         "name_jp": row.name_jp,
+        "source_product_name": row.source_product_name,
+        "color": row.color or row.supplier_spec,
+        "size": row.size,
         "supplier_spec": row.supplier_spec,
         "buy_url": row.buy_url,
+        "unit_price": row.unit_price,
         "units": row.units or 0,
         "unit_per_set": row.unit_per_set or 1,
         "qty": row.qty or 0,
         "instruction": row.instruction or "",
+        "remaining_units": row.remaining_units if row.remaining_units is not None else (row.remaining_qty or 0) * (row.unit_per_set or 1),
         "remaining_qty": row.remaining_qty or 0,
         "note": row.note or "",
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -209,6 +223,9 @@ def list_work_instructions(q: Optional[str] = None, db: Session = Depends(get_db
         query = query.filter(
             (WelfareWorkInstruction.sku.ilike(like)) |
             (WelfareWorkInstruction.name_jp.ilike(like)) |
+            (WelfareWorkInstruction.source_product_name.ilike(like)) |
+            (WelfareWorkInstruction.color.ilike(like)) |
+            (WelfareWorkInstruction.size.ilike(like)) |
             (WelfareWorkInstruction.supplier_spec.ilike(like)) |
             (WelfareWorkInstruction.source_order_no.ilike(like))
         )
@@ -298,7 +315,8 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
         unit = _unit_per_set(product)
         qty = row["units"] // unit
         remaining_units = row.get("remaining_units")
-        remaining_qty = qty if remaining_units is None else remaining_units // unit
+        remaining_units_value = row["units"] if remaining_units is None else remaining_units
+        remaining_qty = remaining_units_value // unit
         if product and qty <= 0:
             continue
         key = _import_key(product, row)
@@ -322,12 +340,17 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 source_sheet=row.get("sheet"),
                 source_order_no=row.get("order_no"),
                 name_jp=product.name if product else None,
+                source_product_name=row.get("name_cn"),
+                color=row.get("supplier_spec"),
+                size=row.get("size"),
                 supplier_spec=row.get("supplier_spec"),
                 buy_url=row.get("buy_url"),
+                unit_price=row.get("unit_price"),
                 units=row["units"],
                 unit_per_set=unit,
                 qty=qty,
                 instruction=row.get("instruction") or "",
+                remaining_units=remaining_units_value,
                 remaining_qty=remaining_qty,
                 note=" / ".join(note_parts) if note_parts else None,
             ))
@@ -449,6 +472,7 @@ class WelfareAdjustIn(BaseModel):
 
 class WelfareWorkInstructionIn(BaseModel):
     instruction: Optional[str] = None
+    remaining_units: Optional[int] = None
     remaining_qty: Optional[int] = None
     note: Optional[str] = None
 
@@ -520,10 +544,16 @@ def update_work_instruction(instruction_id: int, data: WelfareWorkInstructionIn,
         raise HTTPException(status_code=404, detail="作業指示が見つかりません")
     if data.instruction is not None:
         row.instruction = data.instruction
+    if data.remaining_units is not None:
+        if data.remaining_units < 0:
+            raise HTTPException(status_code=400, detail="残は0以上で入力してください")
+        row.remaining_units = data.remaining_units
+        row.remaining_qty = data.remaining_units // (row.unit_per_set or 1)
     if data.remaining_qty is not None:
         if data.remaining_qty < 0:
             raise HTTPException(status_code=400, detail="残は0以上で入力してください")
         row.remaining_qty = data.remaining_qty
+        row.remaining_units = data.remaining_qty * (row.unit_per_set or 1)
     if data.note is not None:
         row.note = data.note
     db.commit()

@@ -24,6 +24,10 @@ const workDateSortValue = (date) => {
   return -1
 }
 
+const workRemainingUnits = (row) => (
+  row.remaining_units ?? ((row.remaining_qty || 0) * (row.unit_per_set || 1))
+)
+
 export default function WelfareInventoryPage() {
   const qc = useQueryClient()
   const fileRef = useRef(null)
@@ -302,16 +306,16 @@ export default function WelfareInventoryPage() {
               ))}
             </div>
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ minWidth: 1320, tableLayout: 'fixed' }}>
+              <table style={{ minWidth: 1410, tableLayout: 'fixed' }}>
                 <thead>
                   <tr>
-                    <th style={{ width: 80 }}>日付</th>
+                    <th style={{ width: 90 }}>発注時間</th>
                     <th style={{ width: 100 }}>注文</th>
-                    <th style={{ width: 120 }}>SKU</th>
-                    <th style={{ width: 230 }}>商品名</th>
-                    <th style={{ width: 190 }}>URL / 仕様</th>
-                    <th style={{ width: 80 }}>単品数</th>
-                    <th style={{ width: 80 }}>換算</th>
+                    <th style={{ width: 250 }}>商品名</th>
+                    <th style={{ width: 110 }}>色</th>
+                    <th style={{ width: 90 }}>サイズ</th>
+                    <th style={{ width: 80 }}>商品URL</th>
+                    <th style={{ width: 70 }}>単価</th>
                     <th style={{ width: 70 }}>数量</th>
                     <th style={{ width: 180 }}>指示</th>
                     <th style={{ width: 90 }}>残</th>
@@ -323,22 +327,19 @@ export default function WelfareInventoryPage() {
                   {visibleWorkInstructions.map(row => {
                     const draft = workDrafts[row.id] || {}
                     const instruction = draft.instruction ?? row.instruction
-                    const remaining = draft.remaining_qty ?? row.remaining_qty
+                    const remaining = draft.remaining_units ?? workRemainingUnits(row)
                     const note = draft.note ?? row.note
-                    const dirty = instruction !== row.instruction || remaining !== row.remaining_qty || note !== row.note
+                    const dirty = instruction !== row.instruction || remaining !== workRemainingUnits(row) || note !== row.note
                     return (
                       <tr key={row.id}>
-                        <td style={{ whiteSpace: 'nowrap' }}>{fmtWorkDate(row)}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{row.order_date || fmtWorkDate(row)}</td>
                         <td>{row.source_order_no || '-'}</td>
-                        <td style={{ fontWeight: 700 }}>{row.sku || '未照合'}</td>
-                        <td style={{ minWidth: 220 }}>{row.name_jp || '未照合'}</td>
-                        <td style={{ minWidth: 180 }}>
-                          <div>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</div>
-                          <div style={{ color: '#64748b', fontSize: 12 }}>{row.supplier_spec || '-'}</div>
-                        </td>
-                        <td>{row.units}</td>
-                        <td>{row.unit_per_set}個で1</td>
-                        <td>{row.qty}</td>
+                        <td style={{ wordBreak: 'break-word' }}>{row.source_product_name || row.name_jp || '未照合'}</td>
+                        <td style={{ color: '#e11d48' }}>{row.color || row.supplier_spec || '-'}</td>
+                        <td style={{ color: '#e11d48' }}>{row.size || '-'}</td>
+                        <td>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</td>
+                        <td>{row.unit_price || '-'}</td>
+                        <td style={{ color: '#e11d48', fontWeight: 700 }}>{row.units}</td>
                         <td style={{ minWidth: 160 }}>
                           <input
                             value={instruction}
@@ -348,10 +349,10 @@ export default function WelfareInventoryPage() {
                         </td>
                         <td style={{ minWidth: 86 }}>
                           <input
-                            type="number"
-                            min="0"
-                            value={remaining}
-                            onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, remaining_qty: Number(e.target.value) } }))}
+                          type="number"
+                          min="0"
+                          value={remaining}
+                            onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, remaining_units: Number(e.target.value) } }))}
                             style={{ width: 72, textAlign: 'right', fontWeight: 700 }}
                           />
                         </td>
@@ -366,12 +367,12 @@ export default function WelfareInventoryPage() {
                           {dirty && (
                             <button
                               className="btn btn-primary btn-sm"
-                              disabled={workSaveMutation.isPending}
-                              onClick={() => workSaveMutation.mutate({
-                                id: row.id,
-                                payload: { instruction, remaining_qty: remaining, note },
-                              })}
-                            >
+                            disabled={workSaveMutation.isPending}
+                            onClick={() => workSaveMutation.mutate({
+                              id: row.id,
+                              payload: { instruction, remaining_units: remaining, note },
+                            })}
+                          >
                               保存
                             </button>
                           )}
