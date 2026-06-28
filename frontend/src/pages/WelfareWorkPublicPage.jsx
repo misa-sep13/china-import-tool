@@ -12,15 +12,33 @@ const fmtWorkDate = (row) => {
   if (/^\d{2}$/.test(sheet)) return `${Number(sheet.slice(0, 1))}/${Number(sheet.slice(1))}`
   if (/^\d{3}$/.test(sheet)) return `${Number(sheet.slice(0, 1))}/${Number(sheet.slice(1))}`
   if (/^\d{4}$/.test(sheet)) return `${Number(sheet.slice(0, 2))}/${Number(sheet.slice(2))}`
+  const mixed = sheet.match(/^(\d{1,2})[/-](\d{1,2})(.*)$/)
+  if (mixed) return `${Number(mixed[1])}/${Number(mixed[2])}${mixed[3] || ''}`
+  const dotted = sheet.match(/^(\d{1,2})・(\d{1,2})(.*)$/)
+  if (dotted) return sheet
+  const compact = sheet.match(/^(\d{3,4})(.+)$/)
+  if (compact) {
+    const d = compact[1]
+    const month = d.length === 3 ? Number(d.slice(0, 1)) : Number(d.slice(0, 2))
+    const day = d.length === 3 ? Number(d.slice(1)) : Number(d.slice(2))
+    return `${month}/${day}${compact[2]}`
+  }
   return sheet || fmtDate(row.order_date) || '-'
 }
 
 const workDateSortValue = (date) => {
   const s = String(date || '')
-  const iso = s.match(/^\d{4}\/(\d{1,2})\/(\d{1,2})/)
-  if (iso) return Number(iso[1]) * 100 + Number(iso[2])
-  const slash = s.match(/^(\d{1,2})\/(\d{1,2})$/)
-  if (slash) return Number(slash[1]) * 100 + Number(slash[2])
+  const today = new Date()
+  const currentYear = today.getFullYear()
+  const currentMonthDay = (today.getMonth() + 1) * 100 + today.getDate()
+  const withDate = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/)
+  if (withDate) return Number(withDate[1]) * 10000 + Number(withDate[2]) * 100 + Number(withDate[3])
+  const monthDay = s.match(/^(\d{1,2})[\/・](\d{1,2})/)
+  if (monthDay) {
+    const value = Number(monthDay[1]) * 100 + Number(monthDay[2])
+    const year = value > currentMonthDay ? currentYear - 1 : currentYear
+    return year * 10000 + value
+  }
   return -1
 }
 
@@ -130,17 +148,15 @@ export default function WelfareWorkPublicPage() {
                 ))}
               </div>
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ minWidth: 1260, tableLayout: 'fixed' }}>
+                <table style={{ minWidth: 900, width: '100%', tableLayout: 'fixed' }}>
                   <thead>
                     <tr>
-                      <th style={{ width: 90 }}>発注時間</th>
-                      <th style={{ width: 100 }}>注文</th>
-                      <th style={{ width: 250 }}>商品名</th>
-                      <th style={{ width: 110 }}>色</th>
-                      <th style={{ width: 90 }}>サイズ</th>
-                      <th style={{ width: 80 }}>商品URL</th>
-                      <th style={{ width: 70 }}>単価</th>
-                      <th style={{ width: 70 }}>数量</th>
+                      <th style={{ width: 82 }}>発注時間</th>
+                      <th style={{ width: 135 }}>商品名</th>
+                      <th style={{ width: 95 }}>色</th>
+                      <th style={{ width: 82 }}>サイズ</th>
+                      <th style={{ width: 64 }}>商品URL</th>
+                      <th style={{ width: 60 }}>数量</th>
                       <th style={{ width: 180 }}>指示</th>
                       <th style={{ width: 70 }}>残</th>
                       <th style={{ width: 150 }}>備考</th>
@@ -150,12 +166,10 @@ export default function WelfareWorkPublicPage() {
                     {selectedRows.map(row => (
                       <tr key={row.id}>
                         <td style={{ whiteSpace: 'nowrap' }}>{row.order_date || fmtWorkDate(row)}</td>
-                        <td>{row.source_order_no || '-'}</td>
                         <td style={{ wordBreak: 'break-word', fontWeight: 600 }}>{row.source_product_name || row.name_jp || '未照合'}</td>
                         <td style={{ color: '#e11d48' }}>{row.color || row.supplier_spec || '-'}</td>
                         <td style={{ color: '#e11d48' }}>{row.size || '-'}</td>
                         <td>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</td>
-                        <td>{row.unit_price || '-'}</td>
                         <td style={{ color: '#e11d48', fontWeight: 700 }}>{row.units}</td>
                         <td style={{ minWidth: 180 }}>{row.instruction || '-'}</td>
                         <td style={{ fontWeight: 700 }}>{workRemainingUnits(row)}</td>
