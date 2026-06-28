@@ -95,6 +95,21 @@ td {
 }
 tr:hover td { background: #fafbff; }
 
+.welfare-work-table {
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.welfare-work-table th,
+.welfare-work-table td {
+  padding: 6px 6px;
+  font-size: 12px;
+}
+.welfare-work-table input,
+.welfare-work-table select {
+  padding: 5px 5px;
+  font-size: 12px;
+}
+
 input, select, textarea {
   padding: 8px 10px;
   border: 1px solid #dde2ef;

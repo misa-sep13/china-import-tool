@@ -135,7 +135,7 @@ export default function WelfareWorkPublicPage() {
           </div>
         </div>
 
-        <div className="card">
+        <div className="card" style={{ padding: 12 }}>
           {isLoading ? (
             <div className="loading">読み込み中...</div>
           ) : visibleRows.length === 0 ? (
@@ -157,20 +157,20 @@ export default function WelfareWorkPublicPage() {
                 ))}
               </div>
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ minWidth: 780, width: '100%', tableLayout: 'fixed' }}>
+                <table className="welfare-work-table" style={{ width: 790, minWidth: 790 }}>
                   <thead>
                     <tr>
-                      <th style={{ width: 54 }}>写真</th>
-                      <th style={{ width: 110 }}>商品名</th>
+                      <th style={{ width: 48 }}>写真</th>
+                      <th style={{ width: 118 }}>商品名</th>
                       <th style={{ width: 82 }}>色</th>
-                      <th style={{ width: 70 }}>サイズ</th>
-                      <th style={{ width: 48 }}>URL</th>
-                      <th style={{ width: 58 }}>単品数</th>
-                      <th style={{ width: 58 }}>換算</th>
-                      <th style={{ width: 64 }}>残</th>
-                      <th style={{ width: 62 }}>指示</th>
-                      <th style={{ width: 120 }}>備考</th>
-                      <th style={{ width: 78 }}>発注時間</th>
+                      <th style={{ width: 66 }}>サイズ</th>
+                      <th style={{ width: 42 }}>URL</th>
+                      <th style={{ width: 54 }}>単品数</th>
+                      <th style={{ width: 56 }}>換算</th>
+                      <th style={{ width: 58 }}>残</th>
+                      <th style={{ width: 58 }}>指示</th>
+                      <th style={{ width: 130 }}>備考</th>
+                      <th style={{ width: 72 }}>発注時間</th>
                     </tr>
                   </thead>
                   <tbody>
