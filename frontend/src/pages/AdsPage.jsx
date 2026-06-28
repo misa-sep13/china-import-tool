@@ -2,8 +2,18 @@ import { useState, useEffect, useRef } from 'react'
 import api from '../api/client'
 
 const POLL_INTERVAL = 2000
-const TABS = ['campaigns', 'keywords', 'search-terms']
-const TAB_LABELS = { campaigns: 'キャンペーン', keywords: 'KWパフォーマンス', 'search-terms': '検索語句' }
+const TABS = ['campaigns', 'keywords', 'search-terms', 'proposals']
+const TAB_LABELS = { campaigns: 'キャンペーン', keywords: 'KWパフォーマンス', 'search-terms': '検索語句', proposals: '提案一覧' }
+const PROPOSAL_TABS = [
+  ['phrase_promotions', 'P追加'],
+  ['product_promotions', 'G追加'],
+  ['exact_promotions', 'E追加'],
+  ['bid_adjustments', '入札調整'],
+  ['budget_adjustments', '予算調整'],
+  ['new_campaigns', '新規候補'],
+  ['excluded', '除外'],
+]
+const PROPOSAL_LABELS = Object.fromEntries(PROPOSAL_TABS)
 const TYPE_COLORS = { 'A_': '#3b82f6', 'P_': '#eab308', 'G_': '#22c55e', 'E_': '#a855f7', other: '#94a3b8' }
 const TYPE_FILTERS = ['全て', 'A_', 'P_', 'G_', 'E_', 'other']
 
@@ -35,15 +45,18 @@ const acosColor = (v) => {
 export default function AdsPage() {
   const initialRange = defaultSyncRange()
   const [tab, setTab] = useState('campaigns')
+  const [proposalTab, setProposalTab] = useState('phrase_promotions')
   const [typeFilter, setTypeFilter] = useState('全て')
   const [search, setSearch] = useState('')
   const [syncStartDate, setSyncStartDate] = useState(initialRange.start)
   const [syncEndDate, setSyncEndDate] = useState(initialRange.end)
-  const [attributionDays, setAttributionDays] = useState('30')
+  const [attributionDays, setAttributionDays] = useState('14')
   const [syncStatus, setSyncStatus] = useState('idle')
   const [syncProgress, setSyncProgress] = useState('')
   const [dashboard, setDashboard] = useState(null)
   const [data, setData] = useState([])
+  const [proposalData, setProposalData] = useState(null)
+  const [budgetProposalData, setBudgetProposalData] = useState(null)
   const [sortKey, setSortKey] = useState('cost')
   const [sortAsc, setSortAsc] = useState(false)
   const [error, setError] = useState('')
@@ -62,6 +75,11 @@ export default function AdsPage() {
 
   const loadTab = async () => {
     try {
+      if (tab === 'proposals') {
+        const res = await api.get('/ads/proposals')
+        setProposalData(res.data)
+        return
+      }
       const params = new URLSearchParams()
       if (typeFilter !== '全て') params.set('campaign_type', typeFilter)
       if (search) params.set('search', search)
@@ -129,6 +147,20 @@ export default function AdsPage() {
     loadTab()
   }
 
+  const handleBudgetCsv = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setError('')
+    try {
+      const csvText = await file.text()
+      const res = await api.post('/ads/proposals/budget-csv', { csv_text: csvText })
+      setBudgetProposalData(res.data)
+      setProposalTab('budget_adjustments')
+    } catch {
+      setError('予算CSVの読み込みに失敗しました')
+    }
+  }
+
   const sorted = [...data].sort((a, b) => {
     const av = a[sortKey], bv = b[sortKey]
     if (av == null && bv == null) return 0
@@ -142,6 +174,12 @@ export default function AdsPage() {
     else { setSortKey(key); setSortAsc(false) }
   }
   const sortIcon = (key) => sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : ''
+  const proposalRows = proposalTab === 'budget_adjustments'
+    ? (budgetProposalData?.budget_adjustments || proposalData?.budget_adjustments || [])
+    : (proposalData?.[proposalTab] || [])
+  const budgetCount = budgetProposalData?.summary?.budget_adjust ?? proposalData?.summary?.budget_adjust ?? 0
+  const budgetUp = budgetProposalData?.summary?.budget_up ?? 0
+  const budgetDown = budgetProposalData?.summary?.budget_down ?? 0
 
   const TypeBadge = ({ type }) => (
     <span style={{
@@ -292,6 +330,62 @@ export default function AdsPage() {
         </form>
       </div>
 
+      {tab === 'proposals' && proposalData?.summary && (
+        <>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+            {[
+              ['p_add', 'P追加'], ['g_add', 'G追加'], ['e_add', 'E追加'],
+              ['bid_adjust', '入札調整'], ['budget_adjust', '予算調整'],
+              ['new_campaigns', '新規候補'], ['excluded', '除外'],
+            ].map(([key, label]) => (
+              <div key={key} style={{
+                background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6,
+                padding: '8px 12px', fontSize: 13, fontWeight: 600, color: '#1e3a8a',
+              }}>
+                {label}: {fmt(key === 'budget_adjust' ? budgetCount : (proposalData.summary[key] || 0))}件
+              </div>
+            ))}
+            <div style={{
+              background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6,
+              padding: '8px 12px', fontSize: 13, color: '#334155',
+            }}>
+              上げ{fmt(proposalData.summary.bid_up || 0)} / 下げ{fmt(proposalData.summary.bid_down || 0)}
+            </div>
+            {budgetProposalData?.summary && (
+              <div style={{
+                background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6,
+                padding: '8px 12px', fontSize: 13, color: '#166534',
+              }}>
+                予算 上げ{fmt(budgetUp)} / 下げ{fmt(budgetDown)}
+              </div>
+            )}
+            <label style={{
+              marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8,
+              padding: '7px 10px', border: '1px solid #cbd5e1', borderRadius: 6,
+              background: '#fff', cursor: 'pointer', fontSize: 13,
+            }}>
+              予算CSV
+              <input type="file" accept=".csv,text/csv" onChange={handleBudgetCsv} style={{ display: 'none' }} />
+            </label>
+          </div>
+          <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid #bfdbfe', marginBottom: 10, flexWrap: 'wrap' }}>
+            {PROPOSAL_TABS.map(([key, label]) => (
+              <button key={key} onClick={() => setProposalTab(key)}
+                style={{
+                  padding: '7px 12px', border: '1px solid #bfdbfe',
+                  borderBottom: proposalTab === key ? '1px solid #fff' : '1px solid #bfdbfe',
+                  background: proposalTab === key ? '#fff' : '#e0f2fe',
+                  color: '#0f172a', cursor: 'pointer', borderRadius: '6px 6px 0 0',
+                  fontWeight: proposalTab === key ? 700 : 500, fontSize: 13,
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
       {/* テーブル */}
       <div style={{ overflowX: 'auto' }}>
         {tab === 'campaigns' && (
@@ -399,11 +493,139 @@ export default function AdsPage() {
             </tbody>
           </table>
         )}
+
+        {tab === 'proposals' && (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              {['phrase_promotions', 'exact_promotions'].includes(proposalTab) && (
+                <tr style={{ background: '#f8fafc' }}>
+                  {['元', '追加先キャンペーン', 'キーワード', '一致', '入札額', '元CPC', 'CV', 'ACOS', '元キャンペーン', '新規'].map(h => (
+                    <th key={h} style={{ padding: '8px 10px', textAlign: ['入札額', '元CPC', 'CV', 'ACOS'].includes(h) ? 'right' : 'left', borderBottom: '2px solid #e2e8f0', color: '#475569' }}>{h}</th>
+                  ))}
+                </tr>
+              )}
+              {proposalTab === 'product_promotions' && (
+                <tr style={{ background: '#f8fafc' }}>
+                  {['元', '追加先キャンペーン', 'ターゲットASIN', '入札額', '元CPC', 'CV', 'ACOS', '元キャンペーン', '新規'].map(h => (
+                    <th key={h} style={{ padding: '8px 10px', textAlign: ['入札額', '元CPC', 'CV', 'ACOS'].includes(h) ? 'right' : 'left', borderBottom: '2px solid #e2e8f0', color: '#475569' }}>{h}</th>
+                  ))}
+                </tr>
+              )}
+              {proposalTab === 'bid_adjustments' && (
+                <tr style={{ background: '#f8fafc' }}>
+                  {['キャンペーン', '種別', '対象', '現入札', '新入札', '増減', 'Click', 'CV', 'ACOS', 'CPC', '適用ルール'].map(h => (
+                    <th key={h} style={{ padding: '8px 10px', textAlign: ['現入札', '新入札', '増減', 'Click', 'CV', 'ACOS', 'CPC'].includes(h) ? 'right' : 'left', borderBottom: '2px solid #e2e8f0', color: '#475569' }}>{h}</th>
+                  ))}
+                </tr>
+              )}
+              {proposalTab === 'new_campaigns' && (
+                <tr style={{ background: '#f8fafc' }}>
+                  {['作成先', 'キャンペーン名', 'SKU', '予算', '初期入札', '関連候補'].map(h => (
+                    <th key={h} style={{ padding: '8px 10px', textAlign: ['予算', '初期入札', '関連候補'].includes(h) ? 'right' : 'left', borderBottom: '2px solid #e2e8f0', color: '#475569' }}>{h}</th>
+                  ))}
+                </tr>
+              )}
+              {proposalTab === 'excluded' && (
+                <tr style={{ background: '#f8fafc' }}>
+                  {['元キャンペーン', '検索語句', '昇格先', 'CV', 'ACOS', '除外理由'].map(h => (
+                    <th key={h} style={{ padding: '8px 10px', textAlign: ['CV', 'ACOS'].includes(h) ? 'right' : 'left', borderBottom: '2px solid #e2e8f0', color: '#475569' }}>{h}</th>
+                  ))}
+                </tr>
+              )}
+              {proposalTab === 'budget_adjustments' && (
+                <tr style={{ background: '#f8fafc' }}>
+                  {['キャンペーン', '現予算', '新予算', '増減', 'ACOS', '適用ルール'].map(h => (
+                    <th key={h} style={{ padding: '8px 10px', textAlign: ['現予算', '新予算', '増減', 'ACOS'].includes(h) ? 'right' : 'left', borderBottom: '2px solid #e2e8f0', color: '#475569' }}>{h}</th>
+                  ))}
+                </tr>
+              )}
+            </thead>
+            <tbody>
+              {['phrase_promotions', 'exact_promotions'].includes(proposalTab) && proposalRows.map((r, i) => (
+                <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: '8px 10px' }}><TypeBadge type={r.source_type} /></td>
+                  <td style={{ padding: '8px 10px' }}>{r.campaign}</td>
+                  <td style={{ padding: '8px 10px' }}>{r.keyword}</td>
+                  <td style={{ padding: '8px 10px' }}>{r.match_type}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{yen(r.bid)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{yen(r.source_cpc)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{fmt(r.orders)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', ...acosColor(r.acos) }}>{pct(r.acos)}</td>
+                  <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.source_campaign}</td>
+                  <td style={{ padding: '8px 10px' }}>{r.needs_campaign ? '要' : ''}</td>
+                </tr>
+              ))}
+              {proposalTab === 'product_promotions' && proposalRows.map((r, i) => (
+                <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: '8px 10px' }}><TypeBadge type={r.source_type} /></td>
+                  <td style={{ padding: '8px 10px' }}>{r.campaign}</td>
+                  <td style={{ padding: '8px 10px' }}>{r.target_asin}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{yen(r.bid)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{yen(r.source_cpc)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{fmt(r.orders)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', ...acosColor(r.acos) }}>{pct(r.acos)}</td>
+                  <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.source_campaign}</td>
+                  <td style={{ padding: '8px 10px' }}>{r.needs_campaign ? '要' : ''}</td>
+                </tr>
+              ))}
+              {proposalTab === 'bid_adjustments' && proposalRows.map((r, i) => (
+                <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: '8px 10px', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.campaign}</td>
+                  <td style={{ padding: '8px 10px' }}>{r.kind}</td>
+                  <td style={{ padding: '8px 10px', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.target}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{yen(r.current_bid)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{yen(r.new_bid)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', color: r.delta > 0 ? '#15803d' : '#dc2626' }}>{r.delta > 0 ? '+' : ''}{r.delta}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{fmt(r.clicks)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{fmt(r.orders)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', ...acosColor(r.acos) }}>{pct(r.acos)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{yen(r.cpc)}</td>
+                  <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.rule}</td>
+                </tr>
+              ))}
+              {proposalTab === 'new_campaigns' && proposalRows.map((r, i) => (
+                <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: '8px 10px', fontWeight: 600 }}>{r.create_type}</td>
+                  <td style={{ padding: '8px 10px' }}>{r.campaign}</td>
+                  <td style={{ padding: '8px 10px' }}>{r.sku}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{yen(r.budget)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{yen(r.initial_bid)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{fmt(r.related_count)}</td>
+                </tr>
+              ))}
+              {proposalTab === 'budget_adjustments' && proposalRows.map((r, i) => (
+                <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: '8px 10px' }}>{r.campaign}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{yen(r.current_budget)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{yen(r.new_budget)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', color: r.delta > 0 ? '#15803d' : '#dc2626' }}>{r.delta > 0 ? '+' : ''}{yen(r.delta)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', ...acosColor(r.acos) }}>{pct(r.acos)}</td>
+                  <td style={{ padding: '8px 10px' }}>{r.rule}</td>
+                </tr>
+              ))}
+              {proposalTab === 'excluded' && proposalRows.map((r, i) => (
+                <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: '8px 10px', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.source_campaign}</td>
+                  <td style={{ padding: '8px 10px' }}>{r.search_term}</td>
+                  <td style={{ padding: '8px 10px' }}>{r.destination}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{fmt(r.orders)}</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', ...acosColor(r.acos) }}>{pct(r.acos)}</td>
+                  <td style={{ padding: '8px 10px' }}>{r.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
-      {data.length === 0 && syncStatus !== 'running' && (
+      {tab !== 'proposals' && data.length === 0 && syncStatus !== 'running' && (
         <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>
           データがありません。「データ同期」ボタンで取得してください。
+        </div>
+      )}
+      {tab === 'proposals' && proposalRows.length === 0 && syncStatus !== 'running' && (
+        <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>
+          {PROPOSAL_LABELS[proposalTab]}はありません。
         </div>
       )}
     </div>

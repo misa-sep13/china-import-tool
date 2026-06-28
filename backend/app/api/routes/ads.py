@@ -1,10 +1,14 @@
 from fastapi import APIRouter, Query, HTTPException
+from pydantic import BaseModel
 from app.core.database import SessionLocal
 from app.models.ads import (
     AdsCampaign, AdsAdGroup, AdsKeyword, AdsTarget, AdsSearchTerm, AdsSyncLog,
 )
 from datetime import datetime, timezone, timedelta
 import threading, uuid, logging
+import re
+import csv
+import io
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +16,10 @@ router = APIRouter(prefix="/ads", tags=["ads"])
 
 _jobs: dict = {}
 _jobs_lock = threading.Lock()
+
+
+class AdsBudgetCsvRequest(BaseModel):
+    csv_text: str
 
 
 def _update_job(job_id: str, **kw):
@@ -501,6 +509,479 @@ def get_sync_logs():
         ]
     finally:
         db.close()
+
+
+def _round_yen(value):
+    return int(float(value) + 0.5)
+
+
+def _clamp_bid(value, bid_min=4, bid_max=100):
+    return max(bid_min, min(bid_max, _round_yen(value)))
+
+
+def _clamp_bid_decimal(value, bid_min=4, bid_max=100):
+    return round(max(bid_min, min(bid_max, float(value or 0))), 2)
+
+
+def _acos(cost, sales):
+    cost = float(cost or 0)
+    sales = float(sales or 0)
+    return (cost / sales * 100) if sales > 0 else None
+
+
+def _cpc(cost, clicks):
+    clicks = int(clicks or 0)
+    return (float(cost or 0) / clicks) if clicks > 0 else 0
+
+
+def _campaign_sku(name: str):
+    parts = (name or "").split("_")
+    if len(parts) >= 3 and parts[0] in ("A", "P", "G", "E"):
+        return parts[2]
+    return None
+
+
+def _is_asin(value: str):
+    return bool(re.fullmatch(r"B0[A-Z0-9]{8}", (value or "").strip().upper()))
+
+
+def _keyword_exists(keywords, campaign_id, keyword_text, match_type):
+    text = (keyword_text or "").strip().lower()
+    mt = (match_type or "").upper()
+    return any(
+        kw.campaign_id == campaign_id
+        and (kw.keyword_text or "").strip().lower() == text
+        and (kw.match_type or "").upper() == mt
+        for kw in keywords
+    )
+
+
+def _target_exists(targets, campaign_id, asin):
+    needle = (asin or "").strip().upper()
+    return any(
+        t.campaign_id == campaign_id
+        and (
+            (t.resolved_asin or "").strip().upper() == needle
+            or needle in (t.expression or "").upper()
+        )
+        for t in targets
+    )
+
+
+def _bid_rule(current_bid, clicks, orders, acos, cpc):
+    if current_bid is None or current_bid <= 0:
+        return None
+
+    if orders > 0:
+        if acos is not None and acos <= 15:
+            new_bid = cpc + 1
+            rule = "ACoS<=15%: CPC+1"
+        elif acos is not None and acos <= 25:
+            new_bid = cpc * 1.05
+            rule = "ACoS15-25%: CPCx1.05"
+        elif acos is not None:
+            new_bid = cpc * (25 / acos) if acos > 0 else current_bid
+            rule = "ACoS>=25%: CPCx(25/ACoS)"
+        else:
+            return None
+    else:
+        if clicks == 0:
+            new_bid = current_bid + 1
+            rule = "clicks=0: +1円"
+        elif clicks <= 2:
+            new_bid = current_bid * 1.2
+            rule = "clicks 1-2: x1.2"
+        elif clicks <= 5:
+            new_bid = current_bid * 1.1
+            rule = "clicks 3-5: x1.1"
+        elif clicks <= 10:
+            return None
+        elif clicks <= 15:
+            new_bid = current_bid * 0.85
+            rule = "clicks 11-15: x0.85"
+        elif clicks <= 20:
+            new_bid = current_bid * 0.65
+            rule = "clicks 16-20: x0.65"
+        else:
+            new_bid = current_bid * 0.5
+            rule = "clicks 21+: x0.5"
+
+    clamped = _clamp_bid_decimal(new_bid)
+    if clamped == round(float(current_bid or 0), 2):
+        return None
+    return clamped, rule
+
+
+def _proposal_payload(items):
+    return sorted(items, key=lambda x: (x.get("sort_score", 0), x.get("campaign") or ""), reverse=True)
+
+
+def _number(value):
+    text = str(value or "").replace(",", "").replace("¥", "").replace("%", "").strip()
+    if not text:
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
+
+def _budget_rule(current_budget, budget_time, clicks, orders, acos):
+    if current_budget <= 0:
+        return None
+
+    target = None
+    rule = ""
+    if orders == 0 and clicks >= 14:
+        target = current_budget * 0.5
+        rule = "CV=0かつClick>=14: x0.5"
+    elif acos < 30:
+        if budget_time >= 100:
+            return None
+        target = current_budget / max(budget_time / 100, 0.01)
+        rule = "ACoS<30%: 100%到達予算"
+    elif acos <= 35:
+        if budget_time >= 100:
+            target = current_budget * 0.9
+            rule = "ACoS30-35%かつ時間100%: x0.9"
+        else:
+            target = current_budget / max(budget_time / 100, 0.01) * 0.95
+            rule = "ACoS30-35%: 95%到達予算"
+    elif acos <= 40:
+        if budget_time >= 100:
+            target = current_budget * 0.8
+            rule = "ACoS36-40%かつ時間100%: x0.8"
+        else:
+            target = current_budget / max(budget_time / 100, 0.01) * 0.90
+            rule = "ACoS36-40%: 90%到達予算"
+    elif acos <= 45:
+        if budget_time >= 100:
+            target = current_budget * 0.7
+            rule = "ACoS41-45%かつ時間100%: x0.7"
+        else:
+            target = current_budget / max(budget_time / 100, 0.01) * 0.85
+            rule = "ACoS41-45%: 85%到達予算"
+    else:
+        if budget_time >= 100:
+            target = current_budget * 0.6
+            rule = "ACoS>=46%かつ時間100%: x0.6"
+        else:
+            target = current_budget / max(budget_time / 100, 0.01) * 0.80
+            rule = "ACoS>=46%: 80%到達予算"
+
+    if target is None:
+        return None
+    if target > current_budget:
+        target = min(target, current_budget * 3)
+    new_budget = _round_yen(max(100, min(3000, target)))
+    if abs(new_budget - current_budget) < 10:
+        return None
+    return new_budget, rule
+
+
+@router.get("/proposals")
+def ads_proposals(
+    include_excluded: bool = Query(default=True),
+    auto_create_campaigns: bool = Query(default=True),
+):
+    db = SessionLocal()
+    try:
+        campaigns = db.query(AdsCampaign).all()
+        keywords = db.query(AdsKeyword).all()
+        targets = db.query(AdsTarget).all()
+        campaign_by_id = {c.campaign_id: c for c in campaigns}
+        campaign_by_name = {c.name: c for c in campaigns}
+
+        rows = db.query(AdsSearchTerm, AdsCampaign.name.label("campaign_name"), AdsCampaign.campaign_type)\
+            .outerjoin(AdsCampaign, AdsSearchTerm.campaign_id == AdsCampaign.campaign_id)\
+            .all()
+
+        p_promotions = []
+        g_promotions = []
+        e_promotions = []
+        excluded = []
+        new_campaigns = {}
+
+        def target_campaign(prefix, source_campaign):
+            if not source_campaign or not source_campaign.parent_asin:
+                return None
+            return f"{prefix}{source_campaign.parent_asin}"
+
+        def add_new_campaign(prefix, target_name, source_campaign, bid):
+            if not auto_create_campaigns or not target_name or target_name in campaign_by_name:
+                return
+            key = target_name
+            sku = _campaign_sku(source_campaign.name) if source_campaign else None
+            item = new_campaigns.setdefault(key, {
+                "create_type": prefix,
+                "campaign": target_name,
+                "sku": sku,
+                "budget": source_campaign.budget_amount if source_campaign else None,
+                "initial_bid": bid,
+                "strategy": "動的な入札 - ダウンのみ",
+                "related_count": 0,
+            })
+            item["related_count"] += 1
+            item["initial_bid"] = max(item["initial_bid"] or 0, bid or 0)
+
+        for st, campaign_name, campaign_type in rows:
+            source = campaign_by_id.get(st.campaign_id)
+            if not source:
+                continue
+
+            search_term = (st.search_term or "").strip()
+            if not search_term:
+                continue
+
+            clicks = int(st.clicks or 0)
+            orders = int(st.orders or 0)
+            cost = float(st.cost or 0)
+            sales = float(st.sales or 0)
+            acos = _acos(cost, sales)
+            cpc = st.cpc if st.cpc is not None else _cpc(cost, clicks)
+            bid = _clamp_bid((cpc or 0) * 1.1, bid_min=2)
+            source_badge = campaign_type or "other"
+            is_asin = _is_asin(search_term)
+
+            if is_asin:
+                target_name = target_campaign("G_", source)
+                target = campaign_by_name.get(target_name)
+                if orders >= 1 and (acos is not None and acos <= 30):
+                    if target and _target_exists(targets, target.campaign_id, search_term):
+                        if include_excluded:
+                            excluded.append({
+                                "source_campaign": campaign_name,
+                                "search_term": search_term,
+                                "destination": target_name,
+                                "orders": orders,
+                                "acos": round(acos, 1) if acos is not None else None,
+                                "reason": f"{target_name} に既に登録済み",
+                                "sort_score": orders * 1000 - (acos or 0),
+                            })
+                    else:
+                        g_promotions.append({
+                            "source_type": source_badge,
+                            "campaign": target_name,
+                            "source_campaign": campaign_name,
+                            "target_asin": search_term.upper(),
+                            "bid": bid,
+                            "source_cpc": round(cpc or 0, 1),
+                            "orders": orders,
+                            "acos": round(acos, 1) if acos is not None else None,
+                            "needs_campaign": target is None,
+                            "sort_score": orders * 1000 - (acos or 0),
+                        })
+                        add_new_campaign("G_", target_name, source, bid)
+                elif include_excluded and orders > 0:
+                    excluded.append({
+                        "source_campaign": campaign_name,
+                        "search_term": search_term,
+                        "destination": target_name,
+                        "orders": orders,
+                        "acos": round(acos, 1) if acos is not None else None,
+                        "reason": f"条件未達（CV {orders} / ACoS {round(acos, 1) if acos is not None else '-'}%）",
+                        "sort_score": orders * 1000 - (acos or 0),
+                    })
+                continue
+
+            p_name = target_campaign("P_", source)
+            p_target = campaign_by_name.get(p_name)
+            if orders >= 1 and (acos is not None and acos <= 30):
+                if p_target and _keyword_exists(keywords, p_target.campaign_id, search_term, "PHRASE"):
+                    if include_excluded:
+                        excluded.append({
+                            "source_campaign": campaign_name,
+                            "search_term": search_term,
+                            "destination": p_name,
+                            "orders": orders,
+                            "acos": round(acos, 1) if acos is not None else None,
+                            "reason": f"{p_name} にフレーズ一致で既に登録済み",
+                            "sort_score": orders * 1000 - (acos or 0),
+                        })
+                else:
+                    p_promotions.append({
+                        "source_type": source_badge,
+                        "campaign": p_name,
+                        "source_campaign": campaign_name,
+                        "keyword": search_term,
+                        "match_type": "フレーズ一致",
+                        "bid": bid,
+                        "source_cpc": round(cpc or 0, 1),
+                        "orders": orders,
+                        "acos": round(acos, 1) if acos is not None else None,
+                        "needs_campaign": p_target is None,
+                        "sort_score": orders * 1000 - (acos or 0),
+                    })
+                    add_new_campaign("P_", p_name, source, bid)
+            elif include_excluded and orders > 0:
+                excluded.append({
+                    "source_campaign": campaign_name,
+                    "search_term": search_term,
+                    "destination": p_name,
+                    "orders": orders,
+                    "acos": round(acos, 1) if acos is not None else None,
+                    "reason": f"条件未達（CV {orders} / ACoS {round(acos, 1) if acos is not None else '-'}%）",
+                    "sort_score": orders * 1000 - (acos or 0),
+                })
+
+            e_name = target_campaign("E_", source)
+            e_target = campaign_by_name.get(e_name)
+            if orders >= 3 and (acos is not None and acos <= 25):
+                if e_target and _keyword_exists(keywords, e_target.campaign_id, search_term, "EXACT"):
+                    if include_excluded:
+                        excluded.append({
+                            "source_campaign": campaign_name,
+                            "search_term": search_term,
+                            "destination": e_name,
+                            "orders": orders,
+                            "acos": round(acos, 1) if acos is not None else None,
+                            "reason": f"{e_name} に完全一致で既に登録済み",
+                            "sort_score": orders * 1000 - (acos or 0),
+                        })
+                else:
+                    e_promotions.append({
+                        "source_type": source_badge,
+                        "campaign": e_name,
+                        "source_campaign": campaign_name,
+                        "keyword": search_term,
+                        "match_type": "完全一致",
+                        "bid": bid,
+                        "source_cpc": round(cpc or 0, 1),
+                        "orders": orders,
+                        "acos": round(acos, 1) if acos is not None else None,
+                        "needs_campaign": e_target is None,
+                        "sort_score": orders * 1000 - (acos or 0),
+                    })
+                    add_new_campaign("E_", e_name, source, bid)
+
+        bid_adjustments = []
+        for kw in keywords:
+            camp = campaign_by_id.get(kw.campaign_id)
+            if not camp or camp.campaign_type not in ("A_", "P_", "G_", "E_"):
+                continue
+            clicks = int(kw.clicks or 0)
+            orders = int(kw.orders or 0)
+            acos = kw.acos
+            cpc = kw.cpc if kw.cpc is not None else _cpc(kw.cost, clicks)
+            rule = _bid_rule(float(kw.bid or 0), clicks, orders, acos, cpc)
+            if not rule:
+                continue
+            new_bid, rule_text = rule
+            bid_adjustments.append({
+                "campaign": camp.name,
+                "kind": "KW",
+                "target": kw.keyword_text,
+                "current_bid": kw.bid,
+                "new_bid": new_bid,
+                "delta": round(new_bid - float(kw.bid or 0), 2),
+                "clicks": clicks,
+                "orders": orders,
+                "acos": round(acos, 1) if acos is not None else None,
+                "cpc": round(cpc or 0, 1),
+                "rule": rule_text,
+                "sort_score": abs(new_bid - float(kw.bid or 0)),
+            })
+
+        for tgt in targets:
+            camp = campaign_by_id.get(tgt.campaign_id)
+            if not camp or camp.campaign_type not in ("A_", "P_", "G_", "E_"):
+                continue
+            clicks = int(tgt.clicks or 0)
+            orders = int(tgt.orders or 0)
+            acos = tgt.acos
+            cpc = tgt.cpc if tgt.cpc is not None else _cpc(tgt.cost, clicks)
+            rule = _bid_rule(float(tgt.bid or 0), clicks, orders, acos, cpc)
+            if not rule:
+                continue
+            new_bid, rule_text = rule
+            bid_adjustments.append({
+                "campaign": camp.name,
+                "kind": "PT",
+                "target": tgt.resolved_asin or tgt.expression_type or tgt.expression,
+                "current_bid": tgt.bid,
+                "new_bid": new_bid,
+                "delta": round(new_bid - float(tgt.bid or 0), 2),
+                "clicks": clicks,
+                "orders": orders,
+                "acos": round(acos, 1) if acos is not None else None,
+                "cpc": round(cpc or 0, 1),
+                "rule": rule_text,
+                "sort_score": abs(new_bid - float(tgt.bid or 0)),
+            })
+
+        budget_adjustments = []
+        return {
+            "summary": {
+                "p_add": len(p_promotions),
+                "g_add": len(g_promotions),
+                "e_add": len(e_promotions),
+                "bid_adjust": len(bid_adjustments),
+                "bid_up": sum(1 for x in bid_adjustments if x["delta"] > 0),
+                "bid_down": sum(1 for x in bid_adjustments if x["delta"] < 0),
+                "budget_adjust": len(budget_adjustments),
+                "new_campaigns": len(new_campaigns),
+                "excluded": len(excluded),
+            },
+            "phrase_promotions": _proposal_payload(p_promotions),
+            "product_promotions": _proposal_payload(g_promotions),
+            "exact_promotions": _proposal_payload(e_promotions),
+            "bid_adjustments": _proposal_payload(bid_adjustments),
+            "budget_adjustments": budget_adjustments,
+            "new_campaigns": sorted(new_campaigns.values(), key=lambda x: x["campaign"]),
+            "excluded": _proposal_payload(excluded)[:300],
+            "notes": [
+                "この一覧は読み取り専用です。広告APIでの追加・入札変更は実行しません。",
+                "予算調整は提案一覧画面で予算CSVを読み込んだ時に計算します。",
+            ],
+        }
+    finally:
+        db.close()
+
+
+@router.post("/proposals/budget-csv")
+def ads_budget_csv_proposals(payload: AdsBudgetCsvRequest):
+    reader = csv.DictReader(io.StringIO(payload.csv_text.lstrip("\ufeff")))
+    adjustments = []
+    for row in reader:
+        campaign = row.get("キャンペーン名") or row.get("Campaign Name") or ""
+        current_budget = _number(row.get("予算") or row.get("Budget"))
+        budget_time = _number(row.get("予算内に収まっていた平均時間") or row.get("Average time in budget"))
+        clicks = int(_number(row.get("クリック数") or row.get("Clicks")))
+        orders = int(_number(
+            row.get("広告がクリックされてから7日間の合計注文数")
+            or row.get("7 Day Total Orders (#)")
+            or row.get("Orders")
+        ))
+        acos = _number(
+            row.get("広告費売上高比率（ACOS）合計")
+            or row.get("Total Advertising Cost of Sales (ACOS)")
+            or row.get("ACOS")
+        )
+        result = _budget_rule(current_budget, budget_time, clicks, orders, acos)
+        if not result:
+            continue
+        new_budget, rule = result
+        adjustments.append({
+            "campaign": campaign,
+            "current_budget": current_budget,
+            "new_budget": new_budget,
+            "delta": round(new_budget - current_budget, 2),
+            "budget_time": round(budget_time, 2),
+            "clicks": clicks,
+            "orders": orders,
+            "acos": round(acos, 1),
+            "rule": rule,
+        })
+
+    adjustments.sort(key=lambda x: abs(x["delta"]), reverse=True)
+    return {
+        "summary": {
+            "budget_adjust": len(adjustments),
+            "budget_up": sum(1 for x in adjustments if x["delta"] > 0),
+            "budget_down": sum(1 for x in adjustments if x["delta"] < 0),
+        },
+        "budget_adjustments": adjustments,
+    }
 
 
 # ---------- ダッシュボードAPI（読み取り専用） ----------
