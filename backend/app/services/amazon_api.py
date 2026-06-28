@@ -376,12 +376,57 @@ def _fetch_price_from_pricing_api(mp: str, item_type: str, value: str) -> Option
     return None
 
 
+def _extract_total_fee(fee_data: dict) -> Optional[float]:
+    total_fee = (
+        fee_data.get("payload", {})
+        .get("FeesEstimateResult", {})
+        .get("FeesEstimate", {})
+        .get("TotalFeesEstimate", {})
+        .get("Amount")
+    )
+    return _positive_float(total_fee)
+
+
+def _fetch_fba_fee(mp: str, identifier: str, selling_price: float, identifier_type: str) -> Optional[float]:
+    if not identifier:
+        return None
+    if identifier_type == "asin":
+        path = f"/products/fees/v0/items/{urllib.parse.quote(identifier, safe='')}/feesEstimate"
+    else:
+        path = f"/products/fees/v0/listings/{urllib.parse.quote(identifier, safe='')}/feesEstimate"
+
+    body = json.dumps({
+        "FeesEstimateRequest": {
+            "MarketplaceId": mp,
+            "IsAmazonFulfilled": True,
+            "PriceToEstimateFees": {
+                "ListingPrice": {"CurrencyCode": "JPY", "Amount": selling_price},
+                "Shipping": {"CurrencyCode": "JPY", "Amount": 0},
+            },
+            "Identifier": identifier,
+        }
+    }).encode()
+    token = _get_access_token()
+    req = urllib.request.Request(
+        f"https://sellingpartnerapi-fe.amazon.com{path}",
+        data=body,
+        method="POST",
+        headers={
+            "x-amz-access-token": token,
+            "Content-Type": "application/json",
+        }
+    )
+    with urllib.request.urlopen(req, timeout=15) as res:
+        return _extract_total_fee(json.loads(res.read()))
+
+
 def _fetch_price_and_fee_one(sku: str, asin: str = "", fallback_price: Optional[float] = None) -> tuple:
-    """1SKUの出品価格とFBA手数料を取得。戻り値: (sku, selling_price, fba_fee, price_source)"""
+    """1SKUの出品価格とFBA手数料を取得。戻り値: (sku, selling_price, fba_fee, price_source, fee_source)"""
     mp = "A1VC38T7YXB528"
     selling_price = None
     fba_fee = None
     price_source = None
+    fee_source = None
 
     # 出品価格取得。SKU価格が取れない場合はASIN価格、最後にDB保存済み価格を使う。
     try:
@@ -407,40 +452,21 @@ def _fetch_price_and_fee_one(sku: str, asin: str = "", fallback_price: Optional[
     # FBA手数料取得（出品価格が取れた場合のみ）
     if selling_price is not None:
         try:
-            body = json.dumps({
-                "FeesEstimateRequest": {
-                    "MarketplaceId": mp,
-                    "IsAmazonFulfilled": True,
-                    "PriceToEstimateFees": {
-                        "ListingPrice": {"CurrencyCode": "JPY", "Amount": selling_price},
-                        "Shipping": {"CurrencyCode": "JPY", "Amount": 0},
-                    },
-                    "Identifier": sku,
-                }
-            }).encode()
-            token = _get_access_token()
-            req = urllib.request.Request(
-                f"https://sellingpartnerapi-fe.amazon.com/products/fees/v0/listings/{urllib.parse.quote(sku, safe='')}/feesEstimate",
-                data=body,
-                method="POST",
-                headers={
-                    "x-amz-access-token": token,
-                    "Content-Type": "application/json",
-                }
-            )
-            with urllib.request.urlopen(req, timeout=15) as res:
-                fee_data = json.loads(res.read())
-            total_fee = (fee_data.get("payload", {})
-                         .get("FeesEstimateResult", {})
-                         .get("FeesEstimate", {})
-                         .get("TotalFeesEstimate", {})
-                         .get("Amount"))
-            if total_fee is not None:
-                fba_fee = float(total_fee)
+            fba_fee = _fetch_fba_fee(mp, sku, selling_price, "sku")
+            if fba_fee is not None:
+                fee_source = "sku"
         except Exception:
             pass
 
-    return sku, selling_price, fba_fee, price_source
+    if selling_price is not None and fba_fee is None and asin:
+        try:
+            fba_fee = _fetch_fba_fee(mp, asin, selling_price, "asin")
+            if fba_fee is not None:
+                fee_source = "asin"
+        except Exception:
+            pass
+
+    return sku, selling_price, fba_fee, price_source, fee_source
 
 
 def fetch_sales_period(days: int, offset_days: int, asin_list: List[str]) -> Dict[str, float]:
@@ -553,11 +579,12 @@ def fetch_prices_and_fees(
             for sku in sku_list
         }
         for f in as_completed(futures):
-            sku, selling_price, fba_fee, price_source = f.result()
+            sku, selling_price, fba_fee, price_source, fee_source = f.result()
             result[sku] = {
                 "selling_price": selling_price,
                 "fba_fee": fba_fee,
                 "price_source": price_source,
+                "fee_source": fee_source,
             }
     return result
 

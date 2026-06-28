@@ -165,6 +165,7 @@ def refresh_fees(db: Session = Depends(get_db)):
     price_missing = 0
     fee_missing = 0
     price_sources = {}
+    fee_sources = {}
     for p in products:
         info = fees_map.get(p.sku)
         if not info:
@@ -181,6 +182,8 @@ def refresh_fees(db: Session = Depends(get_db)):
             fee_missing += 1
         source = info.get("price_source") or "missing"
         price_sources[source] = price_sources.get(source, 0) + 1
+        fee_source = info.get("fee_source") or "missing"
+        fee_sources[fee_source] = fee_sources.get(fee_source, 0) + 1
         p.fees_updated_at = now
         updated += 1
 
@@ -192,6 +195,7 @@ def refresh_fees(db: Session = Depends(get_db)):
         "price_missing": price_missing,
         "fee_missing": fee_missing,
         "price_sources": price_sources,
+        "fee_sources": fee_sources,
     }
 
 
