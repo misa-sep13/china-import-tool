@@ -42,9 +42,7 @@ const workDateSortValue = (date) => {
   return -1
 }
 
-const workRemainingUnits = (row) => (
-  row.remaining_units ?? ((row.remaining_qty || 0) * (row.unit_per_set || 1))
-)
+const workRemainingQty = (row) => row.remaining_qty ?? 0
 
 const instructionCellStyle = (value) => {
   const v = String(value || '')
@@ -70,7 +68,7 @@ export default function WelfareWorkPublicPage() {
   })
 
   const visibleRows = useMemo(
-    () => rows.filter(r => workRemainingUnits(r) > 0),
+    () => rows.filter(r => workRemainingQty(r) > 0),
     [rows]
   )
 
@@ -100,7 +98,7 @@ export default function WelfareWorkPublicPage() {
   }, [activeWorkDate, workDateTabs])
 
   const totalQty = selectedRows.reduce((sum, r) => sum + (r.units || 0), 0)
-  const totalRemaining = selectedRows.reduce((sum, r) => sum + workRemainingUnits(r), 0)
+  const totalRemaining = selectedRows.reduce((sum, r) => sum + workRemainingQty(r), 0)
 
   return (
     <div style={{ minHeight: '100vh', background: '#f5f6fa', padding: '28px 36px' }}>
@@ -128,7 +126,7 @@ export default function WelfareWorkPublicPage() {
             <div style={{ fontSize: 24, fontWeight: 700 }}>{selectedRows.length}</div>
           </div>
           <div className="card" style={{ margin: 0 }}>
-            <div style={{ fontSize: 12, color: '#64748b' }}>数量合計</div>
+            <div style={{ fontSize: 12, color: '#64748b' }}>単品数合計</div>
             <div style={{ fontSize: 24, fontWeight: 700 }}>{totalQty}</div>
           </div>
           <div className="card" style={{ margin: 0 }}>
@@ -159,34 +157,36 @@ export default function WelfareWorkPublicPage() {
                 ))}
               </div>
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ minWidth: 900, width: '100%', tableLayout: 'fixed' }}>
+                <table style={{ minWidth: 780, width: '100%', tableLayout: 'fixed' }}>
                   <thead>
                     <tr>
-                      <th style={{ width: 82 }}>発注時間</th>
-                      <th style={{ width: 58 }}>写真</th>
-                      <th style={{ width: 120 }}>商品名</th>
-                      <th style={{ width: 90 }}>色</th>
-                      <th style={{ width: 78 }}>サイズ</th>
-                      <th style={{ width: 56 }}>URL</th>
-                      <th style={{ width: 54 }}>数量</th>
-                      <th style={{ width: 118 }}>指示</th>
-                      <th style={{ width: 70 }}>残</th>
-                      <th style={{ width: 150 }}>備考</th>
+                      <th style={{ width: 54 }}>写真</th>
+                      <th style={{ width: 110 }}>商品名</th>
+                      <th style={{ width: 82 }}>色</th>
+                      <th style={{ width: 70 }}>サイズ</th>
+                      <th style={{ width: 48 }}>URL</th>
+                      <th style={{ width: 58 }}>単品数</th>
+                      <th style={{ width: 58 }}>換算</th>
+                      <th style={{ width: 64 }}>残</th>
+                      <th style={{ width: 62 }}>指示</th>
+                      <th style={{ width: 120 }}>備考</th>
+                      <th style={{ width: 78 }}>発注時間</th>
                     </tr>
                   </thead>
                   <tbody>
                     {selectedRows.map(row => (
                       <tr key={row.id}>
-                        <td style={{ whiteSpace: 'nowrap' }}>{row.order_date || fmtWorkDate(row)}</td>
                         <td>{imageThumb(row.image_data_url)}</td>
                         <td style={{ wordBreak: 'break-word', fontWeight: 600 }}>{row.source_product_name || row.name_jp || '未照合'}</td>
                         <td style={{ color: '#e11d48' }}>{row.color || row.supplier_spec || '-'}</td>
                         <td style={{ color: '#e11d48' }}>{row.size || '-'}</td>
                         <td>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</td>
                         <td style={{ color: '#e11d48', fontWeight: 700 }}>{row.units}</td>
+                        <td>{row.unit_per_set || 1}個で1</td>
+                        <td style={{ fontWeight: 700 }}>{workRemainingQty(row)}</td>
                         <td style={{ ...instructionCellStyle(row.instruction), fontWeight: 600 }}>{row.instruction || '-'}</td>
-                        <td style={{ fontWeight: 700 }}>{workRemainingUnits(row)}</td>
-                        <td style={{ minWidth: 180 }}>{row.note || '-'}</td>
+                        <td>{row.note || '-'}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{row.order_date || fmtWorkDate(row)}</td>
                       </tr>
                     ))}
                   </tbody>

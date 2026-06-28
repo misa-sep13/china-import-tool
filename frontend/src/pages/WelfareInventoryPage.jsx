@@ -42,11 +42,9 @@ const workDateSortValue = (date) => {
   return -1
 }
 
-const workRemainingUnits = (row) => (
-  row.remaining_units ?? ((row.remaining_qty || 0) * (row.unit_per_set || 1))
-)
+const workRemainingQty = (row) => row.remaining_qty ?? 0
 
-const WORK_INSTRUCTION_OPTIONS = ['', '作業保管', '保管', '戻し', '30戻し']
+const WORK_INSTRUCTION_OPTIONS = ['作業保管', '保管', '戻し']
 
 const instructionCellStyle = (value) => {
   const v = String(value || '')
@@ -339,33 +337,31 @@ export default function WelfareInventoryPage() {
               ))}
             </div>
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ minWidth: 1040, width: '100%', tableLayout: 'fixed' }}>
+              <table style={{ minWidth: 920, width: '100%', tableLayout: 'fixed' }}>
                 <thead>
                   <tr>
                     <th style={{ width: 54 }}></th>
+                    <th style={{ width: 54 }}>写真</th>
+                    <th style={{ width: 110 }}>商品名</th>
+                    <th style={{ width: 82 }}>色</th>
+                    <th style={{ width: 70 }}>サイズ</th>
+                    <th style={{ width: 48 }}>URL</th>
+                    <th style={{ width: 58 }}>単品数</th>
+                    <th style={{ width: 58 }}>換算</th>
+                    <th style={{ width: 70 }}>残</th>
+                    <th style={{ width: 62 }}>指示</th>
+                    <th style={{ width: 120 }}>備考</th>
+                    <th style={{ width: 58 }}></th>
                     <th style={{ width: 78 }}>発注時間</th>
-                    <th style={{ width: 58 }}>写真</th>
-                    <th style={{ width: 120 }}>商品名</th>
-                    <th style={{ width: 90 }}>色</th>
-                    <th style={{ width: 78 }}>サイズ</th>
-                    <th style={{ width: 56 }}>URL</th>
-                    <th style={{ width: 54 }}>数量</th>
-                    <th style={{ width: 118 }}>指示</th>
-                    <th style={{ width: 80 }}>残</th>
-                    <th style={{ width: 130 }}>備考</th>
-                    <th style={{ width: 62 }}></th>
                   </tr>
                 </thead>
                 <tbody>
                   {visibleWorkInstructions.map(row => {
                     const draft = workDrafts[row.id] || {}
                     const instruction = draft.instruction ?? row.instruction
-                    const remaining = draft.remaining_units ?? workRemainingUnits(row)
+                    const remaining = draft.remaining_qty ?? workRemainingQty(row)
                     const note = draft.note ?? row.note
-                    const dirty = instruction !== row.instruction || remaining !== workRemainingUnits(row) || note !== row.note
-                    const instructionOptions = WORK_INSTRUCTION_OPTIONS.includes(instruction)
-                      ? WORK_INSTRUCTION_OPTIONS
-                      : [instruction, ...WORK_INSTRUCTION_OPTIONS]
+                    const dirty = instruction !== row.instruction || remaining !== workRemainingQty(row) || note !== row.note
                     return (
                       <tr key={row.id}>
                         <td style={{ whiteSpace: 'nowrap' }}>
@@ -382,32 +378,31 @@ export default function WelfareInventoryPage() {
                             削除
                           </button>
                         </td>
-                        <td style={{ whiteSpace: 'nowrap' }}>{row.order_date || fmtWorkDate(row)}</td>
                         <td>{imageThumb(row.image_data_url)}</td>
                         <td style={{ wordBreak: 'break-word' }}>{row.source_product_name || row.name_jp || '未照合'}</td>
                         <td style={{ color: '#e11d48' }}>{row.color || row.supplier_spec || '-'}</td>
                         <td style={{ color: '#e11d48' }}>{row.size || '-'}</td>
                         <td>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</td>
                         <td style={{ color: '#e11d48', fontWeight: 700 }}>{row.units}</td>
-                        <td style={{ ...instructionCellStyle(instruction), padding: 6 }}>
-                          <select
-                            value={instruction}
-                            onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, instruction: e.target.value } }))}
-                            style={{ width: '100%', minWidth: 0, background: 'transparent', border: '1px solid #cbd5e1', borderRadius: 6, padding: '6px 4px' }}
-                          >
-                            {instructionOptions.map(opt => <option key={opt} value={opt}>{opt || '-'}</option>)}
-                          </select>
-                        </td>
-                        <td style={{ minWidth: 86 }}>
+                        <td>{row.unit_per_set || 1}個で1</td>
+                        <td style={{ minWidth: 76 }}>
                           <input
                           type="number"
                           min="0"
                           value={remaining}
-                            onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, remaining_units: Number(e.target.value) } }))}
-                            style={{ width: 72, textAlign: 'right', fontWeight: 700 }}
+                            onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, remaining_qty: Number(e.target.value) } }))}
+                            style={{ width: 62, textAlign: 'right', fontWeight: 700 }}
                           />
                         </td>
-                        <td style={{ minWidth: 160 }}>
+                        <td style={{ ...instructionCellStyle(instruction), padding: 6 }}>
+                          <input
+                            list="work-instruction-options"
+                            value={instruction}
+                            onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, instruction: e.target.value } }))}
+                            style={{ width: 52, minWidth: 0, background: 'transparent', border: '1px solid #cbd5e1', borderRadius: 6, padding: '6px 3px' }}
+                          />
+                        </td>
+                        <td>
                           <input
                             value={note}
                             onChange={e => setWorkDrafts(prev => ({ ...prev, [row.id]: { ...draft, note: e.target.value } }))}
@@ -421,18 +416,22 @@ export default function WelfareInventoryPage() {
                             disabled={workSaveMutation.isPending}
                             onClick={() => workSaveMutation.mutate({
                               id: row.id,
-                              payload: { instruction, remaining_units: remaining, note },
+                              payload: { instruction, remaining_qty: remaining, note },
                             })}
                           >
                               保存
                             </button>
                           )}
                         </td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{row.order_date || fmtWorkDate(row)}</td>
                       </tr>
                     )
                   })}
                 </tbody>
               </table>
+              <datalist id="work-instruction-options">
+                {WORK_INSTRUCTION_OPTIONS.map(opt => <option key={opt} value={opt} />)}
+              </datalist>
             </div>
           </div>
         )}
