@@ -115,11 +115,24 @@ def import_from_fba(db: Session = Depends(get_db)):
 def create_product(data: ProductCreate, db: Session = Depends(get_db)):
     existing = db.query(Product).filter(Product.sku == data.sku).first()
     if existing:
-        raise HTTPException(status_code=400, detail="SKUが既に存在します")
+        if existing.is_active:
+            raise HTTPException(status_code=400, detail="SKUが既に存在します")
+        for k, v in data.model_dump().items():
+            setattr(existing, k, v)
+        existing.is_active = True
+        if existing.no is None:
+            existing.no = db.query(Product).count() + 1
+        db.commit()
+        db.refresh(existing)
+        return existing
     max_no = db.query(Product).count()
     p = Product(**data.model_dump(), no=max_no + 1)
     db.add(p)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="SKUが既に存在します")
     db.refresh(p)
     return p
 
