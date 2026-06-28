@@ -1425,7 +1425,7 @@ async def sync_prices_from_rms(db: Session = Depends(get_db)):
     ).decode()
     headers = {"Authorization": f"ESA {token}"}
     products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
-    product_data = [(p.id, p.rakuten_sku_id or p.sku or "") for p in products]
+    product_data = [(p.id, p.sku or "") for p in products]
 
     from app.core.database import SessionLocal
 
