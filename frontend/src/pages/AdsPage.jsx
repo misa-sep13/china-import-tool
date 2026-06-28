@@ -180,6 +180,33 @@ export default function AdsPage() {
   const budgetCount = budgetProposalData?.summary?.budget_adjust ?? proposalData?.summary?.budget_adjust ?? 0
   const budgetUp = budgetProposalData?.summary?.budget_up ?? 0
   const budgetDown = budgetProposalData?.summary?.budget_down ?? 0
+  const proposalCounts = proposalData?.summary ? {
+    p_add: proposalData.summary.p_add || 0,
+    g_add: proposalData.summary.g_add || 0,
+    e_add: proposalData.summary.e_add || 0,
+    bid_adjust: proposalData.summary.bid_adjust || 0,
+    budget_adjust: budgetCount,
+    new_campaigns: proposalData.summary.new_campaigns || 0,
+    excluded: proposalData.summary.excluded || 0,
+  } : {}
+  const promotionTotal = (proposalCounts.p_add || 0) + (proposalCounts.g_add || 0) + (proposalCounts.e_add || 0)
+
+  const downloadProposalCsv = () => {
+    if (!proposalRows.length) return
+    const headers = Array.from(proposalRows.reduce((set, row) => {
+      Object.keys(row).forEach(k => set.add(k))
+      return set
+    }, new Set()))
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
+    const body = [headers.join(','), ...proposalRows.map(row => headers.map(h => esc(row[h])).join(','))].join('\n')
+    const blob = new Blob([`\ufeff${body}`], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `ads_${proposalTab}_audit.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   const TypeBadge = ({ type }) => (
     <span style={{
@@ -331,34 +358,40 @@ export default function AdsPage() {
       </div>
 
       {tab === 'proposals' && proposalData?.summary && (
-        <>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+        <div style={{ marginBottom: 12, border: '1px solid #dbeafe', background: '#fff' }}>
+          <div style={{
+            padding: '10px 14px', borderBottom: '1px solid #dbeafe',
+            fontWeight: 700, color: '#0369a1', borderLeft: '4px solid #38bdf8',
+          }}>
+            結果
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '12px 14px 8px' }}>
             {[
               ['p_add', 'P追加'], ['g_add', 'G追加'], ['e_add', 'E追加'],
               ['bid_adjust', '入札調整'], ['budget_adjust', '予算調整'],
               ['new_campaigns', '新規候補'], ['excluded', '除外'],
             ].map(([key, label]) => (
-              <div key={key} style={{
+              <button key={key} onClick={() => {
+                const map = {
+                  p_add: 'phrase_promotions',
+                  g_add: 'product_promotions',
+                  e_add: 'exact_promotions',
+                  bid_adjust: 'bid_adjustments',
+                  budget_adjust: 'budget_adjustments',
+                  new_campaigns: 'new_campaigns',
+                  excluded: 'excluded',
+                }
+                setProposalTab(map[key])
+              }} style={{
                 background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6,
                 padding: '8px 12px', fontSize: 13, fontWeight: 600, color: '#1e3a8a',
+                cursor: 'pointer',
               }}>
-                {label}: {fmt(key === 'budget_adjust' ? budgetCount : (proposalData.summary[key] || 0))}件
-              </div>
+                {label}: {fmt(proposalCounts[key] || 0)}件
+                {key === 'bid_adjust' && `（上げ${fmt(proposalData.summary.bid_up || 0)} / 下げ${fmt(proposalData.summary.bid_down || 0)}）`}
+                {key === 'budget_adjust' && budgetProposalData?.summary && `（上げ${fmt(budgetUp)} / 下げ${fmt(budgetDown)}）`}
+              </button>
             ))}
-            <div style={{
-              background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6,
-              padding: '8px 12px', fontSize: 13, color: '#334155',
-            }}>
-              上げ{fmt(proposalData.summary.bid_up || 0)} / 下げ{fmt(proposalData.summary.bid_down || 0)}
-            </div>
-            {budgetProposalData?.summary && (
-              <div style={{
-                background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6,
-                padding: '8px 12px', fontSize: 13, color: '#166534',
-              }}>
-                予算 上げ{fmt(budgetUp)} / 下げ{fmt(budgetDown)}
-              </div>
-            )}
             <label style={{
               marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8,
               padding: '7px 10px', border: '1px solid #cbd5e1', borderRadius: 6,
@@ -367,8 +400,21 @@ export default function AdsPage() {
               予算CSV
               <input type="file" accept=".csv,text/csv" onChange={handleBudgetCsv} style={{ display: 'none' }} />
             </label>
+            <button onClick={downloadProposalCsv} disabled={!proposalRows.length} style={{
+              padding: '7px 12px', border: 'none', borderRadius: 6,
+              background: proposalRows.length ? '#2563eb' : '#cbd5e1',
+              color: '#fff', cursor: proposalRows.length ? 'pointer' : 'default', fontWeight: 600,
+            }}>
+              監査CSV
+            </button>
           </div>
-          <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid #bfdbfe', marginBottom: 10, flexWrap: 'wrap' }}>
+          <div style={{
+            background: '#ecfdf5', borderTop: '1px solid #bbf7d0', borderBottom: '1px solid #bbf7d0',
+            padding: '9px 14px', color: '#166534', fontSize: 13,
+          }}>
+            合計 昇格{fmt(promotionTotal)}件 / 入札調整{fmt(proposalCounts.bid_adjust || 0)}件を抽出しました。
+          </div>
+          <div style={{ display: 'flex', gap: 4, padding: '10px 14px 0', borderBottom: '1px solid #bfdbfe', flexWrap: 'wrap' }}>
             {PROPOSAL_TABS.map(([key, label]) => (
               <button key={key} onClick={() => setProposalTab(key)}
                 style={{
@@ -383,7 +429,7 @@ export default function AdsPage() {
               </button>
             ))}
           </div>
-        </>
+        </div>
       )}
 
       {/* テーブル */}
