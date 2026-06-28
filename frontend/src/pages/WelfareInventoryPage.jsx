@@ -8,12 +8,11 @@ const fmtDate = (v) => {
 }
 
 const fmtWorkDate = (row) => {
-  if (row.order_date) return row.order_date
   const sheet = String(row.source_sheet || '').trim()
   if (/^\d{2}$/.test(sheet)) return `${Number(sheet.slice(0, 1))}/${Number(sheet.slice(1))}`
   if (/^\d{3}$/.test(sheet)) return `${Number(sheet.slice(0, 1))}/${Number(sheet.slice(1))}`
   if (/^\d{4}$/.test(sheet)) return `${Number(sheet.slice(0, 2))}/${Number(sheet.slice(2))}`
-  return sheet || '-'
+  return sheet || row.order_date || '-'
 }
 
 const workDateSortValue = (date) => {
@@ -303,21 +302,21 @@ export default function WelfareInventoryPage() {
               ))}
             </div>
             <div style={{ overflowX: 'auto' }}>
-              <table>
+              <table style={{ minWidth: 1320, tableLayout: 'fixed' }}>
                 <thead>
                   <tr>
-                    <th>日付</th>
-                    <th>注文</th>
-                    <th>SKU</th>
-                    <th>商品名</th>
-                    <th>URL / 仕様</th>
-                    <th>単品数</th>
-                    <th>換算</th>
-                    <th>数量</th>
-                    <th>指示</th>
-                    <th>残</th>
-                    <th>備考</th>
-                    <th></th>
+                    <th style={{ width: 80 }}>日付</th>
+                    <th style={{ width: 100 }}>注文</th>
+                    <th style={{ width: 120 }}>SKU</th>
+                    <th style={{ width: 230 }}>商品名</th>
+                    <th style={{ width: 190 }}>URL / 仕様</th>
+                    <th style={{ width: 80 }}>単品数</th>
+                    <th style={{ width: 80 }}>換算</th>
+                    <th style={{ width: 70 }}>数量</th>
+                    <th style={{ width: 180 }}>指示</th>
+                    <th style={{ width: 90 }}>残</th>
+                    <th style={{ width: 160 }}>備考</th>
+                    <th style={{ width: 120 }}></th>
                   </tr>
                 </thead>
                 <tbody>
