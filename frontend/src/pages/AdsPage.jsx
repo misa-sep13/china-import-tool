@@ -7,6 +7,21 @@ const TAB_LABELS = { campaigns: 'キャンペーン', keywords: 'KWパフォー�
 const TYPE_COLORS = { 'A_': '#3b82f6', 'P_': '#eab308', 'G_': '#22c55e', 'E_': '#a855f7', other: '#94a3b8' }
 const TYPE_FILTERS = ['全て', 'A_', 'P_', 'G_', 'E_', 'other']
 
+const dateInput = (date) => {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+const defaultSyncRange = () => {
+  const end = new Date()
+  end.setDate(end.getDate() - 1)
+  const start = new Date(end)
+  start.setDate(start.getDate() - 13)
+  return { start: dateInput(start), end: dateInput(end) }
+}
+
 const fmt = (n) => n == null ? '-' : Number(n).toLocaleString('ja-JP')
 const yen = (n) => n == null ? '-' : `¥${Number(n).toLocaleString('ja-JP')}`
 const pct = (n) => n == null ? '-' : `${n}%`
@@ -18,9 +33,13 @@ const acosColor = (v) => {
 }
 
 export default function AdsPage() {
+  const initialRange = defaultSyncRange()
   const [tab, setTab] = useState('campaigns')
   const [typeFilter, setTypeFilter] = useState('全て')
   const [search, setSearch] = useState('')
+  const [syncStartDate, setSyncStartDate] = useState(initialRange.start)
+  const [syncEndDate, setSyncEndDate] = useState(initialRange.end)
+  const [attributionDays, setAttributionDays] = useState('30')
   const [syncStatus, setSyncStatus] = useState('idle')
   const [syncProgress, setSyncProgress] = useState('')
   const [dashboard, setDashboard] = useState(null)
@@ -62,13 +81,21 @@ export default function AdsPage() {
     loadTab()
   }, [tab, typeFilter])
 
-  const startSync = async (days = 30) => {
+  const startSync = async ({ days = 30, startDate = '', endDate = '', attribution = 30 } = {}) => {
     stopPolling()
     setSyncStatus('running')
     setSyncProgress('開始')
     setError('')
     try {
-      const res = await api.post(`/ads/sync/start?days=${days}`)
+      const params = new URLSearchParams()
+      if (startDate && endDate) {
+        params.set('start_date', startDate)
+        params.set('end_date', endDate)
+      } else {
+        params.set('days', String(days))
+      }
+      params.set('attribution_days', String(attribution))
+      const res = await api.post(`/ads/sync/start?${params.toString()}`)
       const jobId = res.data.job_id
       pollRef.current = setInterval(async () => {
         try {
@@ -143,8 +170,49 @@ export default function AdsPage() {
               最終同期: {new Date(dashboard.last_synced_at).toLocaleString('ja-JP')}
             </span>
           )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <input
+              type="date"
+              value={syncStartDate}
+              onChange={e => setSyncStartDate(e.target.value)}
+              disabled={syncStatus === 'running'}
+              style={{ padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: 6, fontSize: 13 }}
+            />
+            <span style={{ color: '#64748b' }}>〜</span>
+            <input
+              type="date"
+              value={syncEndDate}
+              onChange={e => setSyncEndDate(e.target.value)}
+              disabled={syncStatus === 'running'}
+              style={{ padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: 6, fontSize: 13 }}
+            />
+            <select
+              value={attributionDays}
+              onChange={e => setAttributionDays(e.target.value)}
+              disabled={syncStatus === 'running'}
+              style={{ padding: '7px 8px', border: '1px solid #cbd5e1', borderRadius: 6, fontSize: 13 }}
+            >
+              <option value="7">7日CV</option>
+              <option value="14">14日CV</option>
+              <option value="30">30日CV</option>
+            </select>
+            <button
+              onClick={() => startSync({
+                startDate: syncStartDate,
+                endDate: syncEndDate,
+                attribution: Number(attributionDays),
+              })}
+              disabled={syncStatus === 'running'}
+              style={{
+                padding: '8px 12px', background: syncStatus === 'running' ? '#94a3b8' : '#0f766e',
+                color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600,
+              }}
+            >
+              指定期間で同期
+            </button>
+          </div>
           <button
-            onClick={() => startSync(30)}
+            onClick={() => startSync({ days: 30, attribution: Number(attributionDays) })}
             disabled={syncStatus === 'running'}
             style={{
               padding: '8px 16px', background: syncStatus === 'running' ? '#94a3b8' : '#3b82f6',

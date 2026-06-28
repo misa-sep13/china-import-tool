@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from app.core.database import SessionLocal
 from app.models.ads import (
     AdsCampaign, AdsAdGroup, AdsKeyword, AdsTarget, AdsSearchTerm, AdsSyncLog,
@@ -20,12 +20,59 @@ def _update_job(job_id: str, **kw):
             _jobs[job_id].update(kw)
 
 
-def _run_ads_sync(job_id: str, days: int):
+def _parse_report_date(value: str, field_name: str):
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{field_name}はYYYY-MM-DDで指定してください")
+
+
+def _resolve_report_range(days: int, start_date: str = None, end_date: str = None):
+    if start_date or end_date:
+        if not start_date or not end_date:
+            raise HTTPException(status_code=400, detail="start_dateとend_dateは両方指定してください")
+        start = _parse_report_date(start_date, "start_date")
+        end = _parse_report_date(end_date, "end_date")
+        if end < start:
+            raise HTTPException(status_code=400, detail="end_dateはstart_date以降にしてください")
+        report_days = (end - start).days + 1
+        if report_days > 90:
+            raise HTTPException(status_code=400, detail="取得期間は90日以内にしてください")
+        return start.isoformat(), end.isoformat(), report_days
+
+    end = (datetime.utcnow() - timedelta(days=1)).date()
+    start = end - timedelta(days=days - 1)
+    return start.isoformat(), end.isoformat(), days
+
+
+def _report_metric(row: dict, name: str, attribution_days: int):
+    for key in (f"{name}{attribution_days}d", f"{name}30d", f"{name}14d", f"{name}7d"):
+        value = row.get(key)
+        if value is not None and value != "":
+            return value
+    return 0
+
+
+def _run_ads_sync(
+    job_id: str,
+    days: int,
+    report_start_date: str,
+    report_end_date: str,
+    attribution_days: int,
+):
     with _jobs_lock:
-        _jobs[job_id] = {"status": "running", "progress": "開始", "error": None}
+        _jobs[job_id] = {
+            "status": "running",
+            "progress": f"{report_start_date}〜{report_end_date} 開始",
+            "error": None,
+        }
 
     db = SessionLocal()
-    sync_log = AdsSyncLog(job_id=job_id, sync_type="full", status="started")
+    sync_log = AdsSyncLog(
+        job_id=job_id,
+        sync_type=f"full:{report_start_date}:{report_end_date}:attr{attribution_days}d",
+        status="started",
+    )
     db.add(sync_log)
     db.commit()
     db.refresh(sync_log)
@@ -196,9 +243,44 @@ def _run_ads_sync(job_id: str, days: int):
         db.commit()
         logger.info("Targets: fetched=%d, skipped=%d", len(targets), tgt_skipped)
 
+        # 期間指定を切り替えた時に前回同期の実績が混ざらないようにする。
+        db.query(AdsCampaign).update({
+            AdsCampaign.impressions: 0,
+            AdsCampaign.clicks: 0,
+            AdsCampaign.cost: 0,
+            AdsCampaign.orders: 0,
+            AdsCampaign.sales: 0,
+        }, synchronize_session=False)
+        db.query(AdsKeyword).update({
+            AdsKeyword.impressions: 0,
+            AdsKeyword.clicks: 0,
+            AdsKeyword.cost: 0,
+            AdsKeyword.orders: 0,
+            AdsKeyword.sales: 0,
+            AdsKeyword.acos: None,
+            AdsKeyword.cpc: None,
+            AdsKeyword.report_days: days,
+        }, synchronize_session=False)
+        db.query(AdsTarget).update({
+            AdsTarget.impressions: 0,
+            AdsTarget.clicks: 0,
+            AdsTarget.cost: 0,
+            AdsTarget.orders: 0,
+            AdsTarget.sales: 0,
+            AdsTarget.acos: None,
+            AdsTarget.cpc: None,
+            AdsTarget.report_days: days,
+        }, synchronize_session=False)
+        db.commit()
+
         # 5. キャンペーンレポート → パフォーマンス列更新
         _update_job(job_id, progress="キャンペーンレポート取得中")
-        camp_report = fetch_campaign_report(days)
+        camp_report = fetch_campaign_report(
+            days=days,
+            start_date=report_start_date,
+            end_date=report_end_date,
+            attribution_days=attribution_days,
+        )
         rpt_skipped = 0
         for row in camp_report:
             cid = str(row.get("campaignId", ""))
@@ -210,23 +292,28 @@ def _run_ads_sync(job_id: str, days: int):
                 camp.impressions = int(row.get("impressions") or 0)
                 camp.clicks = int(row.get("clicks") or 0)
                 camp.cost = float(row.get("cost") or 0)
-                camp.orders = int(row.get("purchases30d") or 0)
-                camp.sales = float(row.get("sales30d") or 0)
+                camp.orders = int(_report_metric(row, "purchases", attribution_days) or 0)
+                camp.sales = float(_report_metric(row, "sales", attribution_days) or 0)
         db.commit()
         logger.info("Campaign report: rows=%d, skipped=%d", len(camp_report), rpt_skipped)
 
         # 6. ターゲティングレポート → KW/ターゲットのパフォーマンス列更新
         # レポートにkeywordId/targetIdは含まれない。keyword_text + campaign_id + ad_group_idでマッチ
         _update_job(job_id, progress="ターゲティングレポート取得中")
-        targeting_report = fetch_targeting_report(days)
+        targeting_report = fetch_targeting_report(
+            days=days,
+            start_date=report_start_date,
+            end_date=report_end_date,
+            attribution_days=attribution_days,
+        )
         tgt_matched = 0
         tgt_unmatched = 0
         for row in targeting_report:
             impressions = int(row.get("impressions") or 0)
             clicks = int(row.get("clicks") or 0)
             cost = float(row.get("cost") or 0)
-            orders = int(row.get("purchases30d") or 0)
-            sales = float(row.get("sales30d") or 0)
+            orders = int(_report_metric(row, "purchases", attribution_days) or 0)
+            sales = float(_report_metric(row, "sales", attribution_days) or 0)
             acos = (cost / sales * 100) if sales > 0 else None
             cpc = (cost / clicks) if clicks > 0 else None
 
@@ -283,13 +370,16 @@ def _run_ads_sync(job_id: str, days: int):
 
         # 7. 検索語句レポート → 入れ替え保存
         _update_job(job_id, progress="検索語句レポート取得中")
-        search_terms = fetch_search_term_report(days)
-        end_date = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
-        start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        search_terms = fetch_search_term_report(
+            days=days,
+            start_date=report_start_date,
+            end_date=report_end_date,
+            attribution_days=attribution_days,
+        )
         db.query(AdsSearchTerm).filter(
-            AdsSearchTerm.report_start_date == start_date,
-            AdsSearchTerm.report_end_date == end_date,
-        ).delete()
+            AdsSearchTerm.report_start_date == report_start_date,
+            AdsSearchTerm.report_end_date == report_end_date,
+        ).delete(synchronize_session=False)
         st_skipped = 0
         for row in search_terms:
             cid = str(row.get("campaignId", ""))
@@ -298,7 +388,7 @@ def _run_ads_sync(job_id: str, days: int):
                 continue
             clicks = int(row.get("clicks") or 0)
             cost = float(row.get("cost") or 0)
-            sales = float(row.get("sales30d") or 0)
+            sales = float(_report_metric(row, "sales", attribution_days) or 0)
             db.add(AdsSearchTerm(
                 campaign_id=cid,
                 ad_group_id=str(row.get("adGroupId", "")),
@@ -308,12 +398,12 @@ def _run_ads_sync(job_id: str, days: int):
                 impressions=int(row.get("impressions") or 0),
                 clicks=clicks,
                 cost=cost,
-                orders=int(row.get("purchases30d") or 0),
+                orders=int(_report_metric(row, "purchases", attribution_days) or 0),
                 sales=sales,
                 acos=(cost / sales * 100) if sales > 0 else None,
                 cpc=(cost / clicks) if clicks > 0 else None,
-                report_start_date=start_date,
-                report_end_date=end_date,
+                report_start_date=report_start_date,
+                report_end_date=report_end_date,
                 synced_at=now,
             ))
             total_upserted += 1
@@ -345,11 +435,29 @@ def _run_ads_sync(job_id: str, days: int):
 
 
 @router.post("/sync/start")
-def start_ads_sync(days: int = Query(default=30, ge=1, le=90)):
+def start_ads_sync(
+    days: int = Query(default=30, ge=1, le=90),
+    start_date: str = Query(default=None),
+    end_date: str = Query(default=None),
+    attribution_days: int = Query(default=30),
+):
+    if attribution_days not in (1, 7, 14, 30):
+        raise HTTPException(status_code=400, detail="attribution_daysは1, 7, 14, 30のいずれかを指定してください")
+    report_start_date, report_end_date, report_days = _resolve_report_range(days, start_date, end_date)
     job_id = str(uuid.uuid4())
-    t = threading.Thread(target=_run_ads_sync, args=(job_id, days), daemon=True)
+    t = threading.Thread(
+        target=_run_ads_sync,
+        args=(job_id, report_days, report_start_date, report_end_date, attribution_days),
+        daemon=True,
+    )
     t.start()
-    return {"job_id": job_id}
+    return {
+        "job_id": job_id,
+        "start_date": report_start_date,
+        "end_date": report_end_date,
+        "days": report_days,
+        "attribution_days": attribution_days,
+    }
 
 
 @router.get("/sync/status/{job_id}")

@@ -900,17 +900,25 @@ def fetch_sp_targets() -> list:
     )
 
 
-def _fetch_ads_report(report_type_id: str, group_by: list, columns: list, days: int) -> list:
+def _fetch_ads_report(
+    report_type_id: str,
+    group_by: list,
+    columns: list,
+    days: int = 30,
+    start_date: str = None,
+    end_date: str = None,
+) -> list:
     """Ads Reporting API v3 でレポート取得。失敗時はAdsApiErrorを送出。"""
     import gzip
     from datetime import datetime, timedelta
 
-    end_date = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
-    start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+    if not start_date or not end_date:
+        end_date = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+        start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
 
     headers = _ads_api_headers()
     body = json.dumps({
-        "name": f"{report_type_id}_{days}d",
+        "name": f"{report_type_id}_{start_date}_{end_date}",
         "startDate": start_date,
         "endDate": end_date,
         "configuration": {
@@ -956,30 +964,51 @@ def _fetch_ads_report(report_type_id: str, group_by: list, columns: list, days: 
     raise AdsApiError(f"Report {report_type_id}: polling timeout (120s)")
 
 
-def fetch_campaign_report(days: int = 30) -> list:
+def fetch_campaign_report(
+    days: int = 30,
+    start_date: str = None,
+    end_date: str = None,
+    attribution_days: int = 30,
+) -> list:
+    purchases_col = f"purchases{attribution_days}d"
+    sales_col = f"sales{attribution_days}d"
     return _fetch_ads_report(
         "spCampaigns", ["campaign"],
         ["campaignId", "campaignName", "impressions", "clicks", "cost",
-         "purchases30d", "sales30d"],
-        days,
+         purchases_col, sales_col],
+        days, start_date, end_date,
     )
 
 
-def fetch_targeting_report(days: int = 30) -> list:
+def fetch_targeting_report(
+    days: int = 30,
+    start_date: str = None,
+    end_date: str = None,
+    attribution_days: int = 30,
+) -> list:
+    purchases_col = f"purchases{attribution_days}d"
+    sales_col = f"sales{attribution_days}d"
     return _fetch_ads_report(
         "spTargeting", ["targeting"],
         ["campaignId", "adGroupId", "targeting", "keyword", "keywordType",
-         "impressions", "clicks", "cost", "purchases30d", "sales30d"],
-        days,
+         "impressions", "clicks", "cost", purchases_col, sales_col],
+        days, start_date, end_date,
     )
 
 
-def fetch_search_term_report(days: int = 30) -> list:
+def fetch_search_term_report(
+    days: int = 30,
+    start_date: str = None,
+    end_date: str = None,
+    attribution_days: int = 30,
+) -> list:
+    purchases_col = f"purchases{attribution_days}d"
+    sales_col = f"sales{attribution_days}d"
     return _fetch_ads_report(
         "spSearchTerm", ["searchTerm"],
         ["campaignId", "adGroupId", "searchTerm", "matchType", "keyword",
-         "impressions", "clicks", "cost", "purchases30d", "sales30d"],
-        days,
+         "impressions", "clicks", "cost", purchases_col, sales_col],
+        days, start_date, end_date,
     )
 
 
