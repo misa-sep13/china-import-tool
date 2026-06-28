@@ -4,6 +4,7 @@ from app.core.database import Base, engine
 from app.api.routes import products, orders, settings, fba, invoices, price_adjustments, analytics, shipment_orders
 from app.api.routes import welfare
 from app.api.routes import rakuten
+from app.api.routes import ads
 from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
 from app.models import price_log as price_log_models
@@ -14,6 +15,7 @@ from app.models import shipment_order as shipment_order_models
 from app.models import rakuten_ss_sales as rakuten_ss_sales_models
 from app.models import processed_order as processed_order_models
 from app.models import welfare as welfare_models
+from app.models import ads as ads_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -972,6 +974,7 @@ app.include_router(analytics.router, prefix="/api")
 app.include_router(rakuten.router, prefix="/api")
 app.include_router(shipment_orders.router, prefix="/api")
 app.include_router(welfare.router, prefix="/api")
+app.include_router(ads.router, prefix="/api")
 
 @app.get("/")
 def root():

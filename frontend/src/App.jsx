@@ -11,6 +11,7 @@ import RakutenProductsPage from './pages/RakutenProductsPage'
 import RakutenStockPage from './pages/RakutenStockPage'
 import RakutenSettingsPage from './pages/RakutenSettingsPage'
 import RakutenInvoicePage from './pages/RakutenInvoicePage'
+import AdsPage from './pages/AdsPage'
 import SyncLogsPage from './pages/SyncLogsPage'
 import WelfareInventoryPage from './pages/WelfareInventoryPage'
 import WelfareWorkPublicPage from './pages/WelfareWorkPublicPage'
@@ -38,6 +39,9 @@ function App() {
         </NavLink>
         <NavLink to="/analytics" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📈 商品分析
+        </NavLink>
+        <NavLink to="/ads" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          📢 広告管理
         </NavLink>
         <NavLink to="/products" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🏷️ 商品マスタ
@@ -87,6 +91,7 @@ function App() {
           <Route path="/" element={<OrderPage />} />
           <Route path="/stock" element={<StockPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
+          <Route path="/ads" element={<AdsPage />} />
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/invoices" element={<InvoicePage />} />
           <Route path="/price-adjust" element={<PriceAdjustPage />} />

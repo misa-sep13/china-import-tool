@@ -749,3 +749,246 @@ def fetch_ads_data(asin_list: List[str], days: int) -> Dict[str, dict]:
 
     except Exception:
         return {}
+
+
+# ---------- Ads API v3: エンティティ取得 + レポート ----------
+
+import logging as _logging
+
+_ads_logger = _logging.getLogger("ads_api")
+
+ADS_BASE = "https://advertising-api-fe.amazon.com"
+
+_ADS_RETRY_MAX = 4
+_ADS_RETRY_BASE_WAIT = 2
+
+
+class AdsApiError(Exception):
+    pass
+
+
+def _ads_api_headers(content_type: str = "application/json", accept: str = "application/json") -> dict:
+    token = _get_ads_access_token()
+    profile_id = _get_ads_profile_id()
+    return {
+        "Authorization": f"Bearer {token}",
+        "Amazon-Advertising-API-ClientId": settings.ADS_API_CLIENT_ID,
+        "Amazon-Advertising-API-Scope": profile_id,
+        "Content-Type": content_type,
+        "Accept": accept,
+    }
+
+
+def _ads_request_with_retry(req, *, timeout=30) -> dict:
+    """429/5xxのリトライ + exponential backoff付きHTTPリクエスト"""
+    last_err = None
+    for attempt in range(_ADS_RETRY_MAX):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                return json.loads(res.read())
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code == 429 or e.code >= 500:
+                wait = _ADS_RETRY_BASE_WAIT * (2 ** attempt)
+                _ads_logger.warning("Ads API %s %s -> HTTP %d, retry in %ds", req.get_method(), req.full_url, e.code, wait)
+                time.sleep(wait)
+                continue
+            body = e.read().decode()[:500]
+            raise AdsApiError(f"Ads API HTTP {e.code}: {body}") from e
+        except Exception as e:
+            last_err = e
+            if attempt < _ADS_RETRY_MAX - 1:
+                wait = _ADS_RETRY_BASE_WAIT * (2 ** attempt)
+                _ads_logger.warning("Ads API request error: %s, retry in %ds", e, wait)
+                time.sleep(wait)
+                continue
+            raise
+    raise AdsApiError(f"Ads API rate limited after {_ADS_RETRY_MAX} retries: {last_err}")
+
+
+def _ads_download_with_retry(url, *, timeout=30) -> bytes:
+    """レポートダウンロード用（バイナリ返却、429/5xxリトライ付き）"""
+    last_err = None
+    for attempt in range(_ADS_RETRY_MAX):
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                return res.read()
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code == 429 or e.code >= 500:
+                wait = _ADS_RETRY_BASE_WAIT * (2 ** attempt)
+                _ads_logger.warning("Report download HTTP %d, retry in %ds", e.code, wait)
+                time.sleep(wait)
+                continue
+            raise AdsApiError(f"Report download HTTP {e.code}") from e
+        except Exception as e:
+            last_err = e
+            if attempt < _ADS_RETRY_MAX - 1:
+                wait = _ADS_RETRY_BASE_WAIT * (2 ** attempt)
+                time.sleep(wait)
+                continue
+            raise
+    raise AdsApiError(f"Report download failed after {_ADS_RETRY_MAX} retries: {last_err}")
+
+
+def _ads_post_list(
+    endpoint: str,
+    media_type: str,
+    body_key: str,
+    filters: dict | None = None,
+    max_results: int = 10000,
+) -> list:
+    """SP API v3 の POST /list 形式で全件取得（ページネーション対応）
+    Content-TypeとAcceptの両方にvendor media typeを使用"""
+    headers = _ads_api_headers(content_type=media_type, accept=media_type)
+    all_items = []
+    next_token = None
+
+    while True:
+        body: dict = {"maxResults": min(max_results - len(all_items), 1000)}
+        if filters:
+            body["stateFilter"] = filters.get("stateFilter", {})
+        if next_token:
+            body["nextToken"] = next_token
+
+        data = json.dumps(body).encode()
+        req = urllib.request.Request(
+            f"{ADS_BASE}{endpoint}", data=data, method="POST", headers=headers,
+        )
+        result = _ads_request_with_retry(req)
+
+        items = result.get(body_key, [])
+        all_items.extend(items)
+
+        next_token = result.get("nextToken")
+        if not next_token or len(all_items) >= max_results:
+            break
+
+    return all_items
+
+
+def fetch_sp_campaigns() -> list:
+    return _ads_post_list(
+        "/sp/campaigns/list",
+        "application/vnd.spCampaign.v3+json",
+        "campaigns",
+    )
+
+
+def fetch_sp_ad_groups() -> list:
+    return _ads_post_list(
+        "/sp/adGroups/list",
+        "application/vnd.spAdGroup.v3+json",
+        "adGroups",
+    )
+
+
+def fetch_sp_keywords() -> list:
+    return _ads_post_list(
+        "/sp/keywords/list",
+        "application/vnd.spKeyword.v3+json",
+        "keywords",
+    )
+
+
+def fetch_sp_targets() -> list:
+    return _ads_post_list(
+        "/sp/targets/list",
+        "application/vnd.spTargetingClause.v3+json",
+        "targetingClauses",
+    )
+
+
+def _fetch_ads_report(report_type_id: str, group_by: list, columns: list, days: int) -> list:
+    """Ads Reporting API v3 でレポート取得。失敗時はAdsApiErrorを送出。"""
+    import gzip
+    from datetime import datetime, timedelta
+
+    end_date = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+    start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    headers = _ads_api_headers()
+    body = json.dumps({
+        "name": f"{report_type_id}_{days}d",
+        "startDate": start_date,
+        "endDate": end_date,
+        "configuration": {
+            "adProduct": "SPONSORED_PRODUCTS",
+            "groupBy": group_by,
+            "columns": columns,
+            "reportTypeId": report_type_id,
+            "timeUnit": "SUMMARY",
+            "format": "GZIP_JSON",
+        },
+    }).encode()
+
+    req = urllib.request.Request(
+        f"{ADS_BASE}/reporting/reports",
+        data=body, method="POST", headers=headers,
+    )
+    report_resp = _ads_request_with_retry(req)
+
+    report_id = report_resp.get("reportId")
+    if not report_id:
+        raise AdsApiError(f"Report {report_type_id}: reportId missing in response")
+
+    for _ in range(40):
+        time.sleep(3)
+        status_req = urllib.request.Request(
+            f"{ADS_BASE}/reporting/reports/{report_id}",
+            method="GET", headers=headers,
+        )
+        status_data = _ads_request_with_retry(status_req, timeout=15)
+        status = status_data.get("status")
+        if status == "COMPLETED":
+            report_url = status_data.get("url")
+            if not report_url:
+                raise AdsApiError(f"Report {report_type_id}: COMPLETED but no download URL")
+            raw = _ads_download_with_retry(report_url)
+            try:
+                return json.loads(gzip.decompress(raw))
+            except Exception:
+                return json.loads(raw)
+        elif status in ("FAILURE", "FAILED"):
+            raise AdsApiError(f"Report {report_type_id}: status={status}")
+
+    raise AdsApiError(f"Report {report_type_id}: polling timeout (120s)")
+
+
+def fetch_campaign_report(days: int = 30) -> list:
+    return _fetch_ads_report(
+        "spCampaigns", ["campaign"],
+        ["campaignId", "campaignName", "impressions", "clicks", "cost",
+         "purchases30d", "sales30d"],
+        days,
+    )
+
+
+def fetch_targeting_report(days: int = 30) -> list:
+    return _fetch_ads_report(
+        "spTargeting", ["targeting"],
+        ["campaignId", "adGroupId", "targeting", "keyword", "keywordType",
+         "impressions", "clicks", "cost", "purchases30d", "sales30d"],
+        days,
+    )
+
+
+def fetch_search_term_report(days: int = 30) -> list:
+    return _fetch_ads_report(
+        "spSearchTerm", ["searchTerm"],
+        ["campaignId", "adGroupId", "searchTerm", "matchType", "keyword",
+         "impressions", "clicks", "cost", "purchases30d", "sales30d"],
+        days,
+    )
+
+
+def parse_campaign_name(name: str) -> tuple:
+    for prefix in ("A_", "P_", "G_", "E_"):
+        if name.startswith(prefix):
+            rest = name[len(prefix):]
+            asin = rest.split("_")[0].split(" ")[0] if rest else None
+            if asin and len(asin) >= 10:
+                return (prefix, asin)
+            return (prefix, None)
+    return ("other", None)
