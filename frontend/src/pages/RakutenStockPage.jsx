@@ -300,6 +300,9 @@ function StockRow({
   const inbound = e.inbound !== undefined ? e.inbound : (p.inbound ?? 0)
   const inbound2 = e.standard_stock !== undefined ? e.standard_stock : (p.standard_stock ?? 0)
   const isDirty = !!edits[p.id]
+  const stockDirty = e.stock !== undefined
+  const inboundDirty = e.inbound !== undefined
+  const inbound2Dirty = e.standard_stock !== undefined
   const canReceive = !!p.is_manufacturer && !isDirty && Number(p.inbound || 0) > 0
   const isReceiving = receivingId === p.id
 
@@ -314,6 +317,16 @@ function StockRow({
   const selectIfZero = (ev) => {
     if (Number(ev.target.value) === 0) ev.target.select()
   }
+  const preventWheelChange = (ev) => ev.currentTarget.blur()
+  const inputStyle = (fieldDirty, extra = {}) => ({
+    width: 60,
+    textAlign: 'center',
+    border: fieldDirty ? '1px solid #d97706' : '1px solid #e2e8f0',
+    background: fieldDirty ? '#fff7ed' : '#fff',
+    borderRadius: 4,
+    padding: '3px 4px',
+    ...extra,
+  })
 
   return (
     <tr style={{ borderBottom: '1px solid #e5e7eb', background: rowBg }}>
@@ -364,8 +377,10 @@ function StockRow({
           type="number"
           value={stock}
           onFocus={selectIfZero}
+          onWheel={preventWheelChange}
           onChange={e => setEdit(p.id, 'stock', e.target.value)}
-          style={{ width: 60, textAlign: 'center', border: isDirty ? '1px solid #d97706' : '1px solid #e2e8f0', borderRadius: 4, padding: '3px 4px', fontWeight: 600 }}
+          title={stockDirty ? '実在庫を保存します' : '実在庫は保存対象外です'}
+          style={inputStyle(stockDirty, { fontWeight: 600 })}
         />
       </td>
       <td style={{ padding: '4px 6px', textAlign: 'center' }}>
@@ -373,8 +388,10 @@ function StockRow({
           type="number"
           value={inbound}
           onFocus={selectIfZero}
+          onWheel={preventWheelChange}
           onChange={e => setEdit(p.id, 'inbound', e.target.value)}
-          style={{ width: 60, textAlign: 'center', border: '1px solid #e2e8f0', borderRadius: 4, padding: '3px 4px' }}
+          title={inboundDirty ? '輸送中1を保存します' : '輸送中1は保存対象外です'}
+          style={inputStyle(inboundDirty)}
         />
       </td>
       <td style={{ padding: '4px 6px', textAlign: 'center' }}>
@@ -382,8 +399,10 @@ function StockRow({
           type="number"
           value={inbound2}
           onFocus={selectIfZero}
+          onWheel={preventWheelChange}
           onChange={e => setEdit(p.id, 'standard_stock', e.target.value)}
-          style={{ width: 60, textAlign: 'center', border: '1px solid #e2e8f0', borderRadius: 4, padding: '3px 4px' }}
+          title={inbound2Dirty ? '輸送中2を保存します' : '輸送中2は保存対象外です'}
+          style={inputStyle(inbound2Dirty)}
         />
       </td>
       <td style={{ padding: '8px 10px', textAlign: 'center', color: '#2563eb', fontWeight: 600 }}>{p.sales_30_recent}</td>
