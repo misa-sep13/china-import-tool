@@ -305,23 +305,24 @@ export default function RakutenProductsPage() {
       </div>
 
       {/* 商品テーブル */}
-      <div className="card" style={{ padding: 0, overflow: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-              {[
-                ['SKU管理番号', null], ['商品名 / 仕様', null], ['お客様専用メモ', 90],
-                ['仕入原価(円)', null], ['販売価格(円)', null], ['手数料率', null],
-                ['利益額', null], ['利益率', null], ['備考', 90], ['操作', null]
-              ].map(([h, w]) => (
-                <th key={h} style={{ padding: '10px 12px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700, ...(w ? { width: w, maxWidth: w } : {}) }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filteredParents.length === 0 && filteredStandalone.length === 0 && (!showComponents || filteredSingles.length === 0) && (
-              <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
-            )}
+      <div className="card" style={{ padding: 0 }}>
+        <div className="sticky-table-wrap">
+          <table className="sticky-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
+                {[
+                  ['SKU管理番号', null], ['商品名 / 仕様', null], ['お客様専用メモ', 90],
+                  ['仕入原価(円)', null], ['販売価格(円)', null], ['手数料率', null],
+                  ['利益額', null], ['利益率', null], ['備考', 90], ['操作', null]
+                ].map(([h, w]) => (
+                  <th key={h} style={{ padding: '10px 12px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700, ...(w ? { width: w, maxWidth: w } : {}) }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filteredParents.length === 0 && filteredStandalone.length === 0 && (!showComponents || filteredSingles.length === 0) && (
+                <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
+              )}
 
             {/* ① バリエーション親（単品）→ クリックでセット商品を展開 */}
             {filteredParents.map(p => {
@@ -365,17 +366,18 @@ export default function RakutenProductsPage() {
             ))}
 
             {/* ③ 内部管理SKU（is_component=True）→ チェック時のみ表示 */}
-            {showComponents && filteredSingles.map(p => (
-              <ProductRow
-                key={p.id}
-                p={p}
-                commissionRate={commissionRate}
-                onEdit={openEdit}
-                onDelete={(p) => { if (confirm(`${p.name || p.sku} を削除しますか？`)) deleteMutation.mutate(p.id) }}
-              />
-            ))}
-          </tbody>
-        </table>
+              {showComponents && filteredSingles.map(p => (
+                <ProductRow
+                  key={p.id}
+                  p={p}
+                  commissionRate={commissionRate}
+                  onEdit={openEdit}
+                  onDelete={(p) => { if (confirm(`${p.name || p.sku} を削除しますか？`)) deleteMutation.mutate(p.id) }}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* 編集モーダル */}

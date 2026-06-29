@@ -261,8 +261,8 @@ export default function ProductsPage() {
         </div>
       ) : (
         <div className="card">
-          <div style={{ overflowX: 'auto' }}>
-            <table>
+          <div className="sticky-table-wrap">
+            <table className="sticky-table">
               <thead>
                 <tr>
                   <th>SKU</th>

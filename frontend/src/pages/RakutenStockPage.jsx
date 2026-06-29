@@ -227,36 +227,38 @@ export default function RakutenStockPage() {
         <span style={{ fontSize: 12, color: '#6b7280' }}>{displayCount}件</span>
       </div>
 
-      <div className="card" style={{ padding: 0, overflow: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-              {['SKU', '商品名', '仕様', '仕入原価(円)', '販売価格(円)', '送料', '手数料', '利益額', '利益率', '実在庫', '輸送中1', '輸送中2', '直近30日', '前30日', ssPeriod ? `SS(${ssPeriod})` : 'SS', '備考', '操作'].map(h => (
-                <th key={h} style={{ padding: '10px 10px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700, fontSize: 12 }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {displayCount === 0 && (
-              <tr><td colSpan={17} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
-            )}
-            {parents.map(p => {
-              const childList = getVariantChildren(p.sku).filter(searchMatch)
-              // 検索中は自動展開、それ以外は展開状態に従う
-              const isOpen = !!search || !!expanded[p.sku]
-              return [
-                <StockRow
-                  key={p.id} p={p} {...rowProps}
-                  childCount={childList.length}
-                  isExpanded={isOpen}
-                  onToggle={() => toggleExpand(p.sku)}
-                />,
-                ...(isOpen ? childList.map(c => <StockRow key={c.id} p={c} isChild {...rowProps} />) : [])
-              ]
-            })}
-            {others.map(p => <StockRow key={p.id} p={p} {...rowProps} />)}
-          </tbody>
-        </table>
+      <div className="card" style={{ padding: 0 }}>
+        <div className="sticky-table-wrap">
+          <table className="sticky-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
+                {['SKU', '商品名', '仕様', '仕入原価(円)', '販売価格(円)', '送料', '手数料', '利益額', '利益率', '実在庫', '輸送中1', '輸送中2', '直近30日', '前30日', ssPeriod ? `SS(${ssPeriod})` : 'SS', '備考', '操作'].map(h => (
+                  <th key={h} style={{ padding: '10px 10px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700, fontSize: 12 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {displayCount === 0 && (
+                <tr><td colSpan={17} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
+              )}
+              {parents.map(p => {
+                const childList = getVariantChildren(p.sku).filter(searchMatch)
+                // 検索中は自動展開、それ以外は展開状態に従う
+                const isOpen = !!search || !!expanded[p.sku]
+                return [
+                  <StockRow
+                    key={p.id} p={p} {...rowProps}
+                    childCount={childList.length}
+                    isExpanded={isOpen}
+                    onToggle={() => toggleExpand(p.sku)}
+                  />,
+                  ...(isOpen ? childList.map(c => <StockRow key={c.id} p={c} isChild {...rowProps} />) : [])
+                ]
+              })}
+              {others.map(p => <StockRow key={p.id} p={p} {...rowProps} />)}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* フローティング保存ボタン（常時表示） */}

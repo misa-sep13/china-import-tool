@@ -255,8 +255,8 @@ export default function StockPage() {
       {!isLoading && jobStatus === 'done' && (
         <div className="card">
           <h2>全在庫（{sorted.length}件）</h2>
-          <div style={{ overflowX: 'auto' }}>
-            <table>
+          <div className="sticky-table-wrap">
+            <table className="sticky-table">
               <thead>
                 <tr>
                   <th style={{ width: 36, cursor: 'pointer' }} onClick={toggleAll}>
