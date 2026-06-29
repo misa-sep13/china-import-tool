@@ -6,6 +6,7 @@ from typing import Optional, List
 from datetime import date, datetime
 import csv, io, json
 import uuid, time, threading
+import re
 from pydantic import BaseModel
 import asyncio
 from app.core.database import get_db, SessionLocal
@@ -47,6 +48,56 @@ def _clean_set_components(sc: Optional[str]) -> Optional[str]:
         return json.dumps(filtered, ensure_ascii=False) if filtered else None
     except Exception:
         return sc
+
+
+def _is_taotaro_supplier(supplier: Optional[str]) -> bool:
+    value = (supplier or "").strip().lower().replace(" ", "").replace("　", "")
+    return value in {"タオタロウ", "タオ太郎", "taotaro"} or "タオタロウ" in value or "タオ太郎" in value
+
+
+def _is_manufacturer_product(p: RakutenProduct) -> bool:
+    supplier = (p.supplier or "").strip()
+    if supplier:
+        return not _is_taotaro_supplier(supplier)
+    sku = (p.sku or "").strip().lower()
+    return bool(re.match(r"^s\d", sku) or re.match(r"^\d+$", sku))
+
+
+def _parse_components_for_stock(p: RakutenProduct):
+    try:
+        return json.loads(p.set_components or "[]")
+    except Exception:
+        return []
+
+
+def _recalc_dependent_set_stock(all_products: list[RakutenProduct], sku_stock: dict, updated_skus: set[str]):
+    for p in all_products:
+        comps = _parse_components_for_stock(p)
+        if not comps or not any(c.get("sku") in updated_skus for c in comps):
+            continue
+        req: dict[str, int] = {}
+        for c in comps:
+            c_sku = c.get("sku")
+            c_qty = c.get("qty") or 1
+            if c_sku:
+                req[c_sku] = req.get(c_sku, 0) + c_qty
+        set_qty = None
+        for c_sku, c_qty in req.items():
+            avail = sku_stock.get(c_sku, 0) // c_qty
+            set_qty = avail if set_qty is None else min(set_qty, avail)
+        if set_qty is not None:
+            p.stock = set_qty
+            sku_stock[p.sku] = set_qty
+
+
+def _build_rms_stock_items(all_products: list[RakutenProduct], sku_stock: dict, updated_skus: set[str]):
+    rms_items = []
+    for p in all_products:
+        comps = _parse_components_for_stock(p)
+        if p.sku in updated_skus or (comps and any(c.get("sku") in updated_skus for c in comps)):
+            manage_number = p.rakuten_item_url or p.sku.split("_")[0]
+            rms_items.append({"manage_number": manage_number, "variant_id": p.sku, "quantity": sku_stock.get(p.sku, 0)})
+    return rms_items
 
 
 
@@ -179,6 +230,7 @@ def list_stock(db: Session = Depends(get_db)):
             "notes": p.notes,
             "supplier": p.supplier,
             "set_components": p.set_components,
+            "is_manufacturer": _is_manufacturer_product(p),
         })
     return result
 
@@ -361,6 +413,70 @@ async def bulk_update_stock(body: dict, background_tasks: BackgroundTasks, db: S
     return {"ok": True, "updated": len(updated_skus), "rms_pushed": len(rms_items)}
 
 
+@router.post("/products/{product_id}/receive-manufacturer")
+async def receive_manufacturer_stock(product_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """メーカー品の入荷処理。
+    輸送中1(inbound)を実在庫へ加算し、輸送中2(旧standard_stock)を輸送中1へ繰り上げる。
+    輸入品は発注管理・インボイス取込が正規ルートなので、この操作では扱わない。
+    """
+    p = db.query(RakutenProduct).filter(
+        RakutenProduct.id == product_id,
+        RakutenProduct.is_active == True,
+    ).first()
+    if not p:
+        raise HTTPException(404, "商品が見つかりません")
+    if not _is_manufacturer_product(p):
+        raise HTTPException(400, "メーカー品のみ在庫損益から入荷できます")
+
+    received_qty = p.inbound or 0
+    if received_qty <= 0:
+        raise HTTPException(400, "輸送中1が0のため入荷できません")
+
+    next_inbound = p.standard_stock or 0
+    before = {
+        "stock": p.stock or 0,
+        "inbound": p.inbound or 0,
+        "standard_stock": p.standard_stock or 0,
+    }
+
+    all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    sku_stock = {item.sku: (item.stock or 0) for item in all_products}
+
+    p.stock = (p.stock or 0) + received_qty
+    p.inbound = next_inbound
+    p.standard_stock = 0
+    sku_stock[p.sku] = p.stock
+    updated_skus = {p.sku}
+
+    _recalc_dependent_set_stock(all_products, sku_stock, updated_skus)
+    db.commit()
+    db.refresh(p)
+
+    settings = _get_or_create_settings(db)
+    rms_items = []
+    if settings and settings.rms_service_secret and settings.rms_license_key:
+        rms_items = _build_rms_stock_items(all_products, sku_stock, updated_skus)
+        if rms_items:
+            from app.services.rakuten_rms import push_inventory_to_rms
+            background_tasks.add_task(
+                push_inventory_to_rms,
+                settings.rms_service_secret, settings.rms_license_key, rms_items,
+            )
+
+    return {
+        "ok": True,
+        "sku": p.sku,
+        "received_qty": received_qty,
+        "before": before,
+        "after": {
+            "stock": p.stock or 0,
+            "inbound": p.inbound or 0,
+            "standard_stock": p.standard_stock or 0,
+        },
+        "rms_pushed": len(rms_items),
+    }
+
+
 @router.post("/products/bulk-set-components")
 def bulk_set_components(body: dict, db: Session = Depends(get_db)):
     """SKUをキー、set_componentsをJSONとして受け取り一括更新"""
@@ -515,7 +631,7 @@ def get_recommendations(db: Session = Depends(get_db)):
         sales_prev   = agg.get("prev",   0)
         calc = calc_rakuten_order(
             stock=p.stock or 0,
-            inbound=p.inbound or 0,
+            inbound=(p.inbound or 0) + (p.standard_stock or 0),
             ordered=ordered,
             sales_30_recent=sales_recent,
             sales_30_prev=sales_prev,
@@ -539,7 +655,9 @@ def get_recommendations(db: Session = Depends(get_db)):
             "set_size":        p.set_size or 1,
             "set_components":  sc_parsed,
             "stock":           p.stock or 0,
-            "inbound":         p.inbound or 0,
+            "inbound":         (p.inbound or 0) + (p.standard_stock or 0),
+            "inbound_1":       p.inbound or 0,
+            "inbound_2":       p.standard_stock or 0,
             "ordered":         ordered,
             "total_stock":     calc.total_stock,
             "daily_avg":       calc.daily_avg,
@@ -587,7 +705,7 @@ def get_all_products_order(db: Session = Depends(get_db)):
         ordered = ordered_by_sku.get(p.sku, 0) or 0
         calc = calc_rakuten_order(
             stock=p.stock or 0,
-            inbound=p.inbound or 0,
+            inbound=(p.inbound or 0) + (p.standard_stock or 0),
             ordered=ordered,
             sales_30_recent=p.sales_30_recent or 0,
             sales_30_prev=p.sales_30_prev or 0,
@@ -609,7 +727,9 @@ def get_all_products_order(db: Session = Depends(get_db)):
             "buy_url":         p.buy_url or "",
             "set_components":  sc_parsed,
             "stock":           p.stock or 0,
-            "inbound":         p.inbound or 0,
+            "inbound":         (p.inbound or 0) + (p.standard_stock or 0),
+            "inbound_1":       p.inbound or 0,
+            "inbound_2":       p.standard_stock or 0,
             "ordered":         ordered,
             "total_stock":     calc.total_stock,
             "daily_avg":       calc.daily_avg,
@@ -787,9 +907,9 @@ CSV_COLUMN_LABELS = {
     "rakuten_item_url": "在庫管理番号",
     "rakuten_sku_id":   "楽天SKU管理番号",
     "supplier":         "仕入先",
-    "standard_stock":   "規定在庫数",
+    "standard_stock":   "輸送中2",
     "stock":            "実在庫(手持ち)",
-    "inbound":          "輸送中",
+    "inbound":          "輸送中1",
     "sales_30_recent":  "直近30日販売数",
     "sales_30_prev":    "60日前〜31日前の販売数",
     "customer_memo":    "お客様専用メモ",
@@ -879,6 +999,8 @@ def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_
 
     # ヘッダーを内部キー名にマッピング（日本語ラベル or 英語キー どちらでも受け付ける）
     label_to_key = {v: k for k, v in CSV_COLUMN_LABELS.items()}
+    label_to_key["規定在庫数"] = "standard_stock"
+    label_to_key["輸送中"] = "inbound"
     label_to_key.update({k: k for k in CSV_COLUMNS})  # 英語キーもOK
 
     created = updated = skipped = 0

@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 
 export default function RakutenStockPage() {
@@ -14,9 +14,10 @@ export default function RakutenStockPage() {
   const toggleExpand = useCallback((sku) => {
     setExpanded(prev => ({ ...prev, [sku]: !prev[sku] }))
   }, [])
-  // { [id]: { stock, inbound, standard_stock, selling_price, shipping_fee } }
+  // { [id]: { stock, inbound, standard_stock } } standard_stockは輸送中2として利用
   const [edits, setEdits] = useState({})
   const [saving, setSaving] = useState(false)
+  const [receiveResult, setReceiveResult] = useState(null)
 
   const handleImportStock = async () => {
     if (!window.confirm('RMSから現在の在庫数を取得してDBに保存します。よろしいですか？')) return
@@ -141,9 +142,41 @@ export default function RakutenStockPage() {
     }
   }
 
+  const receiveMutation = useMutation({
+    mutationFn: (id) => api.post(`/rakuten/products/${id}/receive-manufacturer`).then(r => r.data),
+    onSuccess: (data) => {
+      setReceiveResult(data)
+      qc.invalidateQueries(['rakuten-stock'])
+      qc.invalidateQueries(['rakuten-products'])
+      qc.invalidateQueries(['rakuten-recommendations'])
+      setEdits({})
+    },
+    onError: (err) => {
+      setReceiveResult({ error: err.response?.data?.detail || '入荷処理でエラーが発生しました' })
+    },
+  })
+
+  const handleReceiveManufacturer = (p) => {
+    if (edits[p.id]) return
+    const inbound = Number(p.inbound || 0)
+    const inbound2 = Number(p.standard_stock || 0)
+    if (inbound <= 0) return
+    const message = `${p.sku} のメーカー入荷を反映しますか？\n\n実在庫に +${inbound}\n輸送中1: ${inbound} → ${inbound2}\n輸送中2: ${inbound2} → 0`
+    if (!window.confirm(message)) return
+    setReceiveResult(null)
+    receiveMutation.mutate(p.id)
+  }
+
   if (isLoading) return <div className="loading">読み込み中...</div>
 
-  const rowProps = { commissionRate, edits, setEdit, ssMap }
+  const rowProps = {
+    commissionRate,
+    edits,
+    setEdit,
+    ssMap,
+    onReceiveManufacturer: handleReceiveManufacturer,
+    receivingId: receiveMutation.isPending ? receiveMutation.variables : null,
+  }
 
   return (
     <div>
@@ -164,6 +197,11 @@ export default function RakutenStockPage() {
         {ssSyncResult && (
           <span style={{ fontSize: 12, color: ssSyncResult.error ? '#e53e3e' : '#9333ea' }}>
             {ssSyncResult.error || `SS(${ssSyncResult.period}) ${ssSyncResult.saved_products}件保存`}
+          </span>
+        )}
+        {receiveResult && (
+          <span style={{ fontSize: 12, color: receiveResult.error ? '#e53e3e' : '#16a34a' }}>
+            {receiveResult.error || `${receiveResult.sku} 入荷+${receiveResult.received_qty}（RMS ${receiveResult.rms_pushed}件）`}
           </span>
         )}
         <button
@@ -193,14 +231,14 @@ export default function RakutenStockPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-              {['SKU', '商品名', '仕様', '仕入原価(円)', '販売価格(円)', '送料', '手数料', '利益額', '利益率', '実在庫', '輸送中', '規定在庫', '直近30日', '前30日', ssPeriod ? `SS(${ssPeriod})` : 'SS', '備考'].map(h => (
+              {['SKU', '商品名', '仕様', '仕入原価(円)', '販売価格(円)', '送料', '手数料', '利益額', '利益率', '実在庫', '輸送中1', '輸送中2', '直近30日', '前30日', ssPeriod ? `SS(${ssPeriod})` : 'SS', '備考', '操作'].map(h => (
                 <th key={h} style={{ padding: '10px 10px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700, fontSize: 12 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {displayCount === 0 && (
-              <tr><td colSpan={16} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
+              <tr><td colSpan={17} style={{ textAlign: 'center', padding: 32, color: '#999' }}>商品がありません</td></tr>
             )}
             {parents.map(p => {
               const childList = getVariantChildren(p.sku).filter(searchMatch)
@@ -242,14 +280,28 @@ export default function RakutenStockPage() {
   )
 }
 
-function StockRow({ p, commissionRate, edits, setEdit, isChild, ssMap, childCount = 0, isExpanded, onToggle }) {
+function StockRow({
+  p,
+  commissionRate,
+  edits,
+  setEdit,
+  isChild,
+  ssMap,
+  childCount = 0,
+  isExpanded,
+  onToggle,
+  onReceiveManufacturer,
+  receivingId,
+}) {
   const e = edits[p.id] || {}
   const sp = e.selling_price !== undefined ? (e.selling_price !== '' ? Number(e.selling_price) : null) : p.selling_price
   const shippingFee = e.shipping_fee !== undefined ? Number(e.shipping_fee) : (p.shipping_fee ?? 180)
   const stock = e.stock !== undefined ? e.stock : (p.stock ?? 0)
   const inbound = e.inbound !== undefined ? e.inbound : (p.inbound ?? 0)
-  const standardStock = e.standard_stock !== undefined ? e.standard_stock : (p.standard_stock ?? 0)
+  const inbound2 = e.standard_stock !== undefined ? e.standard_stock : (p.standard_stock ?? 0)
   const isDirty = !!edits[p.id]
+  const canReceive = !!p.is_manufacturer && !isDirty && Number(p.inbound || 0) > 0
+  const isReceiving = receivingId === p.id
 
   const commission = sp ? Math.round(sp * commissionRate) : null
   const cost = p.cost_jpy || 0
@@ -328,7 +380,7 @@ function StockRow({ p, commissionRate, edits, setEdit, isChild, ssMap, childCoun
       <td style={{ padding: '4px 6px', textAlign: 'center' }}>
         <input
           type="number"
-          value={standardStock}
+          value={inbound2}
           onFocus={selectIfZero}
           onChange={e => setEdit(p.id, 'standard_stock', e.target.value)}
           style={{ width: 60, textAlign: 'center', border: '1px solid #e2e8f0', borderRadius: 4, padding: '3px 4px' }}
@@ -340,6 +392,29 @@ function StockRow({ p, commissionRate, edits, setEdit, isChild, ssMap, childCoun
         {ssMap && ssMap[p.sku] != null ? ssMap[p.sku] : '—'}
       </td>
       <td style={{ padding: '8px 10px', color: '#666', fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.notes || '—'}</td>
+      <td style={{ padding: '6px 8px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+        {p.is_manufacturer ? (
+          <button
+            className="btn"
+            onClick={() => onReceiveManufacturer?.(p)}
+            disabled={!canReceive || isReceiving}
+            title={isDirty ? '保存してから入荷してください' : Number(p.inbound || 0) <= 0 ? '輸送中1が0です' : '輸送中1を実在庫へ入荷します'}
+            style={{
+              fontSize: 12,
+              padding: '4px 10px',
+              opacity: canReceive && !isReceiving ? 1 : 0.45,
+              cursor: canReceive && !isReceiving ? 'pointer' : 'not-allowed',
+              color: '#0f766e',
+              borderColor: '#99f6e4',
+              background: '#ecfdf5',
+            }}
+          >
+            {isReceiving ? '入荷中...' : '入荷'}
+          </button>
+        ) : (
+          <span style={{ color: '#cbd5e1' }}>—</span>
+        )}
+      </td>
     </tr>
   )
 }

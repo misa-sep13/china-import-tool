@@ -45,6 +45,7 @@ export default function RakutenProductsPage() {
       : api.put(`/rakuten/products/${editing.id}`, d),
     onSuccess: () => {
       qc.invalidateQueries(['rakuten-products'])
+      qc.invalidateQueries(['rakuten-stock'])
       qc.invalidateQueries(['rakuten-recommendations'])
       setEditing(null)
     },
@@ -54,6 +55,7 @@ export default function RakutenProductsPage() {
     mutationFn: (id) => api.delete(`/rakuten/products/${id}`),
     onSuccess: () => {
       qc.invalidateQueries(['rakuten-products'])
+      qc.invalidateQueries(['rakuten-stock'])
       qc.invalidateQueries(['rakuten-recommendations'])
     },
   })
@@ -143,6 +145,7 @@ export default function RakutenProductsPage() {
       })
       setImportResult(res.data)
       qc.invalidateQueries(['rakuten-products'])
+      qc.invalidateQueries(['rakuten-stock'])
       qc.invalidateQueries(['rakuten-recommendations'])
     } catch (err) {
       setImportResult({ error: err.response?.data?.detail || 'インポートエラーが発生しました' })
@@ -465,7 +468,7 @@ export default function RakutenProductsPage() {
                   <input {...f('rakuten_item_url')} placeholder="例: s08-2" />
                 </div>
                 <div className="form-group">
-                  <label>規定在庫数</label>
+                  <label>輸送中2</label>
                   <input type="number" min={0} {...f('standard_stock', 'number')} />
                 </div>
               </div>
@@ -480,7 +483,7 @@ export default function RakutenProductsPage() {
                   <input type="number" min={0} {...f('stock', 'number')} />
                 </div>
                 <div className="form-group">
-                  <label>輸送中</label>
+                  <label>輸送中1</label>
                   <input type="number" min={0} {...f('inbound', 'number')} />
                 </div>
                 <div className="form-group">

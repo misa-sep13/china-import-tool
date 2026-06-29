@@ -18,10 +18,10 @@ class RakutenProduct(Base):
     rakuten_item_url = Column(String)           # 在庫管理番号（社内管理用）
     rakuten_sku_id   = Column(String)           # 楽天SKU管理番号（半角32文字: y60_4_black形式）
     supplier         = Column(String)           # 仕入先
-    standard_stock   = Column(Integer, default=0)  # 規定在庫数
+    standard_stock   = Column(Integer, default=0)  # 輸送中2（DB互換のため旧standard_stock列を利用）
     # 在庫
     stock        = Column(Integer, default=0)    # 実在庫（手持ち）
-    inbound      = Column(Integer, default=0)    # 輸送中
+    inbound      = Column(Integer, default=0)    # 輸送中1
     # 販売実績（楽天APIまたは手動入力）
     sales_30_recent  = Column(Integer, default=0) # 直近30日販売数（参考用）
     sales_30_prev    = Column(Integer, default=0) # 60日前〜31日前の販売数（参考用）
