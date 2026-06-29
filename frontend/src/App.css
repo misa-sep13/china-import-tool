@@ -96,7 +96,8 @@ td {
 tr:hover td { background: #fafbff; }
 
 .sticky-table-wrap {
-  overflow-x: auto;
+  overflow: visible;
+  max-width: 100%;
 }
 
 .sticky-table thead th {
