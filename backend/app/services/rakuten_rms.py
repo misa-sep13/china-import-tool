@@ -12,8 +12,10 @@ import httpx
 
 
 RMS_BASE = "https://api.rms.rakuten.co.jp/es"
-BATCH_SIZE = 100      # getOrder の1回あたりの件数（RMSの上限）
-GETORDER_CONCURRENCY = 6  # getOrder の並列数
+# Render(512MB)でOOMしないよう省メモリ設定。1回40件×3並列＝同時に載る受注は最大120件分。
+# （以前は100件×6並列=600件分で、繁忙日にメモリ超過→再起動していた）
+BATCH_SIZE = 40           # getOrder の1回あたりの件数
+GETORDER_CONCURRENCY = 3  # getOrder の並列数
 
 # 楽天RMSへの在庫書き込み（push）の有効/無効。
 # 本番連動を正式に開始するまでは書き込まない（デフォルト無効＝安全側）。
