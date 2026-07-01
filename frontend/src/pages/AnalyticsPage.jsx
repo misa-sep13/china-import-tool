@@ -19,6 +19,7 @@ const periodLabel = (days) => {
 }
 const fmtRate = (n) => n == null ? '-' : `${n}%`
 const yen = (n) => n == null ? '-' : `¥${Number(n).toLocaleString('ja-JP')}`
+const SORT_OPTIONS = { numeric: true, sensitivity: 'base' }
 
 export default function AnalyticsPage() {
   const [period, setPeriod] = useState(30)
@@ -37,7 +38,6 @@ export default function AnalyticsPage() {
   }
 
   const startFetch = async (d = period, force = false) => {
-    if (force) sessionStorage.removeItem(`analytics_${d}`)
     stopPolling()
     setJobStatus('running')
     setError('')
@@ -55,7 +55,6 @@ export default function AnalyticsPage() {
             const result = st.data.result || {}
             setSummary(result.summary || {})
             setItems(result.items || [])
-            sessionStorage.setItem(`analytics_${d}`, JSON.stringify(result))
             setJobStatus('done')
           } else if (st.data.status === 'error') {
             stopPolling()
@@ -75,16 +74,6 @@ export default function AnalyticsPage() {
   }
 
   useEffect(() => {
-    const cached = sessionStorage.getItem(`analytics_${period}`)
-    if (cached) {
-      try {
-        const result = JSON.parse(cached)
-        setSummary(result.summary || {})
-        setItems(result.items || [])
-        setJobStatus('done')
-        return () => {}
-      } catch {}
-    }
     startFetch(period)
     return () => stopPolling()
   }, [])
@@ -109,9 +98,20 @@ export default function AnalyticsPage() {
     : items
 
   const sorted = [...filtered].sort((a, b) => {
-    let va = a[sortKey] ?? -Infinity
-    let vb = b[sortKey] ?? -Infinity
-    return sortAsc ? va - vb : vb - va
+    const va = a[sortKey]
+    const vb = b[sortKey]
+    let result
+    if (sortKey === 'sku' || sortKey === 'name' || typeof va === 'string' || typeof vb === 'string') {
+      result = String(va || '').localeCompare(String(vb || ''), 'ja', SORT_OPTIONS)
+    } else {
+      const na = va == null ? -Infinity : Number(va)
+      const nb = vb == null ? -Infinity : Number(vb)
+      result = na - nb
+    }
+    if (!result) {
+      result = String(a.sku || '').localeCompare(String(b.sku || ''), 'ja', SORT_OPTIONS)
+    }
+    return sortAsc ? result : -result
   })
 
   const sortIcon = (key) => sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : ''
