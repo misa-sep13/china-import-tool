@@ -3,13 +3,19 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional, List
-from datetime import date, datetime
+from datetime import date, datetime, timezone, timedelta
 import csv, io, json
 import uuid, time, threading
 import re
 from pydantic import BaseModel
 import asyncio
 from app.core.database import get_db, SessionLocal
+
+# 日本時間(JST)。RenderはUTCで動くため、表示用の時刻(sales_updated_at, last_sync)は
+# JSTの壁時計時刻(タイムゾーンなし)で保存し、画面や報告で日本時間として正しく見えるようにする。
+JST = timezone(timedelta(hours=9))
+def _now_jst():
+    return datetime.now(JST).replace(tzinfo=None)
 from app.models.rakuten_product import RakutenProduct
 from app.models.rakuten_order import RakutenOrderHistory
 from app.models.rakuten_settings import RakutenSettings
@@ -517,7 +523,7 @@ def update_stock(product_id: int, body: dict, db: Session = Depends(get_db)):
         p.sales_30_recent = body["sales_30_recent"]
     if "sales_30_prev" in body:
         p.sales_30_prev = body["sales_30_prev"]
-        p.sales_updated_at = datetime.now()
+        p.sales_updated_at = _now_jst()
     db.commit()
     return {"ok": True}
 
@@ -1836,7 +1842,7 @@ def _run_sales_sync_job(job_id: str, service_secret: str, license_key: str):
                 p.sales_30_prev    = sales.get("prev",   0)
                 p.sales_90         = sales.get("total_90", 0)
                 p.stockout_days_90 = sales.get("stockout_days", 0)
-                p.sales_updated_at = datetime.now()
+                p.sales_updated_at = _now_jst()
                 updated += 1
         db.commit()
 
@@ -1845,7 +1851,7 @@ def _run_sales_sync_job(job_id: str, service_secret: str, license_key: str):
             _sync_jobs[job_id]["result"] = {
                 "synced_skus": len(sku_sales),
                 "updated_products": updated,
-                "last_sync": datetime.now().isoformat(),
+                "last_sync": _now_jst().isoformat(),
             }
     except Exception as e:
         db.rollback()

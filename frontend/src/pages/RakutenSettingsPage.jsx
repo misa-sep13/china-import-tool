@@ -305,7 +305,10 @@ export default function RakutenSettingsPage() {
                     const st = await api.get(`/rakuten/rms/sync/status/${jobId}`)
                     if (st.data.status === 'done') {
                       const r = st.data.result
-                      setSyncResult(`✅ 同期完了: ${r.updated_products}件更新（取得SKU: ${r.synced_skus}件）`)
+                      const t = r.last_sync
+                        ? new Date(r.last_sync).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                        : ''
+                      setSyncResult(`✅ 同期完了: ${r.updated_products}件更新（取得SKU: ${r.synced_skus}件）${t ? ` ／ 最終同期 ${t}` : ''}`)
                       qc.invalidateQueries(['rakuten-recommendations'])
                       break
                     } else if (st.data.status === 'error') {
