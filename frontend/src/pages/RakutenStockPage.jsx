@@ -305,6 +305,7 @@ function StockRow({
   const stockDirty = e.stock !== undefined
   const inboundDirty = e.inbound !== undefined
   const inbound2Dirty = e.standard_stock !== undefined
+  const canEditInbound = !!p.is_manufacturer
   const canReceive = !!p.is_manufacturer && !isDirty && Number(p.inbound || 0) > 0
   const isReceiving = receivingId === p.id
 
@@ -389,22 +390,24 @@ function StockRow({
         <input
           type="number"
           value={inbound}
+          disabled={!canEditInbound}
           onFocus={selectIfZero}
           onWheel={preventWheelChange}
-          onChange={e => setEdit(p.id, 'inbound', e.target.value)}
-          title={inboundDirty ? '発注済1を保存します' : '発注済1は保存対象外です'}
-          style={inputStyle(inboundDirty)}
+          onChange={e => canEditInbound && setEdit(p.id, 'inbound', e.target.value)}
+          title={canEditInbound ? (inboundDirty ? '発注済1を保存します' : '発注済1は保存対象外です') : '発注済リストから集計されます'}
+          style={inputStyle(inboundDirty, canEditInbound ? {} : { background: '#f8fafc', color: '#64748b' })}
         />
       </td>
       <td style={{ padding: '4px 6px', textAlign: 'center' }}>
         <input
           type="number"
           value={inbound2}
+          disabled={!canEditInbound}
           onFocus={selectIfZero}
           onWheel={preventWheelChange}
-          onChange={e => setEdit(p.id, 'standard_stock', e.target.value)}
-          title={inbound2Dirty ? '発注済2を保存します' : '発注済2は保存対象外です'}
-          style={inputStyle(inbound2Dirty)}
+          onChange={e => canEditInbound && setEdit(p.id, 'standard_stock', e.target.value)}
+          title={canEditInbound ? (inbound2Dirty ? '発注済2を保存します' : '発注済2は保存対象外です') : '発注済リストから集計されます'}
+          style={inputStyle(inbound2Dirty, canEditInbound ? {} : { background: '#f8fafc', color: '#64748b' })}
         />
       </td>
       <td style={{ padding: '8px 10px', textAlign: 'center', color: '#2563eb', fontWeight: 600 }}>{p.sales_30_recent}</td>

@@ -14,6 +14,24 @@ import io
 router = APIRouter(prefix="/shipment-orders", tags=["shipment_orders"])
 
 
+def _url_match_key(url: str) -> str:
+    value = (url or "").strip().lower()
+    if not value:
+        return ""
+    import re
+    m = re.search(r"offer/(\d+)\.html", value)
+    if m:
+        return f"1688:{m.group(1)}"
+    m = re.search(r"[?&]id=(\d+)", value)
+    if m:
+        return f"id:{m.group(1)}"
+    return value.split("?")[0].rstrip("/")
+
+
+def _norm_text(value: str) -> str:
+    return (value or "").strip().replace(" ", "").replace("　", "")
+
+
 class ShipmentOrderItemPatch(BaseModel):
     product_id: int
 
@@ -104,9 +122,6 @@ async def parse_excel(file: UploadFile = File(...)):
         if not name_cn:
             continue
         buy_url = str(row[col_url] or "") if col_url >= 0 else ""
-        # URLはofferIDまでに正規化（?以降除去）
-        if "?" in buy_url:
-            buy_url = buy_url.split("?")[0]
         items_raw.append({
             "name_cn": name_cn,
             "color": str(row[col_color] or "") if col_color >= 0 else "",
@@ -128,23 +143,72 @@ async def parse_excel(file: UploadFile = File(...)):
 
 @router.post("/match")
 def match_products(items: List[dict], db: Session = Depends(get_db)):
-    """URLで楽天商品マスタと照合して照合結果を返す"""
+    """配送依頼明細を楽天商品マスタと照合して照合結果を返す"""
     rakuten_products = db.query(RakutenProduct).filter(RakutenProduct.buy_url.isnot(None)).all()
+    pending_rows = (
+        db.query(RakutenOrderHistory.sku, sqlfunc.sum(RakutenOrderHistory.qty))
+        .filter(RakutenOrderHistory.is_deleted == False, RakutenOrderHistory.is_delivered == False)
+        .group_by(RakutenOrderHistory.sku)
+        .all()
+    )
+    pending_by_sku = {sku: qty or 0 for sku, qty in pending_rows}
 
-    def normalize_url(url: str) -> str:
-        if not url:
-            return ""
-        url = url.split("?")[0].rstrip("/")
-        return url.lower()
+    url_key_counts = {}
+    for p in rakuten_products:
+        key = _url_match_key(p.buy_url or "")
+        if key:
+            url_key_counts[key] = url_key_counts.get(key, 0) + 1
 
-    url_map = {normalize_url(p.buy_url): p for p in rakuten_products if p.buy_url}
+    def score_product(item: dict, product: RakutenProduct) -> int:
+        score = 0
+        item_key = _url_match_key(item.get("buy_url", ""))
+        product_key = _url_match_key(product.buy_url or "")
+        if item_key and product_key and item_key == product_key:
+            score += 45
+            if url_key_counts.get(product_key, 0) == 1:
+                score += 10
+
+        color = _norm_text(item.get("color", ""))
+        size = _norm_text(item.get("size", ""))
+        spec = _norm_text(product.supplier_spec or "")
+        if spec and color and spec == color:
+            score += 35
+        elif spec and color and size and spec in {
+            _norm_text(f"{item.get('color', '')}、{item.get('size', '')}"),
+            _norm_text(f"{item.get('color', '')} {item.get('size', '')}"),
+        }:
+            score += 35
+        elif spec and color and (spec in color or color in spec):
+            score += 18
+
+        try:
+            item_price = float(item.get("unit_price_cny") or 0)
+            product_price = float(product.price or 0)
+            if item_price > 0 and abs(item_price - product_price) < 0.011:
+                score += 15
+        except Exception:
+            pass
+        try:
+            set_size = product.set_size or 1
+            received_qty = int(item.get("qty") or 0) // set_size if set_size > 1 else int(item.get("qty") or 0)
+            pending_qty = (pending_by_sku.get(product.sku, 0) or 0) + (product.inbound or 0) + (product.standard_stock or 0)
+            if received_qty > 0 and pending_qty == received_qty:
+                score += 25
+        except Exception:
+            pass
+        return score
 
     matched = []
     unmatched = []
     for item in items:
-        norm = normalize_url(item.get("buy_url", ""))
-        product = url_map.get(norm)
-        if product:
+        candidates = sorted(
+            ((score_product(item, p), p) for p in rakuten_products),
+            key=lambda x: x[0],
+            reverse=True,
+        )
+        best_score, product = candidates[0] if candidates else (0, None)
+        second_score = candidates[1][0] if len(candidates) > 1 else 0
+        if product and best_score >= 50 and best_score > second_score:
             matched.append({**item, "product_id": product.id, "sku": product.sku, "name_jp": product.name})
         else:
             unmatched.append(item)
@@ -294,12 +358,19 @@ def receive_shipment(order_id: int, db: Session = Depends(get_db)):
             skipped += 1
             continue
 
+        # 配送依頼の数量は仕入れ単位。販売在庫はset_sizeで割った単位で管理する。
+        set_size = product.set_size or 1
+        received_qty = item.qty // set_size if set_size > 1 else item.qty
+        if received_qty <= 0:
+            skipped += 1
+            continue
+
         # 在庫加算
-        product.stock = (product.stock or 0) + item.qty
+        product.stock = (product.stock or 0) + received_qty
         updated += 1
 
         # 発注済みリストをSKU・古い順に消化
-        remaining = item.qty
+        remaining = received_qty
         orders = db.query(RakutenOrderHistory).filter(
             RakutenOrderHistory.sku == product.sku,
             RakutenOrderHistory.is_deleted == False,
@@ -316,6 +387,16 @@ def receive_shipment(order_id: int, db: Session = Depends(get_db)):
                 o.qty -= remaining
                 remaining = 0
                 order_consumed += 1
+
+        # 旧方式で商品マスタに残っている発注済1/2も、移行漏れ対策として消化する。
+        if remaining > 0:
+            consume_legacy = min(remaining, product.inbound or 0)
+            product.inbound = (product.inbound or 0) - consume_legacy
+            remaining -= consume_legacy
+        if remaining > 0:
+            consume_legacy2 = min(remaining, product.standard_stock or 0)
+            product.standard_stock = (product.standard_stock or 0) - consume_legacy2
+            remaining -= consume_legacy2
         consumed_skus.add(product.sku)
 
     # 発注済1が空になったSKUは、残っている発注済2を発注済1へ繰り上げる

@@ -207,8 +207,12 @@ def list_stock(db: Session = Depends(get_db)):
         .order_by(RakutenProduct.sku.asc())
         .all()
     )
+    ordered1_by_sku, ordered2_by_sku = _ordered_by_sku_stage(db)
     result = []
     for p in products:
+        order_managed = bool((p.buy_url or "").strip()) and not _is_manufacturer_product(p)
+        inbound = ordered1_by_sku.get(p.sku, 0) if order_managed else (p.inbound or 0)
+        standard_stock = ordered2_by_sku.get(p.sku, 0) if order_managed else (p.standard_stock or 0)
         selling_price = p.selling_price
         cost_jpy = p.cost_jpy
         shipping_fee = p.shipping_fee if p.shipping_fee is not None else 180
@@ -222,8 +226,8 @@ def list_stock(db: Session = Depends(get_db)):
             "spec": p.spec,
             "customer_memo": p.customer_memo,
             "stock": p.stock,
-            "inbound": p.inbound,
-            "standard_stock": p.standard_stock,
+            "inbound": inbound,
+            "standard_stock": standard_stock,
             "sales_30_recent": p.sales_30_recent,
             "sales_30_prev": p.sales_30_prev,
             "selling_price": selling_price,
@@ -649,7 +653,7 @@ def get_recommendations(db: Session = Depends(get_db)):
         sales_prev   = agg.get("prev",   0)
         calc = calc_rakuten_order(
             stock=p.stock or 0,
-            inbound=(p.inbound or 0) + (p.standard_stock or 0),
+            inbound=0,
             ordered=ordered,
             sales_30_recent=sales_recent,
             sales_30_prev=sales_prev,
@@ -673,12 +677,12 @@ def get_recommendations(db: Session = Depends(get_db)):
             "set_size":        p.set_size or 1,
             "set_components":  sc_parsed,
             "stock":           p.stock or 0,
-            "inbound":         (p.inbound or 0) + (p.standard_stock or 0),
-            "inbound_1":       p.inbound or 0,
-            "inbound_2":       p.standard_stock or 0,
+            "inbound":         ordered,
+            "inbound_1":       ordered_1,
+            "inbound_2":       ordered_2,
             "ordered":         ordered,
-            "ordered_1":       (p.inbound or 0) + ordered_1,
-            "ordered_2":       (p.standard_stock or 0) + ordered_2,
+            "ordered_1":       ordered_1,
+            "ordered_2":       ordered_2,
             "total_stock":     calc.total_stock,
             "daily_avg":       calc.daily_avg,
             "days_left":       calc.days_left,
@@ -722,7 +726,7 @@ def get_all_products_order(db: Session = Depends(get_db)):
         ordered = ordered_1 + ordered_2
         calc = calc_rakuten_order(
             stock=p.stock or 0,
-            inbound=(p.inbound or 0) + (p.standard_stock or 0),
+            inbound=0,
             ordered=ordered,
             sales_30_recent=p.sales_30_recent or 0,
             sales_30_prev=p.sales_30_prev or 0,
@@ -744,12 +748,12 @@ def get_all_products_order(db: Session = Depends(get_db)):
             "buy_url":         p.buy_url or "",
             "set_components":  sc_parsed,
             "stock":           p.stock or 0,
-            "inbound":         (p.inbound or 0) + (p.standard_stock or 0),
-            "inbound_1":       p.inbound or 0,
-            "inbound_2":       p.standard_stock or 0,
+            "inbound":         ordered,
+            "inbound_1":       ordered_1,
+            "inbound_2":       ordered_2,
             "ordered":         ordered,
-            "ordered_1":       (p.inbound or 0) + ordered_1,
-            "ordered_2":       (p.standard_stock or 0) + ordered_2,
+            "ordered_1":       ordered_1,
+            "ordered_2":       ordered_2,
             "total_stock":     calc.total_stock,
             "daily_avg":       calc.daily_avg,
             "days_left":       calc.days_left,
@@ -856,6 +860,75 @@ def delete_order(order_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@router.post("/orders/migrate-legacy-inbound")
+def migrate_legacy_inbound(body: Optional[dict] = None, db: Session = Depends(get_db)):
+    """商品マスタに残っている旧発注済1/2を発注済みリストへ移行する。
+    body: {"dry_run": true} ならプレビューのみ。{"dry_run": false} で移行して旧値を0にする。
+    """
+    body = body or {}
+    dry_run = body.get("dry_run", True)
+    ordered_at = date.today()
+    if body.get("ordered_at"):
+        try:
+            ordered_at = date.fromisoformat(str(body.get("ordered_at"))[:10])
+        except Exception:
+            ordered_at = date.today()
+
+    products = db.query(RakutenProduct).filter(
+        RakutenProduct.is_active == True,
+        RakutenProduct.is_component == False,
+    ).order_by(RakutenProduct.sku.asc()).all()
+
+    rows = []
+    for p in products:
+        if not (p.buy_url or "").strip() or _is_manufacturer_product(p):
+            continue
+        inbound_1 = p.inbound or 0
+        inbound_2 = p.standard_stock or 0
+        if inbound_1 <= 0 and inbound_2 <= 0:
+            continue
+        rows.append({
+            "id": p.id,
+            "sku": p.sku,
+            "name": p.name,
+            "inbound_1": inbound_1,
+            "inbound_2": inbound_2,
+        })
+        if dry_run:
+            continue
+        if inbound_1 > 0:
+            db.add(RakutenOrderHistory(
+                sku=p.sku,
+                name=p.name,
+                qty=inbound_1,
+                stage=1,
+                ordered_at=ordered_at,
+                memo=body.get("memo") or "旧発注済1から移行",
+            ))
+        if inbound_2 > 0:
+            db.add(RakutenOrderHistory(
+                sku=p.sku,
+                name=p.name,
+                qty=inbound_2,
+                stage=2,
+                ordered_at=ordered_at,
+                memo=body.get("memo") or "旧発注済2から移行",
+            ))
+        p.inbound = 0
+        p.standard_stock = 0
+
+    if not dry_run:
+        db.commit()
+
+    return {
+        "dry_run": dry_run,
+        "count": len(rows),
+        "total_inbound_1": sum(r["inbound_1"] for r in rows),
+        "total_inbound_2": sum(r["inbound_2"] for r in rows),
+        "rows": rows,
+    }
+
+
 # ============================================================
 # Excel発注書ダウンロード（タオタロウ形式）
 # ============================================================
@@ -865,16 +938,30 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
     """発注リストをタオタロウ形式Excelで出力"""
     from app.services.excel_export import build_rakuten_taotaro_excel
     order_items = body.get("items", [])  # [{sku, qty}, ...]
+    record_history = bool(body.get("record_history"))
+    ordered_at = date.today()
+    if body.get("ordered_at"):
+        try:
+            ordered_at = date.fromisoformat(str(body.get("ordered_at"))[:10])
+        except Exception:
+            ordered_at = date.today()
 
     excel_items = []
+    history_items: dict[str, dict] = {}
     for oi in order_items:
         sku = oi.get("sku")
-        qty = oi.get("qty", 0)
+        try:
+            qty = int(float(oi.get("qty", 0)))
+        except Exception:
+            qty = 0
         if not sku or not qty:
             continue
         p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
         if not p:
             continue
+        if record_history:
+            h = history_items.setdefault(sku, {"sku": sku, "name": p.name, "qty": 0})
+            h["qty"] += qty
         # 本体行（set_componentsありかつspec空の場合はスキップ）
         if not (p.set_components and not (p.spec or "").strip()):
             excel_items.append({
@@ -922,6 +1009,22 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
             })
 
     xls = build_rakuten_taotaro_excel(excel_items)
+    if record_history and history_items:
+        for item in history_items.values():
+            has_pending = db.query(RakutenOrderHistory).filter(
+                RakutenOrderHistory.sku == item["sku"],
+                RakutenOrderHistory.is_deleted == False,
+                RakutenOrderHistory.is_delivered == False,
+            ).first() is not None
+            db.add(RakutenOrderHistory(
+                sku=item["sku"],
+                name=item["name"],
+                qty=item["qty"],
+                stage=2 if has_pending else 1,
+                ordered_at=ordered_at,
+                memo=body.get("memo") or "発注Excelから登録",
+            ))
+        db.commit()
     return StreamingResponse(
         io.BytesIO(xls),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
