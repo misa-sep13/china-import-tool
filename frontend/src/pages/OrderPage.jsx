@@ -251,7 +251,9 @@ export default function OrderPage() {
                       <th>商品名</th>
                       <th>色/サイズ</th>
                       <th>残日数</th>
-                      <th>在庫</th>
+                      <th>販売可能</th>
+                      <th>納品中</th>
+                      <th>全在庫</th>
                       <th>発注済</th>
                       <th>日販</th>
                       <th>発注数</th>
@@ -279,7 +281,9 @@ export default function OrderPage() {
                         </td>
                         <td style={{ fontSize: 12, color: '#666' }}>{[item.color, item.size].filter(Boolean).join(' / ')}</td>
                         <td>{daysBadge(item.days_left)}</td>
-                        <td style={{ textAlign: 'right' }}>{item.stock}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{item.available}</td>
+                        <td style={{ textAlign: 'right', color: item.inbound > 0 ? '#2563eb' : '#bbb' }}>{item.inbound || '-'}</td>
+                        <td style={{ textAlign: 'right', color: '#666' }}>{item.stock}</td>
                         <td style={{ textAlign: 'right', color: item.ordered > 0 ? '#e94560' : '#bbb', fontWeight: item.ordered > 0 ? 600 : 400 }}>
                           {item.ordered > 0 ? item.ordered : '-'}
                         </td>
@@ -316,7 +320,7 @@ export default function OrderPage() {
                   </tbody>
                   <tfoot>
                     <tr>
-                      <td colSpan={10} style={{ textAlign: 'right', fontWeight: 700, paddingTop: 12 }}>合計（選択分）</td>
+                      <td colSpan={12} style={{ textAlign: 'right', fontWeight: 700, paddingTop: 12 }}>合計（選択分）</td>
                       <td style={{ textAlign: 'right', fontWeight: 700 }}>
                         {totalYuan.toFixed(0)} 元
                       </td>
