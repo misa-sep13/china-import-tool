@@ -84,6 +84,9 @@ def fetch_inventory() -> Dict[str, dict]:
             "granularityType": "Marketplace",
             "granularityId": mp,
             "marketplaceIds": mp,
+            # details=true を付けないと inventoryDetails（販売可能数・納品中・作業中の内訳）が
+            # 返らず、totalQuantity しか取れない（納品中が常に0になる原因だった）
+            "details": "true",
             **({"nextToken": next_token} if next_token else {}),
         })
         data = _call_sp_api(f"/fba/inventory/v1/summaries?{params}")
@@ -91,18 +94,23 @@ def fetch_inventory() -> Dict[str, dict]:
         for item in data.get("payload", {}).get("inventorySummaries", []):
             fnsku = item.get("fnSku", "")
             asin = item.get("asin", "")
-            # fulfillableQuantity=0（売り切れ）は正しい0として扱う。
-            # `or` だと0が偽扱いされtotalQuantity(返品処理中等を含む)に化けて
-            # 売り切れ商品に幽霊在庫が出るため、None判定にする。
-            fulfillable = item.get("fulfillableQuantity")
+            details = item.get("inventoryDetails") or {}
+            # fulfillableQuantity=0（売り切れ）は正しい0として扱う（or判定だと総数に化ける）
+            fulfillable = details.get("fulfillableQuantity")
+            inbound = (
+                (details.get("inboundWorkingQuantity") or 0)
+                + (details.get("inboundShippedQuantity") or 0)
+                + (details.get("inboundReceivingQuantity") or 0)
+            )
+            reserved = (details.get("reservedQuantity") or {}).get("totalReservedQuantity") or 0
             result[fnsku] = {
                 "fnsku": fnsku,
                 "asin": asin,
                 "sku": item.get("sellerSku", ""),
                 "name": item.get("productName", ""),
                 "available": fulfillable if fulfillable is not None else item.get("totalQuantity", 0),
-                "inbound": item.get("inboundWorkingQuantity", 0) + item.get("inboundShippedQuantity", 0) + item.get("inboundReceivingQuantity", 0),
-                "processing": item.get("reservedQuantity", 0),
+                "inbound": inbound,
+                "processing": reserved,
             }
 
         next_token = data.get("pagination", {}).get("nextToken")
