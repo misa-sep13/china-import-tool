@@ -470,7 +470,7 @@ export default function RakutenProductsPage() {
                   <input {...f('rakuten_item_url')} placeholder="例: s08-2" />
                 </div>
                 <div className="form-group">
-                  <label>輸送中2</label>
+                  <label>発注済2</label>
                   <input type="number" min={0} {...f('standard_stock', 'number')} />
                 </div>
               </div>
@@ -485,7 +485,7 @@ export default function RakutenProductsPage() {
                   <input type="number" min={0} {...f('stock', 'number')} />
                 </div>
                 <div className="form-group">
-                  <label>輸送中1</label>
+                  <label>発注済1</label>
                   <input type="number" min={0} {...f('inbound', 'number')} />
                 </div>
                 <div className="form-group">

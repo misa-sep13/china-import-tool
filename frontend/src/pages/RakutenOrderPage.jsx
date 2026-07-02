@@ -343,6 +343,14 @@ export default function RakutenOrderPage() {
     onSuccess: () => qc.refetchQueries(['rakuten-order-history']),
   })
 
+  const changeStage = useMutation({
+    mutationFn: ({ id, stage }) => api.patch(`/rakuten/orders/history/${id}/stage`, { stage }),
+    onSuccess: () => {
+      qc.refetchQueries(['rakuten-order-history'])
+      qc.invalidateQueries(['rakuten-all-products-order'])
+    },
+  })
+
   const settings = allData?.settings || {}
   const thresholdDays = settings.threshold_days ?? 40
 
@@ -448,7 +456,7 @@ export default function RakutenOrderPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-                  {['商品名 / SKU', '実在庫', '輸送中', '発注済', '全在庫', '日販', '在庫日数', '成長率', '提案発注数', '発注'].map(h => (
+                  {['商品名 / SKU', '実在庫', '発注済1', '発注済2', '全在庫', '日販', '在庫日数', '成長率', '提案発注数', '発注'].map(h => (
                     <th key={h} style={{ padding: '10px 12px', textAlign: 'center', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -487,8 +495,8 @@ export default function RakutenOrderPage() {
                         )}
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600 }}>{item.stock}</td>
-                      <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{item.inbound}</td>
-                      <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{item.ordered}</td>
+                      <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{item.ordered_1 ?? item.ordered}</td>
+                      <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{item.ordered_2 ?? 0}</td>
                       <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600 }}>{item.total_stock}</td>
                       <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>
                         {item.daily_avg > 0 ? item.daily_avg.toFixed(1) : '—'}
@@ -571,6 +579,7 @@ export default function RakutenOrderPage() {
                     <th>SKU</th>
                     <th>商品名</th>
                     <th>発注数</th>
+                    <th style={{ textAlign: 'center' }}>ステージ</th>
                     <th>メモ</th>
                     <th></th>
                   </tr>
@@ -584,6 +593,22 @@ export default function RakutenOrderPage() {
                       <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{row.sku}</td>
                       <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name || '—'}</td>
                       <td style={{ textAlign: 'right', fontWeight: 600 }}>{row.qty}</td>
+                      <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                        <span style={{
+                          padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700,
+                          background: (row.stage ?? 1) === 2 ? '#fef9c3' : '#dbeafe',
+                          color: (row.stage ?? 1) === 2 ? '#854d0e' : '#1e40af',
+                        }}>
+                          発注済{row.stage ?? 1}
+                        </span>
+                        <button
+                          className="btn btn-sm"
+                          style={{ marginLeft: 6, fontSize: 11, padding: '2px 8px' }}
+                          disabled={changeStage.isPending}
+                          title={`発注済${(row.stage ?? 1) === 2 ? 1 : 2}に切り替えます`}
+                          onClick={() => changeStage.mutate({ id: row.id, stage: (row.stage ?? 1) === 2 ? 1 : 2 })}
+                        >⇄</button>
+                      </td>
                       <td style={{ fontSize: 12, color: '#666' }}>{row.memo || '—'}</td>
                       <td>
                         <button
@@ -604,7 +629,7 @@ export default function RakutenOrderPage() {
                     <td style={{ textAlign: 'right', fontWeight: 700 }}>
                       {history.reduce((s, r) => s + r.qty, 0)} 個
                     </td>
-                    <td colSpan={2}></td>
+                    <td colSpan={3}></td>
                   </tr>
                 </tfoot>
               </table>

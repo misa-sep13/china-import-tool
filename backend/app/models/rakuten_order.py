@@ -9,6 +9,7 @@ class RakutenOrderHistory(Base):
     sku          = Column(String, index=True)
     name         = Column(String)
     qty          = Column(Integer)
+    stage        = Column(Integer, default=1)  # 発注済1 / 発注済2（追加発注）
     ordered_at   = Column(Date)
     is_delivered = Column(Boolean, default=False)
     is_deleted   = Column(Boolean, default=False)

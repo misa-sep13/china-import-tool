@@ -402,7 +402,7 @@ async def bulk_update_stock(body: dict, background_tasks: BackgroundTasks, db: S
     db.commit()
 
     # Step3: RMSに反映するitemsを組み立て（更新したSKU＋影響したセット商品）。
-    # 実在庫を更新していない場合（輸送中のみ等）はupdated_skusが空なのでpushは発生しない。
+    # 実在庫を更新していない場合（発注済1/2のみ等）はupdated_skusが空なのでpushは発生しない。
     if settings and settings.rms_service_secret and settings.rms_license_key and updated_skus:
         for p in all_products:
             if p.sku in updated_skus or (p.set_components and any(c.get("sku") in updated_skus for c in _parse(p))):
@@ -422,7 +422,7 @@ async def bulk_update_stock(body: dict, background_tasks: BackgroundTasks, db: S
 @router.post("/products/{product_id}/receive-manufacturer")
 async def receive_manufacturer_stock(product_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """メーカー品の入荷処理。
-    輸送中1(inbound)を実在庫へ加算し、輸送中2(旧standard_stock)を輸送中1へ繰り上げる。
+    発注済1(inbound)を実在庫へ加算し、発注済2(旧standard_stock)を発注済1へ繰り上げる。
     輸入品は発注管理・インボイス取込が正規ルートなので、この操作では扱わない。
     """
     p = db.query(RakutenProduct).filter(
@@ -436,7 +436,7 @@ async def receive_manufacturer_stock(product_id: int, background_tasks: Backgrou
 
     received_qty = p.inbound or 0
     if received_qty <= 0:
-        raise HTTPException(400, "輸送中1が0のため入荷できません")
+        raise HTTPException(400, "発注済1が0のため入荷できません")
 
     next_inbound = p.standard_stock or 0
     before = {
@@ -532,6 +532,21 @@ def update_stock(product_id: int, body: dict, db: Session = Depends(get_db)):
 # Order Recommendations（発注推奨リスト）
 # ============================================================
 
+def _ordered_by_sku_stage(db):
+    """未納品の発注数をSKU×ステージ（発注済1/発注済2）ごとに集計"""
+    rows = (
+        db.query(RakutenOrderHistory.sku, RakutenOrderHistory.stage, func.sum(RakutenOrderHistory.qty))
+        .filter(RakutenOrderHistory.is_delivered == False, RakutenOrderHistory.is_deleted == False)
+        .group_by(RakutenOrderHistory.sku, RakutenOrderHistory.stage)
+        .all()
+    )
+    o1, o2 = {}, {}
+    for sku, stage, qty in rows:
+        target = o2 if stage == 2 else o1  # stageがNULLの既存データは発注済1扱い
+        target[sku] = target.get(sku, 0) + (qty or 0)
+    return o1, o2
+
+
 @router.get("/orders/recommendations")
 def get_recommendations(db: Session = Depends(get_db)):
     settings_row = _get_or_create_settings(db)
@@ -542,13 +557,8 @@ def get_recommendations(db: Session = Depends(get_db)):
         threshold_days=settings_row.threshold_days,
     )
 
-    # 発注済み（未納品）の数量をSKUごとに集計
-    ordered_by_sku = dict(
-        db.query(RakutenOrderHistory.sku, func.sum(RakutenOrderHistory.qty))
-        .filter(RakutenOrderHistory.is_delivered == False, RakutenOrderHistory.is_deleted == False)
-        .group_by(RakutenOrderHistory.sku)
-        .all()
-    )
+    # 発注済み（未納品）の数量をSKU×ステージごとに集計
+    ordered1_by_sku, ordered2_by_sku = _ordered_by_sku_stage(db)
 
     # 全商品を取得
     all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
@@ -631,7 +641,9 @@ def get_recommendations(db: Session = Depends(get_db)):
 
     items = []
     for p in all_order_items:
-        ordered = ordered_by_sku.get(p.sku, 0) or 0
+        ordered_1 = ordered1_by_sku.get(p.sku, 0)
+        ordered_2 = ordered2_by_sku.get(p.sku, 0)
+        ordered = ordered_1 + ordered_2
         agg = unit_sales.get(p.sku, {})
         sales_recent = agg.get("recent", 0)
         sales_prev   = agg.get("prev",   0)
@@ -665,6 +677,8 @@ def get_recommendations(db: Session = Depends(get_db)):
             "inbound_1":       p.inbound or 0,
             "inbound_2":       p.standard_stock or 0,
             "ordered":         ordered,
+            "ordered_1":       (p.inbound or 0) + ordered_1,
+            "ordered_2":       (p.standard_stock or 0) + ordered_2,
             "total_stock":     calc.total_stock,
             "daily_avg":       calc.daily_avg,
             "days_left":       calc.days_left,
@@ -691,12 +705,7 @@ def get_all_products_order(db: Session = Depends(get_db)):
         safety_stock_rate=settings_row.safety_stock_rate,
         threshold_days=settings_row.threshold_days,
     )
-    ordered_by_sku = dict(
-        db.query(RakutenOrderHistory.sku, func.sum(RakutenOrderHistory.qty))
-        .filter(RakutenOrderHistory.is_delivered == False, RakutenOrderHistory.is_deleted == False)
-        .group_by(RakutenOrderHistory.sku)
-        .all()
-    )
+    ordered1_by_sku, ordered2_by_sku = _ordered_by_sku_stage(db)
     all_products = db.query(RakutenProduct).filter(
         RakutenProduct.is_active == True,
     ).all()
@@ -708,7 +717,9 @@ def get_all_products_order(db: Session = Depends(get_db)):
     )
     items = []
     for p in targets:
-        ordered = ordered_by_sku.get(p.sku, 0) or 0
+        ordered_1 = ordered1_by_sku.get(p.sku, 0)
+        ordered_2 = ordered2_by_sku.get(p.sku, 0)
+        ordered = ordered_1 + ordered_2
         calc = calc_rakuten_order(
             stock=p.stock or 0,
             inbound=(p.inbound or 0) + (p.standard_stock or 0),
@@ -737,6 +748,8 @@ def get_all_products_order(db: Session = Depends(get_db)):
             "inbound_1":       p.inbound or 0,
             "inbound_2":       p.standard_stock or 0,
             "ordered":         ordered,
+            "ordered_1":       (p.inbound or 0) + ordered_1,
+            "ordered_2":       (p.standard_stock or 0) + ordered_2,
             "total_stock":     calc.total_stock,
             "daily_avg":       calc.daily_avg,
             "days_left":       calc.days_left,
@@ -757,6 +770,7 @@ class RakutenOrderIn(BaseModel):
     sku:       str
     name:      Optional[str] = None
     qty:       int
+    stage:     Optional[int] = None  # 未指定なら自動振り分け（未納品ありなら発注済2）
     ordered_at: Optional[date] = None
     memo:      Optional[str] = None
 
@@ -765,6 +779,7 @@ class RakutenOrderOut(BaseModel):
     sku:         str
     name:        Optional[str] = None
     qty:         int
+    stage:       Optional[int] = 1
     ordered_at:  Optional[date] = None
     is_delivered: bool
     memo:        Optional[str] = None
@@ -786,10 +801,21 @@ def list_orders(db: Session = Depends(get_db)):
 
 @router.post("/orders/history", response_model=RakutenOrderOut)
 def create_order(data: RakutenOrderIn, db: Session = Depends(get_db)):
+    if data.stage in (1, 2):
+        stage = data.stage
+    else:
+        # 同一SKUに未納品の発注が残っていれば追加発注 → 発注済2
+        has_pending = db.query(RakutenOrderHistory).filter(
+            RakutenOrderHistory.sku == data.sku,
+            RakutenOrderHistory.is_deleted == False,
+            RakutenOrderHistory.is_delivered == False,
+        ).first() is not None
+        stage = 2 if has_pending else 1
     o = RakutenOrderHistory(
         sku=data.sku,
         name=data.name,
         qty=data.qty,
+        stage=stage,
         ordered_at=data.ordered_at or date.today(),
         memo=data.memo,
     )
@@ -797,6 +823,19 @@ def create_order(data: RakutenOrderIn, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(o)
     return o
+
+@router.patch("/orders/history/{order_id}/stage")
+def update_order_stage(order_id: int, body: dict, db: Session = Depends(get_db)):
+    """発注済1⇔発注済2の切り替え"""
+    stage = body.get("stage")
+    if stage not in (1, 2):
+        raise HTTPException(400, "stageは1か2を指定してください")
+    o = db.query(RakutenOrderHistory).filter(RakutenOrderHistory.id == order_id).first()
+    if not o:
+        raise HTTPException(404)
+    o.stage = stage
+    db.commit()
+    return {"ok": True, "stage": stage}
 
 @router.patch("/orders/history/{order_id}/deliver")
 def mark_delivered(order_id: int, db: Session = Depends(get_db)):
@@ -913,9 +952,9 @@ CSV_COLUMN_LABELS = {
     "rakuten_item_url": "在庫管理番号",
     "rakuten_sku_id":   "楽天SKU管理番号",
     "supplier":         "仕入先",
-    "standard_stock":   "輸送中2",
+    "standard_stock":   "発注済2",
     "stock":            "実在庫(手持ち)",
-    "inbound":          "輸送中1",
+    "inbound":          "発注済1",
     "sales_30_recent":  "直近30日販売数",
     "sales_30_prev":    "60日前〜31日前の販売数",
     "customer_memo":    "お客様専用メモ",
@@ -1006,7 +1045,10 @@ def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_
     # ヘッダーを内部キー名にマッピング（日本語ラベル or 英語キー どちらでも受け付ける）
     label_to_key = {v: k for k, v in CSV_COLUMN_LABELS.items()}
     label_to_key["規定在庫数"] = "standard_stock"
+    # 旧ラベル（輸送中系）のCSVも引き続き取り込めるようにエイリアスを残す
     label_to_key["輸送中"] = "inbound"
+    label_to_key["輸送中1"] = "inbound"
+    label_to_key["輸送中2"] = "standard_stock"
     label_to_key.update({k: k for k in CSV_COLUMNS})  # 英語キーもOK
 
     created = updated = skipped = 0

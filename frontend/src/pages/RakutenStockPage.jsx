@@ -14,7 +14,7 @@ export default function RakutenStockPage() {
   const toggleExpand = useCallback((sku) => {
     setExpanded(prev => ({ ...prev, [sku]: !prev[sku] }))
   }, [])
-  // { [id]: { stock, inbound, standard_stock } } standard_stockは輸送中2として利用
+  // { [id]: { stock, inbound, standard_stock } } inbound=発注済1 / standard_stock=発注済2として利用
   const [edits, setEdits] = useState({})
   const [saving, setSaving] = useState(false)
   const [receiveResult, setReceiveResult] = useState(null)
@@ -161,7 +161,7 @@ export default function RakutenStockPage() {
     const inbound = Number(p.inbound || 0)
     const inbound2 = Number(p.standard_stock || 0)
     if (inbound <= 0) return
-    const message = `${p.sku} のメーカー入荷を反映しますか？\n\n実在庫に +${inbound}\n輸送中1: ${inbound} → ${inbound2}\n輸送中2: ${inbound2} → 0`
+    const message = `${p.sku} のメーカー入荷を反映しますか？\n\n実在庫に +${inbound}\n発注済1: ${inbound} → ${inbound2}\n発注済2: ${inbound2} → 0`
     if (!window.confirm(message)) return
     setReceiveResult(null)
     receiveMutation.mutate(p.id)
@@ -232,7 +232,7 @@ export default function RakutenStockPage() {
           <table className="sticky-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-                {['SKU', '商品名', '仕様', '仕入原価(円)', '販売価格(円)', '送料', '手数料', '利益額', '利益率', '実在庫', '輸送中1', '輸送中2', '直近30日', '前30日', ssPeriod ? `SS(${ssPeriod})` : 'SS', '備考', '操作'].map(h => (
+                {['SKU', '商品名', '仕様', '仕入原価(円)', '販売価格(円)', '送料', '手数料', '利益額', '利益率', '実在庫', '発注済1', '発注済2', '直近30日', '前30日', ssPeriod ? `SS(${ssPeriod})` : 'SS', '備考', '操作'].map(h => (
                   <th key={h} style={{ padding: '10px 10px', textAlign: 'center', color: '#333', whiteSpace: 'nowrap', fontWeight: 700, fontSize: 12 }}>{h}</th>
                 ))}
               </tr>
@@ -392,7 +392,7 @@ function StockRow({
           onFocus={selectIfZero}
           onWheel={preventWheelChange}
           onChange={e => setEdit(p.id, 'inbound', e.target.value)}
-          title={inboundDirty ? '輸送中1を保存します' : '輸送中1は保存対象外です'}
+          title={inboundDirty ? '発注済1を保存します' : '発注済1は保存対象外です'}
           style={inputStyle(inboundDirty)}
         />
       </td>
@@ -403,7 +403,7 @@ function StockRow({
           onFocus={selectIfZero}
           onWheel={preventWheelChange}
           onChange={e => setEdit(p.id, 'standard_stock', e.target.value)}
-          title={inbound2Dirty ? '輸送中2を保存します' : '輸送中2は保存対象外です'}
+          title={inbound2Dirty ? '発注済2を保存します' : '発注済2は保存対象外です'}
           style={inputStyle(inbound2Dirty)}
         />
       </td>
@@ -419,7 +419,7 @@ function StockRow({
             className="btn"
             onClick={() => onReceiveManufacturer?.(p)}
             disabled={!canReceive || isReceiving}
-            title={isDirty ? '保存してから入荷してください' : Number(p.inbound || 0) <= 0 ? '輸送中1が0です' : '輸送中1を実在庫へ入荷します'}
+            title={isDirty ? '保存してから入荷してください' : Number(p.inbound || 0) <= 0 ? '発注済1が0です' : '発注済1を実在庫へ入荷します'}
             style={{
               fontSize: 12,
               padding: '4px 10px',

@@ -67,6 +67,7 @@ def _migrate():
         ("rakuten_products","supplier_spec",       "ALTER TABLE rakuten_products ADD COLUMN supplier_spec VARCHAR"),
         ("rakuten_products","invoice_note",        "ALTER TABLE rakuten_products ADD COLUMN invoice_note TEXT"),
         ("rakuten_products","purchase_components", "ALTER TABLE rakuten_products ADD COLUMN purchase_components TEXT"),
+        ("rakuten_order_history","stage",          "ALTER TABLE rakuten_order_history ADD COLUMN stage INTEGER DEFAULT 1"),
         # 就労支援在庫 追加フィールド
         ("welfare_inventory_items","product_id",             "ALTER TABLE welfare_inventory_items ADD COLUMN product_id INTEGER"),
         ("welfare_inventory_items","sku",                    "ALTER TABLE welfare_inventory_items ADD COLUMN sku VARCHAR"),

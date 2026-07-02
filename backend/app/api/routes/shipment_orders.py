@@ -283,6 +283,7 @@ def receive_shipment(order_id: int, db: Session = Depends(get_db)):
     updated = 0
     skipped = 0
     order_consumed = 0  # 発注済みリストから消化した件数
+    consumed_skus = set()  # 消化が発生したSKU（発注済2→1の繰り上げ判定用）
 
     for item in items:
         if not item.product_id:
@@ -315,8 +316,24 @@ def receive_shipment(order_id: int, db: Session = Depends(get_db)):
                 o.qty -= remaining
                 remaining = 0
                 order_consumed += 1
+        consumed_skus.add(product.sku)
+
+    # 発注済1が空になったSKUは、残っている発注済2を発注済1へ繰り上げる
+    promoted = 0
+    for sku in consumed_skus:
+        remaining_orders = db.query(RakutenOrderHistory).filter(
+            RakutenOrderHistory.sku == sku,
+            RakutenOrderHistory.is_deleted == False,
+            RakutenOrderHistory.is_delivered == False,
+        ).all()
+        if any((o.stage or 1) == 1 for o in remaining_orders):
+            continue
+        for o in remaining_orders:
+            if o.stage == 2:
+                o.stage = 1
+                promoted += 1
 
     order.status = "received"
     order.received_at = datetime.now(timezone.utc)
     db.commit()
-    return {"updated": updated, "skipped": skipped, "order_consumed": order_consumed}
+    return {"updated": updated, "skipped": skipped, "order_consumed": order_consumed, "stage_promoted": promoted}
