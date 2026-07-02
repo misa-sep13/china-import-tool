@@ -57,13 +57,14 @@ def _call_sp_api(path: str) -> dict:
             "Content-Type": "application/json",
         }
     )
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             with urllib.request.urlopen(req, timeout=15) as res:
                 return json.loads(res.read())
         except urllib.error.HTTPError as e:
             if e.code == 429:
-                time.sleep((attempt + 1) * 2)
+                # レート制限: 指数バックオフ(2,4,8,16,32秒)で粘る
+                time.sleep(2 ** (attempt + 1))
                 continue
             body = e.read().decode()
             raise Exception(f"HTTP {e.code}: {body}")
@@ -90,12 +91,16 @@ def fetch_inventory() -> Dict[str, dict]:
         for item in data.get("payload", {}).get("inventorySummaries", []):
             fnsku = item.get("fnSku", "")
             asin = item.get("asin", "")
+            # fulfillableQuantity=0（売り切れ）は正しい0として扱う。
+            # `or` だと0が偽扱いされtotalQuantity(返品処理中等を含む)に化けて
+            # 売り切れ商品に幽霊在庫が出るため、None判定にする。
+            fulfillable = item.get("fulfillableQuantity")
             result[fnsku] = {
                 "fnsku": fnsku,
                 "asin": asin,
                 "sku": item.get("sellerSku", ""),
                 "name": item.get("productName", ""),
-                "available": item.get("fulfillableQuantity") or item.get("totalQuantity", 0),
+                "available": fulfillable if fulfillable is not None else item.get("totalQuantity", 0),
                 "inbound": item.get("inboundWorkingQuantity", 0) + item.get("inboundShippedQuantity", 0) + item.get("inboundReceivingQuantity", 0),
                 "processing": item.get("reservedQuantity", 0),
             }
@@ -170,6 +175,8 @@ def fetch_catalog_info(asin_list: List[str]) -> Dict[str, dict]:
     return result
 
 def _fetch_sales_one(asin: str, days: int, end_dt) -> tuple:
+    """1ASIN×1期間の日販を取得。失敗時はNoneを返す（0.0を返すと「売れていない」と
+    区別できず、レート制限失敗が日販の過小評価→発注推奨から漏れる事故になるため）"""
     from datetime import timedelta
     mp = "A1VC38T7YXB528"
     start = end_dt - timedelta(days=days)
@@ -184,7 +191,7 @@ def _fetch_sales_one(asin: str, days: int, end_dt) -> tuple:
         units = sum(m.get("unitCount", 0) for m in data.get("payload", []))
         return asin, round(units / days, 4)
     except Exception:
-        return asin, 0.0
+        return asin, None
 
 
 def fetch_all_sales(asin_list: List[str]) -> tuple:
@@ -208,15 +215,27 @@ def fetch_all_sales(asin_list: List[str]) -> tuple:
     # now()を1回だけ取得して全タスクで共有（期間のブレをなくす）
     end_dt = datetime.now(timezone.utc)
 
-    period_results = {d: {a: 0.0 for a in asin_list} for d in missing_periods}
+    period_results = {d: {a: None for a in asin_list} for d in missing_periods}
     tasks = [(a, d) for a in asin_list for d in missing_periods]
 
-    with ThreadPoolExecutor(max_workers=10) as ex:
+    # 並列数を抑えてレート制限(429)自体を減らす（10だと429多発で欠損が出ていた）
+    with ThreadPoolExecutor(max_workers=4) as ex:
         futures = {ex.submit(_fetch_sales_one, a, d, end_dt): (a, d) for a, d in tasks}
         for f in as_completed(futures):
             asin, val = f.result()
             a, d = futures[f]
             period_results[d][a] = val
+
+    # 失敗(None)分は間隔を空けて順次リトライ。それでも失敗したものだけ0にする
+    import logging
+    failed = [(d, a) for d in missing_periods for a, v in period_results[d].items() if v is None]
+    for d, a in failed:
+        time.sleep(1)
+        _, v = _fetch_sales_one(a, d, end_dt)
+        if v is None:
+            logging.getLogger("amazon").warning(f"売上取得失敗(0扱い): asin={a} period={d}d")
+            v = 0.0
+        period_results[d][a] = v
 
     for d in missing_periods:
         _cache_set(f"sales_{d}", period_results[d])
