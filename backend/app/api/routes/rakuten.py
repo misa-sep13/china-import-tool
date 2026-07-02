@@ -1892,6 +1892,39 @@ def get_sales_sync_status(job_id: str):
     }
 
 
+class SalesApplyRequest(BaseModel):
+    # {sku or rakuten_sku_id: {"recent":int,"prev":int,"total_90":int,"stockout_days":int}}
+    sales: dict
+
+
+@router.post("/rms/sales/apply")
+def apply_sales(req: SalesApplyRequest, db: Session = Depends(get_db)):
+    """GitHub Actions側で集計済みのSKU別販売数を受け取り、商品の販売数を更新する。
+    重い受注取得はGitHub側(メモリ7GB)で行い、Renderは軽いDB書き込みだけを担当する
+    （60日分の受注取得をRenderで走らせると512MB超過でOOMするため）。"""
+    sales = req.sales or {}
+    products = db.query(RakutenProduct).filter(
+        RakutenProduct.is_active == True,
+        RakutenProduct.is_component == False,
+    ).all()
+    updated = 0
+    for p in products:
+        s = sales.get(p.rakuten_sku_id or "") or sales.get(p.sku or "") or {}
+        if s:
+            p.sales_30_recent  = s.get("recent", 0)
+            p.sales_30_prev    = s.get("prev", 0)
+            p.sales_90         = s.get("total_90", 0)
+            p.stockout_days_90 = s.get("stockout_days", 0)
+            p.sales_updated_at = _now_jst()
+            updated += 1
+    db.commit()
+    return {
+        "synced_skus": len(sales),
+        "updated_products": updated,
+        "last_sync": _now_jst().isoformat(),
+    }
+
+
 # ============ スーパーセール(SS)販売数の集計・保存 ============
 
 def _run_ss_sync_job(job_id: str, service_secret: str, license_key: str, period_key: str,
