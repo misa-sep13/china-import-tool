@@ -1524,6 +1524,29 @@ async def rakuten_parse_excel(file: UploadFile = File(...), db: Session = Depend
 
     parsed = _parse_rakuten_invoice_workbook(wb)
     unique_by_url = _rakuten_products_by_unique_url(db)
+
+    # 同じ便の配送依頼（追跡番号＝インボイス番号）で照合済みの明細から商品を引き継ぐ。
+    # 配送依頼側は色・仕様も使って照合しているため、色違いで同じURLの商品
+    # （インボイスのURLだけでは区別できない行）もここで解決できる。
+    # キーは (URL, 数量)。同URL同数量の色違いは単価も原価も同じため、残りを順に割り当てる。
+    from app.models.shipment_order import ShipmentOrder, ShipmentOrderItem
+    ship_pool: dict = {}
+    if parsed["invoice_no"]:
+        ship_rows = (
+            db.query(ShipmentOrderItem)
+            .join(ShipmentOrder, ShipmentOrderItem.shipment_order_id == ShipmentOrder.id)
+            .filter(
+                ShipmentOrder.tracking_no == parsed["invoice_no"],
+                ShipmentOrderItem.product_id.isnot(None),
+            )
+            .all()
+        )
+        for si in ship_rows:
+            key = (_url_key(si.buy_url or ""), int(si.qty or 0))
+            ship_pool.setdefault(key, [])
+            if si.product_id not in ship_pool[key]:
+                ship_pool[key].append(si.product_id)
+
     matched = unmatched = 0
     for item in parsed["items"]:
         if db.query(RakutenProduct).filter(
@@ -1533,6 +1556,14 @@ async def rakuten_parse_excel(file: UploadFile = File(...), db: Session = Depend
             matched += 1
             continue
         product = unique_by_url.get(_url_key(item.get("buy_url", "")))
+        if not product and ship_pool:
+            key = (_url_key(item.get("buy_url", "")), int(item["qty"]))
+            pids = ship_pool.get(key) or []
+            if pids:
+                pid = pids.pop(0)  # 同キーが複数行あるときは1件ずつ消費
+                product = db.query(RakutenProduct).filter(
+                    RakutenProduct.id == pid, RakutenProduct.is_active == True
+                ).first()
         if product:
             original_code = item.get("asin_memo") or item["sku"]
             item["sku"] = product.sku
