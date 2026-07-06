@@ -190,13 +190,20 @@ function ShipmentTab() {
 
                   {unmatched.length > 0 && (
                     <div className="card" style={{ marginBottom: 16 }}>
-                      <h3 style={{ color: '#e94560', marginBottom: 12 }}>未照合 {unmatched.length}件</h3>
+                      <h3 style={{ color: '#e94560', marginBottom: 12 }}>
+                        未照合 {unmatched.filter(it => !it.sku && !it.excluded).length}件
+                        {unmatched.some(it => it.excluded) && (
+                          <span style={{ fontSize: 13, color: '#94a3b8', fontWeight: 400, marginLeft: 8 }}>
+                            ／ 対象外 {unmatched.filter(it => it.excluded).length}件
+                          </span>
+                        )}
+                      </h3>
                       <table>
                         <thead><tr><th>商品名(中)</th><th>色</th><th>サイズ</th><th style={{ textAlign: 'right' }}>数量</th><th>SKU選択</th></tr></thead>
                         <tbody>
                           {unmatched.map((item, i) => (
                             <React.Fragment key={i}>
-                            <tr>
+                            <tr style={item.excluded ? { opacity: 0.45, background: '#f8fafc' } : undefined}>
                               <td style={{ fontSize: 12 }}>
                                 <div>{item.name_cn}</div>
                                 {item.buy_url && <a href={item.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#3b82f6' }}>URL</a>}
@@ -205,7 +212,15 @@ function ShipmentTab() {
                               <td style={{ fontSize: 12 }}>{item.size}</td>
                               <td style={{ textAlign: 'right' }}>{item.qty}</td>
                               <td>
-                                {item.sku
+                                {item.excluded
+                                  ? <span style={{ fontSize: 12, color: '#94a3b8' }}>
+                                      対象外（在庫反映しない）
+                                      <button className="btn btn-secondary" style={{ fontSize: 11, padding: '2px 8px', marginLeft: 8 }}
+                                        onClick={() => setUnmatched(prev => prev.map((it, idx) => idx === i ? { ...it, excluded: false } : it))}>
+                                        戻す
+                                      </button>
+                                    </span>
+                                  : item.sku
                                   ? (() => {
                                       const prod = allProducts.find(p => p.id === item.product_id)
                                       const s = prod?.set_size || 1
@@ -225,6 +240,11 @@ function ShipmentTab() {
                                       </select>
                                       <button className="btn btn-secondary" style={{ fontSize: 11, padding: '3px 8px', whiteSpace: 'nowrap' }}
                                         onClick={() => openRegister(i)}>＋新規登録</button>
+                                      <button className="btn btn-secondary" style={{ fontSize: 11, padding: '3px 8px', whiteSpace: 'nowrap', color: '#94a3b8' }}
+                                        title="梱包材など、在庫にも商品マスタにも入れない行"
+                                        onClick={() => setUnmatched(prev => prev.map((it, idx) => idx === i ? { ...it, excluded: true, product_id: null, sku: '' } : it))}>
+                                        対象外
+                                      </button>
                                     </div>
                                 }
                               </td>
