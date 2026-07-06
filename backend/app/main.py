@@ -339,6 +339,7 @@ async def _sync_rakuten_stock():
                 return []
 
         updated_skus = set()
+        oversold: dict[str, int] = {}  # 在庫が足りず0で頭打ちになった不足数（売り越し）
         for sku, qty in new_sold.items():
             p = sku_to_product.get(sku)
             if not p:
@@ -350,11 +351,15 @@ async def _sync_rakuten_stock():
                     c_qty = (c.get("qty") or 1) * qty
                     cp = sku_to_product.get(c_sku)
                     if cp and cp.stock is not None:
+                        if cp.stock < c_qty:
+                            oversold[c_sku] = oversold.get(c_sku, 0) + (c_qty - cp.stock)
                         cp.stock = max(0, cp.stock - c_qty)
                         sku_stock[c_sku] = cp.stock
                         updated_skus.add(c_sku)
             else:
                 if p.stock is not None:
+                    if p.stock < qty:
+                        oversold[sku] = oversold.get(sku, 0) + (qty - p.stock)
                     p.stock = max(0, p.stock - qty)
                     sku_stock[sku] = p.stock
                     updated_skus.add(sku)
@@ -447,6 +452,9 @@ async def _sync_rakuten_stock():
             "updated_skus": list(updated_skus),
             "updated_sets": list(updated_set_skus),
         }
+        if oversold:
+            log_entry["oversold"] = oversold
+            logger.warning(f"[scheduler] 売り越し検知: 在庫不足のまま受注 {oversold}")
         if push_result:
             log_entry["push"] = {
                 "ok": push_result.get("ok", 0),
@@ -481,6 +489,11 @@ async def _sync_rakuten_stock():
                 push_errors = push_result.get("errors", []) or None
                 p_ok = push_result.get("ok", 0)
                 p_fail = push_result.get("fail", 0)
+            if oversold:
+                push_errors = (push_errors or []) + [
+                    {"sku": s, "detail": f"売り越し: 在庫不足{q}個分の受注（0で頭打ち）"}
+                    for s, q in oversold.items()
+                ]
             sb = {s: sku_stock_before[s] for s in all_changed if s in sku_stock_before}
             sa = {s: sku_stock.get(s, 0) for s in all_changed}
             evt = "order_sold" if new_sold else "cancel_restore"
@@ -776,8 +789,38 @@ async def _pull_rms_stock():
             settings.rms_service_secret, settings.rms_license_key, items
         )
 
+        # セット商品ごとに「単品プール在庫から計算した上限値」を求める。
+        # push失敗(429等)でRMSに古い大きな在庫が残ると、その分だけ実在庫以上に
+        # 売れてしまう（売り越し）。pullのたびに上限超過を検出して矯正pushする。
+        import json as _json2
+        pool_expected: dict[str, int] = {}
+        for p in products:
+            try:
+                comps = _json2.loads(p.set_components or "[]")
+            except Exception:
+                comps = []
+            if not comps:
+                continue
+            req: dict[str, int] = {}
+            for c in comps:
+                c_sku = c.get("sku")
+                c_qty = c.get("qty") or 1
+                if c_sku:
+                    req[c_sku] = req.get(c_sku, 0) + c_qty
+            expected = None
+            for c_sku, c_qty in req.items():
+                cp = sku_to_product.get(c_sku)
+                if cp is None:
+                    expected = None
+                    break
+                avail = (cp.stock or 0) // c_qty
+                expected = avail if expected is None else min(expected, avail)
+            if expected is not None:
+                pool_expected[p.sku] = expected
+
         updated = 0
         skipped = 0
+        corrections: dict[str, dict] = {}
         for sku, qty in rms_stock.items():
             p = sku_to_product.get(sku)
             if not p:
@@ -786,18 +829,62 @@ async def _pull_rms_stock():
             if sku in component_parent_skus:
                 skipped += 1
                 continue
-            p.stock = qty
+            expected = pool_expected.get(sku)
+            if expected is not None and qty > expected:
+                # RMSが単品プールの上限を超えている → DBは上限値にし、RMSへ矯正push
+                p.stock = expected
+                corrections[sku] = {"rms": qty, "corrected_to": expected}
+            else:
+                p.stock = qty
             updated += 1
 
         db.commit()
+
+        push_result = None
+        if corrections:
+            from app.services.rakuten_rms import push_inventory_to_rms
+            push_items = []
+            for sku in corrections:
+                p = sku_to_product.get(sku)
+                manage_number = (p.rakuten_item_url or sku.split("_")[0]).strip()
+                push_items.append({
+                    "manage_number": manage_number,
+                    "variant_id": sku,
+                    "quantity": p.stock or 0,
+                })
+            try:
+                push_result = await push_inventory_to_rms(
+                    settings.rms_service_secret, settings.rms_license_key, push_items
+                )
+                logger.warning(f"[scheduler] RMS在庫の上限超過を矯正push: {corrections} 結果={push_result}")
+            except Exception as pe:
+                push_result = {"ok": 0, "fail": len(push_items), "errors": [{"sku": "all", "detail": str(pe)}]}
+                logger.warning(f"[scheduler] 矯正push失敗: {pe}")
+            _save_inventory_event(
+                db, event_type="reconcile_push", event_time=dt.now(JST),
+                changed={s: v["corrected_to"] - v["rms"] for s, v in corrections.items()},
+                recalculated={s: v["corrected_to"] for s, v in corrections.items()},
+                pushed=push_result.get("details") if push_result else None,
+                push_ok=push_result.get("ok") if push_result else None,
+                push_fail=push_result.get("fail") if push_result else None,
+                errors=push_result.get("errors") or None if push_result else None,
+                stock_before={s: v["rms"] for s, v in corrections.items()},
+                stock_after={s: v["corrected_to"] for s, v in corrections.items()},
+            )
+
         logger.info(f"[scheduler] RMS在庫取得完了: {updated}件更新, {skipped}件スキップ(単品管理)")
-        _sync_logs.appendleft({
+        log_entry = {
             "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
             "type": "rms_stock",
             "updated": updated,
             "sent": len(items),
             "skipped_component_parents": skipped,
-        })
+        }
+        if corrections:
+            log_entry["reconciled"] = corrections
+            if push_result:
+                log_entry["push"] = {"ok": push_result.get("ok", 0), "fail": push_result.get("fail", 0)}
+        _sync_logs.appendleft(log_entry)
     except Exception as e:
         logger.warning(f"[scheduler] RMS在庫取得エラー: {e}")
         _sync_logs.appendleft({
@@ -988,14 +1075,24 @@ def get_sync_logs():
 
 
 @app.get("/api/inventory-events")
-def get_inventory_events():
-    """inventory_events テーブルから最新100件を返す"""
+def get_inventory_events(sku: str = None, limit: int = 100):
+    """inventory_events テーブルから最新limit件を返す。sku指定でそのSKUを含むイベントのみ"""
     import json as _j
     from app.core.database import SessionLocal
     from app.models.inventory_event import InventoryEvent
+    limit = max(1, min(limit, 1000))
     db = SessionLocal()
     try:
-        rows = db.query(InventoryEvent).order_by(InventoryEvent.id.desc()).limit(100).all()
+        q = db.query(InventoryEvent).order_by(InventoryEvent.id.desc())
+        if sku:
+            like = f'%"{sku}%'
+            q = q.filter(
+                InventoryEvent.sold.like(like)
+                | InventoryEvent.changed.like(like)
+                | InventoryEvent.recalculated.like(like)
+                | InventoryEvent.stock_before.like(like)
+            )
+        rows = q.limit(limit).all()
         def _parse(v):
             if v is None:
                 return None
