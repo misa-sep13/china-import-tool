@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import axios from 'axios'
@@ -48,6 +48,45 @@ function ShipmentTab() {
       const product = allProducts.find(p => p.id === parseInt(productId))
       return { ...item, product_id: product?.id || null, sku: product?.sku || '', name_jp: product?.name || '' }
     }))
+  }
+
+  // ---- 未照合行からの新規マスタ登録 ----
+  const [regRow, setRegRow] = useState(null)
+  const [regForm, setRegForm] = useState({ sku: '', name: '', set_size: 1, selling_price: '' })
+  const [registering, setRegistering] = useState(false)
+
+  function openRegister(i) {
+    setRegRow(i)
+    setRegForm({ sku: '', name: '', set_size: 1, selling_price: '' })
+  }
+
+  async function handleRegister() {
+    const item = unmatched[regRow]
+    if (!regForm.sku.trim()) { alert('SKUを入力してください'); return }
+    setRegistering(true)
+    try {
+      const payload = {
+        sku: regForm.sku.trim(),
+        name: regForm.name.trim() || item.name_cn,
+        buy_url: item.buy_url || '',
+        supplier_spec: [item.color, item.size].filter(Boolean).join('、'),
+        price: item.unit_price_cny || null,
+        set_size: parseInt(regForm.set_size) || 1,
+        selling_price: regForm.selling_price ? parseFloat(regForm.selling_price) : null,
+        supplier: 'タオタロウ',
+      }
+      const res = await axios.post(`${API}/rakuten/products`, payload)
+      const prod = res.data
+      setAllProducts(prev => [...prev, prod])
+      setUnmatched(prev => prev.map((it, idx) =>
+        idx === regRow ? { ...it, product_id: prod.id, sku: prod.sku, name_jp: prod.name } : it))
+      setRegRow(null)
+      qc.invalidateQueries(['rakuten-products'])
+    } catch (e) {
+      alert('登録エラー: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setRegistering(false)
+    }
   }
 
   async function handleSaveAndReceive() {
@@ -148,7 +187,8 @@ function ShipmentTab() {
                         <thead><tr><th>商品名(中)</th><th>色</th><th>サイズ</th><th style={{ textAlign: 'right' }}>数量</th><th>SKU選択</th></tr></thead>
                         <tbody>
                           {unmatched.map((item, i) => (
-                            <tr key={i}>
+                            <React.Fragment key={i}>
+                            <tr>
                               <td style={{ fontSize: 12 }}>
                                 <div>{item.name_cn}</div>
                                 {item.buy_url && <a href={item.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#3b82f6' }}>URL</a>}
@@ -159,13 +199,56 @@ function ShipmentTab() {
                               <td>
                                 {item.sku
                                   ? <span style={{ fontSize: 12, color: '#166534', fontWeight: 700 }}>{item.sku}</span>
-                                  : <select style={{ fontSize: 12 }} defaultValue="" onChange={e => handleUnmatchedSelect(i, e.target.value)}>
-                                      <option value="">-- 選択 --</option>
-                                      {allProducts.map(p => <option key={p.id} value={p.id}>{p.sku} {p.name}</option>)}
-                                    </select>
+                                  : <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                      <select style={{ fontSize: 12 }} defaultValue="" onChange={e => handleUnmatchedSelect(i, e.target.value)}>
+                                        <option value="">-- 選択 --</option>
+                                        {allProducts.map(p => <option key={p.id} value={p.id}>{p.sku} {p.name}</option>)}
+                                      </select>
+                                      <button className="btn btn-secondary" style={{ fontSize: 11, padding: '3px 8px', whiteSpace: 'nowrap' }}
+                                        onClick={() => openRegister(i)}>＋新規登録</button>
+                                    </div>
                                 }
                               </td>
                             </tr>
+                            {regRow === i && !item.sku && (
+                              <tr>
+                                <td colSpan={5} style={{ background: '#f8fafc', padding: '12px 16px' }}>
+                                  <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                                    <div>
+                                      <label style={{ fontSize: 11, color: '#64748b', display: 'block' }}>SKU（必須）</label>
+                                      <input value={regForm.sku} placeholder="例: y134_black" style={{ width: 140, fontSize: 12 }}
+                                        onChange={e => setRegForm(f => ({ ...f, sku: e.target.value }))} />
+                                    </div>
+                                    <div>
+                                      <label style={{ fontSize: 11, color: '#64748b', display: 'block' }}>商品名（空欄なら中国語名）</label>
+                                      <input value={regForm.name} placeholder={item.name_cn} style={{ width: 240, fontSize: 12 }}
+                                        onChange={e => setRegForm(f => ({ ...f, name: e.target.value }))} />
+                                    </div>
+                                    <div>
+                                      <label style={{ fontSize: 11, color: '#64748b', display: 'block' }}>セット入数</label>
+                                      <input type="number" min="1" value={regForm.set_size} style={{ width: 70, fontSize: 12 }}
+                                        onChange={e => setRegForm(f => ({ ...f, set_size: e.target.value }))} />
+                                    </div>
+                                    <div>
+                                      <label style={{ fontSize: 11, color: '#64748b', display: 'block' }}>販売価格（円・任意）</label>
+                                      <input type="number" value={regForm.selling_price} style={{ width: 90, fontSize: 12 }}
+                                        onChange={e => setRegForm(f => ({ ...f, selling_price: e.target.value }))} />
+                                    </div>
+                                    <div style={{ fontSize: 11, color: '#64748b' }}>
+                                      入荷数: {item.qty} ÷ {parseInt(regForm.set_size) || 1} = <b>{Math.floor(item.qty / (parseInt(regForm.set_size) || 1))}</b>個
+                                      ／ 仕入単価 {item.unit_price_cny}元・色/仕様は自動セット
+                                    </div>
+                                    <button className="btn btn-primary" style={{ fontSize: 12, padding: '4px 12px' }}
+                                      onClick={handleRegister} disabled={registering}>
+                                      {registering ? '登録中...' : '登録して照合'}
+                                    </button>
+                                    <button className="btn btn-secondary" style={{ fontSize: 12, padding: '4px 12px' }}
+                                      onClick={() => setRegRow(null)}>キャンセル</button>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                            </React.Fragment>
                           ))}
                         </tbody>
                       </table>
