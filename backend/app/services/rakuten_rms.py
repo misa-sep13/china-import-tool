@@ -409,30 +409,35 @@ async def push_inventory_to_rms(
         quantity = item["quantity"]
         url = f"{RMS_BASE}/2.0/inventories/manage-numbers/{manage_number}/variants/{variant_id}"
         body = json.dumps({"mode": "ABSOLUTE", "quantity": quantity}, ensure_ascii=False).encode("utf-8")
+        last_status = None
+        last_detail = None
         for attempt in range(4):
             try:
                 res = await client.put(url, headers=headers, content=body)
+                last_status = res.status_code
                 if res.status_code == 204:
-                    return ("ok", variant_id, quantity, 204, None)
-                elif res.status_code == 429:
+                    return ("ok", variant_id, quantity, 204, None, attempt + 1)
+                if res.status_code == 429 or 500 <= res.status_code < 600:
+                    last_detail = "429 Rate Limit" if res.status_code == 429 else res.text[:100]
                     await asyncio.sleep(2 ** attempt)
-                else:
-                    return ("fail", variant_id, quantity, res.status_code, res.text[:100])
+                    continue
+                return ("fail", variant_id, quantity, res.status_code, res.text[:100], attempt + 1)
             except Exception as e:
-                return ("fail", variant_id, quantity, None, str(e))
-        return ("fail", variant_id, quantity, 429, "too many retries")
+                last_detail = str(e)
+                await asyncio.sleep(2 ** attempt)
+        return ("fail", variant_id, quantity, last_status, last_detail or "too many retries", 4)
 
     async with httpx.AsyncClient(timeout=30) as client:
         for i in range(0, len(items), 10):
             batch = items[i:i + 10]
             results = await asyncio.gather(*[_push_one(client, item) for item in batch])
-            for status, sku, qty, http_status, detail in results:
-                details.append({"sku": sku, "qty": qty, "http": http_status, "ok": status == "ok"})
+            for status, sku, qty, http_status, detail, attempts in results:
+                details.append({"sku": sku, "qty": qty, "http": http_status, "ok": status == "ok", "attempts": attempts})
                 if status == "ok":
                     ok += 1
                 else:
                     fail += 1
-                    errors.append({"sku": sku, "detail": detail})
+                    errors.append({"sku": sku, "detail": detail, "attempts": attempts})
 
     return {"ok": ok, "fail": fail, "errors": errors, "details": details}
 

@@ -107,7 +107,12 @@ export default function ShipmentOrderPage() {
     if (!confirm('入荷済みにして在庫を加算しますか？（この操作は元に戻せません）')) return
     try {
       const res = await axios.post(`${API}/shipment-orders/${orderId}/receive`)
-      alert(`入荷処理完了。${res.data.updated}件の在庫を加算しました。（未照合スキップ: ${res.data.skipped}件）`)
+      const rmsFail = res.data.rms_push_fail || 0
+      alert(
+        `入荷処理完了。${res.data.updated}件の在庫を加算しました。（未照合スキップ: ${res.data.skipped}件）\n`
+        + `RMS反映: ok ${res.data.rms_push_ok || 0} / fail ${rmsFail}`
+        + (rmsFail > 0 ? '\nRMS反映に失敗したSKUがあります。補正pushが必要です。' : '')
+      )
       await fetchOrders()
       if (detail?.id === orderId) {
         setDetail(prev => ({ ...prev, status: 'received' }))

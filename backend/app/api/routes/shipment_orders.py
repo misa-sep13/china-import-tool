@@ -10,6 +10,7 @@ from app.models.inventory_reflection_log import InventoryReflectionLog
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timezone
+import asyncio
 import io, uuid
 
 router = APIRouter(prefix="/shipment-orders", tags=["shipment_orders"])
@@ -336,7 +337,7 @@ def match_item(order_id: int, item_id: int, data: ShipmentOrderItemPatch, db: Se
 
 
 @router.post("/{order_id}/receive")
-def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """入荷済みにして在庫を加算する"""
     order = db.query(ShipmentOrder).filter(ShipmentOrder.id == order_id).first()
     if not order:
@@ -465,20 +466,37 @@ def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db: Sessi
     db.commit()
 
     push_items = 0
+    push_result = {"ok": 0, "fail": 0, "errors": [], "details": []}
     if rms_items:
         from app.api.routes.rakuten import _get_or_create_settings
         settings = _get_or_create_settings(db)
         if settings.rms_service_secret and settings.rms_license_key:
             from app.services.rakuten_rms import push_inventory_to_rms
-            background_tasks.add_task(
-                push_inventory_to_rms,
-                settings.rms_service_secret, settings.rms_license_key, rms_items,
-            )
             push_items = len(rms_items)
+            for attempt in range(3):
+                push_result = await push_inventory_to_rms(
+                    settings.rms_service_secret,
+                    settings.rms_license_key,
+                    rms_items,
+                )
+                if push_result.get("fail", 0) == 0:
+                    break
+                await asyncio.sleep(2 * (attempt + 1))
+            note_suffix = (
+                f" / RMS push ok:{push_result.get('ok', 0)}"
+                f" fail:{push_result.get('fail', 0)}"
+            )
             db.query(InventoryReflectionLog).filter(
                 InventoryReflectionLog.event_id == event_id,
-            ).update({"rms_push_items": push_items})
+            ).update({
+                "rms_push_items": push_items,
+                "note": f"未照合スキップ: {skipped}件 / 発注済消化: {order_consumed}件{note_suffix}",
+            })
             db.commit()
 
     return {"updated": updated, "skipped": skipped, "order_consumed": order_consumed,
-            "stage_promoted": promoted, "rms_push_items": push_items}
+            "stage_promoted": promoted, "rms_push_items": push_items,
+            "rms_push_ok": push_result.get("ok", 0),
+            "rms_push_fail": push_result.get("fail", 0),
+            "rms_push_errors": push_result.get("errors", []),
+            "rms_push_details": push_result.get("details", [])}

@@ -134,6 +134,12 @@ function ShipmentTab() {
               {receiveResult && (
                 <div style={{ fontSize: 13, color: '#475569', marginBottom: 12 }}>
                   在庫加算: {receiveResult.updated}件 / 未照合スキップ: {receiveResult.skipped}件 / 発注済消化: {receiveResult.order_consumed}件
+                  {' '} / RMS反映: ok {receiveResult.rms_push_ok || 0} / fail {receiveResult.rms_push_fail || 0}
+                  {receiveResult.rms_push_fail > 0 && (
+                    <div style={{ color: '#dc2626', fontWeight: 700, marginTop: 4 }}>
+                      RMS反映に失敗したSKUがあります。補正pushが必要です。
+                    </div>
+                  )}
                 </div>
               )}
               <button className="btn btn-secondary" onClick={resetImport}>続けて取り込む</button>
