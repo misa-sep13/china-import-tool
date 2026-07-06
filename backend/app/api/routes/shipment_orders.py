@@ -6,10 +6,11 @@ from app.models.shipment_order import ShipmentOrder, ShipmentOrderItem
 from app.models.product import Product
 from app.models.rakuten_product import RakutenProduct
 from app.models.rakuten_order import RakutenOrderHistory
+from app.models.inventory_reflection_log import InventoryReflectionLog
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timezone
-import io
+import io, uuid
 
 router = APIRouter(prefix="/shipment-orders", tags=["shipment_orders"])
 
@@ -349,6 +350,7 @@ def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db: Sessi
     order_consumed = 0  # 発注済みリストから消化した件数
     consumed_skus = set()  # 消化が発生したSKU（発注済2→1の繰り上げ判定用）
     updated_skus = set()   # 在庫を加算したSKU（セット再計算・RMS反映用）
+    reflection_rows = []
 
     for item in items:
         if not item.product_id:
@@ -365,6 +367,12 @@ def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db: Sessi
         if received_qty <= 0:
             skipped += 1
             continue
+
+        before = {
+            "stock": product.stock or 0,
+            "inbound": product.inbound or 0,
+            "standard_stock": product.standard_stock or 0,
+        }
 
         # 在庫加算
         product.stock = (product.stock or 0) + received_qty
@@ -401,6 +409,19 @@ def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db: Sessi
             remaining -= consume_legacy2
         consumed_skus.add(product.sku)
 
+        reflection_rows.append({
+            "sku": product.sku,
+            "name": product.name,
+            "supplier": product.supplier,
+            "received_qty": received_qty,
+            "stock_before": before["stock"],
+            "stock_after": product.stock or 0,
+            "inbound_before": before["inbound"],
+            "inbound_after": product.inbound or 0,
+            "standard_stock_before": before["standard_stock"],
+            "standard_stock_after": product.standard_stock or 0,
+        })
+
     # 発注済1が空になったSKUは、残っている発注済2を発注済1へ繰り上げる
     promoted = 0
     for sku in consumed_skus:
@@ -428,6 +449,19 @@ def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db: Sessi
 
     order.status = "received"
     order.received_at = datetime.now(timezone.utc)
+    event_id = str(uuid.uuid4())
+    source_ref = order.tracking_no or order.order_no or f"配送依頼#{order.id}"
+    for row in reflection_rows:
+        db.add(InventoryReflectionLog(
+            event_id=event_id,
+            source="shipment_order",
+            source_label="配送依頼",
+            source_id=order.id,
+            source_ref=source_ref,
+            note=f"未照合スキップ: {skipped}件 / 発注済消化: {order_consumed}件",
+            rms_push_items=0,
+            **row,
+        ))
     db.commit()
 
     push_items = 0
@@ -441,6 +475,10 @@ def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db: Sessi
                 settings.rms_service_secret, settings.rms_license_key, rms_items,
             )
             push_items = len(rms_items)
+            db.query(InventoryReflectionLog).filter(
+                InventoryReflectionLog.event_id == event_id,
+            ).update({"rms_push_items": push_items})
+            db.commit()
 
     return {"updated": updated, "skipped": skipped, "order_consumed": order_consumed,
             "stage_promoted": promoted, "rms_push_items": push_items}

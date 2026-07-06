@@ -13,6 +13,7 @@ import RakutenSettingsPage from './pages/RakutenSettingsPage'
 import RakutenInvoicePage from './pages/RakutenInvoicePage'
 import AdsPage from './pages/AdsPage'
 import SyncLogsPage from './pages/SyncLogsPage'
+import InventoryReflectionLogsPage from './pages/InventoryReflectionLogsPage'
 import WelfareInventoryPage from './pages/WelfareInventoryPage'
 import WelfareWorkPublicPage from './pages/WelfareWorkPublicPage'
 import './App.css'
@@ -75,6 +76,9 @@ function App() {
         <NavLink to="/rakuten/settings" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           ⚙️ 楽天設定
         </NavLink>
+        <NavLink to="/rakuten/inventory-reflections" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          📥 在庫反映履歴
+        </NavLink>
         <NavLink to="/sync-logs" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🔍 同期ログ
         </NavLink>
@@ -101,6 +105,7 @@ function App() {
           <Route path="/rakuten/products" element={<RakutenProductsPage />} />
           <Route path="/rakuten/invoices" element={<RakutenInvoicePage />} />
           <Route path="/rakuten/settings" element={<RakutenSettingsPage />} />
+          <Route path="/rakuten/inventory-reflections" element={<InventoryReflectionLogsPage />} />
           <Route path="/sync-logs" element={<SyncLogsPage />} />
           <Route path="/welfare/inventory" element={<WelfareInventoryPage />} />
           <Route path="/welfare/work-public" element={<WelfareWorkPublicPage />} />

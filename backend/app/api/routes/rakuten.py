@@ -20,9 +20,53 @@ def _now_jst():
 from app.models.rakuten_product import RakutenProduct
 from app.models.rakuten_order import RakutenOrderHistory
 from app.models.rakuten_settings import RakutenSettings
+from app.models.inventory_reflection_log import InventoryReflectionLog
 from app.services.rakuten_calc import calc_rakuten_order, RakutenCalcSettings
 
 router = APIRouter(prefix="/rakuten", tags=["rakuten"])
+
+
+def _log_inventory_reflection(db: Session, **kwargs) -> InventoryReflectionLog:
+    log = InventoryReflectionLog(**kwargs)
+    db.add(log)
+    return log
+
+
+@router.get("/inventory-reflection-logs")
+def get_inventory_reflection_logs(limit: int = 100, db: Session = Depends(get_db)):
+    limit = max(1, min(limit, 500))
+    logs = (
+        db.query(InventoryReflectionLog)
+        .order_by(InventoryReflectionLog.created_at.desc(), InventoryReflectionLog.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return {
+        "logs": [
+            {
+                "id": l.id,
+                "event_id": l.event_id,
+                "source": l.source,
+                "source_label": l.source_label,
+                "source_id": l.source_id,
+                "source_ref": l.source_ref,
+                "sku": l.sku,
+                "name": l.name,
+                "supplier": l.supplier,
+                "received_qty": l.received_qty,
+                "stock_before": l.stock_before,
+                "stock_after": l.stock_after,
+                "inbound_before": l.inbound_before,
+                "inbound_after": l.inbound_after,
+                "standard_stock_before": l.standard_stock_before,
+                "standard_stock_after": l.standard_stock_after,
+                "rms_push_items": l.rms_push_items,
+                "note": l.note,
+                "created_at": l.created_at.isoformat() if l.created_at else None,
+            }
+            for l in logs
+        ]
+    }
 
 
 @router.post("/migrate-show-in-orders")
@@ -469,6 +513,27 @@ async def receive_manufacturer_stock(product_id: int, background_tasks: Backgrou
     updated_skus = {p.sku}
 
     _recalc_dependent_set_stock(all_products, sku_stock, updated_skus)
+    event_id = str(uuid.uuid4())
+    _log_inventory_reflection(
+        db,
+        event_id=event_id,
+        source="manufacturer_receive",
+        source_label="メーカー入荷",
+        source_id=p.id,
+        source_ref="在庫・損益",
+        sku=p.sku,
+        name=p.name,
+        supplier=p.supplier,
+        received_qty=received_qty,
+        stock_before=before["stock"],
+        stock_after=p.stock or 0,
+        inbound_before=before["inbound"],
+        inbound_after=p.inbound or 0,
+        standard_stock_before=before["standard_stock"],
+        standard_stock_after=p.standard_stock or 0,
+        rms_push_items=0,
+        note="在庫・損益の入荷ボタンから反映",
+    )
     db.commit()
     db.refresh(p)
 
@@ -482,6 +547,10 @@ async def receive_manufacturer_stock(product_id: int, background_tasks: Backgrou
                 push_inventory_to_rms,
                 settings.rms_service_secret, settings.rms_license_key, rms_items,
             )
+            db.query(InventoryReflectionLog).filter(
+                InventoryReflectionLog.event_id == event_id,
+            ).update({"rms_push_items": len(rms_items)})
+            db.commit()
 
     return {
         "ok": True,
