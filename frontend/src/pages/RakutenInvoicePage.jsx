@@ -121,6 +121,9 @@ export default function RakutenInvoicePage() {
     }
   }
 
+  const blankSkuCount = parsed?.items?.filter(item => !(item.sku || '').trim()).length || 0
+  const matchedSkuCount = parsed?.items?.length ? parsed.items.length - blankSkuCount : 0
+
   return (
     <div>
       <h2 style={{ marginBottom: 24 }}>楽天 仕入管理（原価計算）</h2>
@@ -211,7 +214,9 @@ export default function RakutenInvoicePage() {
         <div className="card" style={{ marginBottom: 16 }}>
           <h3 style={{ marginBottom: 4 }}>明細（SKU照合）</h3>
           <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
-            商品リンクURLで自動照合済み。<span style={{ color: '#e94560', fontWeight: 600 }}>SKUが空欄の行</span>（色違いで同じURLの商品や新商品）は手で選択してください。空欄のまま保存した行はスキップされます。
+            商品リンクURLで自動照合済み。楽天商品はSKUを選択してください。
+            <span style={{ color: '#d97706', fontWeight: 600 }}> Amazon品など対象外の行は空欄のままでOK</span>です。計算・保存時にスキップされます。
+            <span style={{ marginLeft: 8, color: '#475569' }}>反映対象 {matchedSkuCount}件 / スキップ {blankSkuCount}件</span>
           </div>
           <datalist id="rakuten-sku-options">
             {products.map(p => (
@@ -232,13 +237,16 @@ export default function RakutenInvoicePage() {
               </thead>
               <tbody>
                 {parsed.items.map((item, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid #e5e7eb', background: item.sku ? undefined : '#fef2f2' }}>
+                  <tr key={i} style={{ borderBottom: '1px solid #e5e7eb', background: item.sku ? undefined : '#fffbeb' }}>
                     <td style={{ padding: '4px 12px' }}>
                       <input list="rakuten-sku-options" value={item.sku || ''}
-                        placeholder="SKU選択"
+                        placeholder="空欄=対象外"
                         style={{ width: 150, fontFamily: 'monospace', fontSize: 12, padding: '4px 6px',
-                                 border: `1px solid ${item.sku ? '#cbd5e1' : '#e94560'}`, borderRadius: 4 }}
+                                 border: `1px solid ${item.sku ? '#cbd5e1' : '#f59e0b'}`, borderRadius: 4 }}
                         onChange={e => updateItemSku(i, e.target.value.trim())} />
+                      {!item.sku && (
+                        <div style={{ fontSize: 10, color: '#d97706', marginTop: 2 }}>対象外としてスキップ</div>
+                      )}
                     </td>
                     <td style={{ padding: '8px 12px', fontSize: 12 }}>{item.name_jp || '—'}</td>
                     <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.qty}</td>
@@ -252,6 +260,14 @@ export default function RakutenInvoicePage() {
               </tbody>
             </table>
           </div>
+          <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'flex-end' }}>
+            <span style={{ fontSize: 12, color: '#64748b' }}>
+              {blankSkuCount > 0 ? `SKU空欄 ${blankSkuCount}件はスキップして計算します` : '全行を楽天商品として計算します'}
+            </span>
+            <button className="btn btn-primary" onClick={handleCalculate}>
+              原価を計算へ進む
+            </button>
+          </div>
         </div>
       )}
 
@@ -261,7 +277,7 @@ export default function RakutenInvoicePage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <h3>計算結果</h3>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              {saved && <span style={{ color: '#16a34a', fontSize: 13 }}>保存済み（{saved.updated}件の商品マスタを更新）</span>}
+              {saved && <span style={{ color: '#16a34a', fontSize: 13 }}>保存済み（{saved.updated}件の商品マスタを更新 / {saved.skipped || 0}件スキップ）</span>}
               <button className="btn btn-primary" onClick={handleSave} disabled={saving || !!saved}>
                 {saving ? '保存中...' : '楽天商品マスタに反映して保存'}
               </button>
@@ -272,6 +288,7 @@ export default function RakutenInvoicePage() {
             送料合計: {calculated.total_freight_cny?.toLocaleString()}元 ／
             輸入税: ¥{(calculated.import_tax_jpy || 0).toLocaleString()} ／
             総原価: ¥{calculated.grand_total_jpy?.toLocaleString()}
+            {calculated.skipped ? ` ／ スキップ: ${calculated.skipped}件` : ''}
           </div>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>

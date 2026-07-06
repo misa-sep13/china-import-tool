@@ -1661,36 +1661,48 @@ def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)
     total_freight = data.domestic_freight + data.international_freight
     import_tax_jpy = data.import_tax_jpy or 0
     result = []
+    skipped = 0
     for item in data.items:
+        if not (item.sku or "").strip():
+            skipped += 1
+            continue
         item_total = item.qty * item.unit_price_cny
         freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
         tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
         product = _find_invoice_product(db, item)
+        if not product:
+            skipped += 1
+            continue
         # qtyは仕入単位(枚・本)。原価は販売単位(set_size個で1セット)あたりで計算する
-        set_size = (product.set_size or 1) if product else 1
+        set_size = product.set_size or 1
         sell_units = item.qty / set_size if item.qty > 0 else 0
         cost_jpy = (((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / sell_units) if sell_units > 0 else 0
-        customer_memo = product.customer_memo if product else None
+        customer_memo = product.customer_memo
         result.append({**item.model_dump(), "total_price_cny": round(item_total, 2),
                         "freight_alloc_cny": round(freight_alloc, 2),
                         "tax_alloc_jpy": round(tax_alloc_jpy, 0),
                         "cost_jpy": round(cost_jpy, 1),
                         "customer_memo": customer_memo,
-                        "matched_sku": product.sku if product else ""})
+                        "matched_sku": product.sku})
     return {"items": result, "total_cny": round(total_cny, 2),
             "total_freight_cny": round(total_freight, 2),
             "import_tax_jpy": import_tax_jpy,
-            "grand_total_jpy": round((total_cny + total_freight) * data.exchange_rate + import_tax_jpy, 0)}
+            "grand_total_jpy": round((total_cny + total_freight) * data.exchange_rate + import_tax_jpy, 0),
+            "skipped": skipped}
 
 @router.post("/invoices/save")
 def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
     total_cny = sum(i.qty * i.unit_price_cny for i in data.items)
     total_freight = data.domestic_freight + data.international_freight
     updated = 0
+    skipped = 0
     updated_skus: dict[str, float] = {}  # sku -> cost_jpy
 
     import_tax_jpy = data.import_tax_jpy or 0
     for item in data.items:
+        if not (item.sku or "").strip():
+            skipped += 1
+            continue
         item_total = item.qty * item.unit_price_cny
         freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
         tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
@@ -1705,6 +1717,8 @@ def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
             product.price = item.unit_price_cny if item.unit_price_cny else product.price
             updated_skus[product.sku] = cost_jpy
             updated += 1
+        else:
+            skipped += 1
 
     # set_componentsを持つセット商品の原価を自動再計算
     set_products = db.query(RakutenProduct).filter(
@@ -1740,7 +1754,7 @@ def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
             updated += 1
 
     db.commit()
-    return {"updated": updated}
+    return {"updated": updated, "skipped": skipped}
 
 
 # ============================================================
