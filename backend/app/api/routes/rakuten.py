@@ -1237,6 +1237,7 @@ class RakutenInvoiceItemIn(BaseModel):
     name_jp: str = ""
     qty: int
     unit_price_cny: float
+    buy_url: str = ""
     asin_memo: str = ""  # J列（ASIN/商品番号）：商品内訳メモ
 
 class RakutenInvoiceIn(BaseModel):
@@ -1248,45 +1249,237 @@ class RakutenInvoiceIn(BaseModel):
     import_tax_jpy: float = 0  # 輸入税合計（円）：関税＋消費税＋地方消費税
     items: List[RakutenInvoiceItemIn]
 
+
+def _num(value, default=0.0):
+    if value is None or value == "":
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).replace(",", "").strip())
+    except Exception:
+        return default
+
+
+def _text(value) -> str:
+    return str(value or "").strip()
+
+
+def _code(value) -> str:
+    if value is None or value == "":
+        return ""
+    if isinstance(value, (int, float)) and float(value).is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def _row_value(row, index, default=None):
+    return row[index] if len(row) > index else default
+
+
+def _url_key(url: str) -> str:
+    value = (url or "").strip()
+    if not value:
+        return ""
+    offer = re.search(r"/offer/(\d+)\.html", value)
+    if offer:
+        return f"1688:{offer.group(1)}"
+    item = re.search(r"[?&]id=(\d+)", value)
+    if item:
+        return f"id:{item.group(1)}"
+    return value.split("#", 1)[0].rstrip("/")
+
+
+def _invoice_sheet(wb):
+    for ws in wb.worksheets:
+        if str(ws.title).strip().lower() in {"发票", "發票", "invoice"}:
+            return ws
+    for ws in wb.worksheets:
+        for row in ws.iter_rows(min_row=1, max_row=80, values_only=True):
+            joined = " ".join(_text(c) for c in row)
+            if "Name of Commodity" in joined:
+                return ws
+    return wb.active
+
+
+def _invoice_data_start(ws):
+    candidate = None
+    for i, row in enumerate(ws.iter_rows(min_row=1, max_row=100, values_only=True), 1):
+        cells = [_text(c) for c in row]
+        joined = " ".join(cells)
+        if "Name of Commodity" in joined:
+            candidate = i + 2
+        if (
+            any(c.upper() == "PCS" for c in cells)
+            and any("Unit Price" in c or "单价" in c or "單價" in c for c in cells)
+            and any("TOTAL Price" in c or "总价" in c or "總價" in c for c in cells)
+        ):
+            return i + 1
+    return candidate
+
+
+def _invoice_fee_amount(row):
+    for value in reversed(row):
+        amount = _num(value, None)
+        if amount is not None:
+            return amount
+    return 0.0
+
+
+def _parse_rakuten_invoice_workbook(wb):
+    ws = _invoice_sheet(wb)
+
+    invoice_no = ""
+    for row in ws.iter_rows(min_row=1, max_row=20, values_only=True):
+        for cell in row:
+            value = _text(cell)
+            if value.startswith("VIP") or value.startswith("GBVIP") or "VIP" in value:
+                invoice_no = value
+                break
+        if invoice_no:
+            break
+
+    data_start = _invoice_data_start(ws)
+    if not data_start:
+        raise HTTPException(400, "インボイスの商品データが見つかりません")
+
+    items = []
+    for row in ws.iter_rows(min_row=data_start, values_only=True):
+        first = _text(_row_value(row, 0))
+        if first.startswith("TOTAL") or first.startswith("MADE IN"):
+            break
+
+        qty = _num(_row_value(row, 6))
+        unit_price = _num(_row_value(row, 7))
+        total_price = _num(_row_value(row, 8))
+        if qty <= 0 or unit_price <= 0:
+            continue
+
+        invoice_code = _code(_row_value(row, 9))
+        fallback_sku = _code(_row_value(row, 12)) or invoice_code
+        items.append({
+            "sku": fallback_sku,
+            "name_jp": _text(_row_value(row, 2)) or _text(_row_value(row, 1)),
+            "qty": int(qty),
+            "unit_price_cny": unit_price,
+            "total_price_cny": total_price or round(qty * unit_price, 2),
+            "buy_url": _text(_row_value(row, 10)),
+            "asin_memo": invoice_code,
+        })
+
+    if not items:
+        raise HTTPException(400, "インボイスの商品データが見つかりません")
+
+    added_value = domestic_freight = international_freight = 0.0
+    for row in ws.iter_rows(min_row=data_start, values_only=True):
+        joined = " ".join(_text(c) for c in row)
+        if "Added Value" in joined or "增值" in joined or "増値" in joined:
+            added_value += _invoice_fee_amount(row)
+        elif "Domestic Freight" in joined or "国内运费" in joined or "国内送料" in joined:
+            domestic_freight += _invoice_fee_amount(row)
+        elif "International" in joined and ("Freight" in joined or "运费" in joined or "送料" in joined):
+            international_freight += _invoice_fee_amount(row)
+
+    return {
+        "invoice_no": invoice_no,
+        "domestic_freight": round(domestic_freight + added_value, 2),
+        "international_freight": round(international_freight, 2),
+        "items": items,
+    }
+
+
+def _permit_text(content: bytes) -> str:
+    try:
+        import pdfplumber
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
+            return "\n".join(page.extract_text() or "" for page in pdf.pages)
+    except Exception as e:
+        raise HTTPException(400, f"輸入許可書読み込みエラー: {str(e)}")
+
+
+def _permit_values(text: str):
+    cny = 0.0
+    m = re.search(r"仕入書価格\s+[A-Z]\s+-\s+CIF\s+-\s+CNY\s+-\s+([\d,\.]+)", text)
+    if not m:
+        m = re.search(r"CIF\s*-\s*CNY\s*-\s*([\d,\.]+)", text)
+    if m:
+        cny = float(m.group(1).replace(",", ""))
+
+    exchange_rate = 0.0
+    m = re.search(r"通貨レート\s+CNY\s*-\s*([0-9]+(?:\.[0-9]+)?)", text)
+    if not m:
+        m = re.search(r"CNY\s*-\s*([0-9]+(?:\.[0-9]+)?)", text)
+    if m:
+        exchange_rate = float(m.group(1))
+
+    tax_total = 0
+    m = re.search(r"納税額合計\s*[\\¥￥]?\s*([0-9,]+)", text)
+    if m:
+        tax_total = int(m.group(1).replace(",", ""))
+
+    tax_values = sorted(
+        [int(v.replace(",", "")) for v in re.findall(r"[\\¥￥]\s*([0-9]{1,3}(?:,[0-9]{3})+)", text)],
+        reverse=True,
+    )
+    if not tax_total and tax_values:
+        tax_total = max(tax_values)
+
+    return {
+        "permit_cny": cny,
+        "exchange_rate": exchange_rate,
+        "import_tax_jpy": tax_total,
+        "tax_breakdown": tax_values[:10],
+    }
+
+
+def _rakuten_products_by_unique_url(db: Session):
+    rows = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    grouped = {}
+    for p in rows:
+        key = _url_key(p.buy_url or "")
+        if key:
+            grouped.setdefault(key, []).append(p)
+    return {key: products[0] for key, products in grouped.items() if len(products) == 1}
+
+
+def _find_invoice_product(db: Session, item: RakutenInvoiceItemIn):
+    product = db.query(RakutenProduct).filter(
+        RakutenProduct.sku == item.sku,
+        RakutenProduct.is_active == True,
+    ).first()
+    if product:
+        return product
+    key = _url_key(item.buy_url)
+    if not key:
+        return None
+    matches = db.query(RakutenProduct).filter(
+        RakutenProduct.is_active == True,
+        RakutenProduct.buy_url != None,
+    ).all()
+    matched = [p for p in matches if _url_key(p.buy_url or "") == key]
+    return matched[0] if len(matched) == 1 else None
+
+
 @router.post("/invoices/validate-pair")
 async def rakuten_validate_pair(
     invoice_file: UploadFile = File(...),
     permit_file: UploadFile = File(...),
 ):
     """インボイスXLSと輸入許可書PDFのCNY合計が一致するか検証する"""
-    import re, openpyxl
+    import openpyxl
     inv_content = await invoice_file.read()
     try:
         wb = openpyxl.load_workbook(io.BytesIO(inv_content))
     except Exception as e:
         raise HTTPException(400, f"インボイス読み込みエラー: {str(e)}")
 
-    ws = wb.active
-    header_row = None
-    for i, row in enumerate(ws.iter_rows(min_row=1, max_row=20, values_only=True), 1):
-        if row[0] == "10) Name of Commodity":
-            header_row = i + 1
-            break
-    if not header_row:
-        raise HTTPException(400, "インボイスの商品データが見つかりません")
-
-    total_cny = 0.0
-    for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
-        if row[0] and str(row[0]).startswith("MADE IN"):
-            break
-        if row[0] is None and row[6] and row[7]:
-            total_cny += float(row[6]) * float(row[7])
+    parsed = _parse_rakuten_invoice_workbook(wb)
+    total_cny = sum((item["total_price_cny"] or item["qty"] * item["unit_price_cny"]) for item in parsed["items"])
+    total_cny += (parsed["domestic_freight"] or 0) + (parsed["international_freight"] or 0)
 
     permit_content = await permit_file.read()
-    try:
-        import pdfplumber
-        with pdfplumber.open(io.BytesIO(permit_content)) as pdf:
-            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
-    except Exception as e:
-        raise HTTPException(400, f"輸入許可書読み込みエラー: {str(e)}")
-
-    m = re.search(r'仕入書価格\s+[A-Z]\s+-\s+CIF\s+-\s+CNY\s+-\s+([\d,\.]+)', text)
-    permit_cny = float(m.group(1).replace(",", "")) if m else 0.0
+    permit = _permit_values(_permit_text(permit_content))
+    permit_cny = permit["permit_cny"]
 
     total_cny = round(total_cny, 2)
     diff = abs(total_cny - permit_cny)
@@ -1304,52 +1497,17 @@ async def rakuten_validate_pair(
 @router.post("/invoices/parse-pdf")
 async def rakuten_parse_pdf(file: UploadFile = File(...)):
     """輸入許可証PDFから納税額合計・為替レートを抽出"""
-    import re, fitz
     content = await file.read()
-    try:
-        doc = fitz.open(stream=content, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(400, f"PDF読み込みエラー: {str(e)}")
-
-    full_text = ""
-    for page in doc:
-        from html import unescape
-        html = page.get_text("html")
-        text = unescape(re.sub('<[^>]+>', '\n', html))
-        full_text += text + "\n"
-
-    # 納税額合計：¥25,500 形式
-    tax_total = 0
-    m = re.search(r'\\([0-9,]+)\s*\n.*?納税額合計', full_text)
-    if not m:
-        # 数字の後に25,500のような値を探す（文字化けしていても数字は読める）
-        # ページ内で最大の¥XXX,XXX を納税額合計とみなす
-        amounts = re.findall(r'\\([0-9]{2,3},[0-9]{3})', full_text)
-        if amounts:
-            values = [int(a.replace(',', '')) for a in amounts]
-            tax_total = max(values)
-    else:
-        tax_total = int(m.group(1).replace(',', ''))
-
-    # 為替レート：CNY - 23.30 形式
-    exchange_rate = 0
-    m = re.search(r'CNY\s*[-\s]+([0-9]+\.[0-9]+)', full_text)
-    if m:
-        exchange_rate = float(m.group(1))
-
-    # 個別税額も抽出（関税・消費税・地方消費税）
-    taxes = re.findall(r'\\([0-9,]+)', full_text)
-    tax_values = sorted([int(t.replace(',', '')) for t in taxes], reverse=True)
-
+    values = _permit_values(_permit_text(content))
     return {
-        "import_tax_jpy": tax_total,
-        "exchange_rate": exchange_rate,
-        "tax_breakdown": tax_values[:10],  # デバッグ用：上位10件
+        "import_tax_jpy": values["import_tax_jpy"],
+        "exchange_rate": values["exchange_rate"],
+        "tax_breakdown": values["tax_breakdown"],
     }
 
 
 @router.post("/invoices/parse-excel")
-async def rakuten_parse_excel(file: UploadFile = File(...)):
+async def rakuten_parse_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """タオタロウ形式ExcelをパースしてSKU・単価を返す"""
     import openpyxl
     content = await file.read()
@@ -1358,52 +1516,22 @@ async def rakuten_parse_excel(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(400, f"Excel読み込みエラー: {str(e)}")
 
-    ws = wb.active
-    invoice_no = ""
-    for row in ws.iter_rows(min_row=1, max_row=15, values_only=True):
-        for cell in row:
-            if cell and str(cell).startswith("VIP"):
-                invoice_no = str(cell)
-                break
-
-    header_row = None
-    for i, row in enumerate(ws.iter_rows(min_row=1, max_row=20, values_only=True), 1):
-        if row[0] == "10) Name of Commodity":
-            header_row = i + 1
-            break
-
-    if not header_row:
-        raise HTTPException(400, "商品データが見つかりません")
-
-    items = []
-    domestic_freight = international_freight = 0
-    for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
-        if row[0] and str(row[0]).startswith("Domestic"):
-            domestic_freight = row[8] or 0
+    parsed = _parse_rakuten_invoice_workbook(wb)
+    unique_by_url = _rakuten_products_by_unique_url(db)
+    for item in parsed["items"]:
+        if db.query(RakutenProduct).filter(
+            RakutenProduct.sku == item["sku"],
+            RakutenProduct.is_active == True,
+        ).first():
             continue
-        if row[0] and str(row[0]).startswith("International"):
-            international_freight = row[8] or 0
-            continue
-        if row[0] and str(row[0]).startswith("MADE IN"):
-            break
-        if row[0] is None and row[6] and row[7]:
-            sku = str(int(row[12])) if row[12] and isinstance(row[12], (int, float)) else str(row[12] or "")
-            asin_memo = str(row[9]).strip() if len(row) > 9 and row[9] else ""
-            items.append({
-                "sku": sku,
-                "name_jp": str(row[2] or ""),
-                "qty": int(row[6]) if row[6] else 0,
-                "unit_price_cny": float(row[7]) if row[7] else 0,
-                "total_price_cny": float(row[8]) if row[8] else 0,
-                "asin_memo": asin_memo,  # J列（ASIN/商品番号）：商品内訳メモ
-            })
+        product = unique_by_url.get(_url_key(item.get("buy_url", "")))
+        if product:
+            original_code = item.get("asin_memo") or item["sku"]
+            item["sku"] = product.sku
+            item["name_jp"] = product.name or item["name_jp"]
+            item["asin_memo"] = f"{original_code} -> {product.sku}"
 
-    return {
-        "invoice_no": invoice_no,
-        "domestic_freight": domestic_freight,
-        "international_freight": international_freight,
-        "items": items,
-    }
+    return parsed
 
 @router.post("/invoices/calculate")
 def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
@@ -1416,13 +1544,14 @@ def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)
         freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
         tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
         cost_jpy = (((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / item.qty) if item.qty > 0 else 0
-        product = db.query(RakutenProduct).filter(RakutenProduct.sku == item.sku, RakutenProduct.is_active == True).first()
+        product = _find_invoice_product(db, item)
         customer_memo = product.customer_memo if product else None
         result.append({**item.model_dump(), "total_price_cny": round(item_total, 2),
                         "freight_alloc_cny": round(freight_alloc, 2),
                         "tax_alloc_jpy": round(tax_alloc_jpy, 0),
                         "cost_jpy": round(cost_jpy, 1),
-                        "customer_memo": customer_memo})
+                        "customer_memo": customer_memo,
+                        "matched_sku": product.sku if product else ""})
     return {"items": result, "total_cny": round(total_cny, 2),
             "total_freight_cny": round(total_freight, 2),
             "import_tax_jpy": import_tax_jpy,
@@ -1440,13 +1569,13 @@ def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
         item_total = item.qty * item.unit_price_cny
         freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
         tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
-        product = db.query(RakutenProduct).filter(RakutenProduct.sku == item.sku, RakutenProduct.is_active == True).first()
+        product = _find_invoice_product(db, item)
         if product:
             set_size = product.set_size or 1
             cost_jpy = round((((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / (item.qty * set_size)), 1) if item.qty > 0 else 0
             product.cost_jpy = cost_jpy
             product.price = round(item.unit_price_cny / set_size, 2) if item.unit_price_cny else product.price
-            updated_skus[item.sku] = cost_jpy
+            updated_skus[product.sku] = cost_jpy
             updated += 1
 
     # set_componentsを持つセット商品の原価を自動再計算
