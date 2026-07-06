@@ -277,7 +277,12 @@ export default function RakutenInvoicePage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <h3>計算結果</h3>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              {saved && <span style={{ color: '#16a34a', fontSize: 13 }}>保存済み（{saved.updated}件の商品マスタを更新 / {saved.skipped || 0}件スキップ）</span>}
+              {saved && (
+                <span style={{ color: '#16a34a', fontSize: 13 }}>
+                  保存済み（{saved.updated}件の商品マスタを更新 / {saved.skipped || 0}件スキップ）
+                  ※送料・輸入税の按分はスキップ分も含む全体金額で計算済み
+                </span>
+              )}
               <button className="btn btn-primary" onClick={handleSave} disabled={saving || !!saved}>
                 {saving ? '保存中...' : '楽天商品マスタに反映して保存'}
               </button>
