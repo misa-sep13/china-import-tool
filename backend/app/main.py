@@ -717,42 +717,6 @@ async def _check_delayed_cancellations():
         db.close()
 
 
-async def _sync_rakuten_sales():
-    """1時間ごと: RMSから販売数を取得してDBに保存"""
-    from app.core.database import SessionLocal
-    from app.models.rakuten_settings import RakutenSettings
-    from app.models.rakuten_product import RakutenProduct
-    from app.services.rakuten_rms import fetch_sales_by_sku
-    from datetime import datetime
-
-    db = SessionLocal()
-    try:
-        settings = db.query(RakutenSettings).first()
-        if not settings or not settings.rms_service_secret or not settings.rms_license_key:
-            return
-
-        sku_sales = await fetch_sales_by_sku(settings.rms_service_secret, settings.rms_license_key, days=60)
-        products = db.query(RakutenProduct).filter(
-            RakutenProduct.is_active == True, RakutenProduct.is_component == False
-        ).all()
-        updated = 0
-        for p in products:
-            sales = sku_sales.get(p.rakuten_sku_id or "") or sku_sales.get(p.sku or "") or {}
-            if sales:
-                p.sales_30_recent  = sales.get("recent", 0)
-                p.sales_30_prev    = sales.get("prev", 0)
-                p.sales_90         = sales.get("total_90", 0)
-                p.stockout_days_90 = sales.get("stockout_days", 0)
-                p.sales_updated_at = datetime.now()
-                updated += 1
-        db.commit()
-        logger.info(f"[scheduler] 販売数同期完了: {updated}件")
-    except Exception as e:
-        logger.warning(f"[scheduler] 販売数同期エラー: {e}")
-    finally:
-        db.close()
-
-
 async def _pull_rms_stock():
     """RMSから在庫数を取得してDBに上書き。
     ただし「セットの構成品になっている単品SKU」はpullで上書きしない。
@@ -1016,7 +980,11 @@ async def _seed_processed_orders():
 
 
 async def _scheduler_loop():
-    """1分ごとに受注差分の在庫同期＋RMS在庫取得、30分ごとにキャンセル再チェック、1時間ごとに販売数同期を実行"""
+    """1分ごとに受注差分の在庫同期＋RMS在庫取得、30分ごとにキャンセル再チェックを実行。
+
+    販売数同期（60日分の受注取得）はメモリを大量に使いRender(512MB)がOOMするため、
+    ここでは実行しない。GitHub Actionsの日次ワークフロー(rakuten-sales-sync.yml)が
+    毎日JST3:00に実行し、集計結果だけを /rms/sales/apply で受け取る。"""
     await _seed_processed_orders()
     await _pull_rms_stock()
     tick = 0
@@ -1027,8 +995,6 @@ async def _scheduler_loop():
         await _pull_rms_stock()
         if tick % 30 == 0:
             await _check_delayed_cancellations()
-        if tick % 60 == 0:
-            await _sync_rakuten_sales()
 
 
 @asynccontextmanager
