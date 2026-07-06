@@ -10,7 +10,7 @@ import re
 from pydantic import BaseModel
 import asyncio
 from app.core.database import get_db, SessionLocal
-from app.services.rakuten_rms import calc_set_avail
+from app.services.rakuten_rms import calc_set_avail, build_component_share_counts
 
 # 日本時間(JST)。RenderはUTCで動くため、表示用の時刻(sales_updated_at, last_sync)は
 # JSTの壁時計時刻(タイムゾーンなし)で保存し、画面や報告で日本時間として正しく見えるようにする。
@@ -78,6 +78,7 @@ def _parse_components_for_stock(p: RakutenProduct):
 
 
 def _recalc_dependent_set_stock(all_products: list[RakutenProduct], sku_stock: dict, updated_skus: set[str]):
+    share_counts = build_component_share_counts(all_products)
     for p in all_products:
         comps = _parse_components_for_stock(p)
         if not comps or not any(c.get("sku") in updated_skus for c in comps):
@@ -90,7 +91,7 @@ def _recalc_dependent_set_stock(all_products: list[RakutenProduct], sku_stock: d
                 req[c_sku] = req.get(c_sku, 0) + c_qty
         set_qty = None
         for c_sku, c_qty in req.items():
-            avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty)
+            avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty, share_counts.get(c_sku, 0))
             set_qty = avail if set_qty is None else min(set_qty, avail)
         if set_qty is not None:
             p.stock = set_qty
@@ -306,6 +307,7 @@ async def update_product(product_id: int, data: RakutenProductIn, background_tas
                 all_skus = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
                 sku_stock = {cp.sku: (cp.stock or 0) for cp in all_skus}
                 sku_stock[p.sku] = p.stock  # 今回更新した値で上書き
+                share_counts = build_component_share_counts(set_products)
 
                 for sp in set_products:
                     if sp.id == p.id:
@@ -326,7 +328,7 @@ async def update_product(product_id: int, data: RakutenProductIn, background_tas
                         c_qty = c.get("qty") or 1
                         if not c_sku:
                             continue
-                        avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty)
+                        avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty, share_counts.get(c_sku, 0))
                         set_qty = avail if set_qty is None else min(set_qty, avail)
 
                     if set_qty is not None:
@@ -384,6 +386,7 @@ async def bulk_update_stock(body: dict, background_tasks: BackgroundTasks, db: S
         except: return []
 
     rms_items = []
+    share_counts = build_component_share_counts(all_products)
     for p in all_products:
         comps = _parse(p)
         if not comps:
@@ -398,7 +401,7 @@ async def bulk_update_stock(body: dict, background_tasks: BackgroundTasks, db: S
                 req[c_sku] = req.get(c_sku, 0) + c_qty
         set_qty = None
         for c_sku, c_qty in req.items():
-            avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty)
+            avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty, share_counts.get(c_sku, 0))
             set_qty = avail if set_qty is None else min(set_qty, avail)
         if set_qty is not None:
             p.stock = set_qty
@@ -2204,6 +2207,7 @@ def _resolve_push_group(component_sku: str, db: Session) -> dict:
             return []
 
     sets = []
+    share_counts = build_component_share_counts(all_products)
     for p in all_products:
         comps = parse_comps(p)
         if not comps:
@@ -2224,7 +2228,7 @@ def _resolve_push_group(component_sku: str, db: Session) -> dict:
             merged[c_sku] = merged.get(c_sku, 0) + c_qty
         set_qty = None
         for c_sku, total_qty in merged.items():
-            avail = calc_set_avail(sku_to_product.get(c_sku).stock or 0, total_qty) if sku_to_product.get(c_sku) else 0
+            avail = calc_set_avail(sku_to_product.get(c_sku).stock or 0, total_qty, share_counts.get(c_sku, 0)) if sku_to_product.get(c_sku) else 0
             set_qty = avail if set_qty is None else min(set_qty, avail)
 
         manage_number = (p.rakuten_item_url or s.split("_")[0]).strip()

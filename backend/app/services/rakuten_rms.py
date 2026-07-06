@@ -32,9 +32,32 @@ RMS_PUSH_ENABLED = os.environ.get("RMS_PUSH_ENABLED", "false").lower() == "true"
 SET_STOCK_BUFFER = int(os.environ.get("RMS_SET_STOCK_BUFFER", "0") or 0)
 
 
-def calc_set_avail(pool_qty, per_set_qty) -> int:
-    """単品プール在庫から、セット1種類ぶんのページ在庫を計算する（安全マージン適用）"""
-    return max(0, int(pool_qty or 0) - SET_STOCK_BUFFER) // max(1, int(per_set_qty or 1))
+def calc_set_avail(pool_qty, per_set_qty, shared_pages: int = 2) -> int:
+    """単品プール在庫から、セット1種類ぶんのページ在庫を計算する。
+
+    安全マージンは shared_pages（このプールを共有する販売ページ数）が2以上の
+    ときだけ適用する。売り越しは複数ページが同じプールを同時に売れる場合にしか
+    起きないため、単独ページの商品は最後の1個まで通常どおり販売できる。"""
+    buffer = SET_STOCK_BUFFER if shared_pages >= 2 else 0
+    return max(0, int(pool_qty or 0) - buffer) // max(1, int(per_set_qty or 1))
+
+
+def build_component_share_counts(products) -> dict:
+    """構成品SKU → それを参照する販売中セットページ数。
+    2ページ以上で共有される単品プールだけが同時多発注文の売り越しリスクを持つため、
+    calc_set_avail の shared_pages に渡して安全マージンの適用対象を絞る。"""
+    import json as _json
+    counts: dict = {}
+    for p in products:
+        try:
+            comps = _json.loads(getattr(p, "set_components", None) or "[]")
+        except Exception:
+            comps = []
+        if not comps:
+            continue
+        for s in {c.get("sku") for c in comps if c.get("sku")}:
+            counts[s] = counts.get(s, 0) + 1
+    return counts
 
 
 def _auth_header(service_secret: str, license_key: str) -> dict:

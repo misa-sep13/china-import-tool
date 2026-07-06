@@ -265,7 +265,7 @@ async def _sync_rakuten_stock():
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
-    from app.services.rakuten_rms import fetch_recent_orders, push_inventory_to_rms, calc_set_avail
+    from app.services.rakuten_rms import fetch_recent_orders, push_inventory_to_rms, calc_set_avail, build_component_share_counts
     import json as _json
 
     db = SessionLocal()
@@ -384,6 +384,7 @@ async def _sync_rakuten_stock():
                     sku_stock[sku] = p.stock
                     updated_skus.add(sku)
 
+        share_counts = build_component_share_counts(all_products)
         updated_set_skus = set()
         for p in all_products:
             comps = parse_comps(p)
@@ -399,7 +400,7 @@ async def _sync_rakuten_stock():
                     req[c_sku] = req.get(c_sku, 0) + c_qty
             set_qty = None
             for c_sku, c_qty in req.items():
-                avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty)
+                avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty, share_counts.get(c_sku, 0))
                 set_qty = avail if set_qty is None else min(set_qty, avail)
             if set_qty is not None:
                 p.stock = set_qty
@@ -518,7 +519,7 @@ async def _check_delayed_cancellations():
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
     from app.models.processed_order import ProcessedOrder
-    from app.services.rakuten_rms import push_inventory_to_rms, calc_set_avail
+    from app.services.rakuten_rms import push_inventory_to_rms, calc_set_avail, build_component_share_counts
     import json as _json
     import httpx
 
@@ -612,6 +613,7 @@ async def _check_delayed_cancellations():
 
             _save_processed_order(db, order_num, "cancelled")
 
+        share_counts = build_component_share_counts(all_products)
         updated_set_skus = set()
         for p in all_products:
             comps = parse_comps(p)
@@ -627,7 +629,7 @@ async def _check_delayed_cancellations():
                     req[c_sku] = req.get(c_sku, 0) + c_qty
             set_qty = None
             for c_sku, c_qty in req.items():
-                avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty)
+                avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty, share_counts.get(c_sku, 0))
                 set_qty = avail if set_qty is None else min(set_qty, avail)
             if set_qty is not None:
                 p.stock = set_qty
@@ -758,7 +760,7 @@ async def _pull_rms_stock():
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
-    from app.services.rakuten_rms import fetch_inventory_from_rms, calc_set_avail
+    from app.services.rakuten_rms import fetch_inventory_from_rms, calc_set_avail, build_component_share_counts
 
     db = SessionLocal()
     try:
@@ -793,6 +795,7 @@ async def _pull_rms_stock():
         # push失敗(429等)でRMSに古い大きな在庫が残ると、その分だけ実在庫以上に
         # 売れてしまう（売り越し）。pullのたびに上限超過を検出して矯正pushする。
         import json as _json2
+        share_counts = build_component_share_counts(products)
         pool_expected: dict[str, int] = {}
         for p in products:
             try:
@@ -813,7 +816,7 @@ async def _pull_rms_stock():
                 if cp is None:
                     expected = None
                     break
-                avail = calc_set_avail(cp.stock or 0, c_qty)
+                avail = calc_set_avail(cp.stock or 0, c_qty, share_counts.get(c_sku, 0))
                 expected = avail if expected is None else min(expected, avail)
             if expected is not None:
                 pool_expected[p.sku] = expected
