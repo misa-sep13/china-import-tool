@@ -15,6 +15,17 @@ export default function RakutenInvoicePage() {
   const [calculated, setCalculated] = useState(null)
   const [saving, setSaving]         = useState(false)
   const [saved, setSaved]           = useState(null)
+  const [products, setProducts]     = useState([])
+
+  function updateItemSku(index, sku) {
+    setParsed(p => {
+      const items = [...p.items]
+      const prod = products.find(x => x.sku === sku)
+      items[index] = { ...items[index], sku, name_jp: prod?.name || items[index].name_jp }
+      return { ...p, items }
+    })
+    setCalculated(null); setSaved(null)
+  }
 
   function reset() {
     setValidation(null); setParsed(null); setPdfResult(null); setCalculated(null); setSaved(null)
@@ -42,6 +53,11 @@ export default function RakutenInvoicePage() {
       fd2.append('file', invoiceFile)
       const invRes = await api.post('/rakuten/invoices/parse-excel', fd2)
       setParsed(invRes.data)
+      // SKU手動選択用に商品マスタを取得
+      try {
+        const pRes = await api.get('/rakuten/products')
+        setProducts(pRes.data || [])
+      } catch { /* SKU候補が出ないだけなので続行 */ }
       setForm(f => ({
         ...f,
         invoice_no: invRes.data.invoice_no || '',
@@ -186,6 +202,55 @@ export default function RakutenInvoicePage() {
           </div>
           <div style={{ marginTop: 16 }}>
             <button className="btn btn-primary" onClick={handleCalculate}>原価を計算</button>
+          </div>
+        </div>
+      )}
+
+      {/* 明細（SKU照合） */}
+      {parsed && validation?.ok && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <h3 style={{ marginBottom: 4 }}>明細（SKU照合）</h3>
+          <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
+            商品リンクURLで自動照合済み。<span style={{ color: '#e94560', fontWeight: 600 }}>SKUが空欄の行</span>（色違いで同じURLの商品や新商品）は手で選択してください。空欄のまま保存した行はスキップされます。
+          </div>
+          <datalist id="rakuten-sku-options">
+            {products.map(p => (
+              <option key={p.sku} value={p.sku}>{p.name}</option>
+            ))}
+          </datalist>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
+                  <th style={{ padding: '8px 12px', textAlign: 'left' }}>SKU</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left' }}>品名</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'right' }}>数量</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'right' }}>単価(元)</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left' }}>仕入先注文</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left' }}>URL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {parsed.items.map((item, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid #e5e7eb', background: item.sku ? undefined : '#fef2f2' }}>
+                    <td style={{ padding: '4px 12px' }}>
+                      <input list="rakuten-sku-options" value={item.sku || ''}
+                        placeholder="SKU選択"
+                        style={{ width: 150, fontFamily: 'monospace', fontSize: 12, padding: '4px 6px',
+                                 border: `1px solid ${item.sku ? '#cbd5e1' : '#e94560'}`, borderRadius: 4 }}
+                        onChange={e => updateItemSku(i, e.target.value.trim())} />
+                    </td>
+                    <td style={{ padding: '8px 12px', fontSize: 12 }}>{item.name_jp || '—'}</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.qty}</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.unit_price_cny}</td>
+                    <td style={{ padding: '8px 12px', fontSize: 12 }}>{item.asin_memo || '—'}</td>
+                    <td style={{ padding: '8px 12px', fontSize: 11 }}>
+                      {item.buy_url ? <a href={item.buy_url} target="_blank" rel="noreferrer">リンク</a> : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

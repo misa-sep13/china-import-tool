@@ -1474,14 +1474,20 @@ async def rakuten_validate_pair(
         raise HTTPException(400, f"インボイス読み込みエラー: {str(e)}")
 
     parsed = _parse_rakuten_invoice_workbook(wb)
-    total_cny = sum((item["total_price_cny"] or item["qty"] * item["unit_price_cny"]) for item in parsed["items"])
-    total_cny += (parsed["domestic_freight"] or 0) + (parsed["international_freight"] or 0)
+    goods_cny = sum((item["total_price_cny"] or item["qty"] * item["unit_price_cny"]) for item in parsed["items"])
+    with_fees = goods_cny + (parsed["domestic_freight"] or 0) + (parsed["international_freight"] or 0)
 
     permit_content = await permit_file.read()
     permit = _permit_values(_permit_text(permit_content))
     permit_cny = permit["permit_cny"]
 
-    total_cny = round(total_cny, 2)
+    # 輸入許可書のCIFは商品代のみ(旧)／商品代＋諸費用(新)の両パターンがあるため近い方で判定
+    goods_cny = round(goods_cny, 2)
+    with_fees = round(with_fees, 2)
+    if abs(with_fees - permit_cny) <= abs(goods_cny - permit_cny):
+        total_cny = with_fees
+    else:
+        total_cny = goods_cny
     diff = abs(total_cny - permit_cny)
     ok = diff <= 1.0
 
@@ -1518,11 +1524,13 @@ async def rakuten_parse_excel(file: UploadFile = File(...), db: Session = Depend
 
     parsed = _parse_rakuten_invoice_workbook(wb)
     unique_by_url = _rakuten_products_by_unique_url(db)
+    matched = unmatched = 0
     for item in parsed["items"]:
         if db.query(RakutenProduct).filter(
             RakutenProduct.sku == item["sku"],
             RakutenProduct.is_active == True,
         ).first():
+            matched += 1
             continue
         product = unique_by_url.get(_url_key(item.get("buy_url", "")))
         if product:
@@ -1530,7 +1538,15 @@ async def rakuten_parse_excel(file: UploadFile = File(...), db: Session = Depend
             item["sku"] = product.sku
             item["name_jp"] = product.name or item["name_jp"]
             item["asin_memo"] = f"{original_code} -> {product.sku}"
+            matched += 1
+        else:
+            # 照合できなかった行はSKUを空にして画面で手動選択させる
+            # （订单号のままだと保存時に静かにスキップされて紛らわしい）
+            item["sku"] = ""
+            unmatched += 1
 
+    parsed["matched"] = matched
+    parsed["unmatched"] = unmatched
     return parsed
 
 @router.post("/invoices/calculate")
@@ -1543,8 +1559,11 @@ def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)
         item_total = item.qty * item.unit_price_cny
         freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
         tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
-        cost_jpy = (((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / item.qty) if item.qty > 0 else 0
         product = _find_invoice_product(db, item)
+        # qtyは仕入単位(枚・本)。原価は販売単位(set_size個で1セット)あたりで計算する
+        set_size = (product.set_size or 1) if product else 1
+        sell_units = item.qty / set_size if item.qty > 0 else 0
+        cost_jpy = (((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / sell_units) if sell_units > 0 else 0
         customer_memo = product.customer_memo if product else None
         result.append({**item.model_dump(), "total_price_cny": round(item_total, 2),
                         "freight_alloc_cny": round(freight_alloc, 2),
@@ -1571,10 +1590,13 @@ def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
         tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
         product = _find_invoice_product(db, item)
         if product:
+            # qtyは仕入単位(枚・本)。原価は販売単位(set_size個で1セット)あたり、
+            # 仕入れ値(price)は仕入単位あたりの元単価をそのまま保存する
             set_size = product.set_size or 1
-            cost_jpy = round((((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / (item.qty * set_size)), 1) if item.qty > 0 else 0
+            sell_units = item.qty / set_size if item.qty > 0 else 0
+            cost_jpy = round((((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / sell_units), 1) if sell_units > 0 else 0
             product.cost_jpy = cost_jpy
-            product.price = round(item.unit_price_cny / set_size, 2) if item.unit_price_cny else product.price
+            product.price = item.unit_price_cny if item.unit_price_cny else product.price
             updated_skus[product.sku] = cost_jpy
             updated += 1
 
