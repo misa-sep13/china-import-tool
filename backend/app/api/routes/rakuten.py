@@ -101,10 +101,16 @@ def _recalc_dependent_set_stock(all_products: list[RakutenProduct], sku_stock: d
 def _build_rms_stock_items(all_products: list[RakutenProduct], sku_stock: dict, updated_skus: set[str]):
     rms_items = []
     for p in all_products:
+        # RMSにページが無い内部SKU（y91_case等）はpush対象外
+        if p.is_component and not p.rakuten_item_url:
+            continue
+        sku = (p.sku or "").strip()
+        if not sku or not re.match(r'^[a-zA-Z0-9_\-]+$', sku):
+            continue
         comps = _parse_components_for_stock(p)
-        if p.sku in updated_skus or (comps and any(c.get("sku") in updated_skus for c in comps)):
-            manage_number = p.rakuten_item_url or p.sku.split("_")[0]
-            rms_items.append({"manage_number": manage_number, "variant_id": p.sku, "quantity": sku_stock.get(p.sku, 0)})
+        if sku in updated_skus or (comps and any(c.get("sku") in updated_skus for c in comps)):
+            manage_number = p.rakuten_item_url or sku.split("_")[0]
+            rms_items.append({"manage_number": manage_number, "variant_id": sku, "quantity": sku_stock.get(sku, 0)})
     return rms_items
 
 

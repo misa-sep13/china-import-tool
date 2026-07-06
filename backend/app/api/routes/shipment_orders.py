@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func as sqlfunc
 from app.core.database import get_db
@@ -335,7 +335,7 @@ def match_item(order_id: int, item_id: int, data: ShipmentOrderItemPatch, db: Se
 
 
 @router.post("/{order_id}/receive")
-def receive_shipment(order_id: int, db: Session = Depends(get_db)):
+def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """入荷済みにして在庫を加算する"""
     order = db.query(ShipmentOrder).filter(ShipmentOrder.id == order_id).first()
     if not order:
@@ -348,6 +348,7 @@ def receive_shipment(order_id: int, db: Session = Depends(get_db)):
     skipped = 0
     order_consumed = 0  # 発注済みリストから消化した件数
     consumed_skus = set()  # 消化が発生したSKU（発注済2→1の繰り上げ判定用）
+    updated_skus = set()   # 在庫を加算したSKU（セット再計算・RMS反映用）
 
     for item in items:
         if not item.product_id:
@@ -368,6 +369,7 @@ def receive_shipment(order_id: int, db: Session = Depends(get_db)):
         # 在庫加算
         product.stock = (product.stock or 0) + received_qty
         updated += 1
+        updated_skus.add(product.sku)
 
         # 発注済みリストをSKU・古い順に消化
         remaining = received_qty
@@ -414,7 +416,31 @@ def receive_shipment(order_id: int, db: Session = Depends(get_db)):
                 o.stage = 1
                 promoted += 1
 
+    # セット在庫を再計算し、RMSへ反映するitemsを組み立てる。
+    # pushしないと毎分のRMS在庫取得(pull)で楽天側の古い在庫に巻き戻ってしまうため必須。
+    rms_items = []
+    if updated_skus:
+        from app.api.routes.rakuten import _recalc_dependent_set_stock, _build_rms_stock_items
+        all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+        sku_stock = {p.sku: (p.stock or 0) for p in all_products}
+        _recalc_dependent_set_stock(all_products, sku_stock, updated_skus)
+        rms_items = _build_rms_stock_items(all_products, sku_stock, updated_skus)
+
     order.status = "received"
     order.received_at = datetime.now(timezone.utc)
     db.commit()
-    return {"updated": updated, "skipped": skipped, "order_consumed": order_consumed, "stage_promoted": promoted}
+
+    push_items = 0
+    if rms_items:
+        from app.api.routes.rakuten import _get_or_create_settings
+        settings = _get_or_create_settings(db)
+        if settings.rms_service_secret and settings.rms_license_key:
+            from app.services.rakuten_rms import push_inventory_to_rms
+            background_tasks.add_task(
+                push_inventory_to_rms,
+                settings.rms_service_secret, settings.rms_license_key, rms_items,
+            )
+            push_items = len(rms_items)
+
+    return {"updated": updated, "skipped": skipped, "order_consumed": order_consumed,
+            "stage_promoted": promoted, "rms_push_items": push_items}

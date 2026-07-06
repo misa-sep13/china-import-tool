@@ -164,17 +164,25 @@ function ShipmentTab() {
                     <div className="card" style={{ marginBottom: 16 }}>
                       <h3 style={{ color: '#166534', marginBottom: 12 }}>照合済み {matched.length}件</h3>
                       <table>
-                        <thead><tr><th>SKU</th><th>商品名</th><th>色</th><th>サイズ</th><th style={{ textAlign: 'right' }}>数量</th></tr></thead>
+                        <thead><tr><th>SKU</th><th>商品名</th><th>色</th><th>サイズ</th><th style={{ textAlign: 'right' }}>数量(仕入)</th><th style={{ textAlign: 'right' }}>在庫加算</th></tr></thead>
                         <tbody>
-                          {matched.map((item, i) => (
+                          {matched.map((item, i) => {
+                            const prod = allProducts.find(p => p.id === item.product_id)
+                            const setSize = prod?.set_size || 1
+                            const addQty = setSize > 1 ? Math.floor(item.qty / setSize) : item.qty
+                            return (
                             <tr key={i}>
                               <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{item.sku}</td>
                               <td style={{ fontSize: 12 }}>{item.name_jp || item.name_cn}</td>
                               <td style={{ fontSize: 12 }}>{item.color}</td>
                               <td style={{ fontSize: 12 }}>{item.size}</td>
                               <td style={{ textAlign: 'right' }}>{item.qty}</td>
+                              <td style={{ textAlign: 'right', fontWeight: 700, color: '#166534' }}>
+                                {addQty}{setSize > 1 && <span style={{ fontSize: 11, color: '#64748b', fontWeight: 400 }}>（{setSize}個で1セット）</span>}
+                              </td>
                             </tr>
-                          ))}
+                            )
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -198,7 +206,18 @@ function ShipmentTab() {
                               <td style={{ textAlign: 'right' }}>{item.qty}</td>
                               <td>
                                 {item.sku
-                                  ? <span style={{ fontSize: 12, color: '#166534', fontWeight: 700 }}>{item.sku}</span>
+                                  ? (() => {
+                                      const prod = allProducts.find(p => p.id === item.product_id)
+                                      const s = prod?.set_size || 1
+                                      return (
+                                        <span style={{ fontSize: 12, color: '#166534', fontWeight: 700 }}>
+                                          {item.sku}
+                                          <span style={{ fontSize: 11, color: '#64748b', fontWeight: 400, marginLeft: 6 }}>
+                                            在庫加算 {Math.floor(item.qty / s)}{s > 1 ? `（${item.qty}÷${s}）` : ''}
+                                          </span>
+                                        </span>
+                                      )
+                                    })()
                                   : <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                                       <select style={{ fontSize: 12 }} defaultValue="" onChange={e => handleUnmatchedSelect(i, e.target.value)}>
                                         <option value="">-- 選択 --</option>
