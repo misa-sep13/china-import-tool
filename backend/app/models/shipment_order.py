@@ -23,7 +23,7 @@ class ShipmentOrderItem(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     shipment_order_id = Column(Integer, ForeignKey("shipment_orders.id"), index=True)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)  # NULL = 未照合
+    product_id = Column(Integer, ForeignKey("rakuten_products.id"), nullable=True)  # NULL = 未照合
     name_cn = Column(String)         # 中国語商品名
     color = Column(String)           # 色
     size = Column(String)            # サイズ

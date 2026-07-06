@@ -146,6 +146,40 @@ def _migrate():
             except Exception as e:
                 logger.warning(f"migrate: {table}.{col} -> {e}")
 
+    # 配送依頼明細のproduct_idは楽天商品マスタ(rakuten_products.id)を指す。
+    # 初期実装でAmazon商品マスタ(products.id)へのFKとして作られたDBでは、
+    # 入荷反映時に楽天product_idを保存できず500になるため、PostgreSQLでは制約を修正する。
+    try:
+        fks = inspector.get_foreign_keys("shipment_order_items")
+        wrong_fks = [
+            fk for fk in fks
+            if "product_id" in (fk.get("constrained_columns") or [])
+            and fk.get("referred_table") == "products"
+        ]
+        has_rakuten_fk = any(
+            "product_id" in (fk.get("constrained_columns") or [])
+            and fk.get("referred_table") == "rakuten_products"
+            for fk in fks
+        )
+        if wrong_fks and engine.dialect.name == "postgresql":
+            preparer = engine.dialect.identifier_preparer
+            with engine.begin() as conn:
+                for fk in wrong_fks:
+                    name = fk.get("name")
+                    if name:
+                        conn.execute(text(
+                            f"ALTER TABLE shipment_order_items DROP CONSTRAINT IF EXISTS {preparer.quote(name)}"
+                        ))
+                if not has_rakuten_fk:
+                    conn.execute(text(
+                        "ALTER TABLE shipment_order_items "
+                        "ADD CONSTRAINT shipment_order_items_product_id_rakuten_fkey "
+                        "FOREIGN KEY (product_id) REFERENCES rakuten_products(id)"
+                    ))
+            logger.info("migrate: fixed shipment_order_items.product_id FK to rakuten_products.id")
+    except Exception as e:
+        logger.warning(f"migrate: shipment_order_items.product_id FK fix -> {e}")
+
     drop_migrations = [
         ("order_settings", "new_product_required_days"),
         ("order_settings", "sale_extra_days"),
