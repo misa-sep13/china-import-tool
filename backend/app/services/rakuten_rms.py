@@ -23,6 +23,19 @@ GETORDER_CONCURRENCY = 3  # getOrder の並列数
 # 本番連動を始めるときに環境変数 RMS_PUSH_ENABLED=true を設定して有効化する。
 RMS_PUSH_ENABLED = os.environ.get("RMS_PUSH_ENABLED", "false").lower() == "true"
 
+# セット在庫計算の安全マージン（本数）。
+# 複数のセットページが1つの単品プールを共有する構造上、同期の隙間（約1分）に
+# 複数ページで同時に売れると受注合計がプールを超えられる（売り越し）。
+# プールからこの本数を差し引いてからセット在庫を計算することで、
+# 残りわずかのとき少し早めに売り切れ表示になる代わりに売り越しを防ぐ。
+# Renderの環境変数 RMS_SET_STOCK_BUFFER で設定（デフォルト0=マージンなし）。推奨: 3〜5
+SET_STOCK_BUFFER = int(os.environ.get("RMS_SET_STOCK_BUFFER", "0") or 0)
+
+
+def calc_set_avail(pool_qty, per_set_qty) -> int:
+    """単品プール在庫から、セット1種類ぶんのページ在庫を計算する（安全マージン適用）"""
+    return max(0, int(pool_qty or 0) - SET_STOCK_BUFFER) // max(1, int(per_set_qty or 1))
+
 
 def _auth_header(service_secret: str, license_key: str) -> dict:
     token = base64.b64encode(f"{service_secret}:{license_key}".encode()).decode()

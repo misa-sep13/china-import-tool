@@ -265,7 +265,7 @@ async def _sync_rakuten_stock():
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
-    from app.services.rakuten_rms import fetch_recent_orders, push_inventory_to_rms
+    from app.services.rakuten_rms import fetch_recent_orders, push_inventory_to_rms, calc_set_avail
     import json as _json
 
     db = SessionLocal()
@@ -399,7 +399,7 @@ async def _sync_rakuten_stock():
                     req[c_sku] = req.get(c_sku, 0) + c_qty
             set_qty = None
             for c_sku, c_qty in req.items():
-                avail = sku_stock.get(c_sku, 0) // c_qty
+                avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty)
                 set_qty = avail if set_qty is None else min(set_qty, avail)
             if set_qty is not None:
                 p.stock = set_qty
@@ -518,7 +518,7 @@ async def _check_delayed_cancellations():
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
     from app.models.processed_order import ProcessedOrder
-    from app.services.rakuten_rms import push_inventory_to_rms
+    from app.services.rakuten_rms import push_inventory_to_rms, calc_set_avail
     import json as _json
     import httpx
 
@@ -627,7 +627,7 @@ async def _check_delayed_cancellations():
                     req[c_sku] = req.get(c_sku, 0) + c_qty
             set_qty = None
             for c_sku, c_qty in req.items():
-                avail = sku_stock.get(c_sku, 0) // c_qty
+                avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty)
                 set_qty = avail if set_qty is None else min(set_qty, avail)
             if set_qty is not None:
                 p.stock = set_qty
@@ -758,7 +758,7 @@ async def _pull_rms_stock():
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
-    from app.services.rakuten_rms import fetch_inventory_from_rms
+    from app.services.rakuten_rms import fetch_inventory_from_rms, calc_set_avail
 
     db = SessionLocal()
     try:
@@ -813,7 +813,7 @@ async def _pull_rms_stock():
                 if cp is None:
                     expected = None
                     break
-                avail = (cp.stock or 0) // c_qty
+                avail = calc_set_avail(cp.stock or 0, c_qty)
                 expected = avail if expected is None else min(expected, avail)
             if expected is not None:
                 pool_expected[p.sku] = expected

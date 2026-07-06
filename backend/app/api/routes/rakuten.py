@@ -10,6 +10,7 @@ import re
 from pydantic import BaseModel
 import asyncio
 from app.core.database import get_db, SessionLocal
+from app.services.rakuten_rms import calc_set_avail
 
 # 日本時間(JST)。RenderはUTCで動くため、表示用の時刻(sales_updated_at, last_sync)は
 # JSTの壁時計時刻(タイムゾーンなし)で保存し、画面や報告で日本時間として正しく見えるようにする。
@@ -89,7 +90,7 @@ def _recalc_dependent_set_stock(all_products: list[RakutenProduct], sku_stock: d
                 req[c_sku] = req.get(c_sku, 0) + c_qty
         set_qty = None
         for c_sku, c_qty in req.items():
-            avail = sku_stock.get(c_sku, 0) // c_qty
+            avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty)
             set_qty = avail if set_qty is None else min(set_qty, avail)
         if set_qty is not None:
             p.stock = set_qty
@@ -325,7 +326,7 @@ async def update_product(product_id: int, data: RakutenProductIn, background_tas
                         c_qty = c.get("qty") or 1
                         if not c_sku:
                             continue
-                        avail = sku_stock.get(c_sku, 0) // c_qty
+                        avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty)
                         set_qty = avail if set_qty is None else min(set_qty, avail)
 
                     if set_qty is not None:
@@ -397,7 +398,7 @@ async def bulk_update_stock(body: dict, background_tasks: BackgroundTasks, db: S
                 req[c_sku] = req.get(c_sku, 0) + c_qty
         set_qty = None
         for c_sku, c_qty in req.items():
-            avail = sku_stock.get(c_sku, 0) // c_qty
+            avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty)
             set_qty = avail if set_qty is None else min(set_qty, avail)
         if set_qty is not None:
             p.stock = set_qty
@@ -2223,7 +2224,7 @@ def _resolve_push_group(component_sku: str, db: Session) -> dict:
             merged[c_sku] = merged.get(c_sku, 0) + c_qty
         set_qty = None
         for c_sku, total_qty in merged.items():
-            avail = (sku_to_product.get(c_sku).stock or 0) // total_qty if sku_to_product.get(c_sku) else 0
+            avail = calc_set_avail(sku_to_product.get(c_sku).stock or 0, total_qty) if sku_to_product.get(c_sku) else 0
             set_qty = avail if set_qty is None else min(set_qty, avail)
 
         manage_number = (p.rakuten_item_url or s.split("_")[0]).strip()
