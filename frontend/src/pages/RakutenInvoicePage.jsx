@@ -300,29 +300,34 @@ export default function RakutenInvoicePage() {
                 </tr>
               </thead>
               <tbody>
-                {calculated.items.map((item, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid #e5e7eb', background: item.asin_memo ? '#fffbeb' : undefined }}>
-                    <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 12 }}>{item.sku}</td>
-                    <td style={{ padding: '8px 12px', fontSize: 12 }}>{item.name_jp || '—'}</td>
-                    <td style={{ padding: '8px 12px', fontSize: 12 }}>
-                      {item.asin_memo
-                        ? <span style={{ background: '#fef08a', border: '1px solid #ca8a04', borderRadius: 4, padding: '2px 6px', fontSize: 11, fontWeight: 600 }}>⚠️ {item.asin_memo}</span>
-                        : item.customer_memo
-                          ? <span style={{ color: '#64748b', fontSize: 11 }}>{item.customer_memo}</span>
-                          : '—'}
-                    </td>
-                    <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.qty}</td>
-                    <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.unit_price_cny}</td>
-                    <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.total_price_cny}</td>
-                    <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.freight_alloc_cny}</td>
-                    <td style={{ padding: '8px 12px', textAlign: 'right', color: '#7c3aed' }}>
-                      {item.tax_alloc_jpy ? `¥${item.tax_alloc_jpy.toLocaleString()}` : '—'}
-                    </td>
-                    <td style={{ padding: '8px 12px', textAlign: 'right', color: '#e94560', fontWeight: 700 }}>
-                      ¥{item.cost_jpy?.toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
+                {calculated.items.map((item, i) => {
+                  const isLinked = !!item.matched_sku
+                  return (
+                    <tr key={i} style={{ borderBottom: '1px solid #e5e7eb', background: isLinked ? '#f0fdf4' : item.asin_memo ? '#fffbeb' : undefined }}>
+                      <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 12 }}>{item.sku}</td>
+                      <td style={{ padding: '8px 12px', fontSize: 12 }}>{item.name_jp || '—'}</td>
+                      <td style={{ padding: '8px 12px', fontSize: 12 }}>
+                        {item.asin_memo
+                          ? isLinked
+                            ? <span style={{ background: '#dcfce7', border: '1px solid #22c55e', color: '#166534', borderRadius: 4, padding: '2px 6px', fontSize: 11, fontWeight: 700 }}>紐づき {item.asin_memo}</span>
+                            : <span style={{ background: '#fef08a', border: '1px solid #ca8a04', borderRadius: 4, padding: '2px 6px', fontSize: 11, fontWeight: 600 }}>注意 {item.asin_memo}</span>
+                          : item.customer_memo
+                            ? <span style={{ color: '#64748b', fontSize: 11 }}>{item.customer_memo}</span>
+                            : '—'}
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.qty}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.unit_price_cny}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.total_price_cny}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.freight_alloc_cny}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', color: '#7c3aed' }}>
+                        {item.tax_alloc_jpy ? `¥${item.tax_alloc_jpy.toLocaleString()}` : '—'}
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', color: '#e94560', fontWeight: 700 }}>
+                        ¥{item.cost_jpy?.toLocaleString()}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

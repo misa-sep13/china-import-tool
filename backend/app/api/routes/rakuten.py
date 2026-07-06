@@ -1678,7 +1678,11 @@ def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)
         sell_units = item.qty / set_size if item.qty > 0 else 0
         cost_jpy = (((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / sell_units) if sell_units > 0 else 0
         customer_memo = product.customer_memo
-        result.append({**item.model_dump(), "total_price_cny": round(item_total, 2),
+        result_item = item.model_dump()
+        result_item["sku"] = product.sku
+        if product.name:
+            result_item["name_jp"] = product.name
+        result.append({**result_item, "total_price_cny": round(item_total, 2),
                         "freight_alloc_cny": round(freight_alloc, 2),
                         "tax_alloc_jpy": round(tax_alloc_jpy, 0),
                         "cost_jpy": round(cost_jpy, 1),
