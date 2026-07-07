@@ -1043,11 +1043,15 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
             h["qty"] += qty
         # 本体行（set_componentsありかつspec空の場合はスキップ）
         if not (p.set_components and not (p.spec or "").strip()):
+            # 発注数は販売単位（セット数）。タオタロウへ渡す数量は仕入単位（個数）なので
+            # セット入数(set_size)を掛ける（例: y79 2枚セット×40 → 80個）。
+            # セット商品(set_components)は構成品行の qty×comp_qty 側で換算されるため、
+            # この掛け算は単体商品（set_sizeで管理・セット商品はset_size=1運用）にだけ効く
             excel_items.append({
                 "buy_url":       p.buy_url or "",
                 "supplier_spec": getattr(p, "supplier_spec", "") or "",
                 "spec":          p.spec or "",
-                "qty":           qty,
+                "qty":           qty * (p.set_size or 1),
                 "price":         p.price or 0,
                 "customer_memo": p.customer_memo or "",
                 "notes":         p.notes or "",
