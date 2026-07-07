@@ -196,7 +196,7 @@ export default function StockPage() {
   const isLoading = jobStatus === 'running' || jobStatus === 'idle'
 
   const daysBadge = (days) => {
-    if (days >= 9999) return <span style={{ color: '#aaa', fontSize: 12 }}>-</span>
+    if (days >= 9999) return <span style={{ color: '#999', fontSize: 12 }}>-</span>
     if (days < 30) return <span className="badge badge-danger">{days}日</span>
     if (days < 60) return <span className="badge badge-warn">{days}日</span>
     return <span className="badge badge-ok">{days}日</span>
@@ -205,7 +205,7 @@ export default function StockPage() {
   const recBadge = (pieces) => {
     if (pieces > 0) return <span style={{ color: '#e94560', fontWeight: 700 }}>+{pieces}</span>
     if (pieces < 0) return <span style={{ color: '#16a34a', fontWeight: 600 }}>{pieces}</span>
-    return <span style={{ color: '#aaa' }}>0</span>
+    return <span style={{ color: '#999' }}>0</span>
   }
 
   const thStyle = (key) => ({
@@ -286,7 +286,7 @@ export default function StockPage() {
                 {sorted.map(item => (
                   <tr
                     key={item.product_id}
-                    style={{ opacity: currentSelected.has(item._idx) ? 1 : 0.7, background: item.recommended_pieces < 0 ? '#f0fdf4' : undefined }}
+                    style={{ background: item.recommended_pieces < 0 ? '#f0fdf4' : undefined }}
                   >
                     <td style={{ textAlign: 'center', cursor: 'pointer' }} onClick={() => toggleSelect(item._idx)}>
                       <input
@@ -296,13 +296,13 @@ export default function StockPage() {
                         onClick={e => e.stopPropagation()}
                       />
                     </td>
-                    <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{item.sku}</td>
-                    <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</td>
-                    <td style={{ fontSize: 12, color: '#666' }}>{[item.color, item.size].filter(Boolean).join(' / ')}</td>
-                    <td style={{ textAlign: 'right' }}>{item.available}</td>
-                    <td style={{ textAlign: 'right', color: item.inbound > 0 ? '#2563eb' : '#bbb' }}>{item.inbound || '-'}</td>
-                    <td style={{ textAlign: 'right', color: item.ordered > 0 ? '#e94560' : '#bbb' }}>{item.ordered > 0 ? item.ordered : '-'}</td>
-                    <td style={{ textAlign: 'right' }}>{item.daily}</td>
+                    <td style={{ fontFamily: 'monospace', fontSize: 12, color: '#1a1a2e' }}>{item.sku}</td>
+                    <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1a1a2e' }}>{item.name}</td>
+                    <td style={{ fontSize: 12, color: '#555' }}>{[item.color, item.size].filter(Boolean).join(' / ')}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{item.available}</td>
+                    <td style={{ textAlign: 'right', color: item.inbound > 0 ? '#2563eb' : '#aaa' }}>{item.inbound || '-'}</td>
+                    <td style={{ textAlign: 'right', color: item.ordered > 0 ? '#e94560' : '#aaa' }}>{item.ordered > 0 ? item.ordered : '-'}</td>
+                    <td style={{ textAlign: 'right', color: '#555' }}>{item.daily}</td>
                     <td style={{ textAlign: 'right' }}>{daysBadge(item.days_left)}</td>
                     <td style={{ textAlign: 'right' }}>{recBadge(item.recommended_pieces)}</td>
                     <td>
@@ -315,7 +315,7 @@ export default function StockPage() {
                         style={{ width: 60 }}
                       />
                     </td>
-                    <td style={{ textAlign: 'right' }}>{item.price}</td>
+                    <td style={{ textAlign: 'right', color: '#555' }}>{item.price}</td>
                     <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
                       {justOrdered.has(item.product_id) ? (
                         <span style={{ color: '#16a34a', fontWeight: 700, fontSize: 12 }}>✓ 発注済</span>
