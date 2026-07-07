@@ -39,6 +39,17 @@ export default function RakutenProductsPage() {
   })
   const commissionRate = settings?.commission_rate ?? 0.09
 
+  // タオタロウ取り込みで読めない仕様形式を検出する。
+  // 正しい形式: 1688の選択肢の「値」を属性の表示順に「、」で区切る（例: 燕麦色、S 建议75-95斤）
+  const specFormatWarning = (spec) => {
+    const s = (spec || '').trim()
+    if (!s) return null
+    if (/[；;]/.test(s) || /(颜色|规格|尺码|款式)[：:]/.test(s)) {
+      return '「颜色：」などのラベルや「；」はタオタロウで読み込めません。選択肢の値だけを表示順に「、」で区切ってください（例: 燕麦色、S 建议75-95斤）'
+    }
+    return null
+  }
+
   const saveMutation = useMutation({
     mutationFn: (d) => editing === 'new'
       ? api.post('/rakuten/products', d)
@@ -83,11 +94,17 @@ export default function RakutenProductsPage() {
   const openNew = () => { setForm(EMPTY); setInitialForm(EMPTY); setEditing('new') }
   const openEdit = (p) => { setForm({ ...p }); setInitialForm({ ...p }); setEditing(p) }
 
+  const trySave = () => {
+    const warn = specFormatWarning(form.supplier_spec)
+    if (warn && !window.confirm('⚠ 仕様（中国語）の形式警告\n' + warn + '\n\nこのまま保存しますか？')) return
+    saveMutation.mutate(form)
+  }
+
   const handleModalClose = () => {
     const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm)
     if (isDirty) {
       if (window.confirm('変更が保存されていません。保存しますか？')) {
-        saveMutation.mutate(form)
+        trySave()
       } else {
         setEditing(null)
       }
@@ -429,8 +446,13 @@ export default function RakutenProductsPage() {
                 <textarea {...f('buy_url')} placeholder="https://..." rows={3} style={{ fontFamily: 'monospace', fontSize: 12 }} />
               </div>
               <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                <label>仕様（中国語）<span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 6 }}>タオタロウB列・発注書に反映</span></label>
-                <input {...f('supplier_spec')} placeholder="例: M006加大码-直筒款黑色" />
+                <label>仕様（中国語）<span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 6 }}>タオタロウB列・発注書に反映 ／ 1688の選択肢の値を表示順に「、」区切り</span></label>
+                <input {...f('supplier_spec')} placeholder="例: 燕麦色、S 建议75-95斤（1属性なら値そのまま）" />
+                {specFormatWarning(form.supplier_spec) && (
+                  <div style={{ color: '#e94560', fontSize: 11, marginTop: 4 }}>
+                    ⚠ {specFormatWarning(form.supplier_spec)}
+                  </div>
+                )}
               </div>
               <div className="form-group">
                 <label>単価（元）</label>
@@ -548,7 +570,7 @@ export default function RakutenProductsPage() {
               <button
                 className="btn btn-primary"
                 disabled={!form.sku || saveMutation.isPending}
-                onClick={() => saveMutation.mutate(form)}
+                onClick={trySave}
               >
                 {saveMutation.isPending ? '保存中...' : '💾 保存'}
               </button>
