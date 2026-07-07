@@ -311,16 +311,16 @@ function ShipmentTab() {
   )
 }
 
-async function downloadExcel(items) {
+async function downloadExcel(items, memo = '発注Excelから登録', suffix = '') {
   const res = await api.post('/rakuten/orders/excel', {
     items,
     record_history: true,
-    memo: '発注Excelから登録',
+    memo,
   }, { responseType: 'blob' })
   const url = URL.createObjectURL(new Blob([res.data]))
   const a = document.createElement('a')
   a.href = url
-  a.download = `${new Date().toISOString().slice(0,10).replace(/-/g,'')}_rakuten_order.xlsx`
+  a.download = `${new Date().toISOString().slice(0,10).replace(/-/g,'')}_rakuten_order${suffix ? '_' + suffix : ''}.xlsx`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -331,6 +331,7 @@ export default function RakutenOrderPage() {
   const [orderInputs, setOrderInputs] = useState({})
   const [ordering, setOrdering] = useState(null)
   const [downloading, setDownloading] = useState(false)
+  const [checkedSkus, setCheckedSkus] = useState(new Set())
   const [search, setSearch] = useState('')
   const [onlyRecommended, setOnlyRecommended] = useState(false)
 
@@ -376,7 +377,12 @@ export default function RakutenOrderPage() {
     if (!qty || qty <= 0) return
     setOrdering(item.sku)
     try {
-      await createOrder.mutateAsync({ sku: item.sku, name: item.name, qty: Number(qty) })
+      // 単品の発注Excelを生成し、同時に発注済みリストへ記録する
+      await downloadExcel([{ sku: item.sku, qty: Number(qty) }], '単品発注', item.sku)
+      qc.invalidateQueries(['rakuten-all-products-order'])
+      qc.invalidateQueries(['rakuten-order-history'])
+    } catch (e) {
+      alert('発注エラー: ' + (e.response?.data?.detail || e.message))
     } finally {
       setOrdering(null)
     }
@@ -384,12 +390,14 @@ export default function RakutenOrderPage() {
 
   const handleExcelDownload = async () => {
     const targets = displayItems
+      .filter(item => checkedSkus.has(item.sku))
       .map(item => ({ sku: item.sku, qty: Number(orderInputs[item.sku] ?? item.order_qty) }))
       .filter(i => i.qty > 0)
-    if (targets.length === 0) { alert('発注数が1以上の商品がありません'); return }
+    if (targets.length === 0) { alert('チェックした商品（発注数1以上）がありません'); return }
     setDownloading(true)
     try {
       await downloadExcel(targets)
+      setCheckedSkus(new Set())
       qc.invalidateQueries(['rakuten-all-products-order'])
       qc.invalidateQueries(['rakuten-order-history'])
     } finally {
@@ -432,11 +440,12 @@ export default function RakutenOrderPage() {
         </button>
         <button
           className="btn"
-          style={{ fontSize: 13, background: '#22c55e', color: '#fff', border: 'none' }}
-          disabled={downloading}
+          style={{ fontSize: 13, background: checkedSkus.size > 0 ? '#22c55e' : '#cbd5e1', color: '#fff', border: 'none' }}
+          disabled={downloading || checkedSkus.size === 0}
           onClick={handleExcelDownload}
+          title="チェックした行だけがExcelに書き込まれます"
         >
-          {downloading ? '生成中...' : '📥 発注Excel（タオタロウ）'}
+          {downloading ? '生成中...' : `📥 発注Excel（チェックした${checkedSkus.size}件）`}
         </button>
       </div>
 
@@ -479,9 +488,27 @@ export default function RakutenOrderPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-                  {['商品名 / SKU', '実在庫', '発注済1', '発注済2', '全在庫', '日販', '在庫日数', '成長率', '提案発注数', '発注'].map(h => (
+                  {['商品名 / SKU', '実在庫', '発注済1', '発注済2', '全在庫', '日販', '在庫日数', '成長率', '提案発注数'].map(h => (
                     <th key={h} style={{ padding: '10px 12px', textAlign: 'center', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
+                  <th style={{ padding: '10px 12px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                    発注
+                    <label style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: '#64748b', cursor: 'pointer', userSelect: 'none' }}>
+                      <input
+                        type="checkbox"
+                        checked={displayItems.length > 0 && displayItems.every(it => checkedSkus.has(it.sku))}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setCheckedSkus(new Set(displayItems.map(it => it.sku)))
+                          } else {
+                            setCheckedSkus(new Set())
+                          }
+                        }}
+                        style={{ verticalAlign: 'middle', marginRight: 2 }}
+                      />
+                      全選択
+                    </label>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -492,7 +519,8 @@ export default function RakutenOrderPage() {
                 )}
                 {displayItems.map(item => {
                   const needsOrder = item.needs_order
-                  const rowBg = needsOrder ? '#fff7ed' : 'transparent'
+                  const isChecked = checkedSkus.has(item.sku)
+                  const rowBg = isChecked ? '#eff6ff' : needsOrder ? '#fff7ed' : 'transparent'
                   const inputVal = orderInputs[item.sku] ?? (item.order_qty > 0 ? item.order_qty : 0)
                   const comps = item.set_components || []
                   return (
@@ -559,9 +587,24 @@ export default function RakutenOrderPage() {
                             style={{ padding: '4px 10px', fontSize: 12 }}
                             disabled={ordering === item.sku || !inputVal || Number(inputVal) <= 0}
                             onClick={() => handleOrder(item)}
+                            title="この1商品だけの発注Excelを作成し、発注済みリストに記録"
                           >
-                            発注
+                            {ordering === item.sku ? '生成中' : '発注'}
                           </button>
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            title="チェックした行だけが一括の発注Excelに載ります"
+                            onChange={e => {
+                              setCheckedSkus(prev => {
+                                const next = new Set(prev)
+                                if (e.target.checked) next.add(item.sku)
+                                else next.delete(item.sku)
+                                return next
+                              })
+                            }}
+                            style={{ width: 16, height: 16, cursor: 'pointer' }}
+                          />
                         </div>
                       </td>
                     </tr>
