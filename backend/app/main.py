@@ -124,6 +124,8 @@ def _migrate():
         ("welfare_work_instructions","created_at",           "ALTER TABLE welfare_work_instructions ADD COLUMN created_at TIMESTAMP"),
         ("welfare_work_instructions","updated_at",           "ALTER TABLE welfare_work_instructions ADD COLUMN updated_at TIMESTAMP"),
         # インボイス：輸入許可書情報
+        # Amazon商品マスタ：区分
+        ("products",      "category",            "ALTER TABLE products ADD COLUMN category VARCHAR DEFAULT '標準'"),
         ("invoices","customs_duty",          "ALTER TABLE invoices ADD COLUMN customs_duty INTEGER DEFAULT 0"),
         ("invoices","consumption_tax",       "ALTER TABLE invoices ADD COLUMN consumption_tax INTEGER DEFAULT 0"),
         ("invoices","local_consumption_tax", "ALTER TABLE invoices ADD COLUMN local_consumption_tax INTEGER DEFAULT 0"),

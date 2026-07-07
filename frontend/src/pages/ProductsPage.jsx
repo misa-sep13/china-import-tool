@@ -2,10 +2,12 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 
+const CATEGORIES = ['標準', 'ファッション', '大型']
+
 const EMPTY = {
   sku: '', fnsku: '', asin: '', name: '', buy_url: '', photo_url: '',
   color: '', size: '', spec: '', customer_memo: '', price: '', repack: '', note: '',
-  set_size: 1, extra_stock: 0, amazon_fee_rate: 0.1,
+  set_size: 1, extra_stock: 0, amazon_fee_rate: 0.1, category: '標準',
 }
 const EDITABLE_FIELDS = Object.keys(EMPTY)
 
@@ -267,6 +269,7 @@ export default function ProductsPage() {
                 <tr>
                   <th>SKU</th>
                   <th>商品名</th>
+                  <th>区分</th>
                   <th>仕様</th>
                   <th>お客様専用メモ</th>
                   <th style={{ textAlign: 'right' }}>仕入原価(円)</th>
@@ -318,6 +321,15 @@ export default function ProductsPage() {
                             {p.name || '(未入力)'}
                           </span>
                         )}
+                      </td>
+                      <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                        <span style={{
+                          padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                          background: p.category === 'ファッション' ? '#fce7f3' : p.category === '大型' ? '#fef9c3' : '#e0f2fe',
+                          color: p.category === 'ファッション' ? '#9d174d' : p.category === '大型' ? '#854d0e' : '#0369a1',
+                        }}>
+                          {p.category || '標準'}
+                        </span>
                       </td>
                       <td style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }} title={p.spec}>
                         {p.spec || <span style={{ color: '#bbb' }}>-</span>}
@@ -385,6 +397,12 @@ export default function ProductsPage() {
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
                   <label>商品名</label>
                   <input {...f('name')} />
+                </div>
+                <div className="form-group">
+                  <label>区分</label>
+                  <select value={form.category || '標準'} onChange={e => setForm(p => ({ ...p, category: e.target.value }))}>
+                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
                 </div>
                 <div className="form-group">
                   <label>仕入原価(円)※インボイスから自動計算</label>

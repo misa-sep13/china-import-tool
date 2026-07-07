@@ -32,6 +32,7 @@ class Product(Base):
     fees_updated_at = Column(DateTime(timezone=True), nullable=True)  # 最終取得日時
     price_auto_adjust = Column(Boolean, default=True)   # 価格自動調整対象
     price_max = Column(Float, nullable=True)            # 上限価格（円）
+    category = Column(String, default='標準')             # 区分: 標準/ファッション/大型
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

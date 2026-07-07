@@ -29,6 +29,7 @@ class ProductCreate(BaseModel):
     set_size: Optional[int] = 1
     extra_stock: Optional[int] = 0
     amazon_fee_rate: Optional[float] = 0.1
+    category: Optional[str] = "標準"
 
 def _restore_deleted_product(existing: Product, data: ProductCreate, db: Session) -> Product:
     for k, v in data.model_dump().items():
@@ -64,6 +65,7 @@ class ProductUpdate(BaseModel):
     amazon_fee_rate: Optional[float] = None
     selling_price: Optional[float] = None
     fba_fee: Optional[float] = None
+    category: Optional[str] = None
 
 class ProductOut(ProductCreate):
     id: int
@@ -73,6 +75,7 @@ class ProductOut(ProductCreate):
     selling_price: Optional[float] = None
     fba_fee: Optional[float] = None
     fees_updated_at: Optional[datetime] = None
+    category: Optional[str] = "標準"
 
     class Config:
         from_attributes = True

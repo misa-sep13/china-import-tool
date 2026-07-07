@@ -269,6 +269,7 @@ export default function StockPage() {
                   </th>
                   <th style={thStyle('sku')} onClick={() => handleSort('sku')}>SKU{sortIcon('sku')}</th>
                   <th style={thStyle('name')} onClick={() => handleSort('name')}>商品名{sortIcon('name')}</th>
+                  <th style={thStyle('category')} onClick={() => handleSort('category')}>区分{sortIcon('category')}</th>
                   <th style={thStyle('color')} onClick={() => handleSort('color')}>色/サイズ{sortIcon('color')}</th>
                   <th style={{ ...thStyle('available'), textAlign: 'right' }} onClick={() => handleSort('available')}>在庫{sortIcon('available')}</th>
                   <th style={{ ...thStyle('inbound'), textAlign: 'right' }} onClick={() => handleSort('inbound')}>納品中{sortIcon('inbound')}</th>
@@ -298,6 +299,15 @@ export default function StockPage() {
                     </td>
                     <td style={{ fontFamily: 'monospace', fontSize: 12, color: '#1a1a2e' }}>{item.sku}</td>
                     <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1a1a2e' }}>{item.name}</td>
+                    <td style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                      <span style={{
+                        padding: '2px 6px', borderRadius: 4, fontWeight: 600,
+                        background: item.category === 'ファッション' ? '#fce7f3' : item.category === '大型' ? '#fef9c3' : '#e0f2fe',
+                        color: item.category === 'ファッション' ? '#9d174d' : item.category === '大型' ? '#854d0e' : '#0369a1',
+                      }}>
+                        {item.category || '標準'}
+                      </span>
+                    </td>
                     <td style={{ fontSize: 12, color: '#555' }}>{[item.color, item.size].filter(Boolean).join(' / ')}</td>
                     <td style={{ textAlign: 'right', fontWeight: 600 }}>{item.available}</td>
                     <td style={{ textAlign: 'right', color: item.inbound > 0 ? '#2563eb' : '#aaa' }}>{item.inbound || '-'}</td>
