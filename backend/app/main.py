@@ -14,6 +14,7 @@ from app.models import rakuten_settings as rakuten_settings_models
 from app.models import shipment_order as shipment_order_models
 from app.models import inventory_reflection_log as inventory_reflection_log_models
 from app.models import rakuten_ss_sales as rakuten_ss_sales_models
+from app.models import rakuten_sales as rakuten_sales_models
 from app.models import processed_order as processed_order_models
 from app.models import welfare as welfare_models
 from app.models import ads as ads_models

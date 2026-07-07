@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -21,7 +21,13 @@ from app.models.rakuten_product import RakutenProduct
 from app.models.rakuten_order import RakutenOrderHistory
 from app.models.rakuten_settings import RakutenSettings
 from app.models.inventory_reflection_log import InventoryReflectionLog
+from app.models.rakuten_sales import RakutenSalesImport, RakutenSalesSummary
 from app.services.rakuten_calc import calc_rakuten_order, RakutenCalcSettings
+from app.services.rakuten_sales_import import (
+    build_sales_summary,
+    find_table_rows,
+    read_upload_table,
+)
 
 router = APIRouter(prefix="/rakuten", tags=["rakuten"])
 
@@ -202,6 +208,207 @@ def update_settings(data: RakutenSettingsSchema, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(row)
     return row
+
+
+# ============================================================
+# Sales Management（月次売上管理・手動アップロード）
+# ============================================================
+
+def _validate_sales_period(period: str) -> str:
+    value = (period or "").strip()
+    if not re.match(r"^\d{4}-\d{2}$", value):
+        raise HTTPException(400, "対象月は YYYY-MM 形式で指定してください。")
+    return value
+
+
+async def _read_sales_upload(file: UploadFile | None, candidates: list[list[str]]) -> tuple[list[dict], str | None]:
+    if not file or not file.filename:
+        return [], None
+    data = await file.read()
+    try:
+        rows = read_upload_table(file.filename, data)
+        last_error = None
+        for required in candidates:
+            try:
+                return find_table_rows(rows, required), file.filename
+            except Exception as e:
+                last_error = e
+        raise last_error or ValueError("テーブルを読み取れませんでした")
+    except Exception as e:
+        raise HTTPException(400, f"{file.filename} の読み込みに失敗しました: {e}")
+
+
+def _sales_summary_out(row: RakutenSalesSummary) -> dict:
+    return {
+        "id": row.id,
+        "period": row.period,
+        "level": row.level,
+        "product_key": row.product_key,
+        "sku_key": row.sku_key,
+        "product_name": row.product_name,
+        "units": row.units or 0,
+        "sales": row.sales or 0,
+        "point_cost": row.point_cost or 0,
+        "all_coupon": row.all_coupon or 0,
+        "store_coupon": row.store_coupon or 0,
+        "coupon_fee": row.coupon_fee or 0,
+        "rpp_cost": row.rpp_cost or 0,
+        "coupon_ad_cost": row.coupon_ad_cost or 0,
+        "affiliate_cost": row.affiliate_cost or 0,
+        "affiliate_fee": row.affiliate_fee or 0,
+        "sales_store_coupon_excluded": row.sales_store_coupon_excluded or 0,
+        "sales_all_coupon_excluded": row.sales_all_coupon_excluded or 0,
+        "pc_sales": row.pc_sales or 0,
+        "mobile_sales": row.mobile_sales or 0,
+        "platform_fee": row.platform_fee or 0,
+        "platform_fee_rate": row.platform_fee_rate,
+        "shipping_cost": row.shipping_cost or 0,
+        "product_cost": row.product_cost or 0,
+        "profit": row.profit or 0,
+        "profit_rate": row.profit_rate,
+        "rpp_rate": row.rpp_rate,
+    }
+
+
+def _sales_import_out(row: RakutenSalesImport) -> dict:
+    return {
+        "id": row.id,
+        "period": row.period,
+        "order_file_name": row.order_file_name,
+        "rpp_file_name": row.rpp_file_name,
+        "coupon_ad_file_name": row.coupon_ad_file_name,
+        "affiliate_file_name": row.affiliate_file_name,
+        "order_rows": row.order_rows or 0,
+        "rpp_rows": row.rpp_rows or 0,
+        "coupon_ad_rows": row.coupon_ad_rows or 0,
+        "affiliate_rows": row.affiliate_rows or 0,
+        "total_units": row.total_units or 0,
+        "total_sales": row.total_sales or 0,
+        "total_profit": row.total_profit or 0,
+        "status": row.status,
+        "message": row.message,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.get("/sales/months")
+def list_sales_months(db: Session = Depends(get_db)):
+    rows = (
+        db.query(RakutenSalesImport)
+        .order_by(RakutenSalesImport.period.desc(), RakutenSalesImport.id.desc())
+        .all()
+    )
+    return {"months": [_sales_import_out(r) for r in rows]}
+
+
+@router.get("/sales/summary")
+def get_sales_summary(period: str, level: str = "parent", db: Session = Depends(get_db)):
+    period = _validate_sales_period(period)
+    if level not in {"parent", "sku"}:
+        raise HTTPException(400, "level は parent または sku を指定してください。")
+    info = db.query(RakutenSalesImport).filter(RakutenSalesImport.period == period).first()
+    rows = (
+        db.query(RakutenSalesSummary)
+        .filter(RakutenSalesSummary.period == period, RakutenSalesSummary.level == level)
+        .order_by(RakutenSalesSummary.sales.desc(), RakutenSalesSummary.product_key.asc(), RakutenSalesSummary.sku_key.asc())
+        .all()
+    )
+    totals = {
+        "units": round(sum((r.units or 0) for r in rows), 2),
+        "sales": round(sum((r.sales or 0) for r in rows), 2),
+        "profit": round(sum((r.profit or 0) for r in rows), 2),
+    }
+    totals["profit_rate"] = round(totals["profit"] / totals["sales"] * 100, 2) if totals["sales"] else None
+    return {
+        "import": _sales_import_out(info) if info else None,
+        "totals": totals,
+        "rows": [_sales_summary_out(r) for r in rows],
+    }
+
+
+@router.post("/sales/import")
+async def import_sales_month(
+    period: str = Form(...),
+    order_file: UploadFile = File(...),
+    rpp_file: Optional[UploadFile] = File(None),
+    coupon_ad_file: Optional[UploadFile] = File(None),
+    affiliate_file: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+):
+    period = _validate_sales_period(period)
+    order_rows, order_name = await _read_sales_upload(
+        order_file,
+        [["注文番号", "ステータス", "商品管理番号", "単価", "個数"]],
+    )
+    rpp_rows, rpp_name = await _read_sales_upload(
+        rpp_file,
+        [["商品管理番号", "実績額(合計)"], ["商品管理番号", "実績額"], ["商品ページURL", "実績額(合計)"]],
+    )
+    coupon_ad_rows, coupon_ad_name = await _read_sales_upload(
+        coupon_ad_file,
+        [
+            ["商品管理番号", "実績額(合計)"],
+            ["商品管理番号", "実績額"],
+            ["商品管理番号", "広告費"],
+            ["商品管理番号（URL）", "実績額"],
+            ["商品ページURL", "実績額"],
+        ],
+    )
+    affiliate_rows, affiliate_name = await _read_sales_upload(
+        affiliate_file,
+        [["成果発生日時", "商品管理番号", "成果報酬"], ["date", "item_mng_id", "rewards"], ["受注番号", "商品管理番号", "成果報酬"]],
+    )
+
+    products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    settings = _get_or_create_settings(db)
+    built = build_sales_summary(
+        period=period,
+        products=products,
+        settings=settings,
+        order_rows=order_rows,
+        rpp_rows=rpp_rows,
+        coupon_ad_rows=coupon_ad_rows,
+        affiliate_rows=affiliate_rows,
+    )
+
+    try:
+        existing = db.query(RakutenSalesImport).filter(RakutenSalesImport.period == period).first()
+        if existing:
+            info = existing
+        else:
+            info = RakutenSalesImport(period=period)
+            db.add(info)
+        info.order_file_name = order_name
+        info.rpp_file_name = rpp_name
+        info.coupon_ad_file_name = coupon_ad_name
+        info.affiliate_file_name = affiliate_name
+        info.order_rows = len(order_rows)
+        info.rpp_rows = len(rpp_rows)
+        info.coupon_ad_rows = len(coupon_ad_rows)
+        info.affiliate_rows = len(affiliate_rows)
+        info.total_units = built["totals"]["units"]
+        info.total_sales = built["totals"]["sales"]
+        info.total_profit = built["totals"]["profit"]
+        info.status = "completed"
+        info.message = f"受注スキップ {built['skipped_orders']}件"
+
+        db.query(RakutenSalesSummary).filter(RakutenSalesSummary.period == period).delete(synchronize_session=False)
+        for data in built["parent_rows"] + built["sku_rows"]:
+            db.add(RakutenSalesSummary(**data))
+        db.commit()
+        db.refresh(info)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"売上集計の保存に失敗しました: {e}")
+
+    return {
+        "import": _sales_import_out(info),
+        "totals": built["totals"],
+        "parent_count": len(built["parent_rows"]),
+        "sku_count": len(built["sku_rows"]),
+        "skipped_orders": built["skipped_orders"],
+    }
 
 
 # ============================================================
