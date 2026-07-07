@@ -21,3 +21,18 @@ jobs:
             --max-time 60 \
             --retry 2 \
             -f
+      - name: Wait for order fetch to finish
+        run: |
+          # orderMetricsのレート制限枠(約0.5回/秒)を発注管理の取得と奪い合わないよう、
+          # 発注管理側が終わる時間を待ってから商品分析を温める
+          sleep 240
+      - name: Warm analytics cache
+        run: |
+          # 商品分析(30日)のデータも温める。30日売上詳細・新商品判定・広告・カタログが
+          # キャッシュされ、画面を開いたときに即表示になる（コールドだと10分以上かかる）。
+          # forceなし＝期限切れの分だけ取得するので、温まっていれば何もしない。
+          curl -X POST "${{ secrets.BACKEND_URL }}/api/analytics/start?days=30" \
+            -H "Content-Type: application/json" \
+            --max-time 60 \
+            --retry 2 \
+            -f

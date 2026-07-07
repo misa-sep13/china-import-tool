@@ -10,6 +10,19 @@ _jobs: dict = {}
 _jobs_lock = threading.Lock()
 
 
+def _prune_jobs():
+    """古い・完了済みのジョブをメモリから掃除する。
+    結果（全商品リスト）を保持したまま残り続けると、毎時のウォームアップの
+    たびに溜まってメモリリークになる（Render 512MBのOOM要因）。"""
+    now = time.time()
+    with _jobs_lock:
+        for jid in [j for j, v in _jobs.items() if now - v.get("started_at", now) > 1200]:
+            _jobs.pop(jid, None)
+        if len(_jobs) > 10:
+            for jid, _ in sorted(_jobs.items(), key=lambda kv: kv[1].get("started_at", 0))[:-10]:
+                _jobs.pop(jid, None)
+
+
 def _run_analytics_job(job_id: str, days: int):
     with _jobs_lock:
         _jobs[job_id] = {"status": "running", "result": None, "error": None, "started_at": time.time()}
@@ -247,6 +260,7 @@ def _run_analytics_job(job_id: str, days: int):
 
 @router.post("/start")
 def start_analytics(background_tasks: BackgroundTasks, days: int = 30, force: bool = False):
+    _prune_jobs()
     if force:
         from app.services.amazon_api import _cache
         keys = [k for k in _cache if k.startswith("sales_detail") or k == "catalog_info"]

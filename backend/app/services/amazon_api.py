@@ -282,7 +282,9 @@ def fetch_sales_detail(asin_list: List[str], days: int = 30) -> Dict[str, dict]:
             return asin, {"units": 0, "revenue": 0, "avg_price": 0}
 
     result = {}
-    with ThreadPoolExecutor(max_workers=10) as ex:
+    # orderMetricsのレート制限は約0.5回/秒。並列を増やしても429→バックオフ待ちが
+    # 増えるだけなので抑える（fetch_all_salesと同時実行時の奪い合いも減る）
+    with ThreadPoolExecutor(max_workers=4) as ex:
         futures = {ex.submit(_fetch_one, asin): asin for asin in asin_list}
         for f in as_completed(futures):
             asin, val = f.result()
@@ -355,13 +357,15 @@ def fetch_new_product_info(asin_list: List[str]) -> Dict[str, dict]:
             return asin, {"first_sale_date": None, "elapsed_days": None, "total_units": 0}
 
     result = {}
-    with ThreadPoolExecutor(max_workers=5) as ex:
+    with ThreadPoolExecutor(max_workers=3) as ex:
         futures = {ex.submit(_fetch_one, asin): asin for asin in asin_list}
         for f in as_completed(futures):
             asin, val = f.result()
             result[asin] = val
 
-    _cache_set(cache_key, result)
+    # 初回売上日は日単位でしか変わらないためTTL=24時間。
+    # orderMetricsのレート制限枠(0.5回/秒)を売上取得と奪い合う頻度を減らす
+    _cache[cache_key] = {"value": result, "expires_at": time.time() + _CACHE_TTL_LONG}
     return result
 
 
