@@ -1127,6 +1127,18 @@ def update_order_stage(order_id: int, body: dict, db: Session = Depends(get_db))
     db.commit()
     return {"ok": True, "stage": stage}
 
+@router.patch("/orders/history/{order_id}/qty")
+def update_order_qty(order_id: int, body: dict, db: Session = Depends(get_db)):
+    qty = body.get("qty")
+    if qty is None or not isinstance(qty, (int, float)) or int(qty) < 0:
+        raise HTTPException(400, "qtyは0以上の整数を指定してください")
+    o = db.query(RakutenOrderHistory).filter(RakutenOrderHistory.id == order_id).first()
+    if not o:
+        raise HTTPException(404)
+    o.qty = int(qty)
+    db.commit()
+    return {"ok": True, "qty": o.qty}
+
 @router.patch("/orders/history/{order_id}/deliver")
 def mark_delivered(order_id: int, db: Session = Depends(get_db)):
     o = db.query(RakutenOrderHistory).filter(RakutenOrderHistory.id == order_id).first()
