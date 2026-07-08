@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState, useCallback, useRef, useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 
 export default function RakutenStockPage() {
@@ -142,30 +142,43 @@ export default function RakutenStockPage() {
     }
   }
 
-  const receiveMutation = useMutation({
-    mutationFn: (id) => api.post(`/rakuten/products/${id}/receive-manufacturer`).then(r => r.data),
-    onSuccess: (data) => {
-      setReceiveResult(data)
+  const [receivingIds, setReceivingIds] = useState(new Set())
+  const receiveQueueRef = useRef([])
+  const processingRef = useRef(false)
+
+  const processReceiveQueue = useCallback(async () => {
+    if (processingRef.current) return
+    processingRef.current = true
+    while (receiveQueueRef.current.length > 0) {
+      const id = receiveQueueRef.current.shift()
+      try {
+        const data = await api.post(`/rakuten/products/${id}/receive-manufacturer`).then(r => r.data)
+        setReceiveResult(data)
+      } catch (err) {
+        setReceiveResult({ error: `${id}: ${err.response?.data?.detail || '入荷処理でエラーが発生しました'}` })
+      }
+      setReceivingIds(prev => { const next = new Set(prev); next.delete(id); return next })
       qc.invalidateQueries(['rakuten-stock'])
       qc.invalidateQueries(['rakuten-products'])
-      qc.invalidateQueries(['rakuten-recommendations'])
-      setEdits({})
-    },
-    onError: (err) => {
-      setReceiveResult({ error: err.response?.data?.detail || '入荷処理でエラーが発生しました' })
-    },
-  })
+    }
+    processingRef.current = false
+    qc.invalidateQueries(['rakuten-recommendations'])
+    setEdits({})
+  }, [qc])
 
-  const handleReceiveManufacturer = (p) => {
+  const handleReceiveManufacturer = useCallback((p) => {
     if (edits[p.id]) return
+    if (receivingIds.has(p.id)) return
     const inbound = Number(p.inbound || 0)
     const inbound2 = Number(p.standard_stock || 0)
     if (inbound <= 0) return
     const message = `${p.sku} のメーカー入荷を反映しますか？\n\n実在庫に +${inbound}\n発注済1: ${inbound} → ${inbound2}\n発注済2: ${inbound2} → 0`
     if (!window.confirm(message)) return
     setReceiveResult(null)
-    receiveMutation.mutate(p.id)
-  }
+    setReceivingIds(prev => new Set(prev).add(p.id))
+    receiveQueueRef.current.push(p.id)
+    processReceiveQueue()
+  }, [edits, receivingIds, processReceiveQueue])
 
   if (isLoading) return <div className="loading">読み込み中...</div>
 
@@ -175,7 +188,7 @@ export default function RakutenStockPage() {
     setEdit,
     ssMap,
     onReceiveManufacturer: handleReceiveManufacturer,
-    receivingId: receiveMutation.isPending ? receiveMutation.variables : null,
+    receivingIds,
   }
 
   return (
@@ -293,7 +306,7 @@ function StockRow({
   isExpanded,
   onToggle,
   onReceiveManufacturer,
-  receivingId,
+  receivingIds,
 }) {
   const e = edits[p.id] || {}
   const sp = e.selling_price !== undefined ? (e.selling_price !== '' ? Number(e.selling_price) : null) : p.selling_price
@@ -307,7 +320,7 @@ function StockRow({
   const inbound2Dirty = e.standard_stock !== undefined
   const canEditInbound = !!p.is_manufacturer
   const canReceive = !!p.is_manufacturer && !isDirty && Number(p.inbound || 0) > 0
-  const isReceiving = receivingId === p.id
+  const isReceiving = receivingIds?.has(p.id)
 
   const commission = sp ? Math.round(sp * commissionRate) : null
   const cost = p.cost_jpy || 0
