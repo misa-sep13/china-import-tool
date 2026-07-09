@@ -468,6 +468,7 @@ class WelfareMemoIn(BaseModel):
     name_jp: Optional[str] = None
     instruction: Optional[str] = None
     note: Optional[str] = None
+    unit_per_set: Optional[int] = None
 
 
 @router.patch("/inventory/{item_id}")
@@ -481,6 +482,8 @@ def update_inventory_item(item_id: int, data: WelfareMemoIn, db: Session = Depen
         item.instruction = data.instruction
     if data.note is not None:
         item.note = data.note
+    if data.unit_per_set is not None and data.unit_per_set >= 1:
+        item.unit_per_set = data.unit_per_set
     db.commit()
     db.refresh(item)
     return _out(item)
