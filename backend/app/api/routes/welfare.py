@@ -505,6 +505,17 @@ class WelfareWorkInstructionIn(BaseModel):
     note: Optional[str] = None
 
 
+@router.delete("/inventory/{item_id}")
+def delete_inventory_item(item_id: int, db: Session = Depends(get_db)):
+    item = db.query(WelfareInventoryItem).filter(WelfareInventoryItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="就労支援在庫が見つかりません")
+    db.query(WelfareInventoryMovement).filter(WelfareInventoryMovement.item_id == item_id).delete()
+    db.delete(item)
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/inventory/{item_id}/withdraw")
 def withdraw_inventory(item_id: int, data: WelfareWithdrawIn, db: Session = Depends(get_db)):
     item = db.query(WelfareInventoryItem).filter(WelfareInventoryItem.id == item_id).first()
