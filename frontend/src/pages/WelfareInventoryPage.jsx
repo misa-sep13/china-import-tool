@@ -507,6 +507,7 @@ export default function WelfareInventoryPage() {
                             min="0"
                             value={remainingDrafts[item.id] ?? item.remaining_qty}
                             onChange={e => setRemainingDrafts(prev => ({ ...prev, [item.id]: Number(e.target.value) }))}
+                            onFocus={e => e.target.select()}
                             style={{ width: 72, fontSize: 16, fontWeight: 700, textAlign: 'right' }}
                           />
                           {(remainingDrafts[item.id] ?? item.remaining_qty) !== item.remaining_qty && (
