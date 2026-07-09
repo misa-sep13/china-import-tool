@@ -498,7 +498,10 @@ export default function WelfareInventoryPage() {
                         <div style={{ color: '#64748b', fontSize: 12 }}>{item.supplier_spec}</div>
                       </td>
                       <td>{item.total_received_units}</td>
-                      <td>{item.unit_per_set}個で1</td>
+                      <td style={item.unit_per_set !== item.product_unit_per_set ? { background: '#fef3c7', fontWeight: 700, borderRadius: 4 } : undefined}>
+                        {item.unit_per_set}個で1
+                        {item.unit_per_set !== item.product_unit_per_set && <span title={`商品マスタ: ${item.product_unit_per_set}個で1`}> ⚠</span>}
+                      </td>
                       <td>{item.total_received_qty}</td>
                       <td style={{ minWidth: 120 }}>
                         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

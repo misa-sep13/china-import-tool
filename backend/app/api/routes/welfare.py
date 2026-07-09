@@ -211,7 +211,15 @@ def list_inventory(q: Optional[str] = None, db: Session = Depends(get_db)):
             (WelfareInventoryItem.supplier_spec.ilike(like))
         )
     rows = query.order_by(WelfareInventoryItem.remaining_qty.desc(), WelfareInventoryItem.sku.asc()).all()
-    return [_out(r) for r in rows]
+    pids = [r.product_id for r in rows if r.product_id]
+    products = {p.id: p for p in db.query(RakutenProduct).filter(RakutenProduct.id.in_(pids)).all()} if pids else {}
+    result = []
+    for r in rows:
+        d = _out(r)
+        p = products.get(r.product_id)
+        d["product_unit_per_set"] = _unit_per_set(p) if p else (r.unit_per_set or 1)
+        result.append(d)
+    return result
 
 
 def _work_out(row: WelfareWorkInstruction):
