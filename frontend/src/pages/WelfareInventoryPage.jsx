@@ -485,12 +485,12 @@ export default function WelfareInventoryPage() {
                     <tr key={item.id}>
                       <td style={{ fontWeight: 700 }}>{item.sku || '-'}</td>
                       <td>{imageThumb(item.image_data_url)}</td>
-                      <td style={{ minWidth: 220 }}>
+                      <td style={{ minWidth: 340 }}>
                         <input
                           value={itemName}
                           onChange={e => updateInventoryDraft(item, { name_jp: e.target.value })}
                           placeholder="日本語名"
-                          style={{ width: '100%', minWidth: 180 }}
+                          style={{ width: '100%', minWidth: 300 }}
                         />
                       </td>
                       <td style={{ minWidth: 240 }}>
