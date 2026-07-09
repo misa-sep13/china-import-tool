@@ -649,6 +649,23 @@ def bulk_create_inventory(data: WelfareBulkCreateIn, db: Session = Depends(get_d
     return {"created": len(created), "skus": created}
 
 
+@router.post("/inventory/backfill-urls")
+def backfill_urls(db: Session = Depends(get_db)):
+    items = db.query(WelfareInventoryItem).filter(
+        WelfareInventoryItem.product_id.isnot(None),
+        (WelfareInventoryItem.buy_url.is_(None)) | (WelfareInventoryItem.buy_url == "")
+    ).all()
+    updated = 0
+    for item in items:
+        product = db.query(RakutenProduct).filter(RakutenProduct.id == item.product_id).first()
+        if product and product.buy_url:
+            item.buy_url = product.buy_url
+            item.supplier_spec = product.supplier_spec or item.supplier_spec
+            updated += 1
+    db.commit()
+    return {"updated": updated}
+
+
 @router.get("/movements")
 def list_movements(item_id: Optional[int] = None, db: Session = Depends(get_db)):
     query = db.query(WelfareInventoryMovement)
