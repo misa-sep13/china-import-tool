@@ -661,6 +661,30 @@ def delete_work_instruction(instruction_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+class WelfareUndoMovementsIn(BaseModel):
+    movement_ids: list[int]
+
+
+@router.post("/undo-movements")
+def undo_movements(data: WelfareUndoMovementsIn, db: Session = Depends(get_db)):
+    movements = db.query(WelfareInventoryMovement).filter(
+        WelfareInventoryMovement.id.in_(data.movement_ids),
+        WelfareInventoryMovement.movement_type == "import",
+    ).all()
+    undone = []
+    for m in movements:
+        if m.item_id:
+            item = db.query(WelfareInventoryItem).filter(WelfareInventoryItem.id == m.item_id).first()
+            if item:
+                item.total_received_units = max(0, (item.total_received_units or 0) - (m.units or 0))
+                item.total_received_qty = max(0, (item.total_received_qty or 0) - (m.qty or 0))
+                item.remaining_qty = max(0, (item.remaining_qty or 0) - (m.qty or 0))
+        undone.append(m.sku)
+        db.delete(m)
+    db.commit()
+    return {"undone": len(undone), "skus": undone}
+
+
 class WelfareBulkCreateIn(BaseModel):
     product_ids: list[int]
 
