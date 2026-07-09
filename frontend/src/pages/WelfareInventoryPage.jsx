@@ -435,7 +435,26 @@ export default function WelfareInventoryPage() {
 
       {importResult && (
         <div className="card" style={{ borderLeft: importResult.unmatched ? '4px solid #d97706' : '4px solid #16a34a' }}>
-          取込完了: 在庫 {importResult.imported}行 / 作業指示 {importResult.work_imported ?? importResult.imported}行 / 未照合 {importResult.unmatched}行
+          <div>取込完了: 在庫 {importResult.imported}行 / 作業指示 {importResult.work_imported ?? importResult.imported}行 / 未照合 {importResult.unmatched}行</div>
+          {importResult.unmatched_items?.length > 0 && (
+            <details style={{ marginTop: 8 }}>
+              <summary style={{ cursor: 'pointer', color: '#d97706', fontWeight: 600 }}>未照合 {importResult.unmatched_items.length}件の詳細</summary>
+              <table style={{ marginTop: 6, fontSize: 12 }}>
+                <thead><tr><th>シート</th><th>商品名</th><th>仕様</th><th>数量</th><th>URL</th></tr></thead>
+                <tbody>
+                  {importResult.unmatched_items.map((item, i) => (
+                    <tr key={i}>
+                      <td>{item.sheet}</td>
+                      <td>{item.name_cn}</td>
+                      <td>{item.supplier_spec}</td>
+                      <td>{item.units}</td>
+                      <td>{item.buy_url ? <a href={item.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11 }}>URL</a> : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
         </div>
       )}
 

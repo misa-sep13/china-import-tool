@@ -344,10 +344,18 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
             int(w.units or 0),
         ))
 
+    unmatched_items = []
     for row in rows:
         product, _match_type = _match_product(row, by_url_spec, unique_url)
         if not product:
             unmatched += 1
+            unmatched_items.append({
+                "name_cn": row.get("name_cn", ""),
+                "supplier_spec": row.get("supplier_spec", ""),
+                "units": row.get("units", 0),
+                "buy_url": row.get("buy_url", ""),
+                "sheet": row.get("sheet", ""),
+            })
         unit = _unit_per_set(product)
         qty = row["units"] // unit
         remaining_units = row.get("remaining_units")
@@ -436,7 +444,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
         existing_movement_keys.add(key)
         imported += 1
     db.commit()
-    return {"imported": imported, "work_imported": work_imported, "unmatched": unmatched}
+    return {"imported": imported, "work_imported": work_imported, "unmatched": unmatched, "unmatched_items": unmatched_items}
 
 
 @router.post("/import-google-sheet")
