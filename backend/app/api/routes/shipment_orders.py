@@ -348,10 +348,12 @@ async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db:
     items = db.query(ShipmentOrderItem).filter(ShipmentOrderItem.shipment_order_id == order_id).all()
     updated = 0
     skipped = 0
+    duplicate_skipped = 0
     order_consumed = 0  # 発注済みリストから消化した件数
     consumed_skus = set()  # 消化が発生したSKU（発注済2→1の繰り上げ判定用）
     updated_skus = set()   # 在庫を加算したSKU（セット再計算・RMS反映用）
     reflection_rows = []
+    processed_product_ids = set()
 
     for item in items:
         if not item.product_id:
@@ -374,6 +376,12 @@ async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db:
             "inbound": product.inbound or 0,
             "standard_stock": product.standard_stock or 0,
         }
+
+        # 同一商品の重複行はスキップ（色違い等で同じSKUに複数行照合される場合）
+        if item.product_id in processed_product_ids:
+            duplicate_skipped += 1
+            continue
+        processed_product_ids.add(item.product_id)
 
         # 在庫加算
         product.stock = (product.stock or 0) + received_qty
@@ -494,7 +502,8 @@ async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db:
             })
             db.commit()
 
-    return {"updated": updated, "skipped": skipped, "order_consumed": order_consumed,
+    return {"updated": updated, "skipped": skipped, "duplicate_skipped": duplicate_skipped,
+            "order_consumed": order_consumed,
             "stage_promoted": promoted, "rms_push_items": push_items,
             "rms_push_ok": push_result.get("ok", 0),
             "rms_push_fail": push_result.get("fail", 0),

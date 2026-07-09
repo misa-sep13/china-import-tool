@@ -108,8 +108,10 @@ export default function ShipmentOrderPage() {
     try {
       const res = await axios.post(`${API}/shipment-orders/${orderId}/receive`)
       const rmsFail = res.data.rms_push_fail || 0
+      const dupSkip = res.data.duplicate_skipped || 0
       alert(
         `入荷処理完了。${res.data.updated}件の在庫を加算しました。（未照合スキップ: ${res.data.skipped}件）\n`
+        + (dupSkip > 0 ? `色違い等の重複行スキップ: ${dupSkip}件\n` : '')
         + `RMS反映: ok ${res.data.rms_push_ok || 0} / fail ${rmsFail}`
         + (rmsFail > 0 ? '\nRMS反映に失敗したSKUがあります。補正pushが必要です。' : '')
       )
