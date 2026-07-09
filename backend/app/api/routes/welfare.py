@@ -603,6 +603,39 @@ def delete_work_instruction(instruction_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+class WelfareBulkCreateIn(BaseModel):
+    product_ids: list[int]
+
+
+@router.post("/inventory/bulk-create")
+def bulk_create_inventory(data: WelfareBulkCreateIn, db: Session = Depends(get_db)):
+    existing_pids = set(
+        r[0] for r in db.query(WelfareInventoryItem.product_id).all() if r[0]
+    )
+    created = []
+    for pid in data.product_ids:
+        if pid in existing_pids:
+            continue
+        product = db.query(RakutenProduct).filter(RakutenProduct.id == pid).first()
+        if not product:
+            continue
+        item = WelfareInventoryItem(
+            product_id=product.id,
+            sku=product.sku,
+            name_jp=product.name,
+            unit_per_set=1,
+            total_received_units=0,
+            total_received_qty=0,
+            withdrawn_qty=0,
+            remaining_qty=0,
+        )
+        db.add(item)
+        existing_pids.add(pid)
+        created.append(product.sku)
+    db.commit()
+    return {"created": len(created), "skus": created}
+
+
 @router.get("/movements")
 def list_movements(item_id: Optional[int] = None, db: Session = Depends(get_db)):
     query = db.query(WelfareInventoryMovement)
