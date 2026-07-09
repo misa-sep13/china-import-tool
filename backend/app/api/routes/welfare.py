@@ -636,7 +636,7 @@ def bulk_create_inventory(data: WelfareBulkCreateIn, db: Session = Depends(get_d
             name_jp=product.name,
             buy_url=product.buy_url,
             supplier_spec=product.supplier_spec,
-            unit_per_set=1,
+            unit_per_set=_unit_per_set(product),
             total_received_units=0,
             total_received_qty=0,
             withdrawn_qty=0,
@@ -649,18 +649,28 @@ def bulk_create_inventory(data: WelfareBulkCreateIn, db: Session = Depends(get_d
     return {"created": len(created), "skus": created}
 
 
-@router.post("/inventory/backfill-urls")
-def backfill_urls(db: Session = Depends(get_db)):
+@router.post("/inventory/backfill")
+def backfill_from_product(db: Session = Depends(get_db)):
     items = db.query(WelfareInventoryItem).filter(
-        WelfareInventoryItem.product_id.isnot(None),
-        (WelfareInventoryItem.buy_url.is_(None)) | (WelfareInventoryItem.buy_url == "")
+        WelfareInventoryItem.product_id.isnot(None)
     ).all()
     updated = 0
     for item in items:
         product = db.query(RakutenProduct).filter(RakutenProduct.id == item.product_id).first()
-        if product and product.buy_url:
+        if not product:
+            continue
+        changed = False
+        if product.buy_url and not item.buy_url:
             item.buy_url = product.buy_url
-            item.supplier_spec = product.supplier_spec or item.supplier_spec
+            changed = True
+        if product.supplier_spec and not item.supplier_spec:
+            item.supplier_spec = product.supplier_spec
+            changed = True
+        correct_unit = _unit_per_set(product)
+        if item.unit_per_set != correct_unit:
+            item.unit_per_set = correct_unit
+            changed = True
+        if changed:
             updated += 1
     db.commit()
     return {"updated": updated}

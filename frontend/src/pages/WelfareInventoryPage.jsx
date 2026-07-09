@@ -94,6 +94,7 @@ export default function WelfareInventoryPage() {
   const [activeWorkDate, setActiveWorkDate] = useState('')
   const [pendingWorkDeletes, setPendingWorkDeletes] = useState([])
   const [committingWorkDeleteIds, setCommittingWorkDeleteIds] = useState([])
+  const [inventorySort, setInventorySort] = useState('qty')
 
   const getInventoryDraftValue = (item, draft = {}) => ({
     name_jp: draft.name_jp ?? item.name_jp ?? '',
@@ -121,10 +122,17 @@ export default function WelfareInventoryPage() {
     })
   }
 
-  const { data: items = [], isLoading } = useQuery({
+  const { data: rawItems = [], isLoading } = useQuery({
     queryKey: ['welfare-inventory', search],
     queryFn: () => api.get('/welfare/inventory', { params: search ? { q: search } : {} }).then(r => r.data),
   })
+
+  const items = useMemo(() => {
+    if (inventorySort === 'sku') {
+      return [...rawItems].sort((a, b) => (a.sku || '').localeCompare(b.sku || '', 'ja', JA_SORT_OPTIONS))
+    }
+    return rawItems
+  }, [rawItems, inventorySort])
 
   const { data: movements = [] } = useQuery({
     queryKey: ['welfare-movements'],
@@ -432,6 +440,18 @@ export default function WelfareInventoryPage() {
       )}
 
       {activeTab === 'inventory' && <div className="card">
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <button
+            className={inventorySort === 'qty' ? 'btn-primary' : 'btn-secondary'}
+            onClick={() => setInventorySort('qty')}
+            style={{ padding: '4px 10px', fontSize: 12 }}
+          >残量順</button>
+          <button
+            className={inventorySort === 'sku' ? 'btn-primary' : 'btn-secondary'}
+            onClick={() => setInventorySort('sku')}
+            style={{ padding: '4px 10px', fontSize: 12 }}
+          >SKU順</button>
+        </div>
         {isLoading ? (
           <div className="loading">読み込み中...</div>
         ) : items.length === 0 ? (
