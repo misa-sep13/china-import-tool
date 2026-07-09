@@ -435,10 +435,59 @@ export default function WelfareInventoryPage() {
 
       {importResult && (
         <div className="card" style={{ borderLeft: importResult.unmatched ? '4px solid #d97706' : '4px solid #16a34a' }}>
-          <div>取込完了: 在庫 {importResult.imported}行 / 作業指示 {importResult.work_imported ?? importResult.imported}行 / 未照合 {importResult.unmatched}行</div>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>
+            取込完了: 在庫 {importResult.imported}行 / 作業指示 {importResult.work_imported ?? importResult.imported}行
+            {importResult.unmatched > 0 && <span style={{ color: '#d97706' }}> / 未照合 {importResult.unmatched}行</span>}
+            {importResult.skipped_items?.length > 0 && <span style={{ color: '#64748b' }}> / 既取込済 {importResult.skipped_items.length}行</span>}
+          </div>
+
+          {importResult.imported_items?.length > 0 && (
+            <details open style={{ marginBottom: 8 }}>
+              <summary style={{ cursor: 'pointer', color: '#16a34a', fontWeight: 600 }}>取込済み {importResult.imported_items.length}件</summary>
+              <table style={{ marginTop: 6, fontSize: 12 }}>
+                <thead><tr><th>SKU</th><th>商品名</th><th>数量</th><th>換算</th><th>残量変化</th><th>区分</th></tr></thead>
+                <tbody>
+                  {importResult.imported_items.map((item, i) => (
+                    <tr key={i}>
+                      <td style={{ fontWeight: 600 }}>{item.sku}</td>
+                      <td>{item.name_jp}</td>
+                      <td>{item.units}</td>
+                      <td>{item.qty}</td>
+                      <td>{item.before_qty} → <b>{item.after_qty}</b></td>
+                      <td><span style={{
+                        background: item.status === '新規' ? '#dcfce7' : '#e0f2fe',
+                        padding: '2px 6px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                        color: item.status === '新規' ? '#166534' : '#1e40af'
+                      }}>{item.status}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
+
+          {importResult.skipped_items?.length > 0 && (
+            <details style={{ marginBottom: 8 }}>
+              <summary style={{ cursor: 'pointer', color: '#64748b', fontWeight: 600 }}>既取込済 {importResult.skipped_items.length}件</summary>
+              <table style={{ marginTop: 6, fontSize: 12 }}>
+                <thead><tr><th>SKU</th><th>商品名</th><th>数量</th><th>換算</th></tr></thead>
+                <tbody>
+                  {importResult.skipped_items.map((item, i) => (
+                    <tr key={i} style={{ color: '#94a3b8' }}>
+                      <td>{item.sku}</td>
+                      <td>{item.name_jp}</td>
+                      <td>{item.units}</td>
+                      <td>{item.qty}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
+
           {importResult.unmatched_items?.length > 0 && (
-            <details style={{ marginTop: 8 }}>
-              <summary style={{ cursor: 'pointer', color: '#d97706', fontWeight: 600 }}>未照合 {importResult.unmatched_items.length}件の詳細</summary>
+            <details style={{ marginBottom: 8 }}>
+              <summary style={{ cursor: 'pointer', color: '#d97706', fontWeight: 600 }}>未照合 {importResult.unmatched_items.length}件</summary>
               <table style={{ marginTop: 6, fontSize: 12 }}>
                 <thead><tr><th>シート</th><th>商品名</th><th>仕様</th><th>数量</th><th>URL</th></tr></thead>
                 <tbody>

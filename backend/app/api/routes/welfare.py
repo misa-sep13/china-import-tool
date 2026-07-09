@@ -345,6 +345,8 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
         ))
 
     unmatched_items = []
+    imported_items = []
+    skipped_items = []
     for row in rows:
         product, _match_type = _match_product(row, by_url_spec, unique_url)
         if not product:
@@ -395,10 +397,19 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
         if not product:
             continue
         if already_imported:
+            skipped_items.append({
+                "sku": product.sku,
+                "name_jp": product.name,
+                "units": row["units"],
+                "qty": qty,
+                "status": "既取込済",
+            })
             continue
 
         item = None
         item = db.query(WelfareInventoryItem).filter(WelfareInventoryItem.product_id == product.id).first()
+        is_new = item is None
+        before_qty = (item.remaining_qty or 0) if item else 0
         if not item:
             item = WelfareInventoryItem(
                 product_id=product.id,
@@ -427,6 +438,16 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
         item.remaining_qty = (item.remaining_qty or 0) + remaining_qty
         item.last_received_at = now
 
+        imported_items.append({
+            "sku": product.sku,
+            "name_jp": product.name,
+            "units": row["units"],
+            "qty": qty,
+            "before_qty": before_qty,
+            "after_qty": item.remaining_qty,
+            "status": "新規" if is_new else "追加",
+        })
+
         db.add(WelfareInventoryMovement(
             item_id=item.id,
             product_id=item.product_id,
@@ -444,7 +465,14 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
         existing_movement_keys.add(key)
         imported += 1
     db.commit()
-    return {"imported": imported, "work_imported": work_imported, "unmatched": unmatched, "unmatched_items": unmatched_items}
+    return {
+        "imported": imported,
+        "work_imported": work_imported,
+        "unmatched": unmatched,
+        "imported_items": imported_items,
+        "skipped_items": skipped_items,
+        "unmatched_items": unmatched_items,
+    }
 
 
 @router.post("/import-google-sheet")
