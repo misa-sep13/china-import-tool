@@ -655,6 +655,30 @@ def update_work_instruction(instruction_id: int, data: WelfareWorkInstructionIn,
     return _work_out(row)
 
 
+@router.post("/work-instructions/backfill-products")
+def backfill_work_instruction_products(db: Session = Depends(get_db)):
+    """product_id未設定の荷受けレコードをbuy_urlで再照合し、SKU・日本語名を埋める"""
+    by_url_spec, unique_url = _product_indexes(db)
+    rows = db.query(WelfareWorkInstruction).filter(WelfareWorkInstruction.product_id.is_(None)).all()
+    updated = 0
+    for row in rows:
+        product, _ = _match_product({
+            "buy_url": row.buy_url,
+            "supplier_spec": row.supplier_spec or row.color or "",
+        }, by_url_spec, unique_url)
+        if product:
+            row.product_id = product.id
+            row.sku = product.sku
+            row.name_jp = product.name
+            row.unit_per_set = _unit_per_set(product)
+            if row.units and row.unit_per_set:
+                row.qty = row.units // row.unit_per_set
+                row.remaining_qty = (row.remaining_units or row.units) // row.unit_per_set
+            updated += 1
+    db.commit()
+    return {"ok": True, "checked": len(rows), "updated": updated}
+
+
 class WelfareWorkBatchUpdateSheet(BaseModel):
     old_sheet: str
     new_sheet: str
