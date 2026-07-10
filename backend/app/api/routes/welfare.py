@@ -143,6 +143,7 @@ def _product_indexes(db: Session):
     products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
     by_url_spec = {}
     by_url = {}
+    by_url_all = {}
     url_counts = {}
     for p in products:
         url = _norm_url(p.buy_url)
@@ -153,17 +154,30 @@ def _product_indexes(db: Session):
             by_url_spec[(url, spec)] = p
         url_counts[url] = url_counts.get(url, 0) + 1
         by_url[url] = p
+        by_url_all.setdefault(url, []).append(p)
     unique_url = {url: p for url, p in by_url.items() if url_counts.get(url) == 1}
-    return by_url_spec, unique_url
+    return by_url_spec, unique_url, by_url_all
 
 
-def _match_product(row: dict, by_url_spec: dict, unique_url: dict):
+def _match_product(row: dict, by_url_spec: dict, unique_url: dict, by_url_all: dict | None = None):
     url = _norm_url(row.get("buy_url"))
     spec = (row.get("supplier_spec") or "").strip()
     if url and spec and (url, spec) in by_url_spec:
         return by_url_spec[(url, spec)], "url+spec"
     if url and url in unique_url:
         return unique_url[url], "url"
+    if by_url_all and url and url in by_url_all:
+        color = (row.get("color") or "").strip()
+        size = (row.get("size") or "").strip()
+        candidates = by_url_all[url]
+        for combo in [f"{spec}、{size}", f"{color}、{size}", spec, color]:
+            combo = combo.strip("、 ")
+            if not combo:
+                continue
+            for p in candidates:
+                p_spec = (p.supplier_spec or "").strip()
+                if p_spec and (p_spec.startswith(combo) or combo in p_spec):
+                    return p, "url+fuzzy"
     return None, None
 
 
@@ -276,11 +290,11 @@ def list_work_instructions(q: Optional[str] = None, db: Session = Depends(get_db
 @router.post("/preview-excel")
 async def preview_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
     rows = _parse_excel(await file.read())
-    by_url_spec, unique_url = _product_indexes(db)
+    by_url_spec, unique_url, by_url_all = _product_indexes(db)
     result = []
     matched = 0
     for row in rows:
-        product, match_type = _match_product(row, by_url_spec, unique_url)
+        product, match_type = _match_product(row, by_url_spec, unique_url, by_url_all)
         unit = _unit_per_set(product)
         qty = row["units"] // unit
         if product:
@@ -321,7 +335,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
         _clear_welfare_data(db)
         db.flush()
 
-    by_url_spec, unique_url = _product_indexes(db)
+    by_url_spec, unique_url, by_url_all = _product_indexes(db)
     now = datetime.now(timezone.utc)
     imported = 0
     unmatched = 0
@@ -351,7 +365,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
     imported_items = []
     skipped_items = []
     for row in rows:
-        product, _match_type = _match_product(row, by_url_spec, unique_url)
+        product, _match_type = _match_product(row, by_url_spec, unique_url, by_url_all)
         if not product:
             unmatched += 1
             unmatched_items.append({
@@ -548,6 +562,8 @@ class WelfareAdjustIn(BaseModel):
 
 
 class WelfareWorkInstructionIn(BaseModel):
+    product_id: Optional[int] = None
+    sku: Optional[str] = None
     name_jp: Optional[str] = None
     source_product_name: Optional[str] = None
     instruction: Optional[str] = None
@@ -632,6 +648,10 @@ def update_work_instruction(instruction_id: int, data: WelfareWorkInstructionIn,
     row = db.query(WelfareWorkInstruction).filter(WelfareWorkInstruction.id == instruction_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="作業指示が見つかりません")
+    if data.product_id is not None:
+        row.product_id = data.product_id
+    if data.sku is not None:
+        row.sku = data.sku
     if data.name_jp is not None:
         row.name_jp = data.name_jp
     if data.source_product_name is not None:
@@ -658,14 +678,16 @@ def update_work_instruction(instruction_id: int, data: WelfareWorkInstructionIn,
 @router.post("/work-instructions/backfill-products")
 def backfill_work_instruction_products(db: Session = Depends(get_db)):
     """product_id未設定の荷受けレコードをbuy_urlで再照合し、SKU・日本語名を埋める"""
-    by_url_spec, unique_url = _product_indexes(db)
+    by_url_spec, unique_url, by_url_all = _product_indexes(db)
     rows = db.query(WelfareWorkInstruction).filter(WelfareWorkInstruction.product_id.is_(None)).all()
     updated = 0
     for row in rows:
         product, _ = _match_product({
             "buy_url": row.buy_url,
             "supplier_spec": row.supplier_spec or row.color or "",
-        }, by_url_spec, unique_url)
+            "color": row.color or "",
+            "size": row.size or "",
+        }, by_url_spec, unique_url, by_url_all)
         if product:
             row.product_id = product.id
             row.sku = product.sku
