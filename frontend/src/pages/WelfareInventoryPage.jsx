@@ -186,10 +186,20 @@ export default function WelfareInventoryPage() {
   }, [activeTab, activeWorkDate, workDateTabs])
 
   const importMutation = useMutation({
-    mutationFn: async (file) => {
-      const fd = new FormData()
-      fd.append('file', file)
-      return api.post('/welfare/import-excel', fd, { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
+    mutationFn: async (files) => {
+      const combined = { imported: 0, work_imported: 0, unmatched: 0, imported_items: [], skipped_items: [], unmatched_items: [], file_count: files.length }
+      for (const file of files) {
+        const fd = new FormData()
+        fd.append('file', file)
+        const data = await api.post('/welfare/import-excel', fd, { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
+        combined.imported += data.imported || 0
+        combined.work_imported += data.work_imported || 0
+        combined.unmatched += data.unmatched || 0
+        if (data.imported_items) combined.imported_items.push(...data.imported_items)
+        if (data.skipped_items) combined.skipped_items.push(...data.skipped_items)
+        if (data.unmatched_items) combined.unmatched_items.push(...data.unmatched_items)
+      }
+      return combined
     },
     onSuccess: (data) => {
       setImportResult(data)
@@ -386,10 +396,10 @@ export default function WelfareInventoryPage() {
   })
 
   const handleFile = (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
     setImportResult(null)
-    importMutation.mutate(file)
+    importMutation.mutate(files)
     e.target.value = ''
   }
 
@@ -415,7 +425,7 @@ export default function WelfareInventoryPage() {
           <span style={{ color: '#64748b' }}>登録商品</span>
           <strong style={{ fontSize: 18 }}>{items.length}</strong>
         </div>
-        <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={handleFile} />
+        <input ref={fileRef} type="file" accept=".xlsx,.xls" multiple style={{ display: 'none' }} onChange={handleFile} />
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
@@ -436,7 +446,7 @@ export default function WelfareInventoryPage() {
       {importResult && (
         <div className="card" style={{ borderLeft: importResult.unmatched ? '4px solid #d97706' : '4px solid #16a34a' }}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>
-            取込完了: 在庫 {importResult.imported}行 / 作業指示 {importResult.work_imported ?? importResult.imported}行
+            取込完了{importResult.file_count > 1 ? `（${importResult.file_count}ファイル）` : ''}: 在庫 {importResult.imported}行 / 作業指示 {importResult.work_imported ?? importResult.imported}行
             {importResult.unmatched > 0 && <span style={{ color: '#d97706' }}> / 未照合 {importResult.unmatched}行</span>}
             {importResult.skipped_items?.length > 0 && <span style={{ color: '#64748b' }}> / 既取込済 {importResult.skipped_items.length}行</span>}
           </div>
