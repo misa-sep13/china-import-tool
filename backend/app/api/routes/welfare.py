@@ -655,6 +655,20 @@ def update_work_instruction(instruction_id: int, data: WelfareWorkInstructionIn,
     return _work_out(row)
 
 
+class WelfareWorkBatchUpdateSheet(BaseModel):
+    old_sheet: str
+    new_sheet: str
+
+
+@router.post("/work-instructions/batch-update-sheet")
+def batch_update_work_sheet(data: WelfareWorkBatchUpdateSheet, db: Session = Depends(get_db)):
+    rows = db.query(WelfareWorkInstruction).filter(WelfareWorkInstruction.source_sheet == data.old_sheet).all()
+    for r in rows:
+        r.source_sheet = data.new_sheet
+    db.commit()
+    return {"ok": True, "updated": len(rows)}
+
+
 @router.delete("/work-instructions/{instruction_id}")
 def delete_work_instruction(instruction_id: int, db: Session = Depends(get_db)):
     row = db.query(WelfareWorkInstruction).filter(WelfareWorkInstruction.id == instruction_id).first()

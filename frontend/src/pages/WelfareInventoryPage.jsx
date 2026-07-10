@@ -439,14 +439,14 @@ export default function WelfareInventoryPage() {
           className={`btn ${activeTab === 'work' ? 'btn-primary' : 'btn-secondary'}`}
           onClick={() => setActiveTab('work')}
         >
-          作業指示
+          就労支援荷受け
         </button>
       </div>
 
       {importResult && (
         <div className="card" style={{ borderLeft: importResult.unmatched ? '4px solid #d97706' : '4px solid #16a34a' }}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>
-            取込完了{importResult.file_count > 1 ? `（${importResult.file_count}ファイル）` : ''}: 在庫 {importResult.imported}行 / 作業指示 {importResult.work_imported ?? importResult.imported}行
+            取込完了{importResult.file_count > 1 ? `（${importResult.file_count}ファイル）` : ''}: 在庫 {importResult.imported}行 / 就労支援荷受け {importResult.work_imported ?? importResult.imported}行
             {importResult.unmatched > 0 && <span style={{ color: '#d97706' }}> / 未照合 {importResult.unmatched}行</span>}
             {importResult.skipped_items?.length > 0 && <span style={{ color: '#64748b' }}> / 既取込済 {importResult.skipped_items.length}行</span>}
           </div>
@@ -625,7 +625,7 @@ export default function WelfareInventoryPage() {
           <div className="loading">読み込み中...</div>
         ) : workInstructions.length === 0 ? (
           <div className="empty-state">
-            <p>作業指示がありません。Excelを取り込むと表示されます。</p>
+            <p>就労支援荷受けがありません。Excelを取り込むと表示されます。</p>
           </div>
         ) : (
           <div>
@@ -752,7 +752,7 @@ export default function WelfareInventoryPage() {
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 700, fontSize: 13 }}>削除しました</div>
                 <div style={{ fontSize: 12, color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {row.source_product_name || row.name_jp || row.sku || '作業指示'}
+                  {row.source_product_name || row.name_jp || row.sku || '就労支援荷受け'}
                 </div>
               </div>
               <button
