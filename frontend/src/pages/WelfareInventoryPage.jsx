@@ -48,7 +48,7 @@ const WORK_INSTRUCTION_OPTIONS = ['作業保管', '保管', '戻し']
 const DELETE_UNDO_MS = 8000
 const JA_SORT_OPTIONS = { numeric: true, sensitivity: 'base' }
 
-const workDisplayName = (row) => String(row.source_product_name || row.name_jp || row.sku || '').trim()
+const workDisplayName = (row) => String(row.name_jp || row.source_product_name || row.sku || '').trim()
 
 const compareWorkInstructions = (a, b) => {
   const name = workDisplayName(a).localeCompare(workDisplayName(b), 'ja', JA_SORT_OPTIONS)
@@ -109,7 +109,7 @@ export default function WelfareInventoryPage() {
 
   const getWorkDraftValue = (row, draft = {}) => ({
     name_jp: draft.name_jp ?? row.name_jp ?? '',
-    source_product_name: draft.source_product_name ?? row.source_product_name ?? row.name_jp ?? '',
+    source_product_name: draft.source_product_name ?? row.name_jp ?? row.source_product_name ?? '',
     instruction: draft.instruction ?? row.instruction ?? '',
     remaining_qty: draft.remaining_qty ?? workRemainingQty(row),
     note: draft.note ?? row.note ?? '',
@@ -752,7 +752,7 @@ export default function WelfareInventoryPage() {
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 700, fontSize: 13 }}>削除しました</div>
                 <div style={{ fontSize: 12, color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {row.source_product_name || row.name_jp || row.sku || '就労支援荷受け'}
+                  {row.name_jp || row.source_product_name || row.sku || '就労支援荷受け'}
                 </div>
               </div>
               <button
