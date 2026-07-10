@@ -35,6 +35,7 @@ class WelfareInventoryMovement(Base):
     sku = Column(String, index=True)
     movement_type = Column(String, index=True)  # import / withdraw / adjust
     source_file = Column(String)
+    source_sheet = Column(String)
     source_order_no = Column(String)
     name_cn = Column(Text)
     supplier_spec = Column(String)

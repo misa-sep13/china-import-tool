@@ -174,6 +174,7 @@ def _import_key(product: RakutenProduct | None, row: dict):
         row.get("order_no") or "",
         row.get("supplier_spec") or "",
         int(row.get("units") or 0),
+        row.get("sheet") or "",
     )
 
 
@@ -333,6 +334,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
             m.source_order_no or "",
             m.supplier_spec or "",
             int(m.units or 0),
+            m.source_sheet or "",
         ))
     existing_work_keys = set()
     for w in db.query(WelfareWorkInstruction).all():
@@ -342,6 +344,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
             w.source_order_no or "",
             w.supplier_spec or "",
             int(w.units or 0),
+            w.source_sheet or "",
         ))
 
     unmatched_items = []
@@ -454,6 +457,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
             sku=item.sku,
             movement_type="import",
             source_file=source_file,
+            source_sheet=row.get("sheet"),
             source_order_no=row.get("order_no"),
             name_cn=row.get("name_cn"),
             supplier_spec=row.get("supplier_spec"),

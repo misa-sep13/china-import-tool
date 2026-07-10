@@ -93,6 +93,7 @@ def _migrate():
         ("welfare_inventory_movements","sku",                "ALTER TABLE welfare_inventory_movements ADD COLUMN sku VARCHAR"),
         ("welfare_inventory_movements","movement_type",      "ALTER TABLE welfare_inventory_movements ADD COLUMN movement_type VARCHAR"),
         ("welfare_inventory_movements","source_file",        "ALTER TABLE welfare_inventory_movements ADD COLUMN source_file VARCHAR"),
+        ("welfare_inventory_movements","source_sheet",       "ALTER TABLE welfare_inventory_movements ADD COLUMN source_sheet VARCHAR"),
         ("welfare_inventory_movements","source_order_no",    "ALTER TABLE welfare_inventory_movements ADD COLUMN source_order_no VARCHAR"),
         ("welfare_inventory_movements","name_cn",            "ALTER TABLE welfare_inventory_movements ADD COLUMN name_cn TEXT"),
         ("welfare_inventory_movements","supplier_spec",      "ALTER TABLE welfare_inventory_movements ADD COLUMN supplier_spec VARCHAR"),
