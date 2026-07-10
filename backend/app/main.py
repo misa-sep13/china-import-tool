@@ -403,12 +403,20 @@ async def _sync_rakuten_stock():
                     sku_stock[sku] = p.stock
                     updated_skus.add(sku)
 
+        cancel_skipped = {}
         for sku, qty in new_cancelled.items():
             p = sku_to_product.get(sku)
             if not p:
                 continue
             comps = parse_comps(p)
             if comps:
+                all_zero = all(
+                    (sku_to_product.get(c.get("sku")) or p).stock in (None, 0)
+                    for c in comps
+                )
+                if all_zero:
+                    cancel_skipped[sku] = qty
+                    continue
                 for c in comps:
                     c_sku = c.get("sku")
                     c_qty = (c.get("qty") or 1) * qty
@@ -419,9 +427,14 @@ async def _sync_rakuten_stock():
                         updated_skus.add(c_sku)
             else:
                 if p.stock is not None:
+                    if p.stock == 0:
+                        cancel_skipped[sku] = qty
+                        continue
                     p.stock = p.stock + qty
                     sku_stock[sku] = p.stock
                     updated_skus.add(sku)
+        if cancel_skipped:
+            logger.info(f"[scheduler] キャンセル戻しスキップ(在庫0): {cancel_skipped}")
 
         share_counts = build_component_share_counts(all_products)
         updated_set_skus = set()
@@ -629,6 +642,7 @@ async def _check_delayed_cancellations():
                 return []
 
         updated_skus = set()
+        cancel_skipped = {}
         for order_num, sku_map in newly_cancelled.items():
             for sku, qty in sku_map.items():
                 p = sku_to_product.get(sku)
@@ -636,21 +650,33 @@ async def _check_delayed_cancellations():
                     continue
                 comps = parse_comps(p)
                 if comps:
-                    for c in comps:
-                        c_sku = c.get("sku")
-                        c_qty = (c.get("qty") or 1) * qty
-                        cp = sku_to_product.get(c_sku)
-                        if cp and cp.stock is not None:
-                            cp.stock = cp.stock + c_qty
-                            sku_stock[c_sku] = cp.stock
-                            updated_skus.add(c_sku)
+                    all_zero = all(
+                        (sku_to_product.get(c.get("sku")) or p).stock in (None, 0)
+                        for c in comps
+                    )
+                    if all_zero:
+                        cancel_skipped[sku] = cancel_skipped.get(sku, 0) + qty
+                    else:
+                        for c in comps:
+                            c_sku = c.get("sku")
+                            c_qty = (c.get("qty") or 1) * qty
+                            cp = sku_to_product.get(c_sku)
+                            if cp and cp.stock is not None:
+                                cp.stock = cp.stock + c_qty
+                                sku_stock[c_sku] = cp.stock
+                                updated_skus.add(c_sku)
                 else:
                     if p.stock is not None:
-                        p.stock = p.stock + qty
-                        sku_stock[sku] = p.stock
-                        updated_skus.add(sku)
+                        if p.stock == 0:
+                            cancel_skipped[sku] = cancel_skipped.get(sku, 0) + qty
+                        else:
+                            p.stock = p.stock + qty
+                            sku_stock[sku] = p.stock
+                            updated_skus.add(sku)
 
             _save_processed_order(db, order_num, "cancelled")
+        if cancel_skipped:
+            logger.info(f"[scheduler] 遅延キャンセル戻しスキップ(在庫0): {cancel_skipped}")
 
         share_counts = build_component_share_counts(all_products)
         updated_set_skus = set()
