@@ -29,7 +29,7 @@ def normalize_taotaro_spec(spec) -> str:
     # この商品は1688側の選択肢名が「第六代」「六代代」なので、誤字に見えても実値を優先する。
     text = GRIP_TRAINER_OPTION_FIXES.get(text, text)
     if GRIP_TRAINER_SPEC_RE.fullmatch(text):
-        return f"颜色：{text}；规格：无规格；"
+        return f"颜色：{text}； 规格：无规格；"
 
     return text.strip(" 、,，")
 
