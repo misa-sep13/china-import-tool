@@ -1,8 +1,32 @@
 import io
+import re
 from typing import List, Dict
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+
+TAOTARO_SPEC_LABEL_RE = re.compile(r"(颜色|顏色|规格|規格|尺码|尺寸|款式)\s*[：:]\s*")
+
+
+def normalize_taotaro_spec(spec) -> str:
+    """タオタロウのExcel取込で読める仕様文字に整える。"""
+    text = "" if spec is None else str(spec).strip()
+    if not text:
+        return ""
+
+    text = text.replace("；", "、").replace(";", "、")
+    text = TAOTARO_SPEC_LABEL_RE.sub("", text)
+
+    parts = [part.strip(" 、,，") for part in re.split(r"[、,，]+", text)]
+    parts = [part for part in parts if part and part not in {"无规格", "無規格"}]
+    text = "、".join(parts) if parts else ""
+
+    # 1688の選択肢名と商品マスタ側の表記ゆれを吸収する。
+    text = text.replace("握笔器第六代", "握笔器六代")
+    text = text.replace("握笔器六代代", "握笔器六代")
+
+    return text.strip(" 、,，")
+
 
 def build_taotaro_excel(items: List[Dict]) -> bytes:
     """タオタロウインポート用Excelを生成してbytesで返す"""
@@ -48,6 +72,7 @@ def build_taotaro_excel(items: List[Dict]) -> bytes:
     for i, item in enumerate(items):
         row_num = 3 + i
         spec = item.get("spec") or "　".join(filter(None, [item.get("color", ""), item.get("size", "")]))
+        spec = normalize_taotaro_spec(spec)
         values = [
             item.get("buy_url", ""),       # A: 発注先URL
             spec,                           # B: 仕様
@@ -110,9 +135,10 @@ def build_rakuten_taotaro_excel(items: List[Dict]) -> bytes:
     # 2行目以降：データ（ASIN/FNSKUは空欄、customer_memoがあればASIN欄に出力）
     for i, item in enumerate(items):
         row_num = 2 + i
+        supplier_spec = normalize_taotaro_spec(item.get("supplier_spec", "") or item.get("spec", ""))
         values = [
             item.get("buy_url", ""),        # A: 発注先URL
-            item.get("supplier_spec", "") or item.get("spec", ""),  # B: 仕様（中国語優先）
+            supplier_spec,                   # B: 仕様（中国語優先）
             item.get("qty", 0),             # C: 数量
             item.get("price", 0),           # D: 単価
             "",                             # E: ASIN（空欄）
