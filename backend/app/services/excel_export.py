@@ -6,7 +6,11 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 TAOTARO_SPEC_LABEL_RE = re.compile(r"(颜色|顏色|规格|規格|尺码|尺寸|款式)\s*[：:]\s*")
-GRIP_TRAINER_SPEC_RE = re.compile(r"握笔器六代【[^】]*彩盒装】")
+GRIP_TRAINER_SPEC_RE = re.compile(r"握笔器(?:第六代|六代代)【[^】]*彩盒装】")
+GRIP_TRAINER_OPTION_FIXES = {
+    "握笔器六代【蓝色彩盒装】": "握笔器第六代【蓝色彩盒装】",
+    "握笔器六代【粉色彩盒装】": "握笔器六代代【粉色彩盒装】",
+}
 
 
 def normalize_taotaro_spec(spec) -> str:
@@ -22,10 +26,8 @@ def normalize_taotaro_spec(spec) -> str:
     parts = [part for part in parts if part and part not in {"无规格", "無規格"}]
     text = "、".join(parts) if parts else ""
 
-    # 1688の選択肢名と商品マスタ側の表記ゆれを吸収する。
-    text = text.replace("握笔器第六代", "握笔器六代")
-    text = text.replace("握笔器六代代", "握笔器六代")
-
+    # この商品は1688側の選択肢名が「第六代」「六代代」なので、誤字に見えても実値を優先する。
+    text = GRIP_TRAINER_OPTION_FIXES.get(text, text)
     if GRIP_TRAINER_SPEC_RE.fullmatch(text):
         return f"颜色：{text}；规格：无规格；"
 
