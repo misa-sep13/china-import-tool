@@ -23,13 +23,16 @@ def normalize_taotaro_spec(spec) -> str:
     text = TAOTARO_SPEC_LABEL_RE.sub("", text)
 
     parts = [part.strip(" 、,，") for part in re.split(r"[、,，]+", text)]
-    parts = [part for part in parts if part and part not in {"无规格", "無規格"}]
-    text = "、".join(parts) if parts else ""
+    parts = [part for part in parts if part]
+    if not parts:
+        return ""
 
     # この商品は1688側の選択肢名が「第六代」「六代代」なので、誤字に見えても実値を優先する。
-    text = GRIP_TRAINER_OPTION_FIXES.get(text, text)
-    if GRIP_TRAINER_SPEC_RE.fullmatch(text):
-        return f"颜色：{text}； 规格：无规格；"
+    parts[0] = GRIP_TRAINER_OPTION_FIXES.get(parts[0], parts[0])
+    if len(parts) == 1 and GRIP_TRAINER_SPEC_RE.fullmatch(parts[0]):
+        parts.append("无规格")
+
+    text = "、".join(parts)
 
     return text.strip(" 、,，")
 
