@@ -44,11 +44,14 @@ export default function RakutenProductsPage() {
   const specFormatWarning = (spec) => {
     const s = (spec || '').trim()
     if (!s) return null
-    if (/[；;]/.test(s) || /(颜色|规格|尺码|款式)[：:]/.test(s)) {
-      return '「颜色：」などのラベルや「；」はタオタロウで読み込めません。選択肢の値だけを表示順に「、」で区切ってください（例: 燕麦色、S 建议75-95斤）'
-    }
     if (/握笔器(第六代|六代代)/.test(s)) {
       return 'タオタロウ側の選択肢は「握笔器六代...」です。「第六代」「六代代」では読み込めないため、「握笔器六代」に統一してください'
+    }
+    if (/握笔器六代【[^】]*彩盒装】/.test(s)) {
+      return null
+    }
+    if (/[；;]/.test(s) || /(颜色|规格|尺码|款式)[：:]/.test(s)) {
+      return '「颜色：」などのラベルや「；」はタオタロウで読み込めません。選択肢の値だけを表示順に「、」で区切ってください（例: 燕麦色、S 建议75-95斤）'
     }
     return null
   }
