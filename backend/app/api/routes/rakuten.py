@@ -1655,13 +1655,20 @@ def _parse_rakuten_invoice_workbook(wb):
 
         invoice_code = _code(_row_value(row, 9))
         fallback_sku = _code(_row_value(row, 12)) or invoice_code
+        # 商品URLはK列(SKU/URL)が基本だが、便によってはL列(1688链接)にしか
+        # 記入されないことがあるため、URLらしい方を採用する
+        buy_url = _text(_row_value(row, 10))
+        if "http" not in buy_url:
+            alt_url = _text(_row_value(row, 11))
+            if "http" in alt_url:
+                buy_url = alt_url
         items.append({
             "sku": fallback_sku,
             "name_jp": _text(_row_value(row, 2)) or _text(_row_value(row, 1)),
             "qty": int(qty),
             "unit_price_cny": unit_price,
             "total_price_cny": total_price or round(qty * unit_price, 2),
-            "buy_url": _text(_row_value(row, 10)),
+            "buy_url": buy_url,
             "asin_memo": invoice_code,
         })
 
