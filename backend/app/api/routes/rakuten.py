@@ -1000,6 +1000,27 @@ def get_all_products_order(db: Session = Depends(get_db)):
         RakutenProduct.is_active == True,
     ).all()
 
+    internalSkus = set(p.sku for p in all_products if p.is_component)
+
+    # セット商品の販売実績を構成単品SKUへ按分（recommendationsと同じロジック）
+    unit_sales: dict[str, dict] = {}
+    for p in all_products:
+        if p.is_component or not p.set_components:
+            continue
+        try:
+            comps = json.loads(p.set_components or "[]")
+        except Exception:
+            comps = []
+        for c in comps:
+            unit_sku = c.get("sku", "")
+            qty = c.get("qty", 1) or 1
+            if not unit_sku:
+                continue
+            if unit_sku not in unit_sales:
+                unit_sales[unit_sku] = {"recent": 0, "prev": 0}
+            unit_sales[unit_sku]["recent"] += (p.sales_30_recent or 0) * qty
+            unit_sales[unit_sku]["prev"]   += (p.sales_30_prev   or 0) * qty
+
     # is_component=False・buy_urlあり（内部SKUのみ除外、セット組・本体はすべて表示）
     targets = sorted(
         [p for p in all_products if not p.is_component and (p.buy_url or "").strip()],
@@ -1010,12 +1031,15 @@ def get_all_products_order(db: Session = Depends(get_db)):
         ordered_1 = ordered1_by_sku.get(p.sku, 0)
         ordered_2 = ordered2_by_sku.get(p.sku, 0)
         ordered = ordered_1 + ordered_2
+        agg = unit_sales.get(p.sku, {})
+        sales_recent = agg.get("recent", 0) or (p.sales_30_recent or 0)
+        sales_prev   = agg.get("prev",   0) or (p.sales_30_prev   or 0)
         calc = calc_rakuten_order(
             stock=p.stock or 0,
             inbound=0,
             ordered=ordered,
-            sales_30_recent=p.sales_30_recent or 0,
-            sales_30_prev=p.sales_30_prev or 0,
+            sales_30_recent=sales_recent,
+            sales_30_prev=sales_prev,
             super_sale_qty=0,
             sales_90=getattr(p, 'sales_90', None) or 0,
             stockout_days_90=getattr(p, 'stockout_days_90', None) or 0,
@@ -1046,8 +1070,8 @@ def get_all_products_order(db: Session = Depends(get_db)):
             "growth_rate":     calc.growth_rate,
             "order_qty":       calc.order_qty,
             "needs_order":     calc.needs_order,
-            "sales_30_recent": p.sales_30_recent or 0,
-            "sales_30_prev":   p.sales_30_prev or 0,
+            "sales_30_recent": sales_recent,
+            "sales_30_prev":   sales_prev,
         })
     return {"items": items, "settings": RakutenSettingsSchema.model_validate(settings_row)}
 
