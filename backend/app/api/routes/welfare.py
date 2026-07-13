@@ -762,13 +762,17 @@ def undo_movements(data: WelfareUndoMovementsIn, db: Session = Depends(get_db)):
 
 
 class WelfareBulkCreateIn(BaseModel):
-    product_ids: list[int]
+    product_ids: list[int] = []
+    items: list[dict] = []
 
 
 @router.post("/inventory/bulk-create")
 def bulk_create_inventory(data: WelfareBulkCreateIn, db: Session = Depends(get_db)):
     existing_pids = set(
         r[0] for r in db.query(WelfareInventoryItem.product_id).all() if r[0]
+    )
+    existing_skus = set(
+        r[0] for r in db.query(WelfareInventoryItem.sku).all() if r[0]
     )
     created = []
     for pid in data.product_ids:
@@ -791,7 +795,30 @@ def bulk_create_inventory(data: WelfareBulkCreateIn, db: Session = Depends(get_d
         )
         db.add(item)
         existing_pids.add(pid)
+        existing_skus.add(product.sku)
         created.append(product.sku)
+    for entry in data.items:
+        sku = entry.get("sku", "")
+        if not sku or sku in existing_skus:
+            continue
+        product = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
+        item = WelfareInventoryItem(
+            product_id=product.id if product else None,
+            sku=sku,
+            name_jp=entry.get("name_jp") or (product.name if product else ""),
+            buy_url=entry.get("buy_url") or (product.buy_url if product else None),
+            supplier_spec=entry.get("supplier_spec") or (product.supplier_spec if product else None),
+            unit_per_set=entry.get("unit_per_set") or (_unit_per_set(product) if product else 1),
+            total_received_units=0,
+            total_received_qty=0,
+            withdrawn_qty=0,
+            remaining_qty=entry.get("remaining_qty", 0),
+        )
+        db.add(item)
+        existing_skus.add(sku)
+        if product:
+            existing_pids.add(product.id)
+        created.append(sku)
     db.commit()
     return {"created": len(created), "skus": created}
 
