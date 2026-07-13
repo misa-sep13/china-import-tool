@@ -177,7 +177,7 @@ export default function WelfareWorkPublicPage() {
                     {selectedRows.map(row => (
                       <tr key={row.id}>
                         <td>{imageThumb(row.image_data_url)}</td>
-                        <td style={{ wordBreak: 'break-word', fontWeight: 600 }}>{row.source_product_name || row.name_jp || '未照合'}</td>
+                        <td style={{ wordBreak: 'break-word', fontWeight: 600 }}>{row.name_jp || row.source_product_name || '未照合'}</td>
                         <td style={{ color: '#e11d48' }}>{row.color || row.supplier_spec || '-'}</td>
                         <td style={{ color: '#e11d48' }}>{row.size || '-'}</td>
                         <td>{row.buy_url ? <a href={row.buy_url} target="_blank" rel="noreferrer">URL</a> : '-'}</td>
