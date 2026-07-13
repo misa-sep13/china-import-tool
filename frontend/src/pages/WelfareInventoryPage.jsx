@@ -95,7 +95,7 @@ export default function WelfareInventoryPage() {
   const [activeWorkDate, setActiveWorkDate] = useState('')
   const [pendingWorkDeletes, setPendingWorkDeletes] = useState([])
   const [committingWorkDeleteIds, setCommittingWorkDeleteIds] = useState([])
-  const [inventorySort, setInventorySort] = useState('qty')
+  const [inventorySort, setInventorySort] = useState('sku')
 
   const getInventoryDraftValue = (item, draft = {}) => ({
     name_jp: draft.name_jp ?? item.name_jp ?? '',
