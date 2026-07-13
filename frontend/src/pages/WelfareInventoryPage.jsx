@@ -660,15 +660,6 @@ export default function WelfareInventoryPage() {
               <table className="welfare-work-table" style={{ width: 1200, minWidth: 1200 }}>
                 <thead>
                   <tr>
-                    <th style={{ width: 36 }}>
-                      <input type="checkbox"
-                        checked={visibleWorkInstructions.length > 0 && visibleWorkInstructions.every(r => checkedWorkIds.has(r.id))}
-                        onChange={e => {
-                          if (e.target.checked) setCheckedWorkIds(new Set(visibleWorkInstructions.map(r => r.id)))
-                          else setCheckedWorkIds(new Set())
-                        }}
-                      />
-                    </th>
                     <th style={{ width: 56 }}></th>
                     <th style={{ width: 58 }}>写真</th>
                     <th style={{ width: 240 }}>商品名</th>
@@ -678,6 +669,15 @@ export default function WelfareInventoryPage() {
                     <th style={{ width: 64 }}>単品数</th>
                     <th style={{ width: 64 }}>換算</th>
                     <th style={{ width: 74 }}>残</th>
+                    <th style={{ width: 36 }}>
+                      <input type="checkbox"
+                        checked={visibleWorkInstructions.length > 0 && visibleWorkInstructions.every(r => checkedWorkIds.has(r.id))}
+                        onChange={e => {
+                          if (e.target.checked) setCheckedWorkIds(new Set(visibleWorkInstructions.map(r => r.id)))
+                          else setCheckedWorkIds(new Set())
+                        }}
+                      />
+                    </th>
                     <th style={{ width: 126 }}>指示</th>
                     <th style={{ width: 180 }}>備考</th>
                     <th style={{ width: 90 }}>発注時間</th>
@@ -689,13 +689,6 @@ export default function WelfareInventoryPage() {
                     const { source_product_name: productName, instruction, remaining_qty: remaining, note } = getWorkDraftValue(row, draft)
                     return (
                       <tr key={row.id}>
-                        <td>
-                          <input type="checkbox" checked={checkedWorkIds.has(row.id)} onChange={e => {
-                            const next = new Set(checkedWorkIds)
-                            e.target.checked ? next.add(row.id) : next.delete(row.id)
-                            setCheckedWorkIds(next)
-                          }} />
-                        </td>
                         <td style={{ whiteSpace: 'nowrap' }}>
                           <button
                             className="btn btn-secondary btn-sm"
@@ -728,6 +721,13 @@ export default function WelfareInventoryPage() {
                             onChange={e => updateWorkDraft(row, { remaining_qty: Number(e.target.value) })}
                             style={{ width: 58, textAlign: 'right', fontWeight: 700 }}
                           />
+                        </td>
+                        <td>
+                          <input type="checkbox" checked={checkedWorkIds.has(row.id)} onChange={e => {
+                            const next = new Set(checkedWorkIds)
+                            e.target.checked ? next.add(row.id) : next.delete(row.id)
+                            setCheckedWorkIds(next)
+                          }} />
                         </td>
                         <td style={{ ...instructionCellStyle(instruction), padding: 6 }}>
                           <input
