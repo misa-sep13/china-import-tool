@@ -386,6 +386,18 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
         already_imported = key in existing_movement_keys
         already_work = key in existing_work_keys
 
+        fallback_name = None
+        if not product:
+            raw_url = row.get("buy_url") or ""
+            if raw_url:
+                prev = db.query(WelfareWorkInstruction.name_jp).filter(
+                    WelfareWorkInstruction.buy_url == raw_url,
+                    WelfareWorkInstruction.name_jp.isnot(None),
+                    WelfareWorkInstruction.name_jp != "",
+                ).first()
+                if prev:
+                    fallback_name = prev[0]
+
         if not already_work:
             db.add(WelfareWorkInstruction(
                 product_id=product.id if product else None,
@@ -394,7 +406,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 source_file=source_file,
                 source_sheet=row.get("sheet"),
                 source_order_no=row.get("order_no"),
-                name_jp=product.name if product else None,
+                name_jp=product.name if product else fallback_name,
                 source_product_name=row.get("name_cn"),
                 color=row.get("supplier_spec"),
                 size=row.get("size"),
