@@ -91,6 +91,7 @@ export default function WelfareInventoryPage() {
   const [inventoryDrafts, setInventoryDrafts] = useState({})
   const [remainingDrafts, setRemainingDrafts] = useState({})
   const [workDrafts, setWorkDrafts] = useState({})
+  const [checkedWorkIds, setCheckedWorkIds] = useState(new Set())
   const [activeWorkDate, setActiveWorkDate] = useState('')
   const [pendingWorkDeletes, setPendingWorkDeletes] = useState([])
   const [committingWorkDeleteIds, setCommittingWorkDeleteIds] = useState([])
@@ -641,10 +642,33 @@ export default function WelfareInventoryPage() {
                 </button>
               ))}
             </div>
+            {checkedWorkIds.size > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#eff6ff', borderRadius: 8, marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{checkedWorkIds.size}件選択中</span>
+                {WORK_INSTRUCTION_OPTIONS.map(opt => (
+                  <button key={opt} className="btn btn-sm" style={{ fontSize: 12 }} onClick={() => {
+                    const next = { ...workDrafts }
+                    checkedWorkIds.forEach(id => { next[id] = { ...(next[id] || {}), instruction: opt } })
+                    setWorkDrafts(next)
+                    setCheckedWorkIds(new Set())
+                  }}>{opt}</button>
+                ))}
+                <button className="btn btn-sm btn-secondary" style={{ fontSize: 12 }} onClick={() => setCheckedWorkIds(new Set())}>解除</button>
+              </div>
+            )}
             <div style={{ overflowX: 'auto' }}>
               <table className="welfare-work-table" style={{ width: 1200, minWidth: 1200 }}>
                 <thead>
                   <tr>
+                    <th style={{ width: 36 }}>
+                      <input type="checkbox"
+                        checked={visibleWorkInstructions.length > 0 && visibleWorkInstructions.every(r => checkedWorkIds.has(r.id))}
+                        onChange={e => {
+                          if (e.target.checked) setCheckedWorkIds(new Set(visibleWorkInstructions.map(r => r.id)))
+                          else setCheckedWorkIds(new Set())
+                        }}
+                      />
+                    </th>
                     <th style={{ width: 56 }}></th>
                     <th style={{ width: 58 }}>写真</th>
                     <th style={{ width: 240 }}>商品名</th>
@@ -665,6 +689,13 @@ export default function WelfareInventoryPage() {
                     const { source_product_name: productName, instruction, remaining_qty: remaining, note } = getWorkDraftValue(row, draft)
                     return (
                       <tr key={row.id}>
+                        <td>
+                          <input type="checkbox" checked={checkedWorkIds.has(row.id)} onChange={e => {
+                            const next = new Set(checkedWorkIds)
+                            e.target.checked ? next.add(row.id) : next.delete(row.id)
+                            setCheckedWorkIds(next)
+                          }} />
+                        </td>
                         <td style={{ whiteSpace: 'nowrap' }}>
                           <button
                             className="btn btn-secondary btn-sm"
