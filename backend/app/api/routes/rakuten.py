@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -416,6 +416,28 @@ async def import_sales_month(
         "sku_count": len(built["sku_rows"]),
         "skipped_orders": built["skipped_orders"],
     }
+
+
+@router.patch("/sales/change-period")
+async def change_sales_period(
+    from_period: str = Query(...),
+    to_period: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    from_period = _validate_sales_period(from_period)
+    to_period = _validate_sales_period(to_period)
+    existing_to = db.query(RakutenSalesImport).filter(RakutenSalesImport.period == to_period).first()
+    if existing_to:
+        raise HTTPException(400, f"{to_period} には既にデータがあります。先に削除してください。")
+    info = db.query(RakutenSalesImport).filter(RakutenSalesImport.period == from_period).first()
+    if not info:
+        raise HTTPException(404, f"{from_period} のデータが見つかりません")
+    info.period = to_period
+    updated = db.query(RakutenSalesSummary).filter(RakutenSalesSummary.period == from_period).update(
+        {"period": to_period}, synchronize_session=False
+    )
+    db.commit()
+    return {"message": f"{from_period} → {to_period} に変更しました（{updated}行）"}
 
 
 # ============================================================
