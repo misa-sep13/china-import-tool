@@ -73,13 +73,20 @@ export default function WelfareWorkPublicPage() {
   )
 
   const workDateTabs = useMemo(() => {
-    const counts = new Map()
+    const groups = new Map()
     visibleRows.forEach(row => {
       const date = fmtWorkDate(row)
-      counts.set(date, (counts.get(date) || 0) + 1)
+      if (!groups.has(date)) groups.set(date, { count: 0, maxOrderDate: '' })
+      const g = groups.get(date)
+      g.count++
+      const od = row.order_date || row.created_at || ''
+      if (od > g.maxOrderDate) g.maxOrderDate = od
     })
-    return Array.from(counts, ([date, count]) => ({ date, count }))
-      .sort((a, b) => workDateSortValue(b.date) - workDateSortValue(a.date) || String(b.date).localeCompare(String(a.date), 'ja'))
+    return Array.from(groups, ([date, { count, maxOrderDate }]) => ({ date, count, maxOrderDate }))
+      .sort((a, b) => {
+        if (a.maxOrderDate && b.maxOrderDate) return b.maxOrderDate.localeCompare(a.maxOrderDate)
+        return workDateSortValue(b.date) - workDateSortValue(a.date)
+      })
   }, [visibleRows])
 
   const selectedRows = useMemo(
