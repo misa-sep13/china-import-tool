@@ -220,6 +220,7 @@ class SalesAgg:
 
 def _product_lookup(products) -> dict[str, object]:
     lookup = {}
+    fallback_keys: list[tuple[str, object]] = []
     for p in products:
         keys = {
             normalize_key(getattr(p, "sku", "")),
@@ -228,10 +229,13 @@ def _product_lookup(products) -> dict[str, object]:
         }
         sku = normalize_key(getattr(p, "sku", ""))
         if "_" in sku:
-            keys.add(sku.split("_")[0])
+            fallback_keys.append((sku.split("_")[0], p))
         for key in keys:
             if key and key not in lookup:
                 lookup[key] = p
+    for key, p in fallback_keys:
+        if key not in lookup:
+            lookup[key] = p
     return lookup
 
 
