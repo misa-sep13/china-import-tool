@@ -36,8 +36,9 @@ export default function RakutenSalesPage() {
     mutationFn: async () => {
       const fd = new FormData()
       fd.append('period', period)
-      if (!files.order_file) throw new Error('受注データを選択してください')
-      fd.append('order_file', files.order_file)
+      const orderFiles = files.order_files || []
+      if (orderFiles.length === 0) throw new Error('受注データを選択してください')
+      for (const f of orderFiles) fd.append('order_file', f)
       if (files.rpp_file) fd.append('rpp_file', files.rpp_file)
       if (files.coupon_ad_file) fd.append('coupon_ad_file', files.coupon_ad_file)
       if (files.affiliate_file) fd.append('affiliate_file', files.affiliate_file)
@@ -66,7 +67,13 @@ export default function RakutenSalesPage() {
   const totals = summaryQuery.data?.totals || {}
   const importInfo = summaryQuery.data?.import
 
-  const onFile = (key) => (e) => setFiles(prev => ({ ...prev, [key]: e.target.files?.[0] || null }))
+  const onFile = (key, multiple) => (e) => {
+    if (multiple) {
+      setFiles(prev => ({ ...prev, [key]: Array.from(e.target.files || []) }))
+    } else {
+      setFiles(prev => ({ ...prev, [key]: e.target.files?.[0] || null }))
+    }
+  }
 
   return (
     <div>
@@ -85,7 +92,7 @@ export default function RakutenSalesPage() {
             <label>対象月</label>
             <input type="month" value={period} onChange={e => setPeriod(e.target.value)} />
           </div>
-          <FileInput label="受注データ" required onChange={onFile('order_file')} />
+          <FileInput label="受注データ" required multiple onChange={onFile('order_files', true)} />
           <FileInput label="RPP" onChange={onFile('rpp_file')} />
           <FileInput label="クーアド" onChange={onFile('coupon_ad_file')} />
           <FileInput label="アフィ" onChange={onFile('affiliate_file')} />
@@ -108,6 +115,7 @@ export default function RakutenSalesPage() {
             {importMutation.data.import.period} 取込済み（親{importMutation.data.parent_count}件 / SKU{importMutation.data.sku_count}件）
           </div>
         )}
+        <ImportGuide />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
@@ -196,11 +204,55 @@ export default function RakutenSalesPage() {
   )
 }
 
-function FileInput({ label, required, onChange }) {
+function FileInput({ label, required, multiple, onChange }) {
   return (
     <div className="form-group">
       <label>{label}{required ? ' *' : ''}</label>
-      <input type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" onChange={onChange} />
+      <input type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" multiple={multiple} onChange={onChange} />
+    </div>
+  )
+}
+
+function ImportGuide() {
+  const [open, setOpen] = useState(false)
+  const guideStyle = { fontSize: 12, lineHeight: 1.7, color: '#475569' }
+  const sectionStyle = { display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 0' }
+  const labelStyle = { fontWeight: 700, fontSize: 11, color: '#334155', minWidth: 56, flexShrink: 0 }
+  const urlStyle = { color: '#2563eb', textDecoration: 'none', fontSize: 11, wordBreak: 'break-all' }
+  const stepStyle = { display: 'inline-block', background: '#f1f5f9', borderRadius: 3, padding: '1px 6px', fontSize: 11, margin: '1px 2px' }
+  const data = [
+    { name: '受注データ', tab: null, url: 'https://csvdl-rp.rms.rakuten.co.jp/rms/mall/csvdl/CD02_01_001?dataType=opp_order#result', dlUrl: null,
+      steps: '注文日時を対象月の初日〜末日 → 出力テンプレート: 全カラムダウンロード用 → DL（5000件超は分割して複数選択可）' },
+    { name: 'RPP', tab: null, url: 'https://ad.rms.rakuten.co.jp/rpp/reports', dlUrl: 'https://ad.rms.rakuten.co.jp/rpp/download',
+      steps: '商品別 → 月ごとに表示 → 全商品レポートDL → DL先でzip解凍 → zip・csv削除' },
+    { name: 'クーアド', tab: null, url: 'https://ad.rms.rakuten.co.jp/cpnadv/performance_reports', dlUrl: 'https://ad.rms.rakuten.co.jp/cpnadv/download_history',
+      steps: '商品別 → 月ごとに表示 → この条件でDL → DL先でzip解凍 → zip・csv削除' },
+    { name: 'アフィ', tab: null, url: 'https://afl.rms.rakuten.co.jp/report/pending?date=2024-12', dlUrl: null,
+      steps: '成果速報－注文一覧 → 対象月に設定 → 受注番号にチェック → ↓マークでDL' },
+  ]
+  return (
+    <div style={{ marginTop: 10, borderTop: '1px solid #e2e8f0', paddingTop: 6 }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#64748b', padding: 0, fontWeight: 600 }}
+      >
+        {open ? '▾' : '▸'} データ取得手順
+      </button>
+      {open && (
+        <div style={{ ...guideStyle, marginTop: 6 }}>
+          {data.map(d => (
+            <div key={d.name} style={sectionStyle}>
+              <span style={labelStyle}>{d.name}</span>
+              <div>
+                <a href={d.url} target="_blank" rel="noreferrer" style={urlStyle}>{d.url.replace(/^https?:\/\//, '')}</a>
+                {d.dlUrl && <><br /><span style={{ fontSize: 10, color: '#94a3b8' }}>DL先:</span> <a href={d.dlUrl} target="_blank" rel="noreferrer" style={urlStyle}>{d.dlUrl.replace(/^https?:\/\//, '')}</a></>}
+                <br />
+                {d.steps.split(' → ').map((s, i) => <span key={i} style={stepStyle}>{s}</span>)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

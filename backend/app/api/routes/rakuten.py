@@ -330,17 +330,24 @@ def get_sales_summary(period: str, level: str = "parent", db: Session = Depends(
 @router.post("/sales/import")
 async def import_sales_month(
     period: str = Form(...),
-    order_file: UploadFile = File(...),
+    order_file: list[UploadFile] = File(...),
     rpp_file: Optional[UploadFile] = File(None),
     coupon_ad_file: Optional[UploadFile] = File(None),
     affiliate_file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
 ):
     period = _validate_sales_period(period)
-    order_rows, order_name = await _read_sales_upload(
-        order_file,
-        [["注文番号", "ステータス", "商品管理番号", "単価", "個数"]],
-    )
+    order_rows = []
+    order_names = []
+    for f in order_file:
+        rows, name = await _read_sales_upload(
+            f,
+            [["注文番号", "ステータス", "商品管理番号", "単価", "個数"]],
+        )
+        order_rows.extend(rows)
+        if name:
+            order_names.append(name)
+    order_name = " + ".join(order_names) if order_names else None
     rpp_rows, rpp_name = await _read_sales_upload(
         rpp_file,
         [["商品管理番号", "実績額(合計)"], ["商品管理番号", "実績額"], ["商品ページURL", "実績額(合計)"]],
