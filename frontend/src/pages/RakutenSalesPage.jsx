@@ -145,8 +145,8 @@ export default function RakutenSalesPage() {
       </div>
 
       <div className="card" style={{ padding: 0 }}>
-        <div className="sticky-table-wrap" style={{ overflowX: 'auto' }}>
-          <table className="sticky-table" style={{ minWidth: 1480, fontSize: 12 }}>
+        <div className="sticky-table-wrap">
+          <table className="sticky-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr>
                 <th>{level === 'parent' ? '商品管理番号' : '親商品'}</th>
