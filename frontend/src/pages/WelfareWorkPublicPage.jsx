@@ -76,15 +76,15 @@ export default function WelfareWorkPublicPage() {
     const groups = new Map()
     visibleRows.forEach(row => {
       const date = fmtWorkDate(row)
-      if (!groups.has(date)) groups.set(date, { count: 0, maxOrderDate: '' })
+      if (!groups.has(date)) groups.set(date, { count: 0, maxCreatedAt: '' })
       const g = groups.get(date)
       g.count++
-      const od = row.order_date || row.created_at || ''
-      if (od > g.maxOrderDate) g.maxOrderDate = od
+      const ts = row.created_at || ''
+      if (ts > g.maxCreatedAt) g.maxCreatedAt = ts
     })
-    return Array.from(groups, ([date, { count, maxOrderDate }]) => ({ date, count, maxOrderDate }))
+    return Array.from(groups, ([date, { count, maxCreatedAt }]) => ({ date, count, maxCreatedAt }))
       .sort((a, b) => {
-        if (a.maxOrderDate && b.maxOrderDate) return b.maxOrderDate.localeCompare(a.maxOrderDate)
+        if (a.maxCreatedAt && b.maxCreatedAt) return b.maxCreatedAt.localeCompare(a.maxCreatedAt)
         return workDateSortValue(b.date) - workDateSortValue(a.date)
       })
   }, [visibleRows])
