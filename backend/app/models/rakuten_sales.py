@@ -60,5 +60,6 @@ class RakutenSalesSummary(Base):
     profit = Column(Float, default=0)
     profit_rate = Column(Float)
     rpp_rate = Column(Float)
+    ad_rate = Column(Float)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

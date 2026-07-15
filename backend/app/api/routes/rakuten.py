@@ -267,6 +267,7 @@ def _sales_summary_out(row: RakutenSalesSummary) -> dict:
         "profit": row.profit or 0,
         "profit_rate": row.profit_rate,
         "rpp_rate": row.rpp_rate,
+        "ad_rate": row.ad_rate,
     }
 
 
