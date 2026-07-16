@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
+import { normalizeSearch } from '../searchUtil'
 
 const POLL_INTERVAL = 3000
 
@@ -83,13 +84,13 @@ export default function StockPage() {
     _idx: i,
   }))
 
-  const q = search.trim().toLowerCase()
+  const q = normalizeSearch(search.trim())
   const filtered = q
     ? items.filter(item =>
-        (item.sku || '').toLowerCase().includes(q) ||
-        (item.name || '').toLowerCase().includes(q) ||
-        (item.color || '').toLowerCase().includes(q) ||
-        (item.size || '').toLowerCase().includes(q)
+        normalizeSearch(item.sku).includes(q) ||
+        normalizeSearch(item.name).includes(q) ||
+        normalizeSearch(item.color).includes(q) ||
+        normalizeSearch(item.size).includes(q)
       )
     : items
 

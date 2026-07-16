@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import api from '../api/client'
+import { normalizeSearch } from '../searchUtil'
 
 const POLL_INTERVAL = 3000
 const PERIODS = [
@@ -90,10 +91,10 @@ export default function AnalyticsPage() {
 
   const filtered = search.trim()
     ? items.filter(item => {
-        const q = search.trim().toLowerCase()
-        return (item.sku || '').toLowerCase().includes(q)
-            || (item.name || '').toLowerCase().includes(q)
-            || (item.asin || '').toLowerCase().includes(q)
+        const q = normalizeSearch(search.trim())
+        return normalizeSearch(item.sku).includes(q)
+            || normalizeSearch(item.name).includes(q)
+            || normalizeSearch(item.asin).includes(q)
       })
     : items
 

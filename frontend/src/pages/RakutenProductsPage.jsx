@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
+import { normalizeSearch } from '../searchUtil'
 
 const EMPTY = {
   sku: '', name: '', jan_code: '', spec: '', buy_url: '', price: '',
@@ -224,21 +225,18 @@ export default function RakutenProductsPage() {
     !p.is_component && !variantParentSkus.has(p.sku) && !isVariantChild(p)
   )
 
-  const toHalf = (s) => s.replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-  const normalize = (s) => toHalf(s || '').toLowerCase()
-
   const suppliers = [...new Set(products.map(p => p.supplier).filter(Boolean))].sort()
 
   const searchMatch = (p) => {
     if (supplierFilter && (p.supplier || '') !== supplierFilter) return false
     if (!search) return true
-    const q = normalize(search)
+    const q = normalizeSearch(search)
     return (
-      normalize(p.sku).includes(q) ||
-      normalize(p.name).includes(q) ||
+      normalizeSearch(p.sku).includes(q) ||
+      normalizeSearch(p.name).includes(q) ||
       (p.jan_code || '').includes(search) ||
-      normalize(p.rakuten_sku_id).includes(q) ||
-      normalize(p.rakuten_item_url || '').includes(q)
+      normalizeSearch(p.rakuten_sku_id).includes(q) ||
+      normalizeSearch(p.rakuten_item_url || '').includes(q)
     )
   }
 

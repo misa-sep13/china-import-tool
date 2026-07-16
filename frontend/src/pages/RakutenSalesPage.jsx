@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
+import { normalizeSearch } from '../searchUtil'
 
 const fmtYen = (v) => v == null ? '—' : `¥${Math.round(Number(v) || 0).toLocaleString()}`
 const fmtNum = (v) => Number(v || 0).toLocaleString()
@@ -54,12 +55,12 @@ export default function RakutenSalesPage() {
 
   const rows = summaryQuery.data?.rows || []
   const filteredRows = useMemo(() => {
-    const q = search.trim().toLowerCase()
+    const q = normalizeSearch(search.trim())
     if (!q) return rows
     return rows.filter(r =>
-      String(r.product_key || '').toLowerCase().includes(q) ||
-      String(r.sku_key || '').toLowerCase().includes(q) ||
-      String(r.product_name || '').toLowerCase().includes(q)
+      normalizeSearch(r.product_key).includes(q) ||
+      normalizeSearch(r.sku_key).includes(q) ||
+      normalizeSearch(r.product_name).includes(q)
     )
   }, [rows, search])
 
