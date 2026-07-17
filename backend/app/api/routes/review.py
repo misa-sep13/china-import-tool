@@ -22,6 +22,7 @@ class CampaignIn(BaseModel):
     code: str
     name: str
     product_sku: str | None = None
+    keywords: str | None = None
     is_active: bool = True
 
 class EntrySingleIn(BaseModel):
@@ -302,30 +303,21 @@ def bulk_status(ids: str = Query(...), status: str = Query(...), db: Session = D
 
 
 # ── RMS 問い合わせ取得 ───────────────────────────────────
-CAMPAIGN_KEYWORDS = {
-    "review-A": ["魔法のクロス", "クロス"],
-    "review-B": ["ヘアゴム"],
-    "review-C": ["シリコン耳栓", "耳栓"],
-    "review-D": ["北欧柄ポーチ", "北欧", "ポーチ"],
-    "review-E": ["帆布ペンケース", "ペンケース"],
-    "review-F": ["マルチクリップ", "クリップ"],
-    "review-G": ["眉毛ハサミ", "眉毛", "ハサミ"],
-    "review-H": ["ワンストーンネックレス", "ネックレス"],
-    "review-I": ["鼻パッド", "ストッパー"],
-    "review-I2": ["3in1充電コード", "3in1", "充電コード"],
-    "review-gauze": ["ガーゼ"],
-    "review-bp": ["BP", "母乳パッド"],
-    "review-tb": ["お絵描きタブレット", "タブレット"],
-}
 
-
-def _detect_campaign(message: str, item_name: str = "") -> str | None:
+def _detect_campaign(message: str, item_name: str, campaigns: list) -> str | None:
     text = (message or "") + " " + (item_name or "")
-    text = text.lower()
-    for code, keywords in CAMPAIGN_KEYWORDS.items():
-        for kw in keywords:
-            if kw.lower() in text:
-                return code
+    text_lower = text.lower()
+    # (keyword, code) のリストを長いキーワード優先で並べる
+    kw_code: list[tuple[str, str]] = []
+    for c in campaigns:
+        if not c.is_active or not c.keywords:
+            continue
+        for kw in [k.strip() for k in c.keywords.split(",") if k.strip()]:
+            kw_code.append((kw, c.code))
+    kw_code.sort(key=lambda x: len(x[0]), reverse=True)
+    for kw, code in kw_code:
+        if kw.lower() in text_lower:
+            return code
     return None
 
 
@@ -375,7 +367,8 @@ async def fetch_inquiries(
             break
         page += 1
 
-    campaigns = {c.code: c for c in db.query(ReviewCampaign).all()}
+    campaigns_list = db.query(ReviewCampaign).order_by(ReviewCampaign.code).all()
+    campaigns = {c.code: c for c in campaigns_list}
     existing_orders = {
         e.order_number
         for e in db.query(ReviewEntry.order_number).all()
@@ -386,7 +379,7 @@ async def fetch_inquiries(
         message = inq.get("message") or ""
         item_name = inq.get("itemName") or ""
         order_number = inq.get("orderNumber") or ""
-        detected = _detect_campaign(message, item_name)
+        detected = _detect_campaign(message, item_name, campaigns_list)
 
         has_review_keyword = any(
             kw in message for kw in ["レビュー", "れびゅー", "review", "プレゼント"]

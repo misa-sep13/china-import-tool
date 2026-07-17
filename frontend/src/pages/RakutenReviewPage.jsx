@@ -391,12 +391,12 @@ function EntriesTab({ entries, entriesQ, search, setSearch, statusFilter, setSta
 
 // ── キャンペーンマスタタブ ──
 function CampaignsTab({ campaigns, qc }) {
-  const [form, setForm] = useState({ code: '', name: '', product_sku: '' })
+  const [form, setForm] = useState({ code: '', name: '', product_sku: '', keywords: '' })
   const [editing, setEditing] = useState(null)
 
   const createMut = useMutation({
     mutationFn: (data) => api.post('/review/campaigns', data).then(r => r.data),
-    onSuccess: () => { qc.invalidateQueries(['review-campaigns']); setForm({ code: '', name: '', product_sku: '' }) },
+    onSuccess: () => { qc.invalidateQueries(['review-campaigns']); setForm({ code: '', name: '', product_sku: '', keywords: '' }) },
   })
   const updateMut = useMutation({
     mutationFn: ({ id, ...data }) => api.put(`/review/campaigns/${id}`, data).then(r => r.data),
@@ -424,6 +424,10 @@ function CampaignsTab({ campaigns, qc }) {
             <label>SKU（任意）</label>
             <input value={form.product_sku} onChange={e => setForm(f => ({ ...f, product_sku: e.target.value }))} placeholder="" style={{ width: 120 }} />
           </div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label>判定キーワード（カンマ区切り）</label>
+            <input value={form.keywords} onChange={e => setForm(f => ({ ...f, keywords: e.target.value }))} placeholder="魔法のクロス, クロス, A" style={{ width: 260 }} />
+          </div>
           <button className="btn btn-primary" onClick={() => createMut.mutate(form)} disabled={!form.code || !form.name || createMut.isPending}>
             追加
           </button>
@@ -438,6 +442,7 @@ function CampaignsTab({ campaigns, qc }) {
               <th style={{ padding: '8px 12px', textAlign: 'left' }}>コード</th>
               <th style={{ padding: '8px 12px', textAlign: 'left' }}>商品名</th>
               <th style={{ padding: '8px 12px', textAlign: 'left' }}>SKU</th>
+              <th style={{ padding: '8px 12px', textAlign: 'left', minWidth: 200 }}>判定キーワード</th>
               <th style={{ padding: '8px 12px', width: 100 }}>操作</th>
             </tr>
           </thead>
@@ -451,6 +456,7 @@ function CampaignsTab({ campaigns, qc }) {
                     <td style={{ padding: '8px 12px', fontFamily: 'monospace' }}>{c.code}</td>
                     <td style={{ padding: '8px 12px' }}>{c.name}</td>
                     <td style={{ padding: '8px 12px', fontFamily: 'monospace', color: '#64748b' }}>{c.product_sku || '—'}</td>
+                    <td style={{ padding: '8px 12px', fontSize: 12, color: '#475569' }}>{c.keywords || '—'}</td>
                     <td style={{ padding: '8px 12px', display: 'flex', gap: 4 }}>
                       <button className="btn btn-secondary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => setEditing(c.id)}>編集</button>
                       <button className="btn btn-secondary" style={{ fontSize: 11, padding: '2px 8px', color: '#dc2626' }} onClick={() => { if (confirm('削除？')) deleteMut.mutate(c.id) }}>削除</button>
@@ -467,12 +473,13 @@ function CampaignsTab({ campaigns, qc }) {
 }
 
 function EditCampaignRow({ campaign, onSave, onCancel }) {
-  const [f, setF] = useState({ code: campaign.code, name: campaign.name, product_sku: campaign.product_sku || '' })
+  const [f, setF] = useState({ code: campaign.code, name: campaign.name, product_sku: campaign.product_sku || '', keywords: campaign.keywords || '' })
   return (
     <>
       <td style={{ padding: '4px 8px' }}><input value={f.code} onChange={e => setF(p => ({ ...p, code: e.target.value }))} style={{ width: '100%' }} /></td>
       <td style={{ padding: '4px 8px' }}><input value={f.name} onChange={e => setF(p => ({ ...p, name: e.target.value }))} style={{ width: '100%' }} /></td>
       <td style={{ padding: '4px 8px' }}><input value={f.product_sku} onChange={e => setF(p => ({ ...p, product_sku: e.target.value }))} style={{ width: '100%' }} /></td>
+      <td style={{ padding: '4px 8px' }}><input value={f.keywords} onChange={e => setF(p => ({ ...p, keywords: e.target.value }))} placeholder="魔法のクロス, クロス, A" style={{ width: '100%' }} /></td>
       <td style={{ padding: '4px 8px', display: 'flex', gap: 4 }}>
         <button className="btn btn-primary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => onSave(f)}>保存</button>
         <button className="btn btn-secondary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={onCancel}>取消</button>

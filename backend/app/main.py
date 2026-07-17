@@ -138,6 +138,8 @@ def _migrate():
         ("invoices","declaration_no",        "ALTER TABLE invoices ADD COLUMN declaration_no VARCHAR"),
         # 売上管理：広告比率カラム
         ("rakuten_sales_summaries","ad_rate", "ALTER TABLE rakuten_sales_summaries ADD COLUMN ad_rate FLOAT"),
+        # レビューキャンペーン：判定キーワード
+        ("review_campaigns","keywords", "ALTER TABLE review_campaigns ADD COLUMN keywords TEXT"),
     ]
 
     inspector = inspect(engine)

@@ -10,6 +10,7 @@ class ReviewCampaign(Base):
     code = Column(String, unique=True, index=True)  # review-A, review-C etc
     name = Column(String)                            # 魔法のクロス, シリコン耳栓 etc
     product_sku = Column(String)                     # 対応する楽天SKU (optional)
+    keywords = Column(Text)                          # 判定キーワード（カンマ区切り）
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
 
