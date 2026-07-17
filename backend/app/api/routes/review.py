@@ -376,6 +376,10 @@ async def fetch_inquiries(
 
     results = []
     for inq in all_inquiries:
+        # R-Messeで完了済みのものは表示しない
+        if inq.get("isCompleted", False):
+            continue
+
         message = inq.get("message") or ""
         item_name = inq.get("itemName") or ""
         order_number = inq.get("orderNumber") or ""
