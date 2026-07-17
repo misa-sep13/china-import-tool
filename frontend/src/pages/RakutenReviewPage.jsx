@@ -41,8 +41,14 @@ export default function RakutenReviewPage() {
     mutationFn: () => {
       const now = new Date()
       const from = new Date(now - days * 86400000)
-      const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T00:00:00`
-      return api.get('/review/inquiries', { params: { from_date: fmt(from), to_date: fmt(now), review_only: reviewOnly } }).then(r => r.data)
+      const pad = n => String(n).padStart(2, '0')
+      const fmtDate = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
+      // to_dateは現在時刻まで（0:00にすると当日分が取得できない）
+      return api.get('/review/inquiries', { params: {
+        from_date: `${fmtDate(from)}T00:00:00`,
+        to_date: `${fmtDate(now)}T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`,
+        review_only: reviewOnly,
+      } }).then(r => r.data)
     },
   })
 
@@ -181,6 +187,8 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
           <option value={7}>7日間</option>
           <option value={14}>14日間</option>
           <option value={30}>30日間</option>
+          <option value={60}>60日間</option>
+          <option value={90}>90日間</option>
         </select>
         <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
           <input type="checkbox" checked={reviewOnly} onChange={e => setReviewOnly(e.target.checked)} />
