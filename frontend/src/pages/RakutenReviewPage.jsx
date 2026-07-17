@@ -10,6 +10,7 @@ export default function RakutenReviewPage() {
   const qc = useQueryClient()
   const [tab, setTab] = useState('inquiries')
   const [days, setDays] = useState(7)
+  const [reviewOnly, setReviewOnly] = useState(false)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [campaignFilter, setCampaignFilter] = useState('')
@@ -41,7 +42,7 @@ export default function RakutenReviewPage() {
       const now = new Date()
       const from = new Date(now - days * 86400000)
       const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T00:00:00`
-      return api.get('/review/inquiries', { params: { from_date: fmt(from), to_date: fmt(now) } }).then(r => r.data)
+      return api.get('/review/inquiries', { params: { from_date: fmt(from), to_date: fmt(now), review_only: reviewOnly } }).then(r => r.data)
     },
   })
 
@@ -138,7 +139,7 @@ export default function RakutenReviewPage() {
         <button className={`btn ${tab === 'campaigns' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('campaigns')}>キャンペーンマスタ</button>
       </div>
 
-      {tab === 'inquiries' && <InquiriesTab days={days} setDays={setDays} inquiriesMut={inquiriesMut} registerMut={registerMut} campaigns={campaigns} completeMut={completeMut} />}
+      {tab === 'inquiries' && <InquiriesTab days={days} setDays={setDays} reviewOnly={reviewOnly} setReviewOnly={setReviewOnly} inquiriesMut={inquiriesMut} registerMut={registerMut} campaigns={campaigns} completeMut={completeMut} />}
       {tab === 'entries' && (
         <EntriesTab
           entries={filteredEntries}
@@ -165,7 +166,7 @@ export default function RakutenReviewPage() {
 
 
 // ── 問い合わせ取得タブ ──
-function InquiriesTab({ days, setDays, inquiriesMut, registerMut, campaigns, completeMut }) {
+function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, registerMut, campaigns, completeMut }) {
   const [localCampaigns, setLocalCampaigns] = useState({})
   const [expandedMsg, setExpandedMsg] = useState(null)
 
@@ -181,6 +182,10 @@ function InquiriesTab({ days, setDays, inquiriesMut, registerMut, campaigns, com
           <option value={14}>14日間</option>
           <option value={30}>30日間</option>
         </select>
+        <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+          <input type="checkbox" checked={reviewOnly} onChange={e => setReviewOnly(e.target.checked)} />
+          レビュー関連のみ
+        </label>
         <button
           className="btn btn-primary"
           onClick={() => inquiriesMut.mutate()}
@@ -190,7 +195,7 @@ function InquiriesTab({ days, setDays, inquiriesMut, registerMut, campaigns, com
         </button>
         {inquiriesMut.data && (
           <span style={{ fontSize: 13, color: '#16a34a', fontWeight: 600 }}>
-            {inquiriesMut.data.total}件（レビュー関連のみ）
+            {inquiriesMut.data.total}件（完了は除く）
           </span>
         )}
         {inquiriesMut.error && (

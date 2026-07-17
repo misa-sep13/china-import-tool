@@ -328,6 +328,7 @@ def _detect_campaign(message: str, item_name: str, campaigns: list) -> str | Non
 async def fetch_inquiries(
     from_date: str = Query(None),
     to_date: str = Query(None),
+    review_only: bool = Query(False),
     db: Session = Depends(get_db),
 ):
     settings = db.query(RakutenSettings).first()
@@ -379,7 +380,7 @@ async def fetch_inquiries(
 
     results = []
     for inq in all_inquiries:
-        # R-Messeで完了済みのものは表示しない
+        # R-Messeで完了済みのものだけ表示しない（未返信・返信済は表示する）
         if inq.get("isCompleted", False):
             continue
 
@@ -388,11 +389,13 @@ async def fetch_inquiries(
         order_number = inq.get("orderNumber") or ""
         detected = _detect_campaign(message, item_name, campaigns_list)
 
-        has_review_keyword = any(
-            kw in message for kw in ["レビュー", "れびゅー", "review", "プレゼント"]
-        )
-        if not has_review_keyword:
-            continue
+        # review_only指定時のみレビュー関連（キーワードorキャンペーン判定あり）に絞る
+        if review_only:
+            has_review_keyword = any(
+                kw in message for kw in ["レビュー", "れびゅー", "review", "プレゼント"]
+            )
+            if not has_review_keyword and not detected:
+                continue
 
         results.append({
             "inquiry_number": inq.get("inquiryNumber"),
