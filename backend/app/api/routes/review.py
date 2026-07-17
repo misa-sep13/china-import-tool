@@ -48,6 +48,9 @@ class EntrySingleIn(BaseModel):
 class EntryStatusIn(BaseModel):
     status: str
 
+class InquiryCompleteIn(BaseModel):
+    inquiry_numbers: list[str]
+
 class EntryNotesIn(BaseModel):
     notes: str | None = None
 
@@ -407,6 +410,55 @@ async def fetch_inquiries(
         })
 
     return {"inquiries": results, "total": len(results)}
+
+
+# ── 問い合わせを完了にする（R-Messe連動） ────────────────
+@router.post("/inquiries/complete")
+async def complete_inquiries(data: InquiryCompleteIn, db: Session = Depends(get_db)):
+    settings = db.query(RakutenSettings).first()
+    if not settings or not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません")
+
+    nums = [n.strip() for n in data.inquiry_numbers if n and n.strip()]
+    if not nums:
+        raise HTTPException(400, "問い合わせ番号が指定されていません")
+
+    headers = {
+        **_auth_header(settings.rms_service_secret, settings.rms_license_key),
+        "Content-Type": "application/json; charset=utf-8",
+    }
+
+    ok: list[str] = []
+    errors: list[dict] = []
+    # RMS仕様: 1リクエスト最大20件、1秒1リクエスト
+    import asyncio
+    for i in range(0, len(nums), 20):
+        batch = nums[i:i + 20]
+        if i > 0:
+            await asyncio.sleep(1.1)
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                res = await client.patch(
+                    f"{RMS_BASE}/1.0/inquirymng-api/inquiries/complete",
+                    headers=headers,
+                    content=json.dumps({"inquiryNumbers": batch}).encode("utf-8"),
+                )
+            if res.is_success:
+                result = (res.json() or {}).get("result") or {}
+                ok.extend(result.get("ok") or [])
+                for err in result.get("error") or []:
+                    errors.append({
+                        "inquiry_number": err.get("inquiryNumber"),
+                        "message": err.get("errorMessage"),
+                    })
+            else:
+                for n in batch:
+                    errors.append({"inquiry_number": n, "message": f"RMS APIエラー: {res.status_code}"})
+        except httpx.HTTPError as e:
+            for n in batch:
+                errors.append({"inquiry_number": n, "message": f"通信エラー: {e}"})
+
+    return {"ok": ok, "errors": errors}
 
 
 # ── 受注番号から送付先住所を取得 ─────────────────────────

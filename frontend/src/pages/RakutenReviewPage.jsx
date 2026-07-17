@@ -77,6 +77,17 @@ export default function RakutenReviewPage() {
     },
   })
 
+  // ── R-Messe完了 ──
+  const completeMut = useMutation({
+    mutationFn: (inquiryNumbers) => api.post('/review/inquiries/complete', { inquiry_numbers: inquiryNumbers }).then(r => r.data),
+    onSuccess: (data) => {
+      if (data.errors?.length > 0) {
+        alert('完了にできなかった問い合わせがあります:\n' + data.errors.map(e => `${e.inquiry_number}: ${e.message}`).join('\n'))
+      }
+      inquiriesMut.mutate()
+    },
+  })
+
   // ── ステータス更新 ──
   const statusMut = useMutation({
     mutationFn: ({ id, status }) => api.patch(`/review/entries/${id}/status`, { status }).then(r => r.data),
@@ -127,7 +138,7 @@ export default function RakutenReviewPage() {
         <button className={`btn ${tab === 'campaigns' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('campaigns')}>キャンペーンマスタ</button>
       </div>
 
-      {tab === 'inquiries' && <InquiriesTab days={days} setDays={setDays} inquiriesMut={inquiriesMut} registerMut={registerMut} campaigns={campaigns} />}
+      {tab === 'inquiries' && <InquiriesTab days={days} setDays={setDays} inquiriesMut={inquiriesMut} registerMut={registerMut} campaigns={campaigns} completeMut={completeMut} />}
       {tab === 'entries' && (
         <EntriesTab
           entries={filteredEntries}
@@ -154,7 +165,7 @@ export default function RakutenReviewPage() {
 
 
 // ── 問い合わせ取得タブ ──
-function InquiriesTab({ days, setDays, inquiriesMut, registerMut, campaigns }) {
+function InquiriesTab({ days, setDays, inquiriesMut, registerMut, campaigns, completeMut }) {
   const [localCampaigns, setLocalCampaigns] = useState({})
   const [expandedMsg, setExpandedMsg] = useState(null)
 
@@ -239,16 +250,27 @@ function InquiriesTab({ days, setDays, inquiriesMut, registerMut, campaigns }) {
                         )}
                       </td>
                       <td>
-                        {!inq.already_registered && campaign && inq.order_number && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {!inq.already_registered && campaign && inq.order_number && (
+                            <button
+                              className="btn btn-primary"
+                              style={{ fontSize: 11, padding: '2px 8px' }}
+                              onClick={() => registerMut.mutate({ ...inq, selected_campaign: campaign })}
+                              disabled={registerMut.isPending}
+                            >
+                              登録
+                            </button>
+                          )}
                           <button
-                            className="btn btn-primary"
-                            style={{ fontSize: 11, padding: '2px 8px' }}
-                            onClick={() => registerMut.mutate({ ...inq, selected_campaign: campaign })}
-                            disabled={registerMut.isPending}
+                            className="btn btn-secondary"
+                            style={{ fontSize: 11, padding: '2px 8px', color: '#16a34a' }}
+                            onClick={() => { if (confirm('R-Messeの問い合わせを完了にしますか？')) completeMut.mutate([inq.inquiry_number]) }}
+                            disabled={completeMut.isPending}
+                            title="R-Messe側も完了になります"
                           >
-                            登録
+                            完了
                           </button>
-                        )}
+                        </div>
                       </td>
                     </tr>
                   )
