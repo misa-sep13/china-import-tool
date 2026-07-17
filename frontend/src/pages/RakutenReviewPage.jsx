@@ -24,6 +24,13 @@ export default function RakutenReviewPage() {
   const campaigns = campaignsQ.data || []
   const campaignMap = useMemo(() => Object.fromEntries(campaigns.map(c => [c.code, c])), [campaigns])
 
+  // ── 返信テンプレート ──
+  const templatesQ = useQuery({
+    queryKey: ['review-templates'],
+    queryFn: () => api.get('/review/templates').then(r => r.data),
+  })
+  const templates = templatesQ.data || []
+
   // ── エントリー一覧 ──
   const entriesQ = useQuery({
     queryKey: ['review-entries', statusFilter, campaignFilter],
@@ -143,9 +150,10 @@ export default function RakutenReviewPage() {
         <button className={`btn ${tab === 'inquiries' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('inquiries')}>問い合わせ取得</button>
         <button className={`btn ${tab === 'entries' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('entries')}>エントリー一覧</button>
         <button className={`btn ${tab === 'campaigns' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('campaigns')}>キャンペーンマスタ</button>
+        <button className={`btn ${tab === 'templates' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('templates')}>返信テンプレート</button>
       </div>
 
-      {tab === 'inquiries' && <InquiriesTab days={days} setDays={setDays} reviewOnly={reviewOnly} setReviewOnly={setReviewOnly} inquiriesMut={inquiriesMut} registerMut={registerMut} campaigns={campaigns} completeMut={completeMut} />}
+      {tab === 'inquiries' && <InquiriesTab days={days} setDays={setDays} reviewOnly={reviewOnly} setReviewOnly={setReviewOnly} inquiriesMut={inquiriesMut} registerMut={registerMut} campaigns={campaigns} completeMut={completeMut} templates={templates} />}
       {tab === 'entries' && (
         <EntriesTab
           entries={filteredEntries}
@@ -166,15 +174,17 @@ export default function RakutenReviewPage() {
         />
       )}
       {tab === 'campaigns' && <CampaignsTab campaigns={campaigns} qc={qc} />}
+      {tab === 'templates' && <TemplatesTab templates={templates} qc={qc} />}
     </div>
   )
 }
 
 
 // ── 問い合わせ取得タブ ──
-function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, registerMut, campaigns, completeMut }) {
+function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, registerMut, campaigns, completeMut, templates }) {
   const [localCampaigns, setLocalCampaigns] = useState({})
   const [expandedMsg, setExpandedMsg] = useState(null)
+  const [detailInq, setDetailInq] = useState(null)
 
   const inquiries = inquiriesMut.data?.inquiries || []
 
@@ -276,6 +286,13 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
                           )}
                           <button
                             className="btn btn-secondary"
+                            style={{ fontSize: 11, padding: '2px 8px' }}
+                            onClick={() => setDetailInq(inq)}
+                          >
+                            返信
+                          </button>
+                          <button
+                            className="btn btn-secondary"
                             style={{ fontSize: 11, padding: '2px 8px', color: '#16a34a' }}
                             onClick={() => { if (confirm('R-Messeの問い合わせを完了にしますか？')) completeMut.mutate([inq.inquiry_number]) }}
                             disabled={completeMut.isPending}
@@ -293,6 +310,124 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
           </div>
         </div>
       )}
+
+      {detailInq && (
+        <InquiryDetailModal
+          inquiry={detailInq}
+          templates={templates}
+          completeMut={completeMut}
+          onClose={() => setDetailInq(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+
+// ── 問い合わせ詳細・返信モーダル ──
+function InquiryDetailModal({ inquiry, templates, completeMut, onClose }) {
+  const qc = useQueryClient()
+  const [msg, setMsg] = useState('')
+
+  const detailQ = useQuery({
+    queryKey: ['review-inquiry', inquiry.inquiry_number],
+    queryFn: () => api.get(`/review/inquiry/${inquiry.inquiry_number}`).then(r => r.data),
+  })
+  const detail = detailQ.data
+
+  const replyMut = useMutation({
+    mutationFn: () => api.post('/review/inquiry/reply', { inquiry_number: inquiry.inquiry_number, message: msg }).then(r => r.data),
+    onSuccess: () => {
+      setMsg('')
+      qc.invalidateQueries(['review-inquiry', inquiry.inquiry_number])
+    },
+  })
+
+  const fmtDate = (d) => d ? new Date(d).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onClick={onClose}
+    >
+      <div
+        className="card"
+        style={{ width: 'min(760px, 94vw)', maxHeight: '88vh', display: 'flex', flexDirection: 'column', padding: 16 }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <strong style={{ fontSize: 15 }}>{inquiry.user_name || '—'} 様</strong>
+          <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace' }}>{inquiry.inquiry_number}</span>
+          <button className="btn btn-secondary" style={{ marginLeft: 'auto', fontSize: 12 }} onClick={onClose}>✕ 閉じる</button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', background: '#f8fafc', borderRadius: 8, padding: 12, minHeight: 200 }}>
+          {detailQ.isLoading && <div style={{ color: '#999', textAlign: 'center', padding: 24 }}>読み込み中...</div>}
+          {detailQ.error && <div className="error-msg">{detailQ.error.response?.data?.detail || detailQ.error.message}</div>}
+          {(detail?.thread || []).map((m, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: m.from === 'merchant' ? 'flex-end' : 'flex-start', marginBottom: 10 }}>
+              <div style={{
+                maxWidth: '78%',
+                background: m.from === 'merchant' ? '#dbeafe' : '#fff',
+                border: '1px solid ' + (m.from === 'merchant' ? '#bfdbfe' : '#e2e8f0'),
+                borderRadius: 10,
+                padding: '8px 12px',
+                fontSize: 13,
+                whiteSpace: 'pre-wrap',
+                lineHeight: 1.6,
+              }}>
+                <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }}>
+                  {m.from === 'merchant' ? '自分（店舗）' : (inquiry.user_name || 'お客様')} ・ {fmtDate(m.date)}
+                </div>
+                {m.deleted ? <span style={{ color: '#94a3b8' }}>（削除されたメッセージ）</span> : m.message}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+            <label style={{ fontSize: 12, fontWeight: 600 }}>テンプレート</label>
+            <select
+              defaultValue=""
+              onChange={e => {
+                const t = templates.find(x => String(x.id) === e.target.value)
+                if (t) setMsg(t.body)
+              }}
+              style={{ width: 240 }}
+            >
+              <option value="">-- 選択して挿入 --</option>
+              {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 'auto' }}>{msg.length}/2000文字</span>
+          </div>
+          <textarea
+            value={msg}
+            onChange={e => setMsg(e.target.value)}
+            placeholder="ここに返信を記入してください"
+            rows={6}
+            style={{ width: '100%', fontSize: 13, lineHeight: 1.6, padding: 8, boxSizing: 'border-box' }}
+          />
+          {replyMut.error && <div className="error-msg" style={{ marginTop: 4 }}>{replyMut.error.response?.data?.detail || replyMut.error.message}</div>}
+          {replyMut.isSuccess && <div style={{ color: '#16a34a', fontSize: 12, marginTop: 4 }}>返信を送信しました</div>}
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
+            <button
+              className="btn btn-secondary"
+              style={{ color: '#16a34a' }}
+              onClick={() => { if (confirm('R-Messeの問い合わせを完了にしますか？')) { completeMut.mutate([inquiry.inquiry_number]); onClose() } }}
+            >
+              完了にする
+            </button>
+            <button
+              className="btn btn-primary"
+              disabled={!msg.trim() || replyMut.isPending}
+              onClick={() => { if (confirm('この内容でお客様に返信を送信しますか？')) replyMut.mutate() }}
+            >
+              {replyMut.isPending ? '送信中...' : '📨 送信'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -506,6 +641,85 @@ function CampaignsTab({ campaigns, qc }) {
     </div>
   )
 }
+
+// ── 返信テンプレートタブ ──
+function TemplatesTab({ templates, qc }) {
+  const [form, setForm] = useState({ name: '', body: '' })
+  const [editing, setEditing] = useState(null)
+  const [editForm, setEditForm] = useState({ name: '', body: '' })
+
+  const createMut = useMutation({
+    mutationFn: (data) => api.post('/review/templates', data).then(r => r.data),
+    onSuccess: () => { qc.invalidateQueries(['review-templates']); setForm({ name: '', body: '' }) },
+  })
+  const updateMut = useMutation({
+    mutationFn: ({ id, ...data }) => api.put(`/review/templates/${id}`, data).then(r => r.data),
+    onSuccess: () => { qc.invalidateQueries(['review-templates']); setEditing(null) },
+  })
+  const deleteMut = useMutation({
+    mutationFn: (id) => api.delete(`/review/templates/${id}`),
+    onSuccess: () => qc.invalidateQueries(['review-templates']),
+  })
+
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>テンプレート追加</h3>
+        <div className="form-group" style={{ marginBottom: 8 }}>
+          <label>テンプレート名</label>
+          <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Aクロス" style={{ width: 240 }} />
+        </div>
+        <div className="form-group" style={{ marginBottom: 8 }}>
+          <label>本文</label>
+          <textarea
+            value={form.body}
+            onChange={e => setForm(f => ({ ...f, body: e.target.value }))}
+            placeholder={'この度はみそらマートをご利用くださり誠にありがとうございます。\n\nレビューのご記入ありがとうございます！...'}
+            rows={8}
+            style={{ width: '100%', fontSize: 13, lineHeight: 1.6, padding: 8, boxSizing: 'border-box' }}
+          />
+        </div>
+        <button className="btn btn-primary" onClick={() => createMut.mutate(form)} disabled={!form.name || !form.body || createMut.isPending}>
+          追加
+        </button>
+        {createMut.error && <div className="error-msg" style={{ marginTop: 8 }}>{createMut.error.response?.data?.detail || createMut.error.message}</div>}
+      </div>
+
+      {templates.map(t => (
+        <div key={t.id} className="card" style={{ marginBottom: 8, padding: 12 }}>
+          {editing === t.id ? (
+            <>
+              <input value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} style={{ width: 240, marginBottom: 6 }} />
+              <textarea
+                value={editForm.body}
+                onChange={e => setEditForm(f => ({ ...f, body: e.target.value }))}
+                rows={8}
+                style={{ width: '100%', fontSize: 13, lineHeight: 1.6, padding: 8, boxSizing: 'border-box', marginBottom: 6 }}
+              />
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => updateMut.mutate({ id: t.id, ...editForm })}>保存</button>
+                <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={() => setEditing(null)}>取消</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <strong style={{ fontSize: 14 }}>{t.name}</strong>
+                <button className="btn btn-secondary" style={{ fontSize: 11, padding: '2px 8px', marginLeft: 'auto' }} onClick={() => { setEditing(t.id); setEditForm({ name: t.name, body: t.body }) }}>編集</button>
+                <button className="btn btn-secondary" style={{ fontSize: 11, padding: '2px 8px', color: '#dc2626' }} onClick={() => { if (confirm('削除しますか？')) deleteMut.mutate(t.id) }}>削除</button>
+              </div>
+              <div style={{ fontSize: 12, color: '#475569', whiteSpace: 'pre-wrap', marginTop: 6, lineHeight: 1.6, maxHeight: 120, overflow: 'hidden' }}>
+                {t.body}
+              </div>
+            </>
+          )}
+        </div>
+      ))}
+      {templates.length === 0 && <div style={{ color: '#999', fontSize: 13 }}>テンプレートがありません。上のフォームから追加してください。</div>}
+    </div>
+  )
+}
+
 
 function EditCampaignRow({ campaign, onSave, onCancel }) {
   const [f, setF] = useState({ code: campaign.code, name: campaign.name, product_sku: campaign.product_sku || '', keywords: campaign.keywords || '' })

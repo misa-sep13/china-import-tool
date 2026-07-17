@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.models.review import ReviewCampaign, ReviewEntry
+from app.models.review import ReviewCampaign, ReviewEntry, ReviewTemplate
 from app.models.rakuten_settings import RakutenSettings
 from app.services.rakuten_rms import _auth_header, RMS_BASE
 
@@ -51,6 +51,14 @@ class EntryStatusIn(BaseModel):
 class InquiryCompleteIn(BaseModel):
     inquiry_numbers: list[str]
 
+class TemplateIn(BaseModel):
+    name: str
+    body: str
+
+class ReplyIn(BaseModel):
+    inquiry_number: str
+    message: str
+
 class EntryNotesIn(BaseModel):
     notes: str | None = None
 
@@ -88,6 +96,40 @@ def delete_campaign(campaign_id: int, db: Session = Depends(get_db)):
     if not c:
         raise HTTPException(404)
     db.delete(c)
+    db.commit()
+    return {"ok": True}
+
+
+# ── 返信テンプレート CRUD ────────────────────────────────
+@router.get("/templates")
+def list_templates(db: Session = Depends(get_db)):
+    return db.query(ReviewTemplate).order_by(ReviewTemplate.name).all()
+
+@router.post("/templates")
+def create_template(data: TemplateIn, db: Session = Depends(get_db)):
+    t = ReviewTemplate(**data.model_dump())
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    return t
+
+@router.put("/templates/{template_id}")
+def update_template(template_id: int, data: TemplateIn, db: Session = Depends(get_db)):
+    t = db.query(ReviewTemplate).filter(ReviewTemplate.id == template_id).first()
+    if not t:
+        raise HTTPException(404)
+    t.name = data.name
+    t.body = data.body
+    db.commit()
+    db.refresh(t)
+    return t
+
+@router.delete("/templates/{template_id}")
+def delete_template(template_id: int, db: Session = Depends(get_db)):
+    t = db.query(ReviewTemplate).filter(ReviewTemplate.id == template_id).first()
+    if not t:
+        raise HTTPException(404)
+    db.delete(t)
     db.commit()
     return {"ok": True}
 
@@ -413,6 +455,118 @@ async def fetch_inquiries(
         })
 
     return {"inquiries": results, "total": len(results)}
+
+
+# ── 問い合わせ詳細（やり取り全体） ───────────────────────
+async def _fetch_inquiry_detail(inquiry_number: str, headers: dict) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.get(
+                f"{RMS_BASE}/1.0/inquirymng-api/inquiry/{inquiry_number}",
+                headers=headers,
+            )
+        if res.status_code == 404:
+            raise HTTPException(404, "問い合わせが見つかりません")
+        if not res.is_success:
+            raise HTTPException(502, f"RMS APIエラー: {res.status_code}")
+        return (res.json() or {}).get("result") or {}
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"RMS API 通信エラー: {e}")
+
+
+@router.get("/inquiry/{inquiry_number}")
+async def get_inquiry_detail(inquiry_number: str, db: Session = Depends(get_db)):
+    settings = db.query(RakutenSettings).first()
+    if not settings or not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません")
+
+    headers = {
+        **_auth_header(settings.rms_service_secret, settings.rms_license_key),
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    result = await _fetch_inquiry_detail(inquiry_number, headers)
+
+    # 最初の問い合わせ＋返信を時系列スレッドにまとめる
+    thread = [{
+        "from": "user",
+        "message": result.get("message") or "",
+        "date": result.get("regDate"),
+        "deleted": result.get("isMessageDeleted", False),
+    }]
+    for r in result.get("replies") or []:
+        thread.append({
+            "from": r.get("replyFrom"),  # merchant / user
+            "message": r.get("message") or "",
+            "date": r.get("regDate"),
+            "deleted": r.get("isMessageDeleted", False),
+        })
+
+    return {
+        "inquiry_number": result.get("inquiryNumber"),
+        "user_name": result.get("userName"),
+        "item_name": result.get("itemName"),
+        "order_number": result.get("orderNumber"),
+        "is_completed": result.get("isCompleted", False),
+        "category": result.get("category"),
+        "type": result.get("type"),
+        "thread": thread,
+    }
+
+
+# ── 返信送信（R-Messe連動） ──────────────────────────────
+@router.post("/inquiry/reply")
+async def post_inquiry_reply(data: ReplyIn, db: Session = Depends(get_db)):
+    settings = db.query(RakutenSettings).first()
+    if not settings or not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません")
+
+    message = (data.message or "").strip()
+    if not message:
+        raise HTTPException(400, "メッセージが空です")
+    if len(message) > 2000:
+        raise HTTPException(400, "メッセージは2000文字以内にしてください")
+    for line in message.split("\n"):
+        if len(line) > 300:
+            raise HTTPException(400, "1行は300文字以内にしてください")
+
+    headers = {
+        **_auth_header(settings.rms_service_secret, settings.rms_license_key),
+        "Content-Type": "application/json; charset=utf-8",
+    }
+
+    # reply.postに必要なshopIdを問い合わせ詳細から取得
+    detail = await _fetch_inquiry_detail(data.inquiry_number, headers)
+    shop_id = detail.get("shopId")
+    if shop_id is None:
+        raise HTTPException(502, "shopIdが取得できませんでした")
+
+    body = {
+        "inquiryNumber": data.inquiry_number,
+        "shopId": str(shop_id),
+        "message": message,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            res = await client.post(
+                f"{RMS_BASE}/1.0/inquirymng-api/inquiry/reply",
+                headers=headers,
+                content=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            )
+        if res.status_code not in (200, 201):
+            try:
+                err = res.json()
+            except Exception:
+                err = res.text
+            raise HTTPException(502, f"返信登録に失敗しました: {err}")
+        result = (res.json() or {}).get("result") or {}
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"RMS API 通信エラー: {e}")
+
+    return {
+        "ok": True,
+        "message": result.get("message"),
+        "reg_date": result.get("regDate"),
+    }
 
 
 # ── 問い合わせを完了にする（R-Messe連動） ────────────────

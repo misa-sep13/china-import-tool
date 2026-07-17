@@ -15,6 +15,15 @@ class ReviewCampaign(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
+class ReviewTemplate(Base):
+    __tablename__ = "review_templates"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String)   # テンプレート名（Aクロス 等）
+    body = Column(Text)     # 返信本文
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class ReviewEntry(Base):
     __tablename__ = "review_entries"
 
