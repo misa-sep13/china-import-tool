@@ -460,7 +460,12 @@ async def fetch_inquiries(
         message = inq.get("message") or ""
         order_number = inq.get("orderNumber") or ""
         item_name = order_items_map.get(order_number, "") or inq.get("itemName") or ""
-        detected = _detect_campaign(message, item_name, campaigns_list)
+
+        # レビュー関連の文脈がある場合のみキャンペーン自動判定
+        has_review_context = any(
+            kw in message for kw in ["レビュー", "れびゅー", "review", "プレゼント", "特典", "希望"]
+        )
+        detected = _detect_campaign(message, item_name, campaigns_list) if has_review_context else None
 
         # 返信ステータス判定
         replies = inq.get("replies") or []
