@@ -288,7 +288,7 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
               </thead>
               <tbody>
                 {inquiries.map(inq => {
-                  const campaign = localCampaigns[inq.inquiry_number] || inq.detected_campaign || ''
+                  const campaign = localCampaigns[inq.inquiry_number] || inq.detected_campaign || inq.reply_campaign || ''
                   return (
                     <tr key={inq.inquiry_number} style={{ background: rowBg(inq) }}>
                       <td style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
