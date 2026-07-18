@@ -5,6 +5,7 @@ from app.api.routes import products, orders, settings, fba, invoices, price_adju
 from app.api.routes import welfare
 from app.api.routes import rakuten
 from app.api.routes import ads
+from app.api.routes import review as review_routes
 from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
 from app.models import price_log as price_log_models
@@ -18,6 +19,7 @@ from app.models import rakuten_sales as rakuten_sales_models
 from app.models import processed_order as processed_order_models
 from app.models import welfare as welfare_models
 from app.models import ads as ads_models
+from app.models import review as review_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -134,6 +136,10 @@ def _migrate():
         ("invoices","total_tax",             "ALTER TABLE invoices ADD COLUMN total_tax INTEGER DEFAULT 0"),
         ("invoices","bl_number",             "ALTER TABLE invoices ADD COLUMN bl_number VARCHAR"),
         ("invoices","declaration_no",        "ALTER TABLE invoices ADD COLUMN declaration_no VARCHAR"),
+        # 売上管理：広告比率カラム
+        ("rakuten_sales_summaries","ad_rate", "ALTER TABLE rakuten_sales_summaries ADD COLUMN ad_rate FLOAT"),
+        # レビューキャンペーン：判定キーワード
+        ("review_campaigns","keywords", "ALTER TABLE review_campaigns ADD COLUMN keywords TEXT"),
     ]
 
     inspector = inspect(engine)
@@ -1097,6 +1103,7 @@ app.include_router(rakuten.router, prefix="/api")
 app.include_router(shipment_orders.router, prefix="/api")
 app.include_router(welfare.router, prefix="/api")
 app.include_router(ads.router, prefix="/api")
+app.include_router(review_routes.router, prefix="/api")
 
 @app.get("/")
 def root():

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
+import { normalizeSearch } from '../searchUtil'
 
 const CATEGORIES = ['標準', 'ファッション', '大型']
 
@@ -178,15 +179,13 @@ export default function ProductsPage() {
     if (e.key === 'Escape') setInlineEdit(null)
   }
 
-  const toHalf = (s) => (s || '').replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-  const normalize = (s) => toHalf(s).toLowerCase()
   const suppliers = [...new Set(products.map(p => p.supplier).filter(Boolean))].sort()
   const filteredProducts = products.filter(p => {
     if (supplierFilter && (p.supplier || '') !== supplierFilter) return false
     if (!search) return true
-    const q = normalize(search)
-    return normalize(p.sku).includes(q) || normalize(p.name).includes(q) ||
-      (p.asin || '').toLowerCase().includes(q) || normalize(p.fnsku).includes(q)
+    const q = normalizeSearch(search)
+    return normalizeSearch(p.sku).includes(q) || normalizeSearch(p.name).includes(q) ||
+      normalizeSearch(p.asin).includes(q) || normalizeSearch(p.fnsku).includes(q)
   }).sort(compareProducts)
 
   // 最終更新日時（全商品で最新のもの）

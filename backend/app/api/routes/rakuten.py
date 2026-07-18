@@ -267,6 +267,7 @@ def _sales_summary_out(row: RakutenSalesSummary) -> dict:
         "profit": row.profit or 0,
         "profit_rate": row.profit_rate,
         "rpp_rate": row.rpp_rate,
+        "ad_rate": row.ad_rate,
     }
 
 
@@ -908,7 +909,7 @@ def get_recommendations(db: Session = Depends(get_db)):
     referenced_skus: set[str] = set()
 
     for p in all_products:
-        if p.is_component or not p.set_components:
+        if not p.set_components:
             continue
         if p.sku in parent_orders:
             continue  # 親発注品は後で別処理
@@ -1034,7 +1035,7 @@ def get_all_products_order(db: Session = Depends(get_db)):
     # セット商品の販売実績を構成単品SKUへ按分（recommendationsと同じロジック）
     unit_sales: dict[str, dict] = {}
     for p in all_products:
-        if p.is_component or not p.set_components:
+        if not p.set_components:
             continue
         try:
             comps = json.loads(p.set_components or "[]")

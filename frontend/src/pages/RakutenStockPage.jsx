@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
+import { normalizeSearch } from '../searchUtil'
 
 export default function RakutenStockPage() {
   const qc = useQueryClient()
@@ -108,9 +109,8 @@ export default function RakutenStockPage() {
   const searchMatch = (p) => {
     if (supplierFilter && (p.supplier || '') !== supplierFilter) return false
     if (!search) return true
-    const normalize = (s) => (s || '').replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[\s　]/g, '').toLowerCase()
-    const q = normalize(search)
-    return normalize(p.sku).includes(q) || normalize(p.name).includes(q) || normalize(p.spec).includes(q) || normalize(p.rakuten_item_url || '').includes(q)
+    const q = normalizeSearch(search)
+    return normalizeSearch(p.sku).includes(q) || normalizeSearch(p.name).includes(q) || normalizeSearch(p.spec).includes(q) || normalizeSearch(p.rakuten_item_url || '').includes(q)
   }
 
   const childSkus = new Set(items.filter(p => stockCompSkus(p).some(s => !internalSkus.has(s))).map(p => p.sku))

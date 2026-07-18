@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import axios from 'axios'
+import { normalizeSearch } from '../searchUtil'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
 
@@ -419,8 +420,8 @@ export default function RakutenOrderPage() {
   const displayItems = allItems.filter(item => {
     if (onlyRecommended && !item.needs_order) return false
     if (!search) return true
-    const q = search.toLowerCase()
-    return item.sku.toLowerCase().includes(q) || (item.name || '').toLowerCase().includes(q)
+    const q = normalizeSearch(search)
+    return normalizeSearch(item.sku).includes(q) || normalizeSearch(item.name).includes(q)
   })
 
   const recommendedCount = allItems.filter(i => i.needs_order).length

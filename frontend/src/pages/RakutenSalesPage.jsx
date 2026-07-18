@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
+import { normalizeSearch } from '../searchUtil'
 
 const fmtYen = (v) => v == null ? '—' : `¥${Math.round(Number(v) || 0).toLocaleString()}`
 const fmtNum = (v) => Number(v || 0).toLocaleString()
@@ -54,12 +55,12 @@ export default function RakutenSalesPage() {
 
   const rows = summaryQuery.data?.rows || []
   const filteredRows = useMemo(() => {
-    const q = search.trim().toLowerCase()
+    const q = normalizeSearch(search.trim())
     if (!q) return rows
     return rows.filter(r =>
-      String(r.product_key || '').toLowerCase().includes(q) ||
-      String(r.sku_key || '').toLowerCase().includes(q) ||
-      String(r.product_name || '').toLowerCase().includes(q)
+      normalizeSearch(r.product_key).includes(q) ||
+      normalizeSearch(r.sku_key).includes(q) ||
+      normalizeSearch(r.product_name).includes(q)
     )
   }, [rows, search])
 
@@ -118,12 +119,13 @@ export default function RakutenSalesPage() {
         <ImportGuide />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(130px, 1fr))', gap: 12, marginBottom: 16 }}>
         <Metric label="売上" value={fmtYen(totals.sales)} tone="#2563eb" />
         <Metric label="利益" value={fmtYen(totals.profit)} tone={Number(totals.profit || 0) >= 0 ? '#16a34a' : '#dc2626'} />
         <Metric label="利益率" value={fmtPct(totals.profit_rate)} tone={Number(totals.profit_rate || 0) >= 20 ? '#16a34a' : '#d97706'} />
         <Metric label="販売数" value={fmtNum(totals.units)} tone="#334155" />
         <Metric label="広告費" value={fmtYen(totalAd)} tone="#7c3aed" />
+        <Metric label="広告比率" value={fmtPct(Number(totals.sales || 0) > 0 ? totalAd / Number(totals.sales) * 100 : null)} tone={totalAd / Number(totals.sales || 1) * 100 >= 30 ? '#dc2626' : '#7c3aed'} />
       </div>
 
       <div className="card" style={{ padding: '12px 16px', marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -166,14 +168,15 @@ export default function RakutenSalesPage() {
                 <th style={{ textAlign: 'right' }}>利益</th>
                 <th style={{ textAlign: 'right' }}>利益率</th>
                 <th style={{ textAlign: 'right' }}>RPP比率</th>
+                <th style={{ textAlign: 'right' }}>広告比率</th>
               </tr>
             </thead>
             <tbody>
               {summaryQuery.isLoading && (
-                <tr><td colSpan={level === 'sku' ? 17 : 16} style={{ textAlign: 'center', padding: 32, color: '#999' }}>読み込み中...</td></tr>
+                <tr><td colSpan={level === 'sku' ? 18 : 17} style={{ textAlign: 'center', padding: 32, color: '#999' }}>読み込み中...</td></tr>
               )}
               {!summaryQuery.isLoading && filteredRows.length === 0 && (
-                <tr><td colSpan={level === 'sku' ? 17 : 16} style={{ textAlign: 'center', padding: 32, color: '#999' }}>データがありません</td></tr>
+                <tr><td colSpan={level === 'sku' ? 18 : 17} style={{ textAlign: 'center', padding: 32, color: '#999' }}>データがありません</td></tr>
               )}
               {filteredRows.map(r => (
                 <tr key={`${r.product_key}-${r.sku_key || ''}`}>
@@ -194,6 +197,7 @@ export default function RakutenSalesPage() {
                   <td style={{ textAlign: 'right', fontWeight: 700, color: Number(r.profit || 0) >= 0 ? '#16a34a' : '#dc2626' }}>{fmtYen(r.profit)}</td>
                   <td style={{ textAlign: 'right', fontWeight: 700, color: Number(r.profit_rate || 0) >= 20 ? '#16a34a' : '#d97706' }}>{fmtPct(r.profit_rate)}</td>
                   <td style={{ textAlign: 'right' }}>{fmtPct(r.rpp_rate)}</td>
+                  <td style={{ textAlign: 'right', color: Number(r.ad_rate || 0) >= 30 ? '#dc2626' : Number(r.ad_rate || 0) >= 15 ? '#d97706' : '#16a34a' }}>{fmtPct(r.ad_rate)}</td>
                 </tr>
               ))}
             </tbody>
