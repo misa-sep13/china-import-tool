@@ -206,7 +206,7 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
   const rowBg = (inq) => {
     if (inq.already_registered) return '#f0fdf4'
     if (inq.awaiting_choice) return '#fffde7'
-    if (inq.reply_status === 'unreplied') return '#fff5f5'
+    if (!inq.reply_status || inq.reply_status === 'unreplied') return '#fff5f5'
     return undefined
   }
 
@@ -391,7 +391,7 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
                           >
                             返信
                           </button>
-                          {campaign && inq.reply_status === 'unreplied' && templates.length > 0 && (
+                          {campaign && (!inq.reply_status || inq.reply_status === 'unreplied') && templates.length > 0 && (
                             <button
                               className="btn btn-primary"
                               style={{ fontSize: 10, padding: '2px 6px', background: '#7c3aed' }}
