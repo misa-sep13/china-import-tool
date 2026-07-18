@@ -420,6 +420,37 @@ async def fetch_inquiries(
         for e in db.query(ReviewEntry.order_number).all()
     }
 
+    # 受注APIから購入商品名を一括取得
+    order_numbers = list({
+        inq.get("orderNumber", "") for inq in all_inquiries
+        if inq.get("orderNumber") and not inq.get("isCompleted", False)
+    })
+    order_items_map = {}
+    for i in range(0, len(order_numbers), 100):
+        chunk = order_numbers[i:i + 100]
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                res = await client.post(
+                    f"{RMS_BASE}/2.0/order/getOrder",
+                    headers=headers,
+                    content=json.dumps(
+                        {"orderNumberList": chunk, "version": 10},
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                )
+            if res.is_success:
+                for o in res.json().get("OrderModelList") or []:
+                    on = o.get("orderNumber", "")
+                    items = []
+                    for pkg in o.get("PackageModelList") or []:
+                        for it in pkg.get("ItemModelList") or []:
+                            name = it.get("itemName", "")
+                            if name:
+                                items.append(name)
+                    order_items_map[on] = "、".join(items)
+        except Exception:
+            pass
+
     results = []
     for inq in all_inquiries:
         # R-Messeで完了済みのものだけ表示しない（未返信・返信済は表示する）
@@ -427,8 +458,8 @@ async def fetch_inquiries(
             continue
 
         message = inq.get("message") or ""
-        item_name = inq.get("itemName") or ""
         order_number = inq.get("orderNumber") or ""
+        item_name = order_items_map.get(order_number, "") or inq.get("itemName") or ""
         detected = _detect_campaign(message, item_name, campaigns_list)
 
         # 返信ステータス判定
@@ -473,6 +504,8 @@ async def fetch_inquiries(
             "detected_campaign_name": campaigns[detected].name if detected and detected in campaigns else None,
             "already_registered": order_number in existing_orders if order_number else False,
         })
+
+    results.sort(key=lambda x: x.get("reg_date") or "")
 
     return {"inquiries": results, "total": len(results)}
 

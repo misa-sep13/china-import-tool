@@ -304,7 +304,7 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
                           {inq.message || '—'}
                         </div>
                       </td>
-                      <td style={{ fontSize: 11 }}>{inq.item_name || '—'}</td>
+                      <td style={{ fontSize: 11, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={inq.item_name || ''}>{inq.item_name || '—'}</td>
                       <td>
                         {inq.reply_campaign_name ? (
                           <span style={{ fontSize: 11, fontWeight: 600, color: '#2e7d32', background: '#e8f5e9', padding: '1px 6px', borderRadius: 3 }}>
