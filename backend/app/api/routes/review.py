@@ -510,7 +510,7 @@ async def fetch_inquiries(
             "already_registered": order_number in existing_orders if order_number else False,
         })
 
-    results.sort(key=lambda x: x.get("reg_date") or "")
+    results.sort(key=lambda x: x.get("reg_date") or "", reverse=True)
 
     return {"inquiries": results, "total": len(results)}
 

@@ -189,7 +189,7 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
 
   const inquiries = useMemo(() => {
     const list = inquiriesMut.data?.inquiries || []
-    return [...list].sort((a, b) => (a.reg_date || '').localeCompare(b.reg_date || ''))
+    return [...list].sort((a, b) => (b.reg_date || '').localeCompare(a.reg_date || ''))
   }, [inquiriesMut.data])
 
   const toggleSelectInq = (id) => setSelectedInqs(prev => {
