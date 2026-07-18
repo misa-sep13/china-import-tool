@@ -255,17 +255,48 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
             <span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: 2, background: '#f0fdf4', border: '1px solid #c3e6cb' }} /> 登録済み
           </span>
           {selectedInqs.size > 0 && (
-            <button
-              className="btn btn-secondary"
-              style={{ fontSize: 11, padding: '2px 10px', marginLeft: 'auto', color: '#16a34a' }}
-              onClick={() => {
-                if (confirm(`${selectedInqs.size}件の問い合わせを完了にしますか？`))
-                  completeMut.mutate([...selectedInqs])
-              }}
-              disabled={completeMut.isPending}
-            >
-              選択を完了 ({selectedInqs.size})
-            </button>
+            <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: 11, padding: '2px 10px' }}
+                onClick={() => {
+                  const rows = inquiries.filter(i => selectedInqs.has(i.inquiry_number))
+                  const header = ['受注番号', 'お客様名', '問い合わせ内容', '購入商品', '返信プレゼント', 'キャンペーン判定', '日時']
+                  const csvRows = [header.join(',')]
+                  for (const r of rows) {
+                    const cam = localCampaigns[r.inquiry_number] || r.detected_campaign || r.reply_campaign || ''
+                    csvRows.push([
+                      r.order_number || '',
+                      r.user_name || '',
+                      `"${(r.message || '').replace(/"/g, '""')}"`,
+                      `"${(r.item_name || '').replace(/"/g, '""')}"`,
+                      r.reply_campaign_name || '',
+                      cam,
+                      r.reg_date ? r.reg_date.slice(0, 10) : '',
+                    ].join(','))
+                  }
+                  const bom = '﻿'
+                  const blob = new Blob([bom + csvRows.join('\n')], { type: 'text/csv;charset=utf-8' })
+                  const a = document.createElement('a')
+                  a.href = URL.createObjectURL(blob)
+                  a.download = `inquiries_${new Date().toISOString().slice(0,10)}.csv`
+                  a.click()
+                }}
+              >
+                📥 CSV出力 ({selectedInqs.size})
+              </button>
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: 11, padding: '2px 10px', color: '#16a34a' }}
+                onClick={() => {
+                  if (confirm(`${selectedInqs.size}件の問い合わせを完了にしますか？`))
+                    completeMut.mutate([...selectedInqs])
+                }}
+                disabled={completeMut.isPending}
+              >
+                一括完了 ({selectedInqs.size})
+              </button>
+            </div>
           )}
         </div>
       )}
