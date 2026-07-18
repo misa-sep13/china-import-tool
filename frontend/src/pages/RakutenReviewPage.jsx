@@ -9,7 +9,7 @@ const STATUS_COLORS = { pending: '#d97706', confirmed: '#2563eb', shipped: '#16a
 export default function RakutenReviewPage() {
   const qc = useQueryClient()
   const [tab, setTab] = useState('inquiries')
-  const [days, setDays] = useState(7)
+  const [days, setDays] = useState(30)
   const [reviewOnly, setReviewOnly] = useState(false)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
@@ -185,8 +185,26 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
   const [localCampaigns, setLocalCampaigns] = useState({})
   const [expandedMsg, setExpandedMsg] = useState(null)
   const [detailInq, setDetailInq] = useState(null)
+  const [selectedInqs, setSelectedInqs] = useState(new Set())
 
   const inquiries = inquiriesMut.data?.inquiries || []
+
+  const toggleSelectInq = (id) => setSelectedInqs(prev => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
+  const toggleAllInqs = () => {
+    if (selectedInqs.size === inquiries.length) setSelectedInqs(new Set())
+    else setSelectedInqs(new Set(inquiries.map(i => i.inquiry_number)))
+  }
+
+  const rowBg = (inq) => {
+    if (inq.already_registered) return '#f0fdf4'
+    if (inq.awaiting_choice) return '#fffde7'
+    if (inq.reply_status === 'unreplied') return '#fff5f5'
+    return undefined
+  }
 
   return (
     <div>
@@ -221,6 +239,34 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
         )}
       </div>
 
+      {/* 凡例 */}
+      {inquiries.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 8, fontSize: 12, color: '#555' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: 2, background: '#fff5f5', border: '1px solid #f5c6cb' }} /> 未返信
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: 2, background: '#fffde7', border: '1px solid #ffeeba' }} /> 選択待ち
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: 2, background: '#f0fdf4', border: '1px solid #c3e6cb' }} /> 登録済み
+          </span>
+          {selectedInqs.size > 0 && (
+            <button
+              className="btn btn-secondary"
+              style={{ fontSize: 11, padding: '2px 10px', marginLeft: 'auto', color: '#16a34a' }}
+              onClick={() => {
+                if (confirm(`${selectedInqs.size}件の問い合わせを完了にしますか？`))
+                  completeMut.mutate([...selectedInqs])
+              }}
+              disabled={completeMut.isPending}
+            >
+              選択を完了 ({selectedInqs.size})
+            </button>
+          )}
+        </div>
+      )}
+
       {inquiries.length > 0 && (
         <div className="card" style={{ padding: 0 }}>
           <div className="sticky-table-wrap">
@@ -229,18 +275,22 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
                 <tr>
                   <th style={{ width: 90 }}>日時</th>
                   <th style={{ width: 100 }}>お客様名</th>
-                  <th style={{ minWidth: 250 }}>問い合わせ内容</th>
+                  <th style={{ minWidth: 200 }}>問い合わせ内容</th>
                   <th style={{ width: 120 }}>購入商品</th>
+                  <th style={{ width: 110 }}>返信プレゼント</th>
                   <th style={{ width: 160 }}>受注番号</th>
                   <th style={{ width: 160 }}>キャンペーン判定</th>
                   <th style={{ width: 80 }}>操作</th>
+                  <th style={{ width: 36 }}>
+                    <input type="checkbox" checked={selectedInqs.size === inquiries.length && inquiries.length > 0} onChange={toggleAllInqs} />
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {inquiries.map(inq => {
                   const campaign = localCampaigns[inq.inquiry_number] || inq.detected_campaign || ''
                   return (
-                    <tr key={inq.inquiry_number} style={{ background: inq.already_registered ? '#f0fdf4' : undefined }}>
+                    <tr key={inq.inquiry_number} style={{ background: rowBg(inq) }}>
                       <td style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
                         {inq.reg_date ? new Date(inq.reg_date).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) : '—'}
                       </td>
@@ -255,6 +305,21 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
                         </div>
                       </td>
                       <td style={{ fontSize: 11 }}>{inq.item_name || '—'}</td>
+                      <td>
+                        {inq.reply_campaign_name ? (
+                          <span style={{ fontSize: 11, fontWeight: 600, color: '#2e7d32', background: '#e8f5e9', padding: '1px 6px', borderRadius: 3 }}>
+                            {inq.reply_campaign_name}
+                          </span>
+                        ) : inq.awaiting_choice ? (
+                          <span style={{ fontSize: 11, fontWeight: 600, color: '#f57f17', background: '#fff8e1', padding: '1px 6px', borderRadius: 3 }}>
+                            選択待ち
+                          </span>
+                        ) : inq.reply_status === 'replied' ? (
+                          <span style={{ fontSize: 11, color: '#64748b' }}>—</span>
+                        ) : (
+                          <span style={{ fontSize: 11, color: '#94a3b8' }}>—</span>
+                        )}
+                      </td>
                       <td style={{ fontFamily: 'monospace', fontSize: 10 }}>{inq.order_number || '—'}</td>
                       <td>
                         {inq.already_registered ? (
@@ -301,6 +366,9 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
                             完了
                           </button>
                         </div>
+                      </td>
+                      <td>
+                        <input type="checkbox" checked={selectedInqs.has(inq.inquiry_number)} onChange={() => toggleSelectInq(inq.inquiry_number)} />
                       </td>
                     </tr>
                   )

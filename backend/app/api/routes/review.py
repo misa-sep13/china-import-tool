@@ -431,6 +431,21 @@ async def fetch_inquiries(
         order_number = inq.get("orderNumber") or ""
         detected = _detect_campaign(message, item_name, campaigns_list)
 
+        # 返信ステータス判定
+        replies = inq.get("replies") or []
+        merchant_replies = [r for r in replies if r.get("replyFrom") == "merchant"]
+        has_merchant_reply = len(merchant_replies) > 0
+        reply_status = "replied" if has_merchant_reply else "unreplied"
+
+        # ショップ側の最新返信テキスト
+        merchant_reply_text = merchant_replies[-1].get("message", "") if merchant_replies else ""
+
+        # 返信テキストからプレゼント商品名を判定
+        reply_campaign = _detect_campaign(merchant_reply_text, "", campaigns_list) if merchant_reply_text else None
+
+        # 「選べるプレゼント」を含む返信 → 商品未選択のお客様
+        awaiting_choice = has_merchant_reply and "選べるプレゼント" in merchant_reply_text
+
         # review_only指定時のみレビュー関連（キーワードorキャンペーン判定あり）に絞る
         if review_only:
             has_review_keyword = any(
@@ -449,6 +464,11 @@ async def fetch_inquiries(
             "category": inq.get("category"),
             "reg_date": inq.get("regDate"),
             "is_completed": inq.get("isCompleted", False),
+            "reply_status": reply_status,
+            "merchant_reply_text": merchant_reply_text,
+            "reply_campaign": reply_campaign,
+            "reply_campaign_name": campaigns[reply_campaign].name if reply_campaign and reply_campaign in campaigns else None,
+            "awaiting_choice": awaiting_choice,
             "detected_campaign": detected,
             "detected_campaign_name": campaigns[detected].name if detected and detected in campaigns else None,
             "already_registered": order_number in existing_orders if order_number else False,
