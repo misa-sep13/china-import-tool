@@ -185,6 +185,7 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
   const [localCampaigns, setLocalCampaigns] = useState({})
   const [expandedMsg, setExpandedMsg] = useState(null)
   const [detailInq, setDetailInq] = useState(null)
+  const [detailAutoTemplate, setDetailAutoTemplate] = useState(false)
   const [selectedInqs, setSelectedInqs] = useState(new Set())
 
   const inquiries = useMemo(() => {
@@ -386,10 +387,19 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
                           <button
                             className="btn btn-secondary"
                             style={{ fontSize: 11, padding: '2px 8px' }}
-                            onClick={() => setDetailInq(inq)}
+                            onClick={() => { setDetailAutoTemplate(false); setDetailInq(inq) }}
                           >
                             返信
                           </button>
+                          {campaign && inq.reply_status === 'unreplied' && templates.length > 0 && (
+                            <button
+                              className="btn btn-primary"
+                              style={{ fontSize: 10, padding: '2px 6px', background: '#7c3aed' }}
+                              onClick={() => { setDetailAutoTemplate(true); setDetailInq(inq) }}
+                            >
+                              テンプレ返信
+                            </button>
+                          )}
                           <button
                             className="btn btn-secondary"
                             style={{ fontSize: 11, padding: '2px 8px', color: '#16a34a' }}
@@ -418,7 +428,10 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
           inquiry={detailInq}
           templates={templates}
           completeMut={completeMut}
-          onClose={() => setDetailInq(null)}
+          campaigns={campaigns}
+          campaignCode={localCampaigns[detailInq.inquiry_number] || detailInq.detected_campaign || detailInq.reply_campaign || ''}
+          autoTemplate={detailAutoTemplate}
+          onClose={() => { setDetailInq(null); setDetailAutoTemplate(false) }}
         />
       )}
     </div>
@@ -427,9 +440,20 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
 
 
 // ── 問い合わせ詳細・返信モーダル ──
-function InquiryDetailModal({ inquiry, templates, completeMut, onClose }) {
+function InquiryDetailModal({ inquiry, templates, completeMut, campaigns, campaignCode, autoTemplate, onClose }) {
   const qc = useQueryClient()
-  const [msg, setMsg] = useState('')
+
+  const campaignName = useMemo(() => {
+    const c = (campaigns || []).find(x => x.code === campaignCode)
+    return c ? c.name : ''
+  }, [campaigns, campaignCode])
+
+  const [msg, setMsg] = useState(() => {
+    if (autoTemplate && templates.length > 0 && campaignName) {
+      return templates[0].body.replace(/\{商品名\}/g, campaignName)
+    }
+    return ''
+  })
 
   const detailQ = useQuery({
     queryKey: ['review-inquiry', inquiry.inquiry_number],
@@ -494,7 +518,7 @@ function InquiryDetailModal({ inquiry, templates, completeMut, onClose }) {
               defaultValue=""
               onChange={e => {
                 const t = templates.find(x => String(x.id) === e.target.value)
-                if (t) setMsg(t.body)
+                if (t) setMsg(t.body.replace(/\{商品名\}/g, campaignName || '{商品名}'))
               }}
               style={{ width: 240 }}
             >
