@@ -193,7 +193,7 @@ def get_keyword_data(upload_id: int, db: Session = Depends(get_db)):
 
 # ── AI タイトル改善提案 ──────────────────────────────────
 @router.post("/suggest/{upload_id}")
-def suggest_titles(upload_id: int, db: Session = Depends(get_db)):
+async def suggest_titles(upload_id: int, db: Session = Depends(get_db)):
     rows = (
         db.query(KeywordData)
         .filter(KeywordData.upload_id == upload_id)
@@ -221,7 +221,7 @@ def suggest_titles(upload_id: int, db: Session = Depends(get_db)):
             "action_good": r.action_good,
         })
 
-    title_to_manage = _resolve_manage_numbers(
+    title_to_manage = await _resolve_manage_numbers(
         [p["name"] for p in products.values()], db
     )
 
@@ -259,8 +259,11 @@ def suggest_titles(upload_id: int, db: Session = Depends(get_db)):
     return results
 
 
-def _resolve_manage_numbers(titles: list[str], db: Session) -> dict[str, str]:
-    """過去のTitleOptimizationから同じ商品タイトルのmanage_numberを引き継ぐ。"""
+async def _resolve_manage_numbers(titles: list[str], db: Session) -> dict[str, str]:
+    """RMS items/search APIで全商品を取得し、タイトルからmanageNumberを解決する。
+    過去の手入力も参照し、API失敗時は手入力済みデータにフォールバック。"""
+    import asyncio
+
     result = {}
     for title in titles:
         prev = (
@@ -271,6 +274,56 @@ def _resolve_manage_numbers(titles: list[str], db: Session) -> dict[str, str]:
         )
         if prev and prev.manage_number:
             result[title] = prev.manage_number
+
+    settings_row = db.query(RakutenSettings).first()
+    if not settings_row or not settings_row.rms_service_secret or not settings_row.rms_license_key:
+        return result
+
+    headers = _auth_header(settings_row.rms_service_secret, settings_row.rms_license_key)
+    title_set = set(titles) - set(result.keys())
+    if not title_set:
+        return result
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            offset = 0
+            retry = 0
+            while True:
+                res = await client.get(
+                    f"{RMS_BASE}/2.0/items/search",
+                    headers=headers,
+                    params={"offset": offset},
+                )
+                if res.status_code == 429:
+                    if retry >= 3:
+                        break
+                    await asyncio.sleep(2 ** retry)
+                    retry += 1
+                    continue
+                if res.status_code != 200:
+                    break
+                retry = 0
+                data = res.json()
+                results_list = data.get("results", [])
+                if not results_list:
+                    break
+                for entry in results_list:
+                    item = entry.get("item", {})
+                    rms_title = item.get("title", "")
+                    manage_number = item.get("manageNumber", "")
+                    if rms_title and manage_number and rms_title in title_set:
+                        result[rms_title] = manage_number
+                        title_set.discard(rms_title)
+                if not title_set:
+                    break
+                total = data.get("numFound", 0)
+                offset += len(results_list)
+                if offset >= total:
+                    break
+                await asyncio.sleep(0.3)
+    except Exception:
+        pass
+
     return result
 
 
