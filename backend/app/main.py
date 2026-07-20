@@ -142,6 +142,8 @@ def _migrate():
         ("rakuten_sales_summaries","ad_rate", "ALTER TABLE rakuten_sales_summaries ADD COLUMN ad_rate FLOAT"),
         # レビューキャンペーン：判定キーワード
         ("review_campaigns","keywords", "ALTER TABLE review_campaigns ADD COLUMN keywords TEXT"),
+        # キーワード分析：商品管理番号
+        ("title_optimizations","manage_number", "ALTER TABLE title_optimizations ADD COLUMN manage_number VARCHAR"),
     ]
 
     inspector = inspect(engine)
