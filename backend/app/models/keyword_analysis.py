@@ -41,6 +41,7 @@ class TitleOptimization(Base):
     current_title = Column(Text)
     suggested_title = Column(Text)
     reasoning = Column(Text)
+    manage_number = Column(String, nullable=True)
     status = Column(String, default="pending")  # pending / approved / pushed / skipped
     pushed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())

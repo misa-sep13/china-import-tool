@@ -155,7 +155,12 @@ export default function KeywordAnalysisPage() {
                   <span style={{ fontWeight: 700, fontSize: 14 }}>No.{p.no}</span>
                   <span style={{ marginLeft: 8, fontSize: 13, color: '#333' }}>{p.name}</span>
                 </div>
-                <span style={{ fontSize: 12, color: '#666' }}>合計アクセス: {p.total_access}</span>
+                <div style={{ textAlign: 'right' }}>
+                  {p.optimization?.manage_number && (
+                    <span style={{ fontSize: 11, color: '#2563eb', marginRight: 12 }}>管理番号: {p.optimization.manage_number}</span>
+                  )}
+                  <span style={{ fontSize: 12, color: '#666' }}>合計アクセス: {p.total_access}</span>
+                </div>
               </div>
 
               {/* Keywords table */}
@@ -276,14 +281,14 @@ export default function KeywordAnalysisPage() {
                           <input
                             type="text"
                             placeholder="商品管理番号"
-                            value={manageNumbers[p.optimization.id] || ''}
+                            value={manageNumbers[p.optimization.id] ?? p.optimization.manage_number ?? ''}
                             onChange={e => setManageNumbers(prev => ({ ...prev, [p.optimization.id]: e.target.value }))}
                             style={{ padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, width: 160 }}
                           />
                           <button
                             className="btn btn-primary btn-sm"
-                            onClick={() => pushMut.mutate({ optId: p.optimization.id, manageNumber: manageNumbers[p.optimization.id] || '' })}
-                            disabled={pushMut.isPending || !manageNumbers[p.optimization.id]}
+                            onClick={() => pushMut.mutate({ optId: p.optimization.id, manageNumber: manageNumbers[p.optimization.id] ?? p.optimization.manage_number ?? '' })}
+                            disabled={pushMut.isPending || !(manageNumbers[p.optimization.id] ?? p.optimization.manage_number)}
                           >
                             🚀 RMS Push
                           </button>

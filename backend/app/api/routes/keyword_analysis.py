@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.keyword_analysis import KeywordUpload, KeywordData, TitleOptimization
 from app.models.rakuten_settings import RakutenSettings
+from app.models.rakuten_product import RakutenProduct
 from app.services.rakuten_rms import _auth_header, RMS_BASE
 import httpx
 
@@ -175,6 +176,7 @@ def get_keyword_data(upload_id: int, db: Session = Depends(get_db)):
         "current_title": o.current_title,
         "suggested_title": o.suggested_title,
         "reasoning": o.reasoning,
+        "manage_number": o.manage_number,
         "status": o.status,
         "pushed_at": o.pushed_at.isoformat() if o.pushed_at else None,
     } for o in opts}
@@ -189,7 +191,7 @@ def get_keyword_data(upload_id: int, db: Session = Depends(get_db)):
 
 # ── AI タイトル改善提案 ──────────────────────────────────
 @router.post("/suggest/{upload_id}")
-def suggest_titles(upload_id: int, db: Session = Depends(get_db)):
+async def suggest_titles(upload_id: int, db: Session = Depends(get_db)):
     rows = (
         db.query(KeywordData)
         .filter(KeywordData.upload_id == upload_id)
@@ -217,6 +219,10 @@ def suggest_titles(upload_id: int, db: Session = Depends(get_db)):
             "action_good": r.action_good,
         })
 
+    title_to_manage = await _resolve_manage_numbers(
+        [p["name"] for p in products.values()], db
+    )
+
     db.query(TitleOptimization).filter(TitleOptimization.upload_id == upload_id).delete()
 
     results = []
@@ -224,6 +230,7 @@ def suggest_titles(upload_id: int, db: Session = Depends(get_db)):
         p = products[no]
         title = p["name"]
         suggested, reasoning = _optimize_title(title, p["keywords"])
+        manage_number = title_to_manage.get(title)
 
         opt = TitleOptimization(
             upload_id=upload_id,
@@ -232,6 +239,7 @@ def suggest_titles(upload_id: int, db: Session = Depends(get_db)):
             current_title=title,
             suggested_title=suggested,
             reasoning=reasoning,
+            manage_number=manage_number,
             status="pending",
         )
         db.add(opt)
@@ -242,10 +250,44 @@ def suggest_titles(upload_id: int, db: Session = Depends(get_db)):
             "current_title": title,
             "suggested_title": suggested,
             "reasoning": reasoning,
+            "manage_number": manage_number,
         })
 
     db.commit()
     return results
+
+
+async def _resolve_manage_numbers(titles: list[str], db: Session) -> dict[str, str]:
+    """RMS Item API で商品タイトルから manageNumber を検索して返す。
+    APIが使えない場合は空dictを返す（手動入力にフォールバック）。"""
+    settings_row = db.query(RakutenSettings).first()
+    if not settings_row or not settings_row.rms_service_secret or not settings_row.rms_license_key:
+        return {}
+
+    headers = _auth_header(settings_row.rms_service_secret, settings_row.rms_license_key)
+    result = {}
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            for title in titles:
+                if title in result:
+                    continue
+                res = await client.get(
+                    f"{RMS_BASE}/2.0/items",
+                    headers=headers,
+                    params={"title": title, "hits": 1},
+                )
+                if res.status_code == 200:
+                    data = res.json()
+                    items = data.get("results", [])
+                    if items:
+                        mn = items[0].get("manageNumber", "")
+                        if mn:
+                            result[title] = mn
+    except Exception:
+        pass
+
+    return result
 
 
 def _optimize_title(title: str, keywords: list) -> tuple[str, str]:
@@ -329,6 +371,12 @@ async def push_title_to_rms(opt_id: int, data: PushIn, db: Session = Depends(get
     if opt.status != "approved":
         raise HTTPException(400, "承認済みの提案のみPush可能です")
 
+    manage_number = data.manage_number or opt.manage_number
+    if not manage_number:
+        raise HTTPException(400, "商品管理番号が必要です")
+    if data.manage_number:
+        opt.manage_number = data.manage_number
+
     settings_row = db.query(RakutenSettings).first()
     if not settings_row or not settings_row.rms_service_secret or not settings_row.rms_license_key:
         raise HTTPException(400, "RMS APIキーが設定されていません")
@@ -340,7 +388,7 @@ async def push_title_to_rms(opt_id: int, data: PushIn, db: Session = Depends(get
 
     body = {
         "items": [{
-            "manageNumber": data.manage_number,
+            "manageNumber": manage_number,
             "item": {
                 "title": opt.suggested_title
             }
@@ -367,4 +415,4 @@ async def push_title_to_rms(opt_id: int, data: PushIn, db: Session = Depends(get
     opt.pushed_at = datetime.now(JST)
     db.commit()
 
-    return {"ok": True, "manage_number": data.manage_number, "new_title": opt.suggested_title}
+    return {"ok": True, "manage_number": manage_number, "new_title": opt.suggested_title}
