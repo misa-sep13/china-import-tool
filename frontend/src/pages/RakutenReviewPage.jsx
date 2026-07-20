@@ -547,7 +547,7 @@ function InquiryDetailModal({ inquiry, templates, completeMut, campaigns, campai
             <button
               className="btn btn-primary"
               disabled={!msg.trim() || replyMut.isPending}
-              onClick={() => { if (confirm('この内容でお客様に返信を送信しますか？')) replyMut.mutate() }}
+              onClick={() => replyMut.mutate()}
             >
               {replyMut.isPending ? '送信中...' : '📨 送信'}
             </button>

@@ -6,6 +6,7 @@ from app.api.routes import welfare
 from app.api.routes import rakuten
 from app.api.routes import ads
 from app.api.routes import review as review_routes
+from app.api.routes import keyword_analysis as keyword_analysis_routes
 from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
 from app.models import price_log as price_log_models
@@ -20,6 +21,7 @@ from app.models import processed_order as processed_order_models
 from app.models import welfare as welfare_models
 from app.models import ads as ads_models
 from app.models import review as review_models
+from app.models import keyword_analysis as keyword_analysis_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -1104,6 +1106,7 @@ app.include_router(shipment_orders.router, prefix="/api")
 app.include_router(welfare.router, prefix="/api")
 app.include_router(ads.router, prefix="/api")
 app.include_router(review_routes.router, prefix="/api")
+app.include_router(keyword_analysis_routes.router, prefix="/api")
 
 @app.get("/")
 def root():
