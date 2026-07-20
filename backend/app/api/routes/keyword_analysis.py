@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.keyword_analysis import KeywordUpload, KeywordData, TitleOptimization
 from app.models.rakuten_settings import RakutenSettings
-from app.models.rakuten_product import RakutenProduct
 from app.services.rakuten_rms import _auth_header, RMS_BASE
 import httpx
 
@@ -23,6 +22,9 @@ class TitleUpdateIn(BaseModel):
 
 class TitleStatusIn(BaseModel):
     status: str  # approved / skipped
+
+class ManageNumberIn(BaseModel):
+    manage_number: str
 
 class PushIn(BaseModel):
     manage_number: str
@@ -191,7 +193,7 @@ def get_keyword_data(upload_id: int, db: Session = Depends(get_db)):
 
 # ── AI タイトル改善提案 ──────────────────────────────────
 @router.post("/suggest/{upload_id}")
-async def suggest_titles(upload_id: int, db: Session = Depends(get_db)):
+def suggest_titles(upload_id: int, db: Session = Depends(get_db)):
     rows = (
         db.query(KeywordData)
         .filter(KeywordData.upload_id == upload_id)
@@ -219,7 +221,7 @@ async def suggest_titles(upload_id: int, db: Session = Depends(get_db)):
             "action_good": r.action_good,
         })
 
-    title_to_manage = await _resolve_manage_numbers(
+    title_to_manage = _resolve_manage_numbers(
         [p["name"] for p in products.values()], db
     )
 
@@ -257,36 +259,18 @@ async def suggest_titles(upload_id: int, db: Session = Depends(get_db)):
     return results
 
 
-async def _resolve_manage_numbers(titles: list[str], db: Session) -> dict[str, str]:
-    """RMS Item API で商品タイトルから manageNumber を検索して返す。
-    APIが使えない場合は空dictを返す（手動入力にフォールバック）。"""
-    settings_row = db.query(RakutenSettings).first()
-    if not settings_row or not settings_row.rms_service_secret or not settings_row.rms_license_key:
-        return {}
-
-    headers = _auth_header(settings_row.rms_service_secret, settings_row.rms_license_key)
+def _resolve_manage_numbers(titles: list[str], db: Session) -> dict[str, str]:
+    """過去のTitleOptimizationから同じ商品タイトルのmanage_numberを引き継ぐ。"""
     result = {}
-
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            for title in titles:
-                if title in result:
-                    continue
-                res = await client.get(
-                    f"{RMS_BASE}/2.0/items",
-                    headers=headers,
-                    params={"title": title, "hits": 1},
-                )
-                if res.status_code == 200:
-                    data = res.json()
-                    items = data.get("results", [])
-                    if items:
-                        mn = items[0].get("manageNumber", "")
-                        if mn:
-                            result[title] = mn
-    except Exception:
-        pass
-
+    for title in titles:
+        prev = (
+            db.query(TitleOptimization)
+            .filter(TitleOptimization.current_title == title, TitleOptimization.manage_number.isnot(None))
+            .order_by(TitleOptimization.id.desc())
+            .first()
+        )
+        if prev and prev.manage_number:
+            result[title] = prev.manage_number
     return result
 
 
@@ -360,6 +344,17 @@ def update_optimization_status(opt_id: int, data: TitleStatusIn, db: Session = D
     opt.status = data.status
     db.commit()
     return {"ok": True, "status": opt.status}
+
+
+# ── 商品管理番号を保存 ──────────────────────────────────
+@router.patch("/optimization/{opt_id}/manage-number")
+def update_manage_number(opt_id: int, data: ManageNumberIn, db: Session = Depends(get_db)):
+    opt = db.query(TitleOptimization).filter(TitleOptimization.id == opt_id).first()
+    if not opt:
+        raise HTTPException(404)
+    opt.manage_number = data.manage_number
+    db.commit()
+    return {"ok": True, "manage_number": opt.manage_number}
 
 
 # ── RMS Push（承認済み → 楽天に反映） ────────────────────

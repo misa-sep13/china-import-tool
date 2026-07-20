@@ -60,6 +60,11 @@ export default function KeywordAnalysisPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['kw-data', selectedUpload] }),
   })
 
+  const saveManageNumMut = useMutation({
+    mutationFn: ({ optId, manageNumber }) => api.patch(`/keyword-analysis/optimization/${optId}/manage-number`, { manage_number: manageNumber }).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kw-data', selectedUpload] }),
+  })
+
   const handleFile = (e) => {
     const file = e.target.files?.[0]
     if (file) uploadMut.mutate(file)
@@ -263,9 +268,22 @@ export default function KeywordAnalysisPage() {
                     </div>
                   )}
 
-                  {/* Actions */}
+                  {/* Manage number + Actions */}
                   {p.optimization.status !== 'pushed' && (
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input
+                        type="text"
+                        placeholder="商品管理番号"
+                        value={manageNumbers[p.optimization.id] ?? p.optimization.manage_number ?? ''}
+                        onChange={e => setManageNumbers(prev => ({ ...prev, [p.optimization.id]: e.target.value }))}
+                        onBlur={e => {
+                          const v = e.target.value.trim()
+                          if (v && v !== (p.optimization.manage_number || '')) {
+                            saveManageNumMut.mutate({ optId: p.optimization.id, manageNumber: v })
+                          }
+                        }}
+                        style={{ padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, width: 160 }}
+                      />
                       {p.optimization.status !== 'approved' && (
                         <button className="btn btn-success btn-sm" onClick={() => statusMut.mutate({ optId: p.optimization.id, status: 'approved' })}>
                           ✓ 承認
@@ -277,22 +295,13 @@ export default function KeywordAnalysisPage() {
                         </button>
                       )}
                       {p.optimization.status === 'approved' && (
-                        <>
-                          <input
-                            type="text"
-                            placeholder="商品管理番号"
-                            value={manageNumbers[p.optimization.id] ?? p.optimization.manage_number ?? ''}
-                            onChange={e => setManageNumbers(prev => ({ ...prev, [p.optimization.id]: e.target.value }))}
-                            style={{ padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 12, width: 160 }}
-                          />
-                          <button
-                            className="btn btn-primary btn-sm"
-                            onClick={() => pushMut.mutate({ optId: p.optimization.id, manageNumber: manageNumbers[p.optimization.id] ?? p.optimization.manage_number ?? '' })}
-                            disabled={pushMut.isPending || !(manageNumbers[p.optimization.id] ?? p.optimization.manage_number)}
-                          >
-                            🚀 RMS Push
-                          </button>
-                        </>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => pushMut.mutate({ optId: p.optimization.id, manageNumber: manageNumbers[p.optimization.id] ?? p.optimization.manage_number ?? '' })}
+                          disabled={pushMut.isPending || !(manageNumbers[p.optimization.id] ?? p.optimization.manage_number)}
+                        >
+                          🚀 RMS Push
+                        </button>
                       )}
                     </div>
                   )}
