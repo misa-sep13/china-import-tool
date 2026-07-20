@@ -107,8 +107,9 @@ export default function KeywordAnalysisPage() {
       {uploads.length > 0 && (
         <div className="card">
           <h2>アップロード履歴</h2>
+          <div style={{ maxHeight: 160, overflowY: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
+            <thead style={{ position: 'sticky', top: 0, background: '#fff', zIndex: 1 }}>
               <tr style={{ borderBottom: '2px solid #e5e7eb', textAlign: 'left' }}>
                 <th style={{ padding: '8px 12px' }}>日時</th>
                 <th style={{ padding: '8px 12px' }}>対象期間</th>
@@ -133,6 +134,7 @@ export default function KeywordAnalysisPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
