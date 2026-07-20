@@ -327,6 +327,49 @@ async def _resolve_manage_numbers(titles: list[str], db: Session) -> dict[str, s
     return result
 
 
+@router.get("/debug-rms-titles")
+async def debug_rms_titles(upload_id: int = Query(None), db: Session = Depends(get_db)):
+    """RMS APIから取得したタイトルとCSVタイトルを比較するデバッグ用"""
+    import asyncio
+
+    settings_row = db.query(RakutenSettings).first()
+    if not settings_row or not settings_row.rms_service_secret or not settings_row.rms_license_key:
+        return {"error": "RMS APIキー未設定"}
+
+    headers = _auth_header(settings_row.rms_service_secret, settings_row.rms_license_key)
+    rms_items = []
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            res = await client.get(
+                f"{RMS_BASE}/2.0/items/search",
+                headers=headers,
+                params={"offset": 0},
+            )
+            if res.status_code != 200:
+                return {"error": f"RMS API status {res.status_code}", "body": res.text[:500]}
+            data = res.json()
+            for entry in data.get("results", []):
+                item = entry.get("item", {})
+                rms_items.append({
+                    "manageNumber": item.get("manageNumber", ""),
+                    "title": item.get("title", ""),
+                })
+    except Exception as e:
+        return {"error": str(e)}
+
+    csv_titles = []
+    if upload_id:
+        rows = db.query(KeywordData).filter(KeywordData.upload_id == upload_id).all()
+        csv_titles = list({r.product_name for r in rows if r.product_name})
+
+    return {
+        "rms_count": len(rms_items),
+        "rms_titles": rms_items[:5],
+        "csv_titles": csv_titles[:5],
+    }
+
+
 def _optimize_title(title: str, keywords: list) -> tuple[str, str]:
     """CVRとアクセス数を考慮してタイトルを最適化する。
     スコア = access * (cvr / 100) でキーワードをランク付けし、
