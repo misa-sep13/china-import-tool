@@ -1591,6 +1591,17 @@ class RakutenInvoiceItemIn(BaseModel):
     unit_price_cny: float
     buy_url: str = ""
     asin_memo: str = ""  # J列（ASIN/商品番号）：商品内訳メモ
+    permit_col: int | None = None  # 手動で指定した申告欄番号（1始まり）
+
+class PermitColumnIn(BaseModel):
+    col_no: int
+    item_name: str = ""
+    hs_code: str = ""
+    cif_jpy: int = 0
+    tariff_rate: float = 0.0
+    tariff_rate_str: str = ""
+    duty_jpy: int = 0
+    bpr_coeff: float = 0.0
 
 class RakutenInvoiceIn(BaseModel):
     invoice_no: str = ""
@@ -1600,6 +1611,7 @@ class RakutenInvoiceIn(BaseModel):
     international_freight: float = 0
     import_tax_jpy: float = 0  # 輸入税合計（円）：関税＋消費税＋地方消費税
     items: List[RakutenInvoiceItemIn]
+    permit_columns: List[PermitColumnIn] = []  # 許可書の申告欄情報（空=従来の一律按分）
 
 
 def _num(value, default=0.0):
@@ -1791,6 +1803,138 @@ def _permit_values(text: str):
     }
 
 
+def _parse_permit_columns(text: str) -> list[dict]:
+    """輸入許可書から申告欄ごとの関税率・BPR按分係数・品名・税表番号を抽出する。"""
+    columns = []
+    for m in re.finditer(r"＜\s*(\d+)\s*欄＞", text):
+        col_no = int(m.group(1))
+        after = text[m.end():m.end() + 800]
+
+        item_name = ""
+        n = re.search(r"品名\s+(.+?)(?:\s+数量|$)", after)
+        if n:
+            item_name = n.group(1).strip()
+
+        hs_code = ""
+        n = re.search(r"税表番号\s+([0-9]+(?:\.[0-9]+)?)", after)
+        if n:
+            hs_code = n.group(1)
+
+        cif_jpy = 0
+        n = re.search(r"申告価格（ＣＩＦ）\s*[\\¥￥]?\s*([0-9,]+)", after)
+        if n:
+            cif_jpy = int(n.group(1).replace(",", ""))
+
+        tariff_rate = 0.0
+        tariff_rate_str = ""
+        n = re.search(r"関税率\s+[A-Z]?\s*(\S+)", after)
+        if n:
+            rate_text = n.group(1).strip()
+            tariff_rate_str = rate_text
+            if rate_text.upper() == "FREE":
+                tariff_rate = 0.0
+            else:
+                pct = re.search(r"([0-9]+(?:\.[0-9]+)?)%", rate_text)
+                if pct:
+                    tariff_rate = float(pct.group(1))
+                else:
+                    try:
+                        tariff_rate = float(rate_text.replace("%", ""))
+                    except ValueError:
+                        pass
+
+        duty_jpy = 0
+        n = re.search(r"関税額\s*[\\¥￥]?\s*([0-9,]+)", after)
+        if n:
+            duty_jpy = int(n.group(1).replace(",", ""))
+
+        bpr_coeff = 0.0
+        n = re.search(r"ＢＰＲ按分係数\s+([0-9,]+(?:\.[0-9]+)?)", after)
+        if n:
+            bpr_coeff = float(n.group(1).replace(",", ""))
+
+        columns.append({
+            "col_no": col_no,
+            "item_name": item_name,
+            "hs_code": hs_code,
+            "cif_jpy": cif_jpy,
+            "tariff_rate": tariff_rate,
+            "tariff_rate_str": tariff_rate_str,
+            "duty_jpy": duty_jpy,
+            "bpr_coeff": bpr_coeff,
+        })
+    return columns
+
+
+def _match_items_to_columns(
+    items: list[dict], columns: list[dict]
+) -> list[int | None]:
+    """インボイス商品を許可書の申告欄にマッチングする。
+    BPR按分係数 = 商品金額合計（元）なので、金額の組合せで欄を特定する。
+    戻り値: 各商品に対応するcolumnsのインデックス（マッチしない場合None）。
+    """
+    if not columns:
+        return [None] * len(items)
+    if len(columns) == 1:
+        return [0] * len(items)
+
+    item_amounts = [round(it.get("total_price_cny", 0) or (it.get("qty", 0) * it.get("unit_price_cny", 0)), 2) for it in items]
+
+    # 各欄のBPR按分係数（=その欄に属する商品のCNY合計）
+    col_targets = [c["bpr_coeff"] for c in columns]
+
+    # 2欄の場合: 各商品の金額を足し合わせて、どの欄のBPR按分係数に近いかで分ける
+    # N欄の場合もグリーディに割り当て
+    n = len(items)
+    assignments: list[int | None] = [None] * n
+
+    def _find_subset_for_target(indices: list[int], target: float) -> list[int] | None:
+        """indicesの中からitem_amountsの合計がtargetに一致する部分集合を探す。"""
+        k = len(indices)
+        if k <= 25:
+            for mask in range(1 << k):
+                total = sum(item_amounts[indices[j]] for j in range(k) if mask & (1 << j))
+                if abs(total - target) <= 1.0:
+                    return [indices[j] for j in range(k) if mask & (1 << j)]
+            return None
+        # 商品数が多い場合: meet-in-the-middle (2^13 * 2 ≈ 16K)
+        half = k // 2
+        left_indices = indices[:half]
+        right_indices = indices[half:]
+        left_sums: dict[float, int] = {}
+        for mask in range(1 << len(left_indices)):
+            total = sum(item_amounts[left_indices[j]] for j in range(len(left_indices)) if mask & (1 << j))
+            rounded = round(total, 2)
+            left_sums[rounded] = mask
+        for rmask in range(1 << len(right_indices)):
+            rtotal = sum(item_amounts[right_indices[j]] for j in range(len(right_indices)) if rmask & (1 << j))
+            need = round(target - rtotal, 2)
+            for delta in [0, 0.01, -0.01, 0.02, -0.02]:
+                lmask = left_sums.get(round(need + delta, 2))
+                if lmask is not None:
+                    result = [left_indices[j] for j in range(len(left_indices)) if lmask & (1 << j)]
+                    result += [right_indices[j] for j in range(len(right_indices)) if rmask & (1 << j)]
+                    return result
+        return None
+
+    remaining = list(range(n))
+    # 欄を小さいBPR順に処理（小さい方がマッチしやすい）、最後の欄は残り全部
+    sorted_cols = sorted(range(len(columns)), key=lambda ci: col_targets[ci])
+    for idx, ci in enumerate(sorted_cols):
+        if idx == len(sorted_cols) - 1:
+            for i in remaining:
+                assignments[i] = ci
+            break
+        matched = _find_subset_for_target(remaining, col_targets[ci])
+        if matched is not None:
+            for i in matched:
+                assignments[i] = ci
+                remaining.remove(i)
+        # マッチしなかった場合はスキップして最後の欄に回す
+
+    return assignments
+
+
 def _rakuten_products_by_unique_url(db: Session):
     rows = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
     grouped = {}
@@ -1861,13 +2005,16 @@ async def rakuten_validate_pair(
 
 @router.post("/invoices/parse-pdf")
 async def rakuten_parse_pdf(file: UploadFile = File(...)):
-    """輸入許可証PDFから納税額合計・為替レートを抽出"""
+    """輸入許可証PDFから納税額合計・為替レート・申告欄ごとの関税率を抽出"""
     content = await file.read()
-    values = _permit_values(_permit_text(content))
+    text = _permit_text(content)
+    values = _permit_values(text)
+    permit_columns = _parse_permit_columns(text)
     return {
         "import_tax_jpy": values["import_tax_jpy"],
         "exchange_rate": values["exchange_rate"],
         "tax_breakdown": values["tax_breakdown"],
+        "permit_columns": permit_columns,
     }
 
 
@@ -1939,44 +2086,148 @@ async def rakuten_parse_excel(file: UploadFile = File(...), db: Session = Depend
     parsed["unmatched"] = unmatched
     return parsed
 
+def _calc_tariff_tax(
+    items_with_totals: list[tuple[int, float]],
+    data: "RakutenInvoiceIn",
+    columns: list["PermitColumnIn"],
+) -> dict[int, dict]:
+    """税率別計算: 各商品インデックスに対する関税・消費税・地方消費税を返す。
+    items_with_totals: [(item_index, item_total_cny), ...]
+    戻り値: {item_index: {tariff_rate, duty_jpy, consumption_tax_jpy, local_tax_jpy, total_tax_jpy, col_no}}
+    """
+    if not columns:
+        return {}
+
+    items_dicts = [
+        {"total_price_cny": total, "permit_col": data.items[idx].permit_col}
+        for idx, total in items_with_totals
+    ]
+    col_dicts = [c.model_dump() for c in columns]
+
+    # 手動指定がある商品はそれを使い、残りを自動マッチング
+    assignments = [None] * len(items_dicts)
+    for i, it in enumerate(items_dicts):
+        if it.get("permit_col") is not None:
+            col_idx = next((ci for ci, c in enumerate(col_dicts) if c["col_no"] == it["permit_col"]), None)
+            if col_idx is not None:
+                assignments[i] = col_idx
+
+    unassigned = [i for i, a in enumerate(assignments) if a is None]
+    if unassigned:
+        auto_items = [items_dicts[i] for i in unassigned]
+        # 手動割り当て分を差し引いたBPR按分係数で再計算
+        adjusted_cols = []
+        for ci, c in enumerate(col_dicts):
+            manual_total = sum(items_dicts[i]["total_price_cny"] for i, a in enumerate(assignments) if a == ci)
+            adjusted_cols.append({**c, "bpr_coeff": c["bpr_coeff"] - manual_total})
+        auto_assignments = _match_items_to_columns(auto_items, adjusted_cols)
+        for j, ui in enumerate(unassigned):
+            assignments[ui] = auto_assignments[j]
+
+    result = {}
+    for i, (item_idx, item_total) in enumerate(items_with_totals):
+        col_idx = assignments[i]
+        if col_idx is None:
+            col_idx = 0
+        col = col_dicts[col_idx]
+        tariff_rate = col["tariff_rate"]
+        item_cif_jpy = round(item_total * data.exchange_rate)
+        # 送料按分を加えたCIF相当額に関税率を適用
+        total_cny = sum(t for _, t in items_with_totals)
+        total_freight = data.domestic_freight + data.international_freight
+        freight_alloc_cny = (item_total / total_cny * total_freight) if total_cny > 0 else 0
+        cif_with_freight_jpy = (item_total + freight_alloc_cny) * data.exchange_rate
+
+        duty_jpy = round(cif_with_freight_jpy * tariff_rate / 100)
+        taxable = cif_with_freight_jpy + duty_jpy
+        consumption_tax_jpy = round(taxable * 7.8 / 100)
+        local_tax_jpy = round(consumption_tax_jpy * 22 / 78)
+
+        result[item_idx] = {
+            "tariff_rate": tariff_rate,
+            "tariff_rate_str": col.get("tariff_rate_str", f"{tariff_rate}%"),
+            "duty_jpy": duty_jpy,
+            "consumption_tax_jpy": consumption_tax_jpy,
+            "local_tax_jpy": local_tax_jpy,
+            "total_tax_jpy": duty_jpy + consumption_tax_jpy + local_tax_jpy,
+            "col_no": col["col_no"],
+            "hs_code": col.get("hs_code", ""),
+        }
+    return result
+
+
 @router.post("/invoices/calculate")
 def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
     total_cny = sum(i.qty * i.unit_price_cny for i in data.items)
     total_freight = data.domestic_freight + data.international_freight
     import_tax_jpy = data.import_tax_jpy or 0
+    use_tariff = bool(data.permit_columns)
+
+    # 税率別計算用: 有効な商品のインデックスと金額を収集
+    valid_items: list[tuple[int, float]] = []
+    for idx, item in enumerate(data.items):
+        if not (item.sku or "").strip():
+            continue
+        valid_items.append((idx, item.qty * item.unit_price_cny))
+
+    tariff_info = {}
+    if use_tariff and valid_items:
+        tariff_info = _calc_tariff_tax(valid_items, data, data.permit_columns)
+
     result = []
     skipped = 0
-    for item in data.items:
+    for idx, item in enumerate(data.items):
         if not (item.sku or "").strip():
             skipped += 1
             continue
         item_total = item.qty * item.unit_price_cny
         freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
-        tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
         product = _find_invoice_product(db, item)
         if not product:
             skipped += 1
             continue
-        # qtyは仕入単位(枚・本)。原価は販売単位(set_size個で1セット)あたりで計算する
         set_size = product.set_size or 1
         sell_units = item.qty / set_size if item.qty > 0 else 0
+
+        if use_tariff and idx in tariff_info:
+            ti = tariff_info[idx]
+            tax_alloc_jpy = ti["total_tax_jpy"]
+        else:
+            ti = None
+            tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
+
         cost_jpy = (((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / sell_units) if sell_units > 0 else 0
         customer_memo = product.customer_memo
         result_item = item.model_dump()
         result_item["sku"] = product.sku
         if product.name:
             result_item["name_jp"] = product.name
-        result.append({**result_item, "total_price_cny": round(item_total, 2),
-                        "freight_alloc_cny": round(freight_alloc, 2),
-                        "tax_alloc_jpy": round(tax_alloc_jpy, 0),
-                        "cost_jpy": round(cost_jpy, 1),
-                        "customer_memo": customer_memo,
-                        "matched_sku": product.sku})
-    return {"items": result, "total_cny": round(total_cny, 2),
-            "total_freight_cny": round(total_freight, 2),
-            "import_tax_jpy": import_tax_jpy,
-            "grand_total_jpy": round((total_cny + total_freight) * data.exchange_rate + import_tax_jpy, 0),
-            "skipped": skipped}
+        row = {
+            **result_item,
+            "total_price_cny": round(item_total, 2),
+            "freight_alloc_cny": round(freight_alloc, 2),
+            "tax_alloc_jpy": round(tax_alloc_jpy, 0),
+            "cost_jpy": round(cost_jpy, 1),
+            "customer_memo": customer_memo,
+            "matched_sku": product.sku,
+        }
+        if ti:
+            row["tariff_rate"] = ti["tariff_rate"]
+            row["tariff_rate_str"] = ti["tariff_rate_str"]
+            row["duty_jpy"] = ti["duty_jpy"]
+            row["col_no"] = ti["col_no"]
+            row["hs_code"] = ti["hs_code"]
+        result.append(row)
+
+    return {
+        "items": result,
+        "total_cny": round(total_cny, 2),
+        "total_freight_cny": round(total_freight, 2),
+        "import_tax_jpy": import_tax_jpy,
+        "grand_total_jpy": round((total_cny + total_freight) * data.exchange_rate + import_tax_jpy, 0),
+        "skipped": skipped,
+        "use_tariff": use_tariff,
+    }
 
 @router.post("/invoices/save")
 def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
@@ -1985,19 +2236,34 @@ def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
     updated = 0
     skipped = 0
     updated_skus: dict[str, float] = {}  # sku -> cost_jpy
+    use_tariff = bool(data.permit_columns)
 
     import_tax_jpy = data.import_tax_jpy or 0
-    for item in data.items:
+
+    valid_items: list[tuple[int, float]] = []
+    for idx, item in enumerate(data.items):
+        if not (item.sku or "").strip():
+            continue
+        valid_items.append((idx, item.qty * item.unit_price_cny))
+
+    tariff_info = {}
+    if use_tariff and valid_items:
+        tariff_info = _calc_tariff_tax(valid_items, data, data.permit_columns)
+
+    for idx, item in enumerate(data.items):
         if not (item.sku or "").strip():
             skipped += 1
             continue
         item_total = item.qty * item.unit_price_cny
         freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
-        tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
+
+        if use_tariff and idx in tariff_info:
+            tax_alloc_jpy = tariff_info[idx]["total_tax_jpy"]
+        else:
+            tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
+
         product = _find_invoice_product(db, item)
         if product:
-            # qtyは仕入単位(枚・本)。原価は販売単位(set_size個で1セット)あたり、
-            # 仕入れ値(price)は仕入単位あたりの元単価をそのまま保存する
             set_size = product.set_size or 1
             sell_units = item.qty / set_size if item.qty > 0 else 0
             cost_jpy = round((((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / sell_units), 1) if sell_units > 0 else 0

@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import api from '../api/client'
 
+const COL_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899']
+
 export default function RakutenInvoicePage() {
   const [invoiceFile, setInvoiceFile] = useState(null)
   const [permitFile, setPermitFile]   = useState(null)
@@ -16,12 +18,22 @@ export default function RakutenInvoicePage() {
   const [saving, setSaving]         = useState(false)
   const [saved, setSaved]           = useState(null)
   const [products, setProducts]     = useState([])
+  const [useTariff, setUseTariff]   = useState(true)
 
   function updateItemSku(index, sku) {
     setParsed(p => {
       const items = [...p.items]
       const prod = products.find(x => x.sku === sku)
       items[index] = { ...items[index], sku, name_jp: prod?.name || items[index].name_jp }
+      return { ...p, items }
+    })
+    setCalculated(null); setSaved(null)
+  }
+
+  function updateItemCol(index, colNo) {
+    setParsed(p => {
+      const items = [...p.items]
+      items[index] = { ...items[index], permit_col: colNo || null }
       return { ...p, items }
     })
     setCalculated(null); setSaved(null)
@@ -40,7 +52,6 @@ export default function RakutenInvoicePage() {
     setValidating(true)
     reset()
     try {
-      // 整合性チェック
       const fd1 = new FormData()
       fd1.append('invoice_file', invoiceFile)
       fd1.append('permit_file', permitFile)
@@ -48,12 +59,10 @@ export default function RakutenInvoicePage() {
       setValidation(vRes.data)
       if (!vRes.data.ok) return
 
-      // インボイスパース
       const fd2 = new FormData()
       fd2.append('file', invoiceFile)
       const invRes = await api.post('/rakuten/invoices/parse-excel', fd2)
       setParsed(invRes.data)
-      // SKU手動選択用に商品マスタを取得
       try {
         const pRes = await api.get('/rakuten/products')
         setProducts(pRes.data || [])
@@ -65,7 +74,6 @@ export default function RakutenInvoicePage() {
         international_freight: invRes.data.international_freight || 0,
       }))
 
-      // 輸入許可書パース
       const fd3 = new FormData()
       fd3.append('file', permitFile)
       const pdfRes = await api.post('/rakuten/invoices/parse-pdf', fd3)
@@ -75,6 +83,7 @@ export default function RakutenInvoicePage() {
         import_tax_jpy: pdfRes.data.import_tax_jpy || 0,
         ...(pdfRes.data.exchange_rate ? { exchange_rate: pdfRes.data.exchange_rate } : {}),
       }))
+      setUseTariff(pdfRes.data.permit_columns?.length > 0)
     } catch (err) {
       alert('エラー: ' + (err.response?.data?.detail || err.message))
     } finally {
@@ -82,18 +91,23 @@ export default function RakutenInvoicePage() {
     }
   }
 
-  async function handleCalculate() {
-    if (!parsed) return
-    const payload = {
+  function buildPayload() {
+    const cols = pdfResult?.permit_columns || []
+    return {
       ...form,
       exchange_rate: parseFloat(form.exchange_rate),
       domestic_freight: parseFloat(form.domestic_freight || 0),
       international_freight: parseFloat(form.international_freight || 0),
       import_tax_jpy: parseFloat(form.import_tax_jpy || 0),
       items: parsed.items,
+      permit_columns: useTariff ? cols : [],
     }
+  }
+
+  async function handleCalculate() {
+    if (!parsed) return
     try {
-      const res = await api.post('/rakuten/invoices/calculate', payload)
+      const res = await api.post('/rakuten/invoices/calculate', buildPayload())
       setCalculated(res.data)
     } catch (err) {
       alert('計算エラー: ' + (err.response?.data?.detail || err.message))
@@ -104,15 +118,7 @@ export default function RakutenInvoicePage() {
     if (!calculated) return
     setSaving(true)
     try {
-      const payload = {
-        ...form,
-        exchange_rate: parseFloat(form.exchange_rate),
-        domestic_freight: parseFloat(form.domestic_freight || 0),
-        international_freight: parseFloat(form.international_freight || 0),
-        import_tax_jpy: parseFloat(form.import_tax_jpy || 0),
-        items: parsed.items,
-      }
-      const res = await api.post('/rakuten/invoices/save', payload)
+      const res = await api.post('/rakuten/invoices/save', buildPayload())
       setSaved(res.data)
     } catch (err) {
       alert('保存エラー: ' + (err.response?.data?.detail || err.message))
@@ -123,6 +129,8 @@ export default function RakutenInvoicePage() {
 
   const blankSkuCount = parsed?.items?.filter(item => !(item.sku || '').trim()).length || 0
   const matchedSkuCount = parsed?.items?.length ? parsed.items.length - blankSkuCount : 0
+  const permitColumns = pdfResult?.permit_columns || []
+  const hasMultipleCols = permitColumns.length > 1
 
   return (
     <div>
@@ -164,14 +172,48 @@ export default function RakutenInvoicePage() {
         </div>
       )}
 
-      {/* 輸入許可書情報 */}
+      {/* 輸入許可書情報 + 申告欄 */}
       {pdfResult && validation?.ok && (
         <div className="card" style={{ marginBottom: 16 }}>
           <h3 style={{ marginBottom: 12 }}>輸入許可書情報</h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, fontSize: 13 }}>
             <div><b>為替レート:</b> {pdfResult.exchange_rate}円/元</div>
-            <div><b>輸入税合計（関税＋消費税＋地方消費税）:</b> ¥{pdfResult.import_tax_jpy?.toLocaleString()}</div>
+            <div><b>輸入税合計（関税+消費税+地方消費税）:</b> ¥{pdfResult.import_tax_jpy?.toLocaleString()}</div>
+            <div><b>申告欄数:</b> {permitColumns.length}欄</div>
           </div>
+
+          {/* 申告欄ごとの関税率 */}
+          {permitColumns.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                <b style={{ fontSize: 13 }}>申告欄（税関分類）</b>
+                {hasMultipleCols && (
+                  <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={useTariff}
+                      onChange={e => { setUseTariff(e.target.checked); setCalculated(null); setSaved(null) }} />
+                    欄ごとの税率で計算（OFF=従来の一律按分）
+                  </label>
+                )}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(permitColumns.length, 3)}, 1fr)`, gap: 8 }}>
+                {permitColumns.map((col, i) => (
+                  <div key={col.col_no} style={{
+                    padding: '10px 14px', borderRadius: 6, fontSize: 12,
+                    border: `2px solid ${COL_COLORS[i % COL_COLORS.length]}`,
+                    background: `${COL_COLORS[i % COL_COLORS.length]}10`,
+                  }}>
+                    <div style={{ fontWeight: 700, marginBottom: 4, color: COL_COLORS[i % COL_COLORS.length] }}>
+                      {col.col_no}欄: {col.tariff_rate_str || 'FREE'}
+                    </div>
+                    <div style={{ color: '#475569' }}>{col.item_name}</div>
+                    <div style={{ color: '#94a3b8', marginTop: 2 }}>
+                      HS: {col.hs_code} / CIF: ¥{col.cif_jpy?.toLocaleString()} / BPR: {col.bpr_coeff}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -196,7 +238,9 @@ export default function RakutenInvoicePage() {
             <div className="form-group">
               <label>
                 輸入税合計（円）
-                <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 6 }}>関税＋消費税＋地方消費税</span>
+                <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 6 }}>
+                  {useTariff && hasMultipleCols ? '税率別計算時は参考値' : '関税+消費税+地方消費税'}
+                </span>
               </label>
               <input value={form.import_tax_jpy ?? 0} type="number" step="1"
                 style={{ borderColor: form.import_tax_jpy > 0 ? '#16a34a' : undefined }}
@@ -233,6 +277,9 @@ export default function RakutenInvoicePage() {
                   <th style={{ padding: '8px 12px', textAlign: 'right' }}>単価(元)</th>
                   <th style={{ padding: '8px 12px', textAlign: 'left' }}>仕入先注文</th>
                   <th style={{ padding: '8px 12px', textAlign: 'left' }}>URL</th>
+                  {useTariff && hasMultipleCols && (
+                    <th style={{ padding: '8px 12px', textAlign: 'center' }}>申告欄</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -255,6 +302,19 @@ export default function RakutenInvoicePage() {
                     <td style={{ padding: '8px 12px', fontSize: 11 }}>
                       {item.buy_url ? <a href={item.buy_url} target="_blank" rel="noreferrer">リンク</a> : '—'}
                     </td>
+                    {useTariff && hasMultipleCols && (
+                      <td style={{ padding: '4px 8px', textAlign: 'center' }}>
+                        <select value={item.permit_col || ''}
+                          style={{ fontSize: 11, padding: '2px 4px', borderRadius: 4,
+                                   border: '1px solid #cbd5e1', background: '#fff', minWidth: 60 }}
+                          onChange={e => updateItemCol(i, e.target.value ? parseInt(e.target.value) : null)}>
+                          <option value="">自動</option>
+                          {permitColumns.map(c => (
+                            <option key={c.col_no} value={c.col_no}>{c.col_no}欄 ({c.tariff_rate_str})</option>
+                          ))}
+                        </select>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -275,12 +335,25 @@ export default function RakutenInvoicePage() {
       {calculated && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <h3>計算結果</h3>
+            <div>
+              <h3 style={{ display: 'inline' }}>計算結果</h3>
+              {calculated.use_tariff && (
+                <span style={{ marginLeft: 12, fontSize: 12, background: '#dbeafe', color: '#1e40af',
+                               padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>
+                  税率別計算
+                </span>
+              )}
+              {!calculated.use_tariff && hasMultipleCols && (
+                <span style={{ marginLeft: 12, fontSize: 12, background: '#fef3c7', color: '#92400e',
+                               padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>
+                  一律按分（従来方式）
+                </span>
+              )}
+            </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               {saved && (
                 <span style={{ color: '#16a34a', fontSize: 13 }}>
                   保存済み（{saved.updated}件の商品マスタを更新 / {saved.skipped || 0}件スキップ）
-                  ※送料・輸入税の按分はスキップ分も含む全体金額で計算済み
                 </span>
               )}
               <button className="btn btn-primary" onClick={handleSave} disabled={saving || !!saved}>
@@ -299,14 +372,20 @@ export default function RakutenInvoicePage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-                  {['SKU', '品名', '商品内訳', '数量', '単価(元)', '小計(元)', '按分送料(元)', '按分税(円)', '1個原価(円)'].map(h => (
-                    <th key={h} style={{ padding: '8px 12px', textAlign: ['SKU', '品名', '商品内訳'].includes(h) ? 'left' : 'right', whiteSpace: 'nowrap' }}>{h}</th>
+                  {[
+                    'SKU', '品名', '商品内訳', '数量', '単価(元)', '小計(元)', '按分送料(元)',
+                    ...(calculated.use_tariff ? ['欄', '税率', '関税(円)'] : []),
+                    '按分税(円)', '1個原価(円)',
+                  ].map(h => (
+                    <th key={h} style={{ padding: '8px 12px', textAlign: ['SKU', '品名', '商品内訳', '欄'].includes(h) ? 'left' : 'right', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {calculated.items.map((item, i) => {
                   const isLinked = !!item.matched_sku
+                  const colIdx = item.col_no ? permitColumns.findIndex(c => c.col_no === item.col_no) : -1
+                  const colColor = colIdx >= 0 ? COL_COLORS[colIdx % COL_COLORS.length] : '#94a3b8'
                   return (
                     <tr key={i} style={{ borderBottom: '1px solid #e5e7eb', background: isLinked ? '#f0fdf4' : item.asin_memo ? '#fffbeb' : undefined }}>
                       <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 12 }}>{item.sku}</td>
@@ -324,6 +403,24 @@ export default function RakutenInvoicePage() {
                       <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.unit_price_cny}</td>
                       <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.total_price_cny}</td>
                       <td style={{ padding: '8px 12px', textAlign: 'right' }}>{item.freight_alloc_cny}</td>
+                      {calculated.use_tariff && (
+                        <>
+                          <td style={{ padding: '8px 6px', fontSize: 11 }}>
+                            {item.col_no != null && (
+                              <span style={{ background: `${colColor}18`, color: colColor, border: `1px solid ${colColor}`,
+                                             borderRadius: 4, padding: '1px 6px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                {item.col_no}欄
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: colColor }}>
+                            {item.tariff_rate_str || '—'}
+                          </td>
+                          <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                            {item.duty_jpy != null ? `¥${item.duty_jpy.toLocaleString()}` : '—'}
+                          </td>
+                        </>
+                      )}
                       <td style={{ padding: '8px 12px', textAlign: 'right', color: '#7c3aed' }}>
                         {item.tax_alloc_jpy ? `¥${item.tax_alloc_jpy.toLocaleString()}` : '—'}
                       </td>
