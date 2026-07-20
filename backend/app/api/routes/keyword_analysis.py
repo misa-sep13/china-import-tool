@@ -341,20 +341,31 @@ async def debug_rms_titles(upload_id: int = Query(None), db: Session = Depends(g
 
     try:
         async with httpx.AsyncClient(timeout=60) as client:
-            res = await client.get(
-                f"{RMS_BASE}/2.0/items/search",
-                headers=headers,
-                params={"offset": 0},
-            )
-            if res.status_code != 200:
-                return {"error": f"RMS API status {res.status_code}", "body": res.text[:500]}
-            data = res.json()
-            for entry in data.get("results", []):
-                item = entry.get("item", {})
-                rms_items.append({
-                    "manageNumber": item.get("manageNumber", ""),
-                    "title": item.get("title", ""),
-                })
+            offset = 0
+            while True:
+                res = await client.get(
+                    f"{RMS_BASE}/2.0/items/search",
+                    headers=headers,
+                    params={"offset": offset},
+                )
+                if res.status_code != 200:
+                    return {"error": f"RMS API status {res.status_code}", "body": res.text[:500]}
+                data = res.json()
+                results_list = data.get("results", [])
+                if not results_list:
+                    break
+                for entry in results_list:
+                    item = entry.get("item", {})
+                    rms_items.append({
+                        "manageNumber": item.get("manageNumber", ""),
+                        "title": item.get("title", ""),
+                    })
+                total = data.get("numFound", 0)
+                offset += len(results_list)
+                if offset >= total:
+                    break
+                import asyncio
+                await asyncio.sleep(0.3)
     except Exception as e:
         return {"error": str(e)}
 
@@ -363,10 +374,17 @@ async def debug_rms_titles(upload_id: int = Query(None), db: Session = Depends(g
         rows = db.query(KeywordData).filter(KeywordData.upload_id == upload_id).all()
         csv_titles = list({r.product_name for r in rows if r.product_name})
 
+    rms_title_set = {item["title"] for item in rms_items}
+    matched = [t for t in csv_titles if t in rms_title_set]
+    unmatched = [t[:60] for t in csv_titles if t not in rms_title_set]
+
     return {
         "rms_count": len(rms_items),
-        "rms_titles": rms_items[:5],
-        "csv_titles": csv_titles[:5],
+        "rms_titles": rms_items[:3],
+        "csv_count": len(csv_titles),
+        "csv_titles": csv_titles[:3],
+        "matched": len(matched),
+        "unmatched_csv": unmatched[:5],
     }
 
 
