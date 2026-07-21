@@ -33,3 +33,5 @@ backend/china_import.db
 
 # Claude Code
 .claude/
+
+.gh-dep*/
