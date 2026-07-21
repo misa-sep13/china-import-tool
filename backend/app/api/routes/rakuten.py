@@ -2963,22 +2963,28 @@ def apply_daily_sales(req: DailySalesApplyRequest, db: Session = Depends(get_db)
     """GitHub Actions から日別×SKU の販売数を受け取り rakuten_daily_sales に upsert する。"""
     from app.models.rakuten_daily_sales import RakutenDailySales
     from datetime import date as _date
-    upserted = 0
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    rows_to_upsert = []
     for sku, day_map in (req.daily or {}).items():
         for day_str, qty in day_map.items():
             try:
                 sale_date = _date.fromisoformat(day_str)
             except Exception:
                 continue
-            existing = db.query(RakutenDailySales).filter(
-                RakutenDailySales.sale_date == sale_date,
-                RakutenDailySales.sku == sku,
-            ).first()
-            if existing:
-                existing.qty = qty
-            else:
-                db.add(RakutenDailySales(sale_date=sale_date, sku=sku, qty=qty))
-            upserted += 1
+            rows_to_upsert.append({"sale_date": sale_date, "sku": sku, "qty": qty})
+
+    upserted = 0
+    CHUNK = 500
+    for i in range(0, len(rows_to_upsert), CHUNK):
+        chunk = rows_to_upsert[i:i + CHUNK]
+        stmt = pg_insert(RakutenDailySales).values(chunk)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["sale_date", "sku"],
+            set_={"qty": stmt.excluded.qty},
+        )
+        db.execute(stmt)
+        upserted += len(chunk)
     db.commit()
     return {"upserted": upserted}
 

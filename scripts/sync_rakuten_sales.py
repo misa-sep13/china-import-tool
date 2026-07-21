@@ -54,16 +54,25 @@ def main() -> int:
         result = res.json()
         print("反映結果:", result)
 
-        # 4) 日別販売数をRenderに送ってDB更新
+        # 4) 日別販売数をRenderに送ってDB更新（50 SKUずつバッチ送信）
+        all_skus = list(sku_daily.keys())
         daily_count = sum(len(d) for d in sku_daily.values())
-        print(f"日別データ送信中（{len(sku_daily)} SKU × {daily_count} レコード）...")
-        res = c.post(
-            f"{backend}/api/rakuten/rms/daily-sales/apply",
-            json={"daily": sku_daily},
-        )
-        res.raise_for_status()
-        daily_result = res.json()
-        print("日別反映結果:", daily_result)
+        print(f"日別データ送信中（{len(all_skus)} SKU × {daily_count} レコード）...")
+        BATCH = 50
+        total_upserted = 0
+        for i in range(0, len(all_skus), BATCH):
+            batch_skus = all_skus[i:i + BATCH]
+            batch_data = {s: sku_daily[s] for s in batch_skus}
+            res = c.post(
+                f"{backend}/api/rakuten/rms/daily-sales/apply",
+                json={"daily": batch_data},
+                timeout=300,
+            )
+            res.raise_for_status()
+            r = res.json()
+            total_upserted += r.get("upserted", 0)
+            print(f"  バッチ {i // BATCH + 1}/{-(-len(all_skus) // BATCH)}: {len(batch_skus)} SKU done")
+        print(f"日別反映結果: upserted={total_upserted}")
 
         # 5) 在庫切れSKUをマーク
         res = c.post(f"{backend}/api/rakuten/rms/daily-sales/mark-stockouts")
