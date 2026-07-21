@@ -867,9 +867,38 @@ def _ordered_by_sku_stage(db):
     return o1, o2
 
 
+def _daily_avg_from_table(db) -> dict[str, dict]:
+    """rakuten_daily_salesから7日・30日のSKU別日販を算出。
+    戻り値: {sku: {"avg_7": float, "avg_30": float}}
+    """
+    from app.models.rakuten_daily_sales import RakutenDailySales
+    today = date.today()
+    cutoff_30 = today - timedelta(days=30)
+    cutoff_7 = today - timedelta(days=7)
+    rows = db.query(
+        RakutenDailySales.sku,
+        RakutenDailySales.sale_date,
+        RakutenDailySales.qty,
+    ).filter(RakutenDailySales.sale_date >= cutoff_30).all()
+    if not rows:
+        return {}
+    sku_data: dict[str, dict] = {}
+    for sku, sale_date, qty in rows:
+        if sku not in sku_data:
+            sku_data[sku] = {"sum_7": 0, "sum_30": 0}
+        sku_data[sku]["sum_30"] += qty or 0
+        if sale_date >= cutoff_7:
+            sku_data[sku]["sum_7"] += qty or 0
+    return {
+        sku: {"avg_7": round(d["sum_7"] / 7, 2), "avg_30": round(d["sum_30"] / 30, 2)}
+        for sku, d in sku_data.items()
+    }
+
+
 @router.get("/orders/recommendations")
 def get_recommendations(db: Session = Depends(get_db)):
     settings_row = _get_or_create_settings(db)
+    sku_daily_avgs = _daily_avg_from_table(db)
     s = RakutenCalcSettings(
         lead_days=settings_row.lead_days,
         target_days=settings_row.target_days,
@@ -967,6 +996,7 @@ def get_recommendations(db: Session = Depends(get_db)):
         agg = unit_sales.get(p.sku, {})
         sales_recent = agg.get("recent", 0)
         sales_prev   = agg.get("prev",   0)
+        da = sku_daily_avgs.get(p.sku, {})
         calc = calc_rakuten_order(
             stock=p.stock or 0,
             inbound=0,
@@ -976,6 +1006,8 @@ def get_recommendations(db: Session = Depends(get_db)):
             super_sale_qty=0,
             sales_90=p.sales_90 or 0,
             stockout_days_90=p.stockout_days_90 or 0,
+            daily_avg_7=da.get("avg_7", 0),
+            daily_avg_30=da.get("avg_30", 0),
             s=s,
         )
         try:
@@ -1001,6 +1033,8 @@ def get_recommendations(db: Session = Depends(get_db)):
             "ordered_2":       ordered_2,
             "total_stock":     calc.total_stock,
             "daily_avg":       calc.daily_avg,
+            "daily_avg_7":     calc.daily_avg_7,
+            "daily_avg_30":    calc.daily_avg_30,
             "days_left":       calc.days_left,
             "growth_rate":     calc.growth_rate,
             "predicted_30":    calc.predicted_30,
@@ -1019,6 +1053,7 @@ def get_recommendations(db: Session = Depends(get_db)):
 def get_all_products_order(db: Session = Depends(get_db)):
     """全商品（is_component=False）を発注推奨リストと同じ形式で返す"""
     settings_row = _get_or_create_settings(db)
+    sku_daily_avgs = _daily_avg_from_table(db)
     s = RakutenCalcSettings(
         lead_days=settings_row.lead_days,
         target_days=settings_row.target_days,
@@ -1064,6 +1099,7 @@ def get_all_products_order(db: Session = Depends(get_db)):
         agg = unit_sales.get(p.sku, {})
         sales_recent = agg.get("recent", 0) or (p.sales_30_recent or 0)
         sales_prev   = agg.get("prev",   0) or (p.sales_30_prev   or 0)
+        da = sku_daily_avgs.get(p.sku, {})
         calc = calc_rakuten_order(
             stock=p.stock or 0,
             inbound=0,
@@ -1073,6 +1109,8 @@ def get_all_products_order(db: Session = Depends(get_db)):
             super_sale_qty=0,
             sales_90=getattr(p, 'sales_90', None) or 0,
             stockout_days_90=getattr(p, 'stockout_days_90', None) or 0,
+            daily_avg_7=da.get("avg_7", 0),
+            daily_avg_30=da.get("avg_30", 0),
             s=s,
         )
         sc_parsed = []
@@ -1096,6 +1134,8 @@ def get_all_products_order(db: Session = Depends(get_db)):
             "ordered_2":       ordered_2,
             "total_stock":     calc.total_stock,
             "daily_avg":       calc.daily_avg,
+            "daily_avg_7":     calc.daily_avg_7,
+            "daily_avg_30":    calc.daily_avg_30,
             "days_left":       calc.days_left,
             "growth_rate":     calc.growth_rate,
             "order_qty":       calc.order_qty,
