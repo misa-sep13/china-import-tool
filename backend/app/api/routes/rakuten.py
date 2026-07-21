@@ -174,6 +174,7 @@ class RakutenSettingsSchema(BaseModel):
     target_days:        int   = 30
     safety_stock_rate:  float = 0.10
     threshold_days:     int   = 60
+    order_qty_cap:      int   = 3
     super_sale_enabled: bool  = False
     super_sale_mode:    str   = 'A'
     super_sale_start:   Optional[date] = None

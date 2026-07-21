@@ -39,9 +39,11 @@ def main() -> int:
         return 1
 
     # 2) 重い受注取得(60日) — GitHubランナーのメモリで実行
-    print("受注データ取得中（60日分）...")
+    order_qty_cap = settings.get("order_qty_cap", 3) or 0
+    print(f"受注データ取得中（60日分、1注文キャップ={order_qty_cap}）...")
     sku_sales, sku_daily = asyncio.run(
-        fetch_sales_by_sku(secret, license_key, days=60, include_daily=True)
+        fetch_sales_by_sku(secret, license_key, days=60, include_daily=True,
+                           order_qty_cap=order_qty_cap)
     )
     print(f"取得SKU数: {len(sku_sales)}")
 

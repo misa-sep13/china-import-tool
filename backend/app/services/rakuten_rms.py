@@ -71,6 +71,7 @@ async def _process_batch(
     sku_daily: dict,
     now: datetime,
     sem: asyncio.Semaphore,
+    order_qty_cap: int = 0,
 ) -> None:
     """1バッチ分(最大BATCH_SIZE件)の注文詳細をgetOrderで取得しsku_dailyに集計。
     並列実行用。HTTP取得時のみawaitし、sku_dailyへの更新はawaitを挟まないため
@@ -103,6 +104,8 @@ async def _process_batch(
             for package in order.get("PackageModelList", []):
                 for item in package.get("ItemModelList", []):
                     qty = item.get("units", 1) or 1
+                    if order_qty_cap and order_qty_cap > 0:
+                        qty = min(qty, order_qty_cap)
                     # version7以降: SkuModelList の variantId を優先
                     sku_list = item.get("SkuModelList") or []
                     skus = [s.get("variantId", "") for s in sku_list if s.get("variantId")]
@@ -220,6 +223,7 @@ async def fetch_sales_by_sku(
     license_key: str,
     days: int = 60,
     include_daily: bool = False,
+    order_qty_cap: int = 0,
 ) -> dict | tuple:
     """
     過去N日間の受注データを取得し、SKUごとの販売数を返す。
@@ -285,7 +289,7 @@ async def fetch_sales_by_sku(
     # 2) getOrderをBATCH_SIZE件ずつ並列取得してsku_dailyへ集計
     sem = asyncio.Semaphore(GETORDER_CONCURRENCY)
     batches = [all_order_numbers[i:i + BATCH_SIZE] for i in range(0, len(all_order_numbers), BATCH_SIZE)]
-    await asyncio.gather(*[_process_batch(headers, b, sku_daily, now, sem) for b in batches])
+    await asyncio.gather(*[_process_batch(headers, b, sku_daily, now, sem, order_qty_cap=order_qty_cap) for b in batches])
 
     # 3) 集計
     sku_sales: dict[str, dict] = {}

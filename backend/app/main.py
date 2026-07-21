@@ -145,6 +145,8 @@ def _migrate():
         ("review_campaigns","keywords", "ALTER TABLE review_campaigns ADD COLUMN keywords TEXT"),
         # キーワード分析：商品管理番号
         ("title_optimizations","manage_number", "ALTER TABLE title_optimizations ADD COLUMN manage_number VARCHAR"),
+        # まとめ買い除外キャップ
+        ("rakuten_settings","order_qty_cap", "ALTER TABLE rakuten_settings ADD COLUMN order_qty_cap INTEGER DEFAULT 3"),
     ]
 
     inspector = inspect(engine)
