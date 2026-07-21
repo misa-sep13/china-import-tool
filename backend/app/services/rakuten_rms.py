@@ -219,11 +219,13 @@ async def fetch_sales_by_sku(
     service_secret: str,
     license_key: str,
     days: int = 60,
-) -> dict:
+    include_daily: bool = False,
+) -> dict | tuple:
     """
     過去N日間の受注データを取得し、SKUごとの販売数を返す。
     楽天APIは63日以内の制限があるため60日ずつ分割してリクエストする。
     注文番号は全件メモリに溜めず、ページ取得のたびに即時 getOrder 処理してメモリを節約する。
+    include_daily=True の場合、(sku_sales, sku_daily) のタプルを返す。
     """
     headers = _auth_header(service_secret, license_key)
     from datetime import timezone
@@ -307,6 +309,8 @@ async def fetch_sales_by_sku(
             "stockout_days": 0,
         }
 
+    if include_daily:
+        return sku_sales, sku_daily
     return sku_sales
 
 

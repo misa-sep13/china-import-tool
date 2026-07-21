@@ -40,15 +40,29 @@ def main() -> int:
 
     # 2) 重い受注取得(60日) — GitHubランナーのメモリで実行
     print("受注データ取得中（60日分）...")
-    sku_sales = asyncio.run(fetch_sales_by_sku(secret, license_key, days=60))
+    sku_sales, sku_daily = asyncio.run(
+        fetch_sales_by_sku(secret, license_key, days=60, include_daily=True)
+    )
     print(f"取得SKU数: {len(sku_sales)}")
 
-    # 3) 集計結果だけをRenderに送ってDB更新（Render側は軽い書き込みのみ）
     with httpx.Client(timeout=180) as c:
+        # 3) 集計結果をRenderに送ってDB更新（従来のSKU別集計）
         res = c.post(f"{backend}/api/rakuten/rms/sales/apply", json={"sales": sku_sales})
         res.raise_for_status()
         result = res.json()
-    print("反映結果:", result)
+        print("反映結果:", result)
+
+        # 4) 日別販売数をRenderに送ってDB更新
+        daily_count = sum(len(d) for d in sku_daily.values())
+        print(f"日別データ送信中（{len(sku_daily)} SKU × {daily_count} レコード）...")
+        res = c.post(
+            f"{backend}/api/rakuten/rms/daily-sales/apply",
+            json={"daily": sku_daily},
+        )
+        res.raise_for_status()
+        daily_result = res.json()
+        print("日別反映結果:", daily_result)
+
     return 0
 
 

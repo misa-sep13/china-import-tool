@@ -2899,6 +2899,75 @@ def apply_sales(req: SalesApplyRequest, db: Session = Depends(get_db)):
     }
 
 
+# ============ 日別販売数 ============
+
+class DailySalesApplyRequest(BaseModel):
+    # {sku: {date_str: qty, ...}, ...}
+    daily: dict
+
+
+@router.post("/rms/daily-sales/apply")
+def apply_daily_sales(req: DailySalesApplyRequest, db: Session = Depends(get_db)):
+    """GitHub Actions から日別×SKU の販売数を受け取り rakuten_daily_sales に upsert する。"""
+    from app.models.rakuten_daily_sales import RakutenDailySales
+    from datetime import date as _date
+    upserted = 0
+    for sku, day_map in (req.daily or {}).items():
+        for day_str, qty in day_map.items():
+            try:
+                sale_date = _date.fromisoformat(day_str)
+            except Exception:
+                continue
+            existing = db.query(RakutenDailySales).filter(
+                RakutenDailySales.sale_date == sale_date,
+                RakutenDailySales.sku == sku,
+            ).first()
+            if existing:
+                existing.qty = qty
+            else:
+                db.add(RakutenDailySales(sale_date=sale_date, sku=sku, qty=qty))
+            upserted += 1
+    db.commit()
+    return {"upserted": upserted}
+
+
+@router.get("/daily-sales")
+def get_daily_sales(days: int = 7, db: Session = Depends(get_db)):
+    """日別×商品の販売数を返す。商品名はrakuten_productsから結合。"""
+    from app.models.rakuten_daily_sales import RakutenDailySales
+    from datetime import date as _date, timedelta as _td
+    cutoff = _date.today() - _td(days=days)
+    rows = db.query(RakutenDailySales).filter(
+        RakutenDailySales.sale_date >= cutoff,
+    ).order_by(RakutenDailySales.sale_date.desc()).all()
+
+    products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    sku_name = {}
+    for p in products:
+        sku_name[p.sku] = p.name
+        if p.rakuten_sku_id:
+            sku_name[p.rakuten_sku_id] = p.name
+
+    # {sku: {date: qty}}
+    result: dict[str, dict] = {}
+    for r in rows:
+        d = r.sale_date.isoformat()
+        if r.sku not in result:
+            result[r.sku] = {}
+        result[r.sku][d] = r.qty
+
+    sku_list = []
+    for sku, days_data in result.items():
+        sku_list.append({
+            "sku": sku,
+            "name": sku_name.get(sku, sku),
+            "daily": days_data,
+            "total": sum(days_data.values()),
+        })
+    sku_list.sort(key=lambda x: x["total"], reverse=True)
+    return {"data": sku_list, "days": days}
+
+
 # ============ スーパーセール(SS)販売数の集計・保存 ============
 
 def _run_ss_sync_job(job_id: str, service_secret: str, license_key: str, period_key: str,

@@ -22,6 +22,7 @@ from app.models import welfare as welfare_models
 from app.models import ads as ads_models
 from app.models import review as review_models
 from app.models import keyword_analysis as keyword_analysis_models
+from app.models import rakuten_daily_sales as rakuten_daily_sales_models
 
 def _migrate():
     from sqlalchemy import text, inspect
