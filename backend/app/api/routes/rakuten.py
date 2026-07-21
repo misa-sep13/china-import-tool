@@ -869,7 +869,7 @@ def _ordered_by_sku_stage(db):
 
 
 def _daily_avg_from_table(db) -> dict[str, dict]:
-    """rakuten_daily_salesから7日・30日のSKU別日販を算出。
+    """rakuten_daily_salesから7日・30日のSKU別日販を算出（在庫切れ日を除外）。
     戻り値: {sku: {"avg_7": float, "avg_30": float}}
     """
     from app.models.rakuten_daily_sales import RakutenDailySales
@@ -880,20 +880,31 @@ def _daily_avg_from_table(db) -> dict[str, dict]:
         RakutenDailySales.sku,
         RakutenDailySales.sale_date,
         RakutenDailySales.qty,
+        RakutenDailySales.is_stockout,
     ).filter(RakutenDailySales.sale_date >= cutoff_30).all()
     if not rows:
         return {}
     sku_data: dict[str, dict] = {}
-    for sku, sale_date, qty in rows:
+    for sku, sale_date, qty, is_stockout in rows:
         if sku not in sku_data:
-            sku_data[sku] = {"sum_7": 0, "sum_30": 0}
-        sku_data[sku]["sum_30"] += qty or 0
-        if sale_date >= cutoff_7:
-            sku_data[sku]["sum_7"] += qty or 0
-    return {
-        sku: {"avg_7": round(d["sum_7"] / 7, 2), "avg_30": round(d["sum_30"] / 30, 2)}
-        for sku, d in sku_data.items()
-    }
+            sku_data[sku] = {"sum_7": 0, "sum_30": 0, "days_7": 0, "days_30": 0}
+        if not is_stockout:
+            sku_data[sku]["sum_30"] += qty or 0
+            sku_data[sku]["days_30"] += 1
+            if sale_date >= cutoff_7:
+                sku_data[sku]["sum_7"] += qty or 0
+                sku_data[sku]["days_7"] += 1
+        elif sale_date >= cutoff_7:
+            pass  # stockout日は7日カウントにも含めない
+    result = {}
+    for sku, d in sku_data.items():
+        eff_7 = max(d["days_7"], 1)
+        eff_30 = max(d["days_30"], 1)
+        result[sku] = {
+            "avg_7": round(d["sum_7"] / eff_7, 2),
+            "avg_30": round(d["sum_30"] / eff_30, 2),
+        }
+    return result
 
 
 @router.get("/orders/recommendations")
@@ -3007,6 +3018,33 @@ def get_daily_sales(days: int = 7, db: Session = Depends(get_db)):
         })
     sku_list.sort(key=lambda x: x["total"], reverse=True)
     return {"data": sku_list, "days": days}
+
+
+@router.post("/rms/daily-sales/mark-stockouts")
+def mark_stockouts(db: Session = Depends(get_db)):
+    """在庫0のSKUについて今日のrakuten_daily_salesにis_stockout=Trueを設定する。"""
+    from app.models.rakuten_daily_sales import RakutenDailySales
+    today = date.today()
+    zero_stock_skus = [
+        p.sku for p in db.query(RakutenProduct).filter(
+            RakutenProduct.is_active == True,
+            RakutenProduct.stock <= 0,
+        ).all()
+        if p.sku
+    ]
+    marked = 0
+    for sku in zero_stock_skus:
+        existing = db.query(RakutenDailySales).filter(
+            RakutenDailySales.sale_date == today,
+            RakutenDailySales.sku == sku,
+        ).first()
+        if existing:
+            existing.is_stockout = True
+        else:
+            db.add(RakutenDailySales(sale_date=today, sku=sku, qty=0, is_stockout=True))
+        marked += 1
+    db.commit()
+    return {"marked_stockouts": marked, "date": today.isoformat()}
 
 
 # ============ スーパーセール(SS)販売数の集計・保存 ============

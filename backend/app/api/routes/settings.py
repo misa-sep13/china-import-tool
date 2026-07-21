@@ -33,6 +33,7 @@ class SettingsSchema(BaseModel):
     price_change_pct: float = 0.03
     min_profit_rate: float = 0.10
     new_product_exclude_vine: bool = True
+    order_qty_cap: int = 3
 
     class Config:
         from_attributes = True

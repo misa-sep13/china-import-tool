@@ -110,7 +110,7 @@ def _run_preview_job(job_id: str):
             asin_list = [p.asin for p in products if p.asin]
             with ThreadPoolExecutor(max_workers=2) as ex:
                 f_inv   = ex.submit(fetch_inventory)
-                f_sales = ex.submit(fetch_all_sales, asin_list)
+                f_sales = ex.submit(fetch_all_sales, asin_list, getattr(settings_row, 'order_qty_cap', 0) or 0)
             inventory = f_inv.result()
             sales_7, sales_15, sales_30, sales_60, sales_90 = f_sales.result()
         else:
@@ -216,7 +216,7 @@ def _run_stock_job(job_id: str):
             asin_list = [p.asin for p in products if p.asin]
             with ThreadPoolExecutor(max_workers=2) as ex:
                 f_inv   = ex.submit(fetch_inventory)
-                f_sales = ex.submit(fetch_all_sales, asin_list)
+                f_sales = ex.submit(fetch_all_sales, asin_list, getattr(settings_row, 'order_qty_cap', 0) or 0)
             inventory = f_inv.result()
             sales_7, sales_15, sales_30, sales_60, sales_90 = f_sales.result()
         else:
@@ -360,7 +360,7 @@ def preview_orders(db: Session = Depends(get_db)):
         asin_list = [p.asin for p in products if p.asin]
         with ThreadPoolExecutor(max_workers=2) as ex:
             f_inv   = ex.submit(fetch_inventory)
-            f_sales = ex.submit(fetch_all_sales, asin_list)
+            f_sales = ex.submit(fetch_all_sales, asin_list, getattr(settings_row, 'order_qty_cap', 0) or 0)
         inventory = f_inv.result()
         sales_7, sales_15, sales_30, sales_60, sales_90 = f_sales.result()
     else:

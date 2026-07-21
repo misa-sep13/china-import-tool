@@ -182,36 +182,46 @@ def fetch_catalog_info(asin_list: List[str]) -> Dict[str, dict]:
     _cache[cache_key] = {"value": result, "expires_at": time.time() + _CACHE_TTL_LONG}
     return result
 
-def _fetch_sales_one(asin: str, days: int, end_dt) -> tuple:
+def _fetch_sales_one(asin: str, days: int, end_dt, order_qty_cap: int = 0) -> tuple:
     """1ASIN×1期間の日販を取得。失敗時はNoneを返す（0.0を返すと「売れていない」と
-    区別できず、レート制限失敗が日販の過小評価→発注推奨から漏れる事故になるため）"""
+    区別できず、レート制限失敗が日販の過小評価→発注推奨から漏れる事故になるため）
+    order_qty_cap>0の場合、日別データを取得して異常値（中央値×3以上）をキャップする。"""
     from datetime import timedelta
     mp = "A1VC38T7YXB528"
     start = end_dt - timedelta(days=days)
+    granularity = "Day" if order_qty_cap and order_qty_cap > 0 else "Total"
     try:
         params = urllib.parse.urlencode({
             "marketplaceIds": mp,
             "interval": f"{start.strftime('%Y-%m-%dT%H:%M:%SZ')}--{end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')}",
-            "granularity": "Total",
+            "granularity": granularity,
             "asin": asin,
         })
         data = _call_sp_api(f"/sales/v1/orderMetrics?{params}")
-        units = sum(m.get("unitCount", 0) for m in data.get("payload", []))
+        daily_units = [m.get("unitCount", 0) for m in data.get("payload", [])]
+        if granularity == "Day" and len(daily_units) > 2:
+            sorted_units = sorted(daily_units)
+            median = sorted_units[len(sorted_units) // 2]
+            cap = max(order_qty_cap, median * 3, 1)
+            daily_units = [min(u, cap) for u in daily_units]
+        units = sum(daily_units)
         return asin, round(units / days, 4)
     except Exception:
         return asin, None
 
 
-def fetch_all_sales(asin_list: List[str]) -> tuple:
+def fetch_all_sales(asin_list: List[str], order_qty_cap: int = 0) -> tuple:
     """7/15/30/60/90日の売上を全ASIN×全期間で並列一括取得。now()を1回固定して集計期間のブレをなくす"""
     from datetime import datetime, timezone
     periods = [7, 15, 30, 60, 90]
+
+    cache_suffix = f"_cap{order_qty_cap}" if order_qty_cap else ""
 
     # キャッシュチェック
     cached_results = {}
     missing_periods = set()
     for d in periods:
-        cached = _cache_get(f"sales_{d}")
+        cached = _cache_get(f"sales_{d}{cache_suffix}")
         if cached is not None:
             cached_results[d] = cached
         else:
@@ -228,7 +238,7 @@ def fetch_all_sales(asin_list: List[str]) -> tuple:
 
     # 並列数を抑えてレート制限(429)自体を減らす（10だと429多発で欠損が出ていた）
     with ThreadPoolExecutor(max_workers=4) as ex:
-        futures = {ex.submit(_fetch_sales_one, a, d, end_dt): (a, d) for a, d in tasks}
+        futures = {ex.submit(_fetch_sales_one, a, d, end_dt, order_qty_cap): (a, d) for a, d in tasks}
         for f in as_completed(futures):
             asin, val = f.result()
             a, d = futures[f]
@@ -239,14 +249,14 @@ def fetch_all_sales(asin_list: List[str]) -> tuple:
     failed = [(d, a) for d in missing_periods for a, v in period_results[d].items() if v is None]
     for d, a in failed:
         time.sleep(1)
-        _, v = _fetch_sales_one(a, d, end_dt)
+        _, v = _fetch_sales_one(a, d, end_dt, order_qty_cap)
         if v is None:
             logging.getLogger("amazon").warning(f"売上取得失敗(0扱い): asin={a} period={d}d")
             v = 0.0
         period_results[d][a] = v
 
     for d in missing_periods:
-        _cache_set(f"sales_{d}", period_results[d])
+        _cache_set(f"sales_{d}{cache_suffix}", period_results[d])
         cached_results[d] = period_results[d]
 
     return (cached_results[7], cached_results[15], cached_results[30], cached_results[60], cached_results[90])

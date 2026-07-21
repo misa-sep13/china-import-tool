@@ -65,6 +65,12 @@ def main() -> int:
         daily_result = res.json()
         print("日別反映結果:", daily_result)
 
+        # 5) 在庫切れSKUをマーク
+        res = c.post(f"{backend}/api/rakuten/rms/daily-sales/mark-stockouts")
+        res.raise_for_status()
+        stockout_result = res.json()
+        print("在庫切れマーク:", stockout_result)
+
     return 0
 
 
