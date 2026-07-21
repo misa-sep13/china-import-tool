@@ -28,3 +28,4 @@ class OrderSettings(Base):
     price_change_pct = Column(Float, default=0.03)        # 変更幅3%
     min_profit_rate = Column(Float, default=0.10)         # 下限利益率10%
     new_product_exclude_vine = Column(Boolean, default=True) # VINEを販売数から除外
+    order_qty_cap = Column(Integer, default=3)               # 1注文あたり数量上限（まとめ買い除外）

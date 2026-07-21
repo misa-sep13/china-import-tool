@@ -106,7 +106,7 @@ export default function RakutenSettingsPage() {
                 <input type="number" min={1} {...f('target_days', 'number')} style={{ width: 80 }} />
                 <span style={{ color: '#888', fontSize: 13 }}>日</span>
               </div>
-              <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>直近30日販売数を基に、この日数分の予測販売数を計算します</p>
+              <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>加重日販（7日×0.4 + 30日×0.6）を基に、この日数分の予測販売数を計算します</p>
             </div>
             <div className="form-group">
               <label>リードタイム（発注〜入荷）</label>
@@ -136,6 +136,14 @@ export default function RakutenSettingsPage() {
                 <span style={{ color: '#888', fontSize: 13 }}>日</span>
               </div>
               <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>全在庫がこの日数分を下回るとオレンジ表示 + 発注リストに表示</p>
+            </div>
+            <div className="form-group">
+              <label>まとめ買い除外キャップ</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" min={0} {...f('order_qty_cap', 'number')} style={{ width: 80 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>個</span>
+              </div>
+              <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>1注文あたり同一SKUをこの数以上購入した場合、日販計算ではこの数でカウント（0=無制限）</p>
             </div>
           </div>
 

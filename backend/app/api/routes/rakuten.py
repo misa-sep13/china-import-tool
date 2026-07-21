@@ -174,6 +174,7 @@ class RakutenSettingsSchema(BaseModel):
     target_days:        int   = 30
     safety_stock_rate:  float = 0.10
     threshold_days:     int   = 60
+    order_qty_cap:      int   = 3
     super_sale_enabled: bool  = False
     super_sale_mode:    str   = 'A'
     super_sale_start:   Optional[date] = None
@@ -867,9 +868,49 @@ def _ordered_by_sku_stage(db):
     return o1, o2
 
 
+def _daily_avg_from_table(db) -> dict[str, dict]:
+    """rakuten_daily_salesから7日・30日のSKU別日販を算出（在庫切れ日を除外）。
+    戻り値: {sku: {"avg_7": float, "avg_30": float}}
+    """
+    from app.models.rakuten_daily_sales import RakutenDailySales
+    today = date.today()
+    cutoff_30 = today - timedelta(days=30)
+    cutoff_7 = today - timedelta(days=7)
+    rows = db.query(
+        RakutenDailySales.sku,
+        RakutenDailySales.sale_date,
+        RakutenDailySales.qty,
+        RakutenDailySales.is_stockout,
+    ).filter(RakutenDailySales.sale_date >= cutoff_30).all()
+    if not rows:
+        return {}
+    sku_data: dict[str, dict] = {}
+    for sku, sale_date, qty, is_stockout in rows:
+        if sku not in sku_data:
+            sku_data[sku] = {"sum_7": 0, "sum_30": 0, "days_7": 0, "days_30": 0}
+        if not is_stockout:
+            sku_data[sku]["sum_30"] += qty or 0
+            sku_data[sku]["days_30"] += 1
+            if sale_date >= cutoff_7:
+                sku_data[sku]["sum_7"] += qty or 0
+                sku_data[sku]["days_7"] += 1
+        elif sale_date >= cutoff_7:
+            pass  # stockout日は7日カウントにも含めない
+    result = {}
+    for sku, d in sku_data.items():
+        eff_7 = max(d["days_7"], 1)
+        eff_30 = max(d["days_30"], 1)
+        result[sku] = {
+            "avg_7": round(d["sum_7"] / eff_7, 2),
+            "avg_30": round(d["sum_30"] / eff_30, 2),
+        }
+    return result
+
+
 @router.get("/orders/recommendations")
 def get_recommendations(db: Session = Depends(get_db)):
     settings_row = _get_or_create_settings(db)
+    sku_daily_avgs = _daily_avg_from_table(db)
     s = RakutenCalcSettings(
         lead_days=settings_row.lead_days,
         target_days=settings_row.target_days,
@@ -967,6 +1008,7 @@ def get_recommendations(db: Session = Depends(get_db)):
         agg = unit_sales.get(p.sku, {})
         sales_recent = agg.get("recent", 0)
         sales_prev   = agg.get("prev",   0)
+        da = sku_daily_avgs.get(p.sku, {})
         calc = calc_rakuten_order(
             stock=p.stock or 0,
             inbound=0,
@@ -976,6 +1018,8 @@ def get_recommendations(db: Session = Depends(get_db)):
             super_sale_qty=0,
             sales_90=p.sales_90 or 0,
             stockout_days_90=p.stockout_days_90 or 0,
+            daily_avg_7=da.get("avg_7", 0),
+            daily_avg_30=da.get("avg_30", 0),
             s=s,
         )
         try:
@@ -1001,6 +1045,8 @@ def get_recommendations(db: Session = Depends(get_db)):
             "ordered_2":       ordered_2,
             "total_stock":     calc.total_stock,
             "daily_avg":       calc.daily_avg,
+            "daily_avg_7":     calc.daily_avg_7,
+            "daily_avg_30":    calc.daily_avg_30,
             "days_left":       calc.days_left,
             "growth_rate":     calc.growth_rate,
             "predicted_30":    calc.predicted_30,
@@ -1019,6 +1065,7 @@ def get_recommendations(db: Session = Depends(get_db)):
 def get_all_products_order(db: Session = Depends(get_db)):
     """全商品（is_component=False）を発注推奨リストと同じ形式で返す"""
     settings_row = _get_or_create_settings(db)
+    sku_daily_avgs = _daily_avg_from_table(db)
     s = RakutenCalcSettings(
         lead_days=settings_row.lead_days,
         target_days=settings_row.target_days,
@@ -1064,6 +1111,7 @@ def get_all_products_order(db: Session = Depends(get_db)):
         agg = unit_sales.get(p.sku, {})
         sales_recent = agg.get("recent", 0) or (p.sales_30_recent or 0)
         sales_prev   = agg.get("prev",   0) or (p.sales_30_prev   or 0)
+        da = sku_daily_avgs.get(p.sku, {})
         calc = calc_rakuten_order(
             stock=p.stock or 0,
             inbound=0,
@@ -1073,6 +1121,8 @@ def get_all_products_order(db: Session = Depends(get_db)):
             super_sale_qty=0,
             sales_90=getattr(p, 'sales_90', None) or 0,
             stockout_days_90=getattr(p, 'stockout_days_90', None) or 0,
+            daily_avg_7=da.get("avg_7", 0),
+            daily_avg_30=da.get("avg_30", 0),
             s=s,
         )
         sc_parsed = []
@@ -1096,6 +1146,8 @@ def get_all_products_order(db: Session = Depends(get_db)):
             "ordered_2":       ordered_2,
             "total_stock":     calc.total_stock,
             "daily_avg":       calc.daily_avg,
+            "daily_avg_7":     calc.daily_avg_7,
+            "daily_avg_30":    calc.daily_avg_30,
             "days_left":       calc.days_left,
             "growth_rate":     calc.growth_rate,
             "order_qty":       calc.order_qty,
@@ -2897,6 +2949,108 @@ def apply_sales(req: SalesApplyRequest, db: Session = Depends(get_db)):
         "updated_products": updated,
         "last_sync": _now_jst().isoformat(),
     }
+
+
+# ============ 日別販売数 ============
+
+class DailySalesApplyRequest(BaseModel):
+    # {sku: {date_str: qty, ...}, ...}
+    daily: dict
+
+
+@router.post("/rms/daily-sales/apply")
+def apply_daily_sales(req: DailySalesApplyRequest, db: Session = Depends(get_db)):
+    """GitHub Actions から日別×SKU の販売数を受け取り rakuten_daily_sales に upsert する。"""
+    from app.models.rakuten_daily_sales import RakutenDailySales
+    from datetime import date as _date
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    rows_to_upsert = []
+    for sku, day_map in (req.daily or {}).items():
+        for day_str, qty in day_map.items():
+            try:
+                sale_date = _date.fromisoformat(day_str)
+            except Exception:
+                continue
+            rows_to_upsert.append({"sale_date": sale_date, "sku": sku, "qty": qty})
+
+    upserted = 0
+    CHUNK = 500
+    for i in range(0, len(rows_to_upsert), CHUNK):
+        chunk = rows_to_upsert[i:i + CHUNK]
+        stmt = pg_insert(RakutenDailySales).values(chunk)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["sale_date", "sku"],
+            set_={"qty": stmt.excluded.qty},
+        )
+        db.execute(stmt)
+        upserted += len(chunk)
+    db.commit()
+    return {"upserted": upserted}
+
+
+@router.get("/daily-sales")
+def get_daily_sales(days: int = 7, db: Session = Depends(get_db)):
+    """日別×商品の販売数を返す。商品名はrakuten_productsから結合。"""
+    from app.models.rakuten_daily_sales import RakutenDailySales
+    from datetime import date as _date, timedelta as _td
+    cutoff = _date.today() - _td(days=days)
+    rows = db.query(RakutenDailySales).filter(
+        RakutenDailySales.sale_date >= cutoff,
+    ).order_by(RakutenDailySales.sale_date.desc()).all()
+
+    products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    sku_name = {}
+    for p in products:
+        sku_name[p.sku] = p.name
+        if p.rakuten_sku_id:
+            sku_name[p.rakuten_sku_id] = p.name
+
+    # {sku: {date: qty}}
+    result: dict[str, dict] = {}
+    for r in rows:
+        d = r.sale_date.isoformat()
+        if r.sku not in result:
+            result[r.sku] = {}
+        result[r.sku][d] = r.qty
+
+    sku_list = []
+    for sku, days_data in result.items():
+        sku_list.append({
+            "sku": sku,
+            "name": sku_name.get(sku, sku),
+            "daily": days_data,
+            "total": sum(days_data.values()),
+        })
+    sku_list.sort(key=lambda x: x["total"], reverse=True)
+    return {"data": sku_list, "days": days}
+
+
+@router.post("/rms/daily-sales/mark-stockouts")
+def mark_stockouts(db: Session = Depends(get_db)):
+    """在庫0のSKUについて今日のrakuten_daily_salesにis_stockout=Trueを設定する。"""
+    from app.models.rakuten_daily_sales import RakutenDailySales
+    today = date.today()
+    zero_stock_skus = [
+        p.sku for p in db.query(RakutenProduct).filter(
+            RakutenProduct.is_active == True,
+            RakutenProduct.stock <= 0,
+        ).all()
+        if p.sku
+    ]
+    marked = 0
+    for sku in zero_stock_skus:
+        existing = db.query(RakutenDailySales).filter(
+            RakutenDailySales.sale_date == today,
+            RakutenDailySales.sku == sku,
+        ).first()
+        if existing:
+            existing.is_stockout = True
+        else:
+            db.add(RakutenDailySales(sale_date=today, sku=sku, qty=0, is_stockout=True))
+        marked += 1
+    db.commit()
+    return {"marked_stockouts": marked, "date": today.isoformat()}
 
 
 # ============ スーパーセール(SS)販売数の集計・保存 ============

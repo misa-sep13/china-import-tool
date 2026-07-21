@@ -39,16 +39,47 @@ def main() -> int:
         return 1
 
     # 2) 重い受注取得(60日) — GitHubランナーのメモリで実行
-    print("受注データ取得中（60日分）...")
-    sku_sales = asyncio.run(fetch_sales_by_sku(secret, license_key, days=60))
+    order_qty_cap = settings.get("order_qty_cap", 3) or 0
+    print(f"受注データ取得中（60日分、1注文キャップ={order_qty_cap}）...")
+    sku_sales, sku_daily = asyncio.run(
+        fetch_sales_by_sku(secret, license_key, days=60, include_daily=True,
+                           order_qty_cap=order_qty_cap)
+    )
     print(f"取得SKU数: {len(sku_sales)}")
 
-    # 3) 集計結果だけをRenderに送ってDB更新（Render側は軽い書き込みのみ）
     with httpx.Client(timeout=180) as c:
+        # 3) 集計結果をRenderに送ってDB更新（従来のSKU別集計）
         res = c.post(f"{backend}/api/rakuten/rms/sales/apply", json={"sales": sku_sales})
         res.raise_for_status()
         result = res.json()
-    print("反映結果:", result)
+        print("反映結果:", result)
+
+        # 4) 日別販売数をRenderに送ってDB更新（50 SKUずつバッチ送信）
+        all_skus = list(sku_daily.keys())
+        daily_count = sum(len(d) for d in sku_daily.values())
+        print(f"日別データ送信中（{len(all_skus)} SKU × {daily_count} レコード）...")
+        BATCH = 50
+        total_upserted = 0
+        for i in range(0, len(all_skus), BATCH):
+            batch_skus = all_skus[i:i + BATCH]
+            batch_data = {s: sku_daily[s] for s in batch_skus}
+            res = c.post(
+                f"{backend}/api/rakuten/rms/daily-sales/apply",
+                json={"daily": batch_data},
+                timeout=300,
+            )
+            res.raise_for_status()
+            r = res.json()
+            total_upserted += r.get("upserted", 0)
+            print(f"  バッチ {i // BATCH + 1}/{-(-len(all_skus) // BATCH)}: {len(batch_skus)} SKU done")
+        print(f"日別反映結果: upserted={total_upserted}")
+
+        # 5) 在庫切れSKUをマーク
+        res = c.post(f"{backend}/api/rakuten/rms/daily-sales/mark-stockouts")
+        res.raise_for_status()
+        stockout_result = res.json()
+        print("在庫切れマーク:", stockout_result)
+
     return 0
 
 

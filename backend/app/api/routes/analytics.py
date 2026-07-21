@@ -48,7 +48,8 @@ def _run_analytics_job(job_id: str, days: int):
             with ThreadPoolExecutor(max_workers=7) as ex:
                 f_inv       = ex.submit(fetch_inventory)
                 f_sales     = ex.submit(fetch_sales_detail, asin_list, days)
-                f_all_sales = ex.submit(fetch_all_sales, asin_list)
+                _oqc = getattr(db.query(OrderSettings).first(), 'order_qty_cap', 0) or 0
+                f_all_sales = ex.submit(fetch_all_sales, asin_list, _oqc)
                 f_catalog   = ex.submit(fetch_catalog_info, asin_list)
                 f_t4s       = ex.submit(fetch_product_data, asin_list, days)
                 f_new       = ex.submit(fetch_new_product_info, asin_list)

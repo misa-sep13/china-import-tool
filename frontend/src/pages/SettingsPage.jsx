@@ -137,6 +137,14 @@ export default function SettingsPage() {
               <label>90日の重み</label>
               <input type="number" step="0.01" min={0} max={1} {...f('weight_d90', 'number')} />
             </div>
+            <div className="form-group">
+              <label>まとめ買い除外キャップ</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" min={0} {...f('order_qty_cap', 'number')} style={{ width: 80 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>個</span>
+              </div>
+              <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>日別販売数が中央値×3またはこの値を超えた日をキャップ（0=無制限）</p>
+            </div>
           </div>
         </div>
 

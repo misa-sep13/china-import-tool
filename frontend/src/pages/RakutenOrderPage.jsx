@@ -499,7 +499,7 @@ export default function RakutenOrderPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: '#f0f2f8', borderBottom: '2px solid #e2e8f0' }}>
-                  {['商品名 / SKU', '実在庫', '発注済1', '発注済2', '全在庫', '日販', '在庫日数', '成長率', '提案発注数'].map(h => (
+                  {['商品名 / SKU', '実在庫', '発注済1', '発注済2', '全在庫', '7日', '30日', '在庫日数', '成長率', '提案発注数'].map(h => (
                     <th key={h} style={{ padding: '10px 12px', textAlign: 'center', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                   <th style={{ padding: '10px 12px', textAlign: 'center', whiteSpace: 'nowrap' }}>
@@ -524,7 +524,7 @@ export default function RakutenOrderPage() {
               </thead>
               <tbody>
                 {displayItems.length === 0 && (
-                  <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: '#999' }}>
+                  <tr><td colSpan={11} style={{ textAlign: 'center', padding: 32, color: '#999' }}>
                     {onlyRecommended ? '発注が必要な商品はありません' : '商品がありません'}
                   </td></tr>
                 )}
@@ -561,7 +561,10 @@ export default function RakutenOrderPage() {
                       <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>{item.ordered_2 ?? 0}</td>
                       <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600 }}>{item.total_stock}</td>
                       <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>
-                        {item.daily_avg > 0 ? item.daily_avg.toFixed(1) : '—'}
+                        {item.daily_avg_7 > 0 ? item.daily_avg_7.toFixed(1) : '—'}
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'center', color: '#666' }}>
+                        {item.daily_avg_30 > 0 ? item.daily_avg_30.toFixed(1) : '—'}
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                         <span className={`badge ${
