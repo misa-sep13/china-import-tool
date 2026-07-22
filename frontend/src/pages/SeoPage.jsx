@@ -17,13 +17,13 @@ export default function SeoPage() {
   const [testLoading, setTestLoading] = useState(false)
 
   const fetchKeywords = useCallback(async () => {
-    const res = await fetch(`${API}/api/seo/keywords?active_only=false`)
+    const res = await fetch(`${API}/seo/keywords?active_only=false`)
     const data = await res.json()
     setKeywords(data.keywords || [])
   }, [])
 
   const fetchLatestRankings = useCallback(async () => {
-    const res = await fetch(`${API}/api/seo/rankings`)
+    const res = await fetch(`${API}/seo/rankings`)
     const data = await res.json()
     const map = {}
     for (const r of data.rankings || []) {
@@ -37,7 +37,7 @@ export default function SeoPage() {
 
   const fetchHistory = async (kwId) => {
     setSelectedKwId(kwId)
-    const res = await fetch(`${API}/api/seo/rankings/${kwId}?days=90`)
+    const res = await fetch(`${API}/seo/rankings/${kwId}?days=90`)
     const data = await res.json()
     setHistory(data.rankings || [])
   }
@@ -45,13 +45,13 @@ export default function SeoPage() {
   const handleSave = async () => {
     if (!form.keyword.trim()) return
     if (editId) {
-      await fetch(`${API}/api/seo/keywords/${editId}`, {
+      await fetch(`${API}/seo/keywords/${editId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       })
     } else {
-      await fetch(`${API}/api/seo/keywords`, {
+      await fetch(`${API}/seo/keywords`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
@@ -71,12 +71,12 @@ export default function SeoPage() {
 
   const handleDelete = async (id) => {
     if (!confirm('このキーワードを削除しますか？')) return
-    await fetch(`${API}/api/seo/keywords/${id}`, { method: 'DELETE' })
+    await fetch(`${API}/seo/keywords/${id}`, { method: 'DELETE' })
     fetchKeywords()
   }
 
   const handleToggleActive = async (kw) => {
-    await fetch(`${API}/api/seo/keywords/${kw.id}`, {
+    await fetch(`${API}/seo/keywords/${kw.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ is_active: !kw.is_active }),
@@ -88,7 +88,7 @@ export default function SeoPage() {
     setChecking(true)
     setCheckResult(null)
     try {
-      const res = await fetch(`${API}/api/seo/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      const res = await fetch(`${API}/seo/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
       const data = await res.json()
       setCheckResult(data)
       fetchLatestRankings()
@@ -102,7 +102,7 @@ export default function SeoPage() {
   const handleCheckSingle = async (kwId) => {
     setChecking(true)
     try {
-      const res = await fetch(`${API}/api/seo/check`, {
+      const res = await fetch(`${API}/seo/check`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ keyword_ids: [kwId] }),
@@ -119,7 +119,7 @@ export default function SeoPage() {
     setTestLoading(true)
     setTestResult(null)
     try {
-      const res = await fetch(`${API}/api/seo/check-single`, {
+      const res = await fetch(`${API}/seo/check-single`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ keyword: testKeyword }),
