@@ -25,23 +25,26 @@ def calc_rakuten_order(
     stock:            int,   # 実在庫（手持ちのみ）
     inbound:          int,   # 輸送中
     ordered:          int,   # 発注済み（未納品）
-    sales_30_recent:  float, # 直近30日販売数（成長率計算用）
-    sales_30_prev:    float, # 60日前〜31日前の販売数（成長率計算用）
+    sales_30_recent:  float, # 直近30日販売数（フォールバック用）
+    sales_30_prev:    float, # 60日前〜31日前の販売数（フォールバック用）
     super_sale_qty:   int = 0,  # スーパーセール追加分（modeB時）
     sales_90:         float = 0, # 直近63日販売数（フォールバック用）
     stockout_days_90: int = 0,   # 過去63日の在庫切れ日数
-    daily_avg_7:      float = 0, # 7日日販（rakuten_daily_salesから算出）
-    daily_avg_30:     float = 0, # 30日日販（rakuten_daily_salesから算出）
+    daily_avg_7:      float = 0, # 7日日販（rakuten_daily_salesから算出・在庫切れ除外済）
+    daily_avg_30:     float = 0, # 30日日販（同上）
+    daily_avg_prev_30: float = 0, # 前30日日販（31〜60日前・在庫切れ除外済）
     s: RakutenCalcSettings = None,
 ) -> RakutenCalcResult:
     if s is None:
         s = RakutenCalcSettings()
 
     # --- 日販（7日・30日の加重平均: 0.4 × 7日 + 0.6 × 30日）---
+    # 7日日販が30日日販の1.5倍を超える場合はキャップ（復帰スパイク抑制）
     if (daily_avg_7 or 0) > 0 or (daily_avg_30 or 0) > 0:
         da7 = daily_avg_7 or 0
         da30 = daily_avg_30 or 0
         if da7 > 0 and da30 > 0:
+            da7 = min(da7, da30 * 1.5)
             daily_avg = da7 * 0.4 + da30 * 0.6
         elif da7 > 0:
             daily_avg = da7
@@ -59,10 +62,13 @@ def calc_rakuten_order(
     else:
         daily_avg = 0.0
 
-    # --- 成長率（直近30日 vs 前30日）---
-    if (sales_30_prev or 0) > 0 and (sales_30_recent or 0) > 0:
+    # --- 成長率（在庫切れ除外済みの日販ベースで比較）---
+    if (daily_avg_prev_30 or 0) > 0 and (daily_avg_30 or 0) > 0:
+        growth_rate = (daily_avg_30 / daily_avg_prev_30) - 1.0
+        growth_rate = max(-0.5, min(growth_rate, 1.0))
+    elif (sales_30_prev or 0) > 0 and (sales_30_recent or 0) > 0:
         growth_rate = (sales_30_recent / sales_30_prev) - 1.0
-        growth_rate = max(-0.5, min(growth_rate, 2.0))
+        growth_rate = max(-0.5, min(growth_rate, 1.0))
     else:
         growth_rate = 0.0
 
