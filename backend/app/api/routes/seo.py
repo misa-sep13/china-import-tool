@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone, timedelta
+from collections import defaultdict
 from app.core.database import get_db
 from app.models.seo import SeoKeyword, SeoRanking
 
@@ -24,6 +25,21 @@ class KeywordUpdate(BaseModel):
     product_name: Optional[str] = None
     is_active: Optional[bool] = None
     memo: Optional[str] = None
+
+
+class BulkRankingItem(BaseModel):
+    seo_keyword_id: int
+    keyword: str
+    product_sku: Optional[str] = None
+    rank: Optional[int] = None
+    page: Optional[int] = None
+    total_items: Optional[int] = None
+    card_type: Optional[str] = None
+
+
+class BulkRankingRequest(BaseModel):
+    checked_at: str
+    results: list[BulkRankingItem]
 
 
 # ---------- キーワードCRUD ----------
@@ -174,6 +190,75 @@ def get_all_latest_rankings(db: Session = Depends(get_db)):
         .all()
     )
     return {"rankings": [_rank_dict(r) for r in rows]}
+
+
+# ---------- バルク登録（GH Actions用） ----------
+
+@router.post("/rankings/bulk")
+def bulk_import_rankings(data: BulkRankingRequest, db: Session = Depends(get_db)):
+    checked_at = datetime.fromisoformat(data.checked_at)
+    count = 0
+    for item in data.results:
+        ranking = SeoRanking(
+            seo_keyword_id=item.seo_keyword_id,
+            keyword=item.keyword,
+            product_sku=item.product_sku,
+            rank=item.rank,
+            page=item.page,
+            total_items=item.total_items,
+            card_type=item.card_type,
+            checked_at=checked_at,
+        )
+        db.add(ranking)
+        count += 1
+    db.commit()
+    return {"imported": count, "checked_at": checked_at.isoformat()}
+
+
+# ---------- マトリクス表示用 ----------
+
+@router.get("/rankings/matrix")
+def get_ranking_matrix(days: int = 30, db: Session = Depends(get_db)):
+    cutoff = datetime.now(JST) - timedelta(days=days)
+
+    keywords = (
+        db.query(SeoKeyword)
+        .filter(SeoKeyword.is_active == True)
+        .order_by(SeoKeyword.product_sku, SeoKeyword.id)
+        .all()
+    )
+
+    rankings = (
+        db.query(SeoRanking)
+        .filter(SeoRanking.checked_at >= cutoff)
+        .all()
+    )
+
+    date_set = set()
+    kw_date_rank = defaultdict(dict)
+    for r in rankings:
+        if not r.checked_at:
+            continue
+        date_str = r.checked_at.strftime("%Y-%m-%d")
+        date_set.add(date_str)
+        existing = kw_date_rank[r.seo_keyword_id].get(date_str)
+        if existing is None or (r.rank and (existing is None or (existing and r.rank < existing))):
+            kw_date_rank[r.seo_keyword_id][date_str] = r.rank
+
+    dates = sorted(date_set, reverse=True)
+
+    rows = []
+    for kw in keywords:
+        row = {
+            "keyword_id": kw.id,
+            "keyword": kw.keyword,
+            "product_sku": kw.product_sku or "",
+            "product_name": kw.product_name or "",
+            "ranks": {d: kw_date_rank.get(kw.id, {}).get(d) for d in dates},
+        }
+        rows.append(row)
+
+    return {"dates": dates, "rows": rows}
 
 
 # ---------- helpers ----------
