@@ -11,6 +11,8 @@ export default function RakutenStockPage() {
   const [importStockResult, setImportStockResult] = useState(null)
   const [ssSyncing, setSsSyncing] = useState(false)
   const [ssSyncResult, setSsSyncResult] = useState(null)
+  const [syncingPrices, setSyncingPrices] = useState(false)
+  const [syncPriceResult, setSyncPriceResult] = useState(null)
   const [expanded, setExpanded] = useState({})  // {parentSku: true} 展開中の親
   const toggleExpand = useCallback((sku) => {
     setExpanded(prev => ({ ...prev, [sku]: !prev[sku] }))
@@ -33,6 +35,34 @@ export default function RakutenStockPage() {
       setImportStockResult({ error: err.response?.data?.detail || '在庫取得エラーが発生しました' })
     } finally {
       setImportingStock(false)
+    }
+  }
+
+  const handleSyncPrices = async () => {
+    if (!window.confirm('RMS APIから売価を取得して更新します。よろしいですか？')) return
+    setSyncingPrices(true)
+    setSyncPriceResult(null)
+    try {
+      const res = await api.post('/rakuten/rms/sync-prices')
+      if (res.data.ok) {
+        const poll = async () => {
+          for (let i = 0; i < 90; i++) {
+            await new Promise(r => setTimeout(r, 2000))
+            const status = await api.get('/rakuten/rms/sync-prices/status')
+            if (!status.data.running) {
+              setSyncPriceResult(status.data.result)
+              qc.invalidateQueries(['rakuten-stock'])
+              return
+            }
+          }
+          setSyncPriceResult({ error: 'タイムアウトしました' })
+        }
+        await poll()
+      }
+    } catch (err) {
+      setSyncPriceResult({ error: err.response?.data?.detail || '売価同期エラーが発生しました' })
+    } finally {
+      setSyncingPrices(false)
     }
   }
 
@@ -210,6 +240,14 @@ export default function RakutenStockPage() {
         {ssSyncResult && (
           <span style={{ fontSize: 12, color: ssSyncResult.error ? '#e53e3e' : '#9333ea' }}>
             {ssSyncResult.error || `SS(${ssSyncResult.period}) ${ssSyncResult.saved_products}件保存`}
+          </span>
+        )}
+        <button className="btn" style={{ fontSize: 13 }} onClick={handleSyncPrices} disabled={syncingPrices}>
+          {syncingPrices ? '取得中...' : '💰 売価同期(RMS)'}
+        </button>
+        {syncPriceResult && (
+          <span style={{ fontSize: 12, color: syncPriceResult.error ? '#e53e3e' : '#38a169' }}>
+            {syncPriceResult.error || `${syncPriceResult.updated_products}件更新`}
           </span>
         )}
         {receiveResult && (
