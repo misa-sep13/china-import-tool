@@ -187,6 +187,7 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
   const [detailInq, setDetailInq] = useState(null)
   const [detailAutoTemplate, setDetailAutoTemplate] = useState(false)
   const [selectedInqs, setSelectedInqs] = useState(new Set())
+  const [csvExporting, setCsvExporting] = useState(false)
 
   const inquiries = useMemo(() => {
     const list = inquiriesMut.data?.inquiries || []
@@ -260,6 +261,7 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
               <button
                 className="btn btn-secondary"
                 style={{ fontSize: 11, padding: '2px 10px' }}
+                disabled={csvExporting}
                 onClick={async () => {
                   const rows = inquiries.filter(i => selectedInqs.has(i.inquiry_number))
                   const items = rows.map(r => {
@@ -272,6 +274,7 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
                     }
                   }).filter(it => it.order_number)
                   if (!items.length) return
+                  setCsvExporting(true)
                   try {
                     const res = await api.post('/review/inquiries/export-csv', { items }, { responseType: 'blob' })
                     const a = document.createElement('a')
@@ -282,10 +285,12 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
                     a.click()
                   } catch (e) {
                     alert('CSV出力に失敗しました: ' + (e.response?.data?.detail || e.message))
+                  } finally {
+                    setCsvExporting(false)
                   }
                 }}
               >
-                📥 CSV出力 ({selectedInqs.size})
+                {csvExporting ? '⏳ 住所取得中...' : `📥 CSV出力 (${selectedInqs.size})`}
               </button>
               <button
                 className="btn btn-secondary"
