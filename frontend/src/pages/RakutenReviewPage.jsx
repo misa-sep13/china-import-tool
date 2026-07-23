@@ -260,28 +260,29 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
               <button
                 className="btn btn-secondary"
                 style={{ fontSize: 11, padding: '2px 10px' }}
-                onClick={() => {
+                onClick={async () => {
                   const rows = inquiries.filter(i => selectedInqs.has(i.inquiry_number))
-                  const header = ['受注番号', 'お客様名', '問い合わせ内容', '購入商品', '返信プレゼント', 'キャンペーン判定', '日時']
-                  const csvRows = [header.join(',')]
-                  for (const r of rows) {
+                  const items = rows.map(r => {
                     const cam = localCampaigns[r.inquiry_number] || r.detected_campaign || r.reply_campaign || ''
-                    csvRows.push([
-                      r.order_number || '',
-                      r.user_name || '',
-                      `"${(r.message || '').replace(/"/g, '""')}"`,
-                      `"${(r.item_name || '').replace(/"/g, '""')}"`,
-                      r.reply_campaign_name || '',
-                      cam,
-                      r.reg_date ? r.reg_date.slice(0, 10) : '',
-                    ].join(','))
+                    const campObj = (campaignsQ.data || []).find(c => c.code === cam)
+                    return {
+                      order_number: r.order_number || '',
+                      campaign_code: cam,
+                      campaign_name: campObj?.name || r.detected_campaign_name || r.reply_campaign_name || '',
+                    }
+                  }).filter(it => it.order_number)
+                  if (!items.length) return
+                  try {
+                    const res = await api.post('/review/inquiries/export-csv', { items }, { responseType: 'blob' })
+                    const a = document.createElement('a')
+                    a.href = URL.createObjectURL(res.data)
+                    const cd = res.headers['content-disposition'] || ''
+                    const m = cd.match(/filename=(.+)/)
+                    a.download = m ? m[1] : `review${new Date().toISOString().slice(0,10).replace(/-/g,'')}.csv`
+                    a.click()
+                  } catch (e) {
+                    alert('CSV出力に失敗しました: ' + (e.response?.data?.detail || e.message))
                   }
-                  const bom = '﻿'
-                  const blob = new Blob([bom + csvRows.join('\n')], { type: 'text/csv;charset=utf-8' })
-                  const a = document.createElement('a')
-                  a.href = URL.createObjectURL(blob)
-                  a.download = `inquiries_${new Date().toISOString().slice(0,10)}.csv`
-                  a.click()
                 }}
               >
                 📥 CSV出力 ({selectedInqs.size})

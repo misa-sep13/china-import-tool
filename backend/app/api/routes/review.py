@@ -59,6 +59,16 @@ class ReplyIn(BaseModel):
     inquiry_number: str
     message: str
 
+
+class CsvExportItem(BaseModel):
+    order_number: str
+    campaign_code: str = ""
+    campaign_name: str = ""
+
+
+class CsvExportRequest(BaseModel):
+    items: list[CsvExportItem]
+
 class EntryNotesIn(BaseModel):
     notes: str | None = None
 
@@ -751,3 +761,95 @@ async def get_order_address(order_number: str, db: Session = Depends(get_db)):
         "items": items,
         "buyer_differs": ship.get("last_name", "") != orderer.get("familyName", ""),
     }
+
+
+# ── 問い合わせ→配送CSV出力（住所付き） ─────────────────────
+@router.post("/inquiries/export-csv")
+async def export_inquiries_csv(data: CsvExportRequest, db: Session = Depends(get_db)):
+    settings = db.query(RakutenSettings).first()
+    if not settings or not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません")
+
+    headers = {
+        **_auth_header(settings.rms_service_secret, settings.rms_license_key),
+        "Content-Type": "application/json; charset=utf-8",
+    }
+
+    order_numbers = [it.order_number for it in data.items]
+    item_map = {it.order_number: it for it in data.items}
+    address_map = {}
+
+    for i in range(0, len(order_numbers), 100):
+        chunk = order_numbers[i:i + 100]
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                res = await client.post(
+                    f"{RMS_BASE}/2.0/order/getOrder",
+                    headers=headers,
+                    content=json.dumps(
+                        {"orderNumberList": chunk, "version": 10},
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                )
+            if res.is_success:
+                for o in res.json().get("OrderModelList") or []:
+                    on = o.get("orderNumber", "")
+                    pkgs = o.get("PackageModelList") or []
+                    if pkgs:
+                        s = pkgs[0].get("SenderModel") or {}
+                        address_map[on] = {
+                            "zip1": s.get("zipCode1", ""),
+                            "zip2": s.get("zipCode2", ""),
+                            "prefecture": s.get("prefecture", ""),
+                            "city": s.get("city", ""),
+                            "address": s.get("subAddress", ""),
+                            "last_name": s.get("familyName", ""),
+                            "first_name": s.get("firstName", ""),
+                            "phone1": s.get("phoneNumber1", ""),
+                            "phone2": s.get("phoneNumber2", ""),
+                            "phone3": s.get("phoneNumber3", ""),
+                        }
+        except Exception:
+            pass
+
+    campaigns = {c.code: c for c in db.query(ReviewCampaign).all()}
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "受注番号", "送付先郵便番号1", "送付先郵便番号2",
+        "送付先住所都道府県", "送付先住所郡市区", "送付先住所それ以降の住所",
+        "送付先姓", "送付先名",
+        "", "", "",
+        "個数", "送付先電話番号1", "送付先電話番号2", "送付先電話番号3",
+    ])
+    for on in order_numbers:
+        it = item_map[on]
+        addr = address_map.get(on, {})
+        camp = campaigns.get(it.campaign_code)
+        camp_name = camp.name if camp else it.campaign_name
+        writer.writerow([
+            on,
+            addr.get("zip1", ""),
+            addr.get("zip2", ""),
+            addr.get("prefecture", ""),
+            addr.get("city", ""),
+            addr.get("address", ""),
+            addr.get("last_name", ""),
+            addr.get("first_name", ""),
+            camp_name,
+            it.campaign_code,
+            camp_name,
+            1,
+            addr.get("phone1", ""),
+            addr.get("phone2", ""),
+            addr.get("phone3", ""),
+        ])
+
+    content = buf.getvalue().encode("cp932", errors="replace")
+    today = date.today().strftime("%Y%m%d")
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="text/csv; charset=shift_jis",
+        headers={"Content-Disposition": f"attachment; filename=review{today}.csv"},
+    )
