@@ -266,7 +266,7 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
                   const rows = inquiries.filter(i => selectedInqs.has(i.inquiry_number))
                   const items = rows.map(r => {
                     const cam = localCampaigns[r.inquiry_number] || r.detected_campaign || r.reply_campaign || ''
-                    const campObj = (campaignsQ.data || []).find(c => c.code === cam)
+                    const campObj = campaigns.find(c => c.code === cam)
                     return {
                       order_number: r.order_number || '',
                       campaign_code: cam,
