@@ -890,27 +890,31 @@ def _daily_avg_from_table(db) -> dict[str, dict]:
         if sku not in sku_data:
             sku_data[sku] = {
                 "sum_7": 0, "sum_30": 0, "sum_prev_30": 0,
-                "days_7": 0, "days_30": 0, "days_prev_30": 0,
+                "stockout_7": 0, "stockout_30": 0, "stockout_prev_30": 0,
             }
-        if not is_stockout:
-            if sale_date >= cutoff_30:
+        if sale_date >= cutoff_30:
+            if is_stockout:
+                sku_data[sku]["stockout_30"] += 1
+                if sale_date >= cutoff_7:
+                    sku_data[sku]["stockout_7"] += 1
+            else:
                 sku_data[sku]["sum_30"] += qty or 0
-                sku_data[sku]["days_30"] += 1
                 if sale_date >= cutoff_7:
                     sku_data[sku]["sum_7"] += qty or 0
-                    sku_data[sku]["days_7"] += 1
+        else:
+            if is_stockout:
+                sku_data[sku]["stockout_prev_30"] += 1
             else:
                 sku_data[sku]["sum_prev_30"] += qty or 0
-                sku_data[sku]["days_prev_30"] += 1
     result = {}
     for sku, d in sku_data.items():
-        eff_7 = max(d["days_7"], 1)
-        eff_30 = max(d["days_30"], 1)
-        eff_prev = max(d["days_prev_30"], 1)
+        eff_7 = max(7 - d["stockout_7"], 1)
+        eff_30 = max(30 - d["stockout_30"], 1)
+        eff_prev = max(30 - d["stockout_prev_30"], 1)
         result[sku] = {
             "avg_7": round(d["sum_7"] / eff_7, 2),
             "avg_30": round(d["sum_30"] / eff_30, 2),
-            "avg_prev_30": round(d["sum_prev_30"] / eff_prev, 2) if d["days_prev_30"] > 0 else 0,
+            "avg_prev_30": round(d["sum_prev_30"] / eff_prev, 2) if d["sum_prev_30"] > 0 else 0,
         }
     return result
 
