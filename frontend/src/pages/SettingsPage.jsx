@@ -115,6 +115,73 @@ export default function SettingsPage() {
         </div>
 
         <div className="card">
+          <h2>FBA納品プラン（リードタイム詳細）</h2>
+          <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
+            TAO太郎の無料保管期間を活用した納品プラン作成に使う設定です。「🚢 納品プラン」ページで使用されます。
+          </p>
+          <div className="form-grid">
+            <div className="form-group">
+              <label>TAO太郎 無料保管期間</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" min={1} {...f('free_storage_days', 'number')} style={{ width: 80 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>日</span>
+              </div>
+            </div>
+            <div className="form-group">
+              <label>発注〜TAO太郎倉庫着</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" min={1} {...f('lt_order_to_warehouse', 'number')} style={{ width: 80 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>日</span>
+              </div>
+            </div>
+            <div className="form-group">
+              <label>配送依頼〜支払待ち</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" min={1} {...f('lt_shipping_request', 'number')} style={{ width: 80 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>日</span>
+              </div>
+            </div>
+            <div className="form-group">
+              <label>船便発送〜FBA着</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" min={1} {...f('lt_sea_to_fba', 'number')} style={{ width: 80 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>日</span>
+              </div>
+            </div>
+            <div className="form-group">
+              <label>航空便発送〜FBA着</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" min={1} {...f('lt_air_to_fba', 'number')} style={{ width: 80 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>日</span>
+              </div>
+            </div>
+            <div className="form-group">
+              <label>航空便判断（パイプライン残日数がこれ以下）</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" min={1} {...f('air_threshold_days', 'number')} style={{ width: 80 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>日以下 → 航空便</span>
+              </div>
+            </div>
+            <div className="form-group">
+              <label>保留判断（日販がこれ以下なら送らない）</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" step="0.01" min={0} {...f('hold_daily_threshold', 'number')} style={{ width: 80 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>個/日</span>
+              </div>
+            </div>
+          </div>
+          {form.free_storage_days && form.lt_order_to_warehouse && (
+            <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6, padding: '10px 14px', fontSize: 13, color: '#1d4ed8', marginTop: 12 }}>
+              目標在庫日数: {(form.free_storage_days || 90) - (form.lt_order_to_warehouse || 7)}日
+              （無料保管{form.free_storage_days || 90}日 − 発注〜倉庫着{form.lt_order_to_warehouse || 7}日）
+              <br />
+              船便リードタイム合計: {(form.lt_order_to_warehouse || 7) + (form.lt_shipping_request || 7) + (form.lt_sea_to_fba || 18)}日
+              ／航空便リードタイム合計: {(form.lt_order_to_warehouse || 7) + (form.lt_shipping_request || 7) + (form.lt_air_to_fba || 10)}日
+            </div>
+          )}
+        </div>
+
+        <div className="card">
           <h2>加重日販の重み（合計1.0）</h2>
           <div className="form-grid">
             <div className="form-group">

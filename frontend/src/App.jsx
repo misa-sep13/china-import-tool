@@ -20,6 +20,7 @@ import AdsPage from './pages/AdsPage'
 import InventoryReflectionLogsPage from './pages/InventoryReflectionLogsPage'
 import WelfareInventoryPage from './pages/WelfareInventoryPage'
 import WelfareWorkPublicPage from './pages/WelfareWorkPublicPage'
+import FbaPlanPage from './pages/FbaPlanPage'
 import './App.css'
 
 function App() {
@@ -53,6 +54,9 @@ function App() {
         </NavLink>
         <NavLink to="/invoices" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📄 仕入管理
+        </NavLink>
+        <NavLink to="/fba-plan" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          🚢 納品プラン
         </NavLink>
         <NavLink to="/price-adjust" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           💹 価格調整
@@ -113,6 +117,7 @@ function App() {
           <Route path="/ads" element={<AdsPage />} />
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/invoices" element={<InvoicePage />} />
+          <Route path="/fba-plan" element={<FbaPlanPage />} />
           <Route path="/price-adjust" element={<PriceAdjustPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/rakuten/orders" element={<RakutenOrderPage />} />

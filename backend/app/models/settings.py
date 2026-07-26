@@ -29,3 +29,11 @@ class OrderSettings(Base):
     min_profit_rate = Column(Float, default=0.10)         # 下限利益率10%
     new_product_exclude_vine = Column(Boolean, default=True) # VINEを販売数から除外
     order_qty_cap = Column(Integer, default=3)               # 1注文あたり数量上限（まとめ買い除外）
+    # FBA納品プラン用リードタイム詳細
+    lt_order_to_warehouse = Column(Integer, default=7)       # 発注〜TAO太郎倉庫着
+    lt_shipping_request = Column(Integer, default=7)         # 配送依頼〜支払待ち
+    lt_sea_to_fba = Column(Integer, default=18)              # 船便発送〜FBA着
+    lt_air_to_fba = Column(Integer, default=10)              # 航空便発送〜FBA着
+    free_storage_days = Column(Integer, default=90)          # TAO太郎無料保管日数
+    air_threshold_days = Column(Integer, default=18)         # 航空便判断: FBA残日数がこれ以下
+    hold_daily_threshold = Column(Float, default=0.1)        # 保留判断: 日販がこれ以下なら送らない

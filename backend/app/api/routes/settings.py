@@ -34,6 +34,14 @@ class SettingsSchema(BaseModel):
     min_profit_rate: float = 0.10
     new_product_exclude_vine: bool = True
     order_qty_cap: int = 3
+    # FBA納品プラン用リードタイム詳細
+    lt_order_to_warehouse: int = 7
+    lt_shipping_request: int = 7
+    lt_sea_to_fba: int = 18
+    lt_air_to_fba: int = 10
+    free_storage_days: int = 90
+    air_threshold_days: int = 18
+    hold_daily_threshold: float = 0.1
 
     class Config:
         from_attributes = True
