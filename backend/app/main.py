@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+﻿from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import Base, engine
 from app.api.routes import products, orders, settings, fba, invoices, price_adjustments, analytics, shipment_orders, fba_plan
@@ -53,7 +53,7 @@ def _migrate():
         ("order_settings","lead_days",        "ALTER TABLE order_settings ADD COLUMN lead_days INTEGER DEFAULT 75"),
         ("order_settings","weight_d90",       "ALTER TABLE order_settings ADD COLUMN weight_d90 FLOAT DEFAULT 0.30"),
         ("order_settings","sale_multiplier",  "ALTER TABLE order_settings ADD COLUMN sale_multiplier FLOAT DEFAULT 3.0"),
-        # 楽天啁E��マスタ 追加フィールチE
+        # 楽天商品マスタ 追加フィールド
         ("rakuten_products","spec",             "ALTER TABLE rakuten_products ADD COLUMN spec VARCHAR"),
         ("rakuten_products","rakuten_item_url", "ALTER TABLE rakuten_products ADD COLUMN rakuten_item_url VARCHAR"),
         ("rakuten_products","rakuten_sku_id",   "ALTER TABLE rakuten_products ADD COLUMN rakuten_sku_id VARCHAR"),
@@ -77,7 +77,7 @@ def _migrate():
         ("rakuten_products","invoice_note",        "ALTER TABLE rakuten_products ADD COLUMN invoice_note TEXT"),
         ("rakuten_products","purchase_components", "ALTER TABLE rakuten_products ADD COLUMN purchase_components TEXT"),
         ("rakuten_order_history","stage",          "ALTER TABLE rakuten_order_history ADD COLUMN stage INTEGER DEFAULT 1"),
-        # 就労支援在庫 追加フィールチE
+        # 就労支援在庫 追加フィールド
         ("welfare_inventory_items","product_id",             "ALTER TABLE welfare_inventory_items ADD COLUMN product_id INTEGER"),
         ("welfare_inventory_items","sku",                    "ALTER TABLE welfare_inventory_items ADD COLUMN sku VARCHAR"),
         ("welfare_inventory_items","name_jp",                "ALTER TABLE welfare_inventory_items ADD COLUMN name_jp VARCHAR"),
@@ -132,15 +132,22 @@ def _migrate():
         ("welfare_work_instructions","note",                 "ALTER TABLE welfare_work_instructions ADD COLUMN note TEXT"),
         ("welfare_work_instructions","created_at",           "ALTER TABLE welfare_work_instructions ADD COLUMN created_at TIMESTAMP"),
         ("welfare_work_instructions","updated_at",           "ALTER TABLE welfare_work_instructions ADD COLUMN updated_at TIMESTAMP"),
+<<<<<<< HEAD
         # インボイス�E�輸入許可書惁E��
         # Amazon啁E��マスタ�E�区刁E
         ("products",      "category",            "ALTER TABLE products ADD COLUMN category VARCHAR DEFAULT '標溁E"),
+=======
+        # インボイス：輸入許可書情報
+        # Amazon商品マスタ：区分
+        ("products",      "category",            "ALTER TABLE products ADD COLUMN category VARCHAR DEFAULT '標準'"),
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
         ("invoices","customs_duty",          "ALTER TABLE invoices ADD COLUMN customs_duty INTEGER DEFAULT 0"),
         ("invoices","consumption_tax",       "ALTER TABLE invoices ADD COLUMN consumption_tax INTEGER DEFAULT 0"),
         ("invoices","local_consumption_tax", "ALTER TABLE invoices ADD COLUMN local_consumption_tax INTEGER DEFAULT 0"),
         ("invoices","total_tax",             "ALTER TABLE invoices ADD COLUMN total_tax INTEGER DEFAULT 0"),
         ("invoices","bl_number",             "ALTER TABLE invoices ADD COLUMN bl_number VARCHAR"),
         ("invoices","declaration_no",        "ALTER TABLE invoices ADD COLUMN declaration_no VARCHAR"),
+<<<<<<< HEAD
         # 売上管琁E��庁E��比率カラム
         ("rakuten_sales_summaries","ad_rate", "ALTER TABLE rakuten_sales_summaries ADD COLUMN ad_rate FLOAT"),
         # レビューキャンペ�Eン�E�判定キーワーチE
@@ -152,6 +159,19 @@ def _migrate():
         # 在庫刁E��フラグ
         ("rakuten_daily_sales","is_stockout", "ALTER TABLE rakuten_daily_sales ADD COLUMN is_stockout BOOLEAN DEFAULT FALSE"),
         # Amazon大量買ぁE��外キャチE�E
+=======
+        # 売上管理：広告比率カラム
+        ("rakuten_sales_summaries","ad_rate", "ALTER TABLE rakuten_sales_summaries ADD COLUMN ad_rate FLOAT"),
+        # レビューキャンペーン：判定キーワード
+        ("review_campaigns","keywords", "ALTER TABLE review_campaigns ADD COLUMN keywords TEXT"),
+        # キーワード分析：商品管理番号
+        ("title_optimizations","manage_number", "ALTER TABLE title_optimizations ADD COLUMN manage_number VARCHAR"),
+        # まとめ買い除外キャップ
+        ("rakuten_settings","order_qty_cap", "ALTER TABLE rakuten_settings ADD COLUMN order_qty_cap INTEGER DEFAULT 3"),
+        # 在庫切れフラグ
+        ("rakuten_daily_sales","is_stockout", "ALTER TABLE rakuten_daily_sales ADD COLUMN is_stockout BOOLEAN DEFAULT FALSE"),
+        # Amazon大量買い除外キャップ
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
         ("order_settings","order_qty_cap", "ALTER TABLE order_settings ADD COLUMN order_qty_cap INTEGER DEFAULT 3"),
         # FBA納品プラン用リードタイム詳細
         ("order_settings","lt_order_to_warehouse", "ALTER TABLE order_settings ADD COLUMN lt_order_to_warehouse INTEGER DEFAULT 7"),
@@ -178,9 +198,15 @@ def _migrate():
             except Exception as e:
                 logger.warning(f"migrate: {table}.{col} -> {e}")
 
+<<<<<<< HEAD
     # 配送依頼明細のproduct_idは楽天啁E��マスタ(rakuten_products.id)を指す、E
     # 初期実裁E��Amazon啁E��マスタ(products.id)へのFKとして作られたDBでは、E
     # 入荷反映時に楽天product_idを保存できず500になるため、PostgreSQLでは制紁E��修正する、E
+=======
+    # 配送依頼明細のproduct_idは楽天商品マスタ(rakuten_products.id)を指す。
+    # 初期実装でAmazon商品マスタ(products.id)へのFKとして作られたDBでは、
+    # 入荷反映時に楽天product_idを保存できず500になるため、PostgreSQLでは制約を修正する。
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
     try:
         fks = inspector.get_foreign_keys("shipment_order_items")
         wrong_fks = [
@@ -239,7 +265,11 @@ from collections import deque
 
 logger = logging.getLogger("scheduler")
 
+<<<<<<< HEAD
 # 在庫同期ログ履歴�E�直迁E00件�E�E
+=======
+# 在庫同期ログ履歴（直近100件）
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
 _sync_logs: deque = deque(maxlen=100)
 
 
@@ -269,7 +299,7 @@ def _save_inventory_event(db, *, event_type: str, event_time,
         ))
         db.commit()
     except Exception as e:
-        logger.warning(f"[inventory_event] DB保存失敁E {e}")
+        logger.warning(f"[inventory_event] DB保存失敗: {e}")
         try:
             db.rollback()
         except Exception:
@@ -277,14 +307,22 @@ def _save_inventory_event(db, *, event_type: str, event_time,
 
 
 def _load_processed_orders(db) -> dict[str, str]:
+<<<<<<< HEAD
     """DBから処琁E��み注斁E��読み込む"""
+=======
+    """DBから処理済み注文を読み込む"""
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
     from app.models.processed_order import ProcessedOrder
     rows = db.query(ProcessedOrder).all()
     return {r.order_number: r.state for r in rows}
 
 
 def _save_processed_order(db, order_number: str, state: str):
+<<<<<<< HEAD
     """DBに処琁E��み注斁E��保孁E更新"""
+=======
+    """DBに処理済み注文を保存/更新"""
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
     from app.models.processed_order import ProcessedOrder
     existing = db.query(ProcessedOrder).filter(ProcessedOrder.order_number == order_number).first()
     if existing:
@@ -294,7 +332,11 @@ def _save_processed_order(db, order_number: str, state: str):
 
 
 def _cleanup_old_processed_orders(db, keep_days=7):
+<<<<<<< HEAD
     """古ぁE�E琁E��み注斁E��削除。active注斁E�Ekeep_days日間保持、cancelledは30日趁E��削除"""
+=======
+    """古い処理済み注文を削除。active注文はkeep_days日間保持、cancelledは30日超で削除"""
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
     from app.models.processed_order import ProcessedOrder
     cutoff_cancelled = dt.now(JST) - timedelta(days=30)
     cutoff_active = dt.now(JST) - timedelta(days=keep_days)
@@ -308,7 +350,11 @@ def _cleanup_old_processed_orders(db, keep_days=7):
     ).delete(synchronize_session=False)
 
 def _get_component_parent_skus(products) -> set:
+<<<<<<< HEAD
     """セチE��啁E���E�Eet_components有り�E��E構�E品SKUを�Eて収集して返す"""
+=======
+    """セット商品（set_components有り）の構成品SKUを全て収集して返す"""
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
     import json as _json
     parent_skus = set()
     for p in products:
@@ -325,9 +371,15 @@ def _get_component_parent_skus(products) -> set:
     return parent_skus
 
 async def _sync_rakuten_stock():
+<<<<<<< HEAD
     """1刁E��と: 受注を検知し、単品在庫を減算（キャンセルは戻す）、セチE��在庫を�E計算する、E
     処琁E��み注斁E�EDBに永続化�E��E起動時の二重減算を防止�E�、E
     RMS_PUSH_ENABLED=trueの場合、在庫変更をRMSにpushする、E""
+=======
+    """1分ごと: 受注を検知し、単品在庫を減算（キャンセルは戻す）、セット在庫を再計算する。
+    処理済み注文はDBに永続化（再起動時の二重減算を防止）。
+    RMS_PUSH_ENABLED=trueの場合、在庫変更をRMSにpushする。"""
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
@@ -389,7 +441,11 @@ async def _sync_rakuten_stock():
                 "searched_orders": len(order_nums),
                 "skipped_processed": skipped_processed,
                 "processed_new": processed_new,
+<<<<<<< HEAD
                 "note": "在庫変動なぁE if processed_new == 0 else f"受注{processed_new}件処琁E��在庫変動なし！E,
+=======
+                "note": "在庫変動なし" if processed_new == 0 else f"受注{processed_new}件処理（在庫変動なし）",
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
             })
             return
 
@@ -405,7 +461,11 @@ async def _sync_rakuten_stock():
                 return []
 
         updated_skus = set()
+<<<<<<< HEAD
         oversold: dict[str, int] = {}  # 在庫が足りず0で頭打ちになった不足数�E�売り越し�E�E
+=======
+        oversold: dict[str, int] = {}  # 在庫が足りず0で頭打ちになった不足数（売り越し）
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
         for sku, qty in new_sold.items():
             p = sku_to_product.get(sku)
             if not p:
@@ -461,7 +521,11 @@ async def _sync_rakuten_stock():
                     sku_stock[sku] = p.stock
                     updated_skus.add(sku)
         if cancel_skipped:
+<<<<<<< HEAD
             logger.info(f"[scheduler] キャンセル戻しスキチE�E(在庫0): {cancel_skipped}")
+=======
+            logger.info(f"[scheduler] キャンセル戻しスキップ(在庫0): {cancel_skipped}")
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
 
         share_counts = build_component_share_counts(all_products)
         updated_set_skus = set()
@@ -519,7 +583,7 @@ async def _sync_rakuten_stock():
                     logger.info(f"[scheduler] push結果: {push_result}")
                 except Exception as pe:
                     push_result = {"ok": 0, "fail": len(push_items), "errors": [{"sku": "all", "detail": str(pe)}], "details": []}
-                    logger.warning(f"[scheduler] push失敁E {pe}")
+                    logger.warning(f"[scheduler] push失敗: {pe}")
 
         log_entry = {
             "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
@@ -543,7 +607,7 @@ async def _sync_rakuten_stock():
                 "errors": push_result.get("errors", []),
             }
         if not new_sold and not new_cancelled and not updated_skus:
-            log_entry["note"] = "在庫変動なぁE
+            log_entry["note"] = "在庫変動なし"
         _sync_logs.appendleft(log_entry)
         logger.info(f"[scheduler] 在庫更新: sold={new_sold} cancelled={new_cancelled} updated={updated_skus} sets={updated_set_skus}")
 
@@ -571,7 +635,11 @@ async def _sync_rakuten_stock():
                 p_fail = push_result.get("fail", 0)
             if oversold:
                 push_errors = (push_errors or []) + [
+<<<<<<< HEAD
                     {"sku": s, "detail": f"売り越し: 在庫不足{q}個�Eの受注�E�Eで頭打ち�E�E}
+=======
+                    {"sku": s, "detail": f"売り越し: 在庫不足{q}個分の受注（0で頭打ち）"}
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
                     for s, q in oversold.items()
                 ]
             sb = {s: sku_stock_before[s] for s in all_changed if s in sku_stock_before}
@@ -593,7 +661,11 @@ async def _sync_rakuten_stock():
 
 
 async def _check_delayed_cancellations():
+<<<<<<< HEAD
     """30刁E��と: DB冁E�Eactive注斁E��RMSで再確認し、E��延キャンセルを検�Eして在庫を戻ぁE""
+=======
+    """30分ごと: DB内のactive注文をRMSで再確認し、遅延キャンセルを検出して在庫を戻す"""
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
@@ -651,7 +723,11 @@ async def _check_delayed_cancellations():
                     if order_num and sku_map:
                         newly_cancelled[order_num] = sku_map
             except Exception as e:
+<<<<<<< HEAD
                 logger.warning(f"[scheduler] キャンセル再チェチE��API失敁E {e}")
+=======
+                logger.warning(f"[scheduler] キャンセル再チェックAPI失敗: {e}")
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
                 continue
 
         if not newly_cancelled:
@@ -703,7 +779,11 @@ async def _check_delayed_cancellations():
 
             _save_processed_order(db, order_num, "cancelled")
         if cancel_skipped:
+<<<<<<< HEAD
             logger.info(f"[scheduler] 遁E��キャンセル戻しスキチE�E(在庫0): {cancel_skipped}")
+=======
+            logger.info(f"[scheduler] 遅延キャンセル戻しスキップ(在庫0): {cancel_skipped}")
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
 
         share_counts = build_component_share_counts(all_products)
         updated_set_skus = set()
@@ -760,7 +840,7 @@ async def _check_delayed_cancellations():
                     logger.info(f"[scheduler] キャンセル戻しpush結果: {push_result}")
                 except Exception as pe:
                     push_result = {"ok": 0, "fail": len(push_items), "errors": [{"sku": "all", "detail": str(pe)}], "details": []}
-                    logger.warning(f"[scheduler] キャンセル戻しpush失敁E {pe}")
+                    logger.warning(f"[scheduler] キャンセル戻しpush失敗: {pe}")
 
         cancelled_nums = list(newly_cancelled.keys())
         log_entry = {
@@ -777,7 +857,11 @@ async def _check_delayed_cancellations():
                 "errors": push_result.get("errors", []),
             }
         _sync_logs.appendleft(log_entry)
+<<<<<<< HEAD
         logger.info(f"[scheduler] 遁E��キャンセル検�E: {len(cancelled_nums)}件 updated={updated_skus}")
+=======
+        logger.info(f"[scheduler] 遅延キャンセル検出: {len(cancelled_nums)}件 updated={updated_skus}")
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
 
         cancel_changed = {}
         for order_num, sku_map in newly_cancelled.items():
@@ -804,15 +888,25 @@ async def _check_delayed_cancellations():
             stock_before=sb or None, stock_after=sa or None,
         )
     except Exception as e:
+<<<<<<< HEAD
         logger.warning(f"[scheduler] キャンセル再チェチE��エラー: {e}")
+=======
+        logger.warning(f"[scheduler] キャンセル再チェックエラー: {e}")
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
     finally:
         db.close()
 
 
 async def _pull_rms_stock():
+<<<<<<< HEAD
     """RMSから在庫数を取得してDBに上書き、E
     ただし「セチE��の構�E品になってぁE��単品SKU」�Epullで上書きしなぁE��E
     単品在庫はチE�Eルが受注減算で管琁E��、セチE��在庫は楽天から取得する、E""
+=======
+    """RMSから在庫数を取得してDBに上書き。
+    ただし「セットの構成品になっている単品SKU」はpullで上書きしない。
+    単品在庫はツールが受注減算で管理し、セット在庫は楽天から取得する。"""
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.rakuten_product import RakutenProduct
@@ -829,7 +923,11 @@ async def _pull_rms_stock():
         ).all()
         sku_to_product = {p.sku: p for p in products}
 
+<<<<<<< HEAD
         # セチE��の構�E品になってぁE��SKUを特定！Eullで上書きしなぁE��象�E�E
+=======
+        # セットの構成品になっているSKUを特定（pullで上書きしない対象）
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
         component_parent_skus = _get_component_parent_skus(products)
 
         import re as _re
@@ -847,9 +945,15 @@ async def _pull_rms_stock():
             settings.rms_service_secret, settings.rms_license_key, items
         )
 
+<<<<<<< HEAD
         # セチE��啁E��ごとに「単品�Eール在庫から計算した上限値」を求める、E
         # push失敁E429筁EでRMSに古ぁE��きな在庫が残ると、その刁E��け実在庫以上に
         # 売れてしまぁE��売り越し�E�。pullのた�Eに上限趁E��を検�Eして矯正pushする、E
+=======
+        # セット商品ごとに「単品プール在庫から計算した上限値」を求める。
+        # push失敗(429等)でRMSに古い大きな在庫が残ると、その分だけ実在庫以上に
+        # 売れてしまう（売り越し）。pullのたびに上限超過を検出して矯正pushする。
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
         import json as _json2
         share_counts = build_component_share_counts(products)
         pool_expected: dict[str, int] = {}
@@ -884,13 +988,21 @@ async def _pull_rms_stock():
             p = sku_to_product.get(sku)
             if not p:
                 continue
+<<<<<<< HEAD
             # セチE��の構�E品になってぁE��単品はpullで上書きしなぁE��受注減算で管琁E��E
+=======
+            # セットの構成品になっている単品はpullで上書きしない（受注減算で管理）
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
             if sku in component_parent_skus:
                 skipped += 1
                 continue
             expected = pool_expected.get(sku)
             if expected is not None and qty > expected:
+<<<<<<< HEAD
                 # RMSが単品�Eールの上限を趁E��てぁE�� ↁEDBは上限値にし、RMSへ矯正push
+=======
+                # RMSが単品プールの上限を超えている → DBは上限値にし、RMSへ矯正push
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
                 p.stock = expected
                 corrections[sku] = {"rms": qty, "corrected_to": expected}
             else:
@@ -915,10 +1027,14 @@ async def _pull_rms_stock():
                 push_result = await push_inventory_to_rms(
                     settings.rms_service_secret, settings.rms_license_key, push_items
                 )
+<<<<<<< HEAD
                 logger.warning(f"[scheduler] RMS在庫の上限趁E��を矯正push: {corrections} 結果={push_result}")
+=======
+                logger.warning(f"[scheduler] RMS在庫の上限超過を矯正push: {corrections} 結果={push_result}")
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
             except Exception as pe:
                 push_result = {"ok": 0, "fail": len(push_items), "errors": [{"sku": "all", "detail": str(pe)}]}
-                logger.warning(f"[scheduler] 矯正push失敁E {pe}")
+                logger.warning(f"[scheduler] 矯正push失敗: {pe}")
             _save_inventory_event(
                 db, event_type="reconcile_push", event_time=dt.now(JST),
                 changed={s: v["corrected_to"] - v["rms"] for s, v in corrections.items()},
@@ -931,7 +1047,11 @@ async def _pull_rms_stock():
                 stock_after={s: v["corrected_to"] for s, v in corrections.items()},
             )
 
+<<<<<<< HEAD
         logger.info(f"[scheduler] RMS在庫取得完亁E {updated}件更新, {skipped}件スキチE�E(単品管琁E")
+=======
+        logger.info(f"[scheduler] RMS在庫取得完了: {updated}件更新, {skipped}件スキップ(単品管理)")
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
         log_entry = {
             "time": dt.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
             "type": "rms_stock",
@@ -956,8 +1076,13 @@ async def _pull_rms_stock():
 
 
 async def _seed_processed_orders():
+<<<<<<< HEAD
     """初回起動時: processed_ordersが空なら過去7日刁E�E注斁E��在庫操作なしでseedする、E
     これにより既に旧プロセスで処琁E��みの注斁E��二重減算しなぁE��E""
+=======
+    """初回起動時: processed_ordersが空なら過去7日分の注文を在庫操作なしでseedする。
+    これにより既に旧プロセスで処理済みの注文を二重減算しない。"""
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
     from app.core.database import SessionLocal
     from app.models.rakuten_settings import RakutenSettings
     from app.models.processed_order import ProcessedOrder
@@ -968,7 +1093,7 @@ async def _seed_processed_orders():
     try:
         existing_count = db.query(ProcessedOrder).count()
         if existing_count > 0:
-            logger.info(f"[scheduler] seed不要E processed_orders={existing_count}件")
+            logger.info(f"[scheduler] seed不要: processed_orders={existing_count}件")
             return
 
         settings = db.query(RakutenSettings).first()
@@ -1028,7 +1153,11 @@ async def _seed_processed_orders():
                 page += 1
 
         if not all_order_numbers:
+<<<<<<< HEAD
             logger.info("[scheduler] seed: 過去7日の注斁E��ぁE)
+=======
+            logger.info("[scheduler] seed: 過去7日の注文なし")
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
             return
 
         BATCH = 100
@@ -1054,7 +1183,7 @@ async def _seed_processed_orders():
                     _save_processed_order(db, order_num, state)
                     seeded += 1
             except Exception as e:
-                logger.warning(f"[scheduler] seed getOrder失敁E {e}")
+                logger.warning(f"[scheduler] seed getOrder失敗: {e}")
                 continue
 
         db.commit()
@@ -1064,7 +1193,11 @@ async def _seed_processed_orders():
             "seeded": seeded,
             "total_searched": len(all_order_numbers),
         })
+<<<<<<< HEAD
         logger.info(f"[scheduler] 初回seed完亁E {seeded}件�E�在庫操作なし！E)
+=======
+        logger.info(f"[scheduler] 初回seed完了: {seeded}件（在庫操作なし）")
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
     except Exception as e:
         logger.warning(f"[scheduler] seedエラー: {e}")
     finally:
@@ -1072,11 +1205,19 @@ async def _seed_processed_orders():
 
 
 async def _scheduler_loop():
+<<<<<<< HEAD
     """1刁E��とに受注差刁E�E在庫同期�E�RMS在庫取得、E0刁E��とにキャンセル再チェチE��を実行、E
 
     販売数同期�E�E0日刁E�E受注取得）�Eメモリを大量に使いRender(512MB)がOOMするため、E
     ここでは実行しなぁE��EitHub Actionsの日次ワークフロー(rakuten-sales-sync.yml)ぁE
     毎日JST3:00に実行し、E��計結果だけを /rms/sales/apply で受け取る、E""
+=======
+    """1分ごとに受注差分の在庫同期＋RMS在庫取得、30分ごとにキャンセル再チェックを実行。
+
+    販売数同期（60日分の受注取得）はメモリを大量に使いRender(512MB)がOOMするため、
+    ここでは実行しない。GitHub Actionsの日次ワークフロー(rakuten-sales-sync.yml)が
+    毎日JST3:00に実行し、集計結果だけを /rms/sales/apply で受け取る。"""
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
     await _seed_processed_orders()
     await _pull_rms_stock()
     tick = 0
@@ -1100,7 +1241,11 @@ async def lifespan(app):
     except asyncio.CancelledError:
         pass
 
+<<<<<<< HEAD
 app = FastAPI(title="中国輸入管琁E��ール", version="0.1.0", lifespan=lifespan)
+=======
+app = FastAPI(title="中国輸入管理ツール", version="0.1.0", lifespan=lifespan)
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
 
 import os
 ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000,https://misa-sep13.github.io").split(",")
@@ -1131,17 +1276,29 @@ app.include_router(fba_plan.router, prefix="/api")
 
 @app.get("/")
 def root():
+<<<<<<< HEAD
     return {"message": "中国輸入管琁E��ール API"}
 
 @app.get("/api/sync-logs")
 def get_sync_logs():
     """在庫同期ログ履歴�E�直迁E00件�E�E""
+=======
+    return {"message": "中国輸入管理ツール API"}
+
+@app.get("/api/sync-logs")
+def get_sync_logs():
+    """在庫同期ログ履歴（直近100件）"""
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
     return {"logs": list(_sync_logs)}
 
 
 @app.get("/api/inventory-events")
 def get_inventory_events(sku: str = None, limit: int = 100):
+<<<<<<< HEAD
     """inventory_events チE�Eブルから最新limit件を返す。sku持E��でそ�ESKUを含むイベント�Eみ"""
+=======
+    """inventory_events テーブルから最新limit件を返す。sku指定でそのSKUを含むイベントのみ"""
+>>>>>>> 56a2193bf9dbe7530cb111d0f647ed03fed64ea1
     import json as _j
     from app.core.database import SessionLocal
     from app.models.inventory_event import InventoryEvent

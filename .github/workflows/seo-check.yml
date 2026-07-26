@@ -1,0 +1,23 @@
+name: Daily SEO Ranking Check
+
+on:
+  schedule:
+    # 毎日 15:00 UTC（= JST 0:00）
+    - cron: '0 15 * * *'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install deps
+        run: pip install httpx beautifulsoup4
+      - name: SEO順位チェック（楽天検索スクレイピング → Render送信）
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+        run: python scripts/check_seo_rankings.py

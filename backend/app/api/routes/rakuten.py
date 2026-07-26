@@ -869,11 +869,12 @@ def _ordered_by_sku_stage(db):
 
 
 def _daily_avg_from_table(db) -> dict[str, dict]:
-    """rakuten_daily_salesから7日・30日のSKU別日販を算出（在庫切れ日を除外）。
-    戻り値: {sku: {"avg_7": float, "avg_30": float}}
+    """rakuten_daily_salesから7日・30日・前30日(31〜60日前)のSKU別日販を算出（在庫切れ日を除外）。
+    戻り値: {sku: {"avg_7": float, "avg_30": float, "avg_prev_30": float}}
     """
     from app.models.rakuten_daily_sales import RakutenDailySales
     today = date.today()
+    cutoff_60 = today - timedelta(days=60)
     cutoff_30 = today - timedelta(days=30)
     cutoff_7 = today - timedelta(days=7)
     rows = db.query(
@@ -881,28 +882,39 @@ def _daily_avg_from_table(db) -> dict[str, dict]:
         RakutenDailySales.sale_date,
         RakutenDailySales.qty,
         RakutenDailySales.is_stockout,
-    ).filter(RakutenDailySales.sale_date >= cutoff_30).all()
+    ).filter(RakutenDailySales.sale_date >= cutoff_60).all()
     if not rows:
         return {}
     sku_data: dict[str, dict] = {}
     for sku, sale_date, qty, is_stockout in rows:
         if sku not in sku_data:
-            sku_data[sku] = {"sum_7": 0, "sum_30": 0, "days_7": 0, "days_30": 0}
-        if not is_stockout:
-            sku_data[sku]["sum_30"] += qty or 0
-            sku_data[sku]["days_30"] += 1
-            if sale_date >= cutoff_7:
-                sku_data[sku]["sum_7"] += qty or 0
-                sku_data[sku]["days_7"] += 1
-        elif sale_date >= cutoff_7:
-            pass  # stockout日は7日カウントにも含めない
+            sku_data[sku] = {
+                "sum_7": 0, "sum_30": 0, "sum_prev_30": 0,
+                "stockout_7": 0, "stockout_30": 0, "stockout_prev_30": 0,
+            }
+        if sale_date >= cutoff_30:
+            if is_stockout:
+                sku_data[sku]["stockout_30"] += 1
+                if sale_date >= cutoff_7:
+                    sku_data[sku]["stockout_7"] += 1
+            else:
+                sku_data[sku]["sum_30"] += qty or 0
+                if sale_date >= cutoff_7:
+                    sku_data[sku]["sum_7"] += qty or 0
+        else:
+            if is_stockout:
+                sku_data[sku]["stockout_prev_30"] += 1
+            else:
+                sku_data[sku]["sum_prev_30"] += qty or 0
     result = {}
     for sku, d in sku_data.items():
-        eff_7 = max(d["days_7"], 1)
-        eff_30 = max(d["days_30"], 1)
+        eff_7 = max(7 - d["stockout_7"], 1)
+        eff_30 = max(30 - d["stockout_30"], 1)
+        eff_prev = max(30 - d["stockout_prev_30"], 1)
         result[sku] = {
             "avg_7": round(d["sum_7"] / eff_7, 2),
             "avg_30": round(d["sum_30"] / eff_30, 2),
+            "avg_prev_30": round(d["sum_prev_30"] / eff_prev, 2) if d["sum_prev_30"] > 0 else 0,
         }
     return result
 
@@ -1020,6 +1032,7 @@ def get_recommendations(db: Session = Depends(get_db)):
             stockout_days_90=p.stockout_days_90 or 0,
             daily_avg_7=da.get("avg_7", 0),
             daily_avg_30=da.get("avg_30", 0),
+            daily_avg_prev_30=da.get("avg_prev_30", 0),
             s=s,
         )
         try:
@@ -1123,6 +1136,7 @@ def get_all_products_order(db: Session = Depends(get_db)):
             stockout_days_90=getattr(p, 'stockout_days_90', None) or 0,
             daily_avg_7=da.get("avg_7", 0),
             daily_avg_30=da.get("avg_30", 0),
+            daily_avg_prev_30=da.get("avg_prev_30", 0),
             s=s,
         )
         sc_parsed = []
