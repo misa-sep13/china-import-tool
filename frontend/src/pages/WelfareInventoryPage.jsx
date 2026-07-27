@@ -421,7 +421,7 @@ export default function WelfareInventoryPage() {
 
       <div className="top-actions">
         <input
-          style={{ maxWidth: 320 }}
+          style={{ maxWidth: 320, imeMode: 'active' }}
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="SKU・商品名・仕様で検索"
