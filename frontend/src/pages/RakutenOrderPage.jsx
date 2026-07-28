@@ -18,6 +18,23 @@ function ShipmentTab() {
   const [note, setNote] = useState('')
   const [done, setDone] = useState(false)
   const [receiveResult, setReceiveResult] = useState(null)
+  const [retrying, setRetrying] = useState(false)
+  const [retryResult, setRetryResult] = useState(null)
+
+  async function handleRetryPush() {
+    setRetrying(true)
+    setRetryResult(null)
+    try {
+      const res = await api.post('/rakuten/rms/push-failures/retry')
+      setRetryResult(res.data)
+      qc.invalidateQueries(['rakuten-stock'])
+      qc.invalidateQueries(['rms-push-failures'])
+    } catch (e) {
+      setRetryResult({ error: e.response?.data?.detail || e.message })
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   useEffect(() => {
     axios.get(`${API}/rakuten/products/`).then(r => setAllProducts(r.data)).catch(() => {})
@@ -136,9 +153,93 @@ function ShipmentTab() {
                 <div style={{ fontSize: 13, color: '#475569', marginBottom: 12 }}>
                   在庫加算: {receiveResult.updated}件 / 未照合スキップ: {receiveResult.skipped}件 / 発注済消化: {receiveResult.order_consumed}件
                   {' '} / RMS反映: ok {receiveResult.rms_push_ok || 0} / fail {receiveResult.rms_push_fail || 0}
+
+                  {receiveResult.skipped_rows?.length > 0 && (
+                    <div style={{ marginTop: 12, border: '1px solid #fcd34d', background: '#fffbeb', borderRadius: 8, padding: 12 }}>
+                      <div style={{ fontWeight: 700, color: '#92400e', marginBottom: 8 }}>
+                        ⚠ 在庫に取り込めなかった行（{receiveResult.skipped_rows.length}件）
+                      </div>
+                      <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+                        <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ textAlign: 'left', color: '#92400e' }}>
+                              <th style={{ padding: '4px 6px' }}>中国語名</th>
+                              <th style={{ padding: '4px 6px' }}>色</th>
+                              <th style={{ padding: '4px 6px' }}>サイズ</th>
+                              <th style={{ padding: '4px 6px', textAlign: 'right' }}>数量</th>
+                              <th style={{ padding: '4px 6px' }}>理由</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {receiveResult.skipped_rows.map((r, i) => (
+                              <tr key={i} style={{ borderTop: '1px solid #fde68a' }}>
+                                <td style={{ padding: '4px 6px' }}>
+                                  {r.buy_url
+                                    ? <a href={r.buy_url} target="_blank" rel="noreferrer">{r.name_cn || '(名称なし)'}</a>
+                                    : (r.name_cn || '(名称なし)')}
+                                </td>
+                                <td style={{ padding: '4px 6px' }}>{r.color}</td>
+                                <td style={{ padding: '4px 6px' }}>{r.size}</td>
+                                <td style={{ padding: '4px 6px', textAlign: 'right' }}>{r.qty}</td>
+                                <td style={{ padding: '4px 6px' }}>{r.reason}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#92400e', marginTop: 6 }}>
+                        ※ 商品マスタに登録・照合してから、この配送依頼を取り込み直してください。
+                      </div>
+                    </div>
+                  )}
+
                   {receiveResult.rms_push_fail > 0 && (
-                    <div style={{ color: '#dc2626', fontWeight: 700, marginTop: 4 }}>
-                      RMS反映に失敗したSKUがあります。補正pushが必要です。
+                    <div style={{ marginTop: 12, border: '1px solid #fca5a5', background: '#fef2f2', borderRadius: 8, padding: 12 }}>
+                      <div style={{ fontWeight: 700, color: '#dc2626', marginBottom: 8 }}>
+                        ⚠ 楽天RMSへの在庫反映に失敗したSKU（{receiveResult.rms_push_fail}件）
+                      </div>
+                      <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+                        <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ textAlign: 'left', color: '#dc2626' }}>
+                              <th style={{ padding: '4px 6px' }}>SKU</th>
+                              <th style={{ padding: '4px 6px', textAlign: 'right' }}>在庫数</th>
+                              <th style={{ padding: '4px 6px' }}>HTTP</th>
+                              <th style={{ padding: '4px 6px' }}>理由</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(receiveResult.rms_push_failed || []).map((d, i) => (
+                              <tr key={i} style={{ borderTop: '1px solid #fecaca' }}>
+                                <td style={{ padding: '4px 6px', fontFamily: 'monospace' }}>{d.sku}</td>
+                                <td style={{ padding: '4px 6px', textAlign: 'right' }}>{d.qty}</td>
+                                <td style={{ padding: '4px 6px' }}>{d.http ?? '-'}</td>
+                                <td style={{ padding: '4px 6px', wordBreak: 'break-all' }}>{d.detail || '-'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                        <button className="btn btn-primary" style={{ fontSize: 13 }} onClick={handleRetryPush} disabled={retrying}>
+                          {retrying ? '補正push中...' : '🔁 補正push（今の在庫で再送）'}
+                        </button>
+                        {retryResult && (
+                          <span style={{ fontSize: 12, color: retryResult.error || retryResult.push_fail > 0 ? '#dc2626' : '#16a34a' }}>
+                            {retryResult.error
+                              ? retryResult.error
+                              : `再送${retryResult.retried}件 → 成功${retryResult.push_ok} / 失敗${retryResult.push_fail}`}
+                          </span>
+                        )}
+                      </div>
+                      {retryResult?.failed?.length > 0 && (
+                        <div style={{ fontSize: 11, color: '#dc2626', marginTop: 6 }}>
+                          まだ失敗: {retryResult.failed.map(f => `${f.sku}(${f.http ?? '-'})`).join(', ')}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 11, color: '#991b1b', marginTop: 6 }}>
+                        ※ 失敗は記録されています。あとから「在庫・損益」ページの警告からも補正pushできます。
+                      </div>
                     </div>
                   )}
                 </div>

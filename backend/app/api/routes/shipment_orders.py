@@ -348,6 +348,7 @@ async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db:
     items = db.query(ShipmentOrderItem).filter(ShipmentOrderItem.shipment_order_id == order_id).all()
     updated = 0
     skipped = 0
+    skipped_rows = []   # 取り込めなかった行（画面に理由付きで出す）
     duplicate_skipped = 0
     order_consumed = 0  # 発注済みリストから消化した件数
     consumed_skus = set()  # 消化が発生したSKU（発注済2→1の繰り上げ判定用）
@@ -355,13 +356,26 @@ async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db:
     reflection_rows = []
     processed_product_ids = set()
 
+    def _skip(item, reason: str, sku: str = ""):
+        skipped_rows.append({
+            "name_cn": item.name_cn or "",
+            "color": item.color or "",
+            "size": item.size or "",
+            "qty": item.qty or 0,
+            "buy_url": item.buy_url or "",
+            "sku": sku,
+            "reason": reason,
+        })
+
     for item in items:
         if not item.product_id:
             skipped += 1
+            _skip(item, "商品マスタと未照合")
             continue
         product = db.query(RakutenProduct).filter(RakutenProduct.id == item.product_id).first()
         if not product:
             skipped += 1
+            _skip(item, "照合先の商品が見つからない（削除済み）")
             continue
 
         # 配送依頼の数量は仕入れ単位。販売在庫はset_sizeで割った単位で管理する。
@@ -369,6 +383,7 @@ async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db:
         received_qty = item.qty // set_size if set_size > 1 else item.qty
         if received_qty <= 0:
             skipped += 1
+            _skip(item, f"セット入数{set_size}に満たないため0個換算", product.sku or "")
             continue
 
         before = {
@@ -479,13 +494,16 @@ async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db:
         from app.api.routes.rakuten import _get_or_create_settings
         settings = _get_or_create_settings(db)
         if settings.rms_service_secret and settings.rms_license_key:
-            from app.services.rakuten_rms import push_inventory_to_rms
+            from app.services.rakuten_rms import push_inventory_and_record
             push_items = len(rms_items)
             for attempt in range(3):
-                push_result = await push_inventory_to_rms(
+                push_result = await push_inventory_and_record(
                     settings.rms_service_secret,
                     settings.rms_license_key,
                     rms_items,
+                    source="shipment_order",
+                    source_label="配送依頼",
+                    event_id=event_id,
                 )
                 if push_result.get("fail", 0) == 0:
                     break
@@ -502,10 +520,17 @@ async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db:
             })
             db.commit()
 
+    failed_details = [d for d in (push_result.get("details") or []) if not d.get("ok")]
+    err_by_sku = {e.get("sku"): e.get("detail") for e in (push_result.get("errors") or [])}
+    for d in failed_details:
+        d["detail"] = err_by_sku.get(d.get("sku"))
+
     return {"updated": updated, "skipped": skipped, "duplicate_skipped": duplicate_skipped,
+            "skipped_rows": skipped_rows,
             "order_consumed": order_consumed,
             "stage_promoted": promoted, "rms_push_items": push_items,
             "rms_push_ok": push_result.get("ok", 0),
             "rms_push_fail": push_result.get("fail", 0),
             "rms_push_errors": push_result.get("errors", []),
+            "rms_push_failed": failed_details,
             "rms_push_details": push_result.get("details", [])}

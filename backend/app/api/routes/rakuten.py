@@ -38,6 +38,108 @@ def _log_inventory_reflection(db: Session, **kwargs) -> InventoryReflectionLog:
     return log
 
 
+@router.get("/rms/push-failures")
+def get_rms_push_failures(include_resolved: bool = False, limit: int = 200, db: Session = Depends(get_db)):
+    """RMS在庫反映に失敗したSKU一覧。既定では未解決のみ。"""
+    from app.models.rms_push_failure import RmsPushFailure
+    limit = max(1, min(limit, 500))
+    q = db.query(RmsPushFailure)
+    if not include_resolved:
+        q = q.filter(RmsPushFailure.resolved == False)
+    rows = q.order_by(RmsPushFailure.created_at.desc(), RmsPushFailure.id.desc()).limit(limit).all()
+    name_by_sku = {}
+    if rows:
+        skus = list({r.sku for r in rows if r.sku})
+        for p in db.query(RakutenProduct).filter(RakutenProduct.sku.in_(skus)).all():
+            name_by_sku[p.sku] = p.name or ""
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "sku": r.sku,
+                "name": name_by_sku.get(r.sku, ""),
+                "manage_number": r.manage_number,
+                "quantity": r.quantity,
+                "http_status": r.http_status,
+                "detail": r.detail,
+                "attempts": r.attempts,
+                "source": r.source,
+                "source_label": r.source_label,
+                "event_id": r.event_id,
+                "resolved": r.resolved,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.post("/rms/push-failures/retry")
+async def retry_rms_push_failures(db: Session = Depends(get_db)):
+    """未解決の失敗SKUを、現在のDB在庫で再push（補正push）する。"""
+    from app.models.rms_push_failure import RmsPushFailure
+    from app.services.rakuten_rms import push_inventory_and_record
+
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません。")
+
+    rows = db.query(RmsPushFailure).filter(RmsPushFailure.resolved == False).all()
+    if not rows:
+        return {"ok": True, "retried": 0, "push_ok": 0, "push_fail": 0, "failed": [],
+                "message": "未解決の失敗はありません。"}
+
+    # 在庫は「今のDBの値」を正として送る（失敗時点の古い数量は使わない）
+    all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    by_sku = {p.sku: p for p in all_products}
+    sku_stock = {p.sku: (p.stock or 0) for p in all_products}
+    target_skus = {r.sku for r in rows if r.sku}
+    _recalc_dependent_set_stock(all_products, sku_stock, target_skus)
+
+    rms_items = []
+    stale = []
+    for r in rows:
+        p = by_sku.get(r.sku)
+        if not p:
+            # 商品が消えている失敗は再送しようがないので解決済みにする
+            stale.append(r.sku)
+            r.resolved = True
+            r.resolved_at = datetime.now(timezone.utc)
+            continue
+        manage_number = p.rakuten_item_url or (p.sku or "").split("_")[0]
+        rms_items.append({
+            "manage_number": manage_number,
+            "variant_id": p.sku,
+            "quantity": sku_stock.get(p.sku, p.stock or 0),
+        })
+    db.commit()
+
+    if not rms_items:
+        return {"ok": True, "retried": 0, "push_ok": 0, "push_fail": 0, "failed": [],
+                "stale_skus": stale, "message": "再送対象がありません。"}
+
+    result = await push_inventory_and_record(
+        settings.rms_service_secret,
+        settings.rms_license_key,
+        rms_items,
+        source="retry",
+        source_label="補正push",
+    )
+    err_by_sku = {e.get("sku"): e.get("detail") for e in (result.get("errors") or [])}
+    failed = [
+        {**d, "detail": err_by_sku.get(d.get("sku"))}
+        for d in (result.get("details") or []) if not d.get("ok")
+    ]
+    return {
+        "ok": result.get("fail", 0) == 0,
+        "retried": len(rms_items),
+        "push_ok": result.get("ok", 0),
+        "push_fail": result.get("fail", 0),
+        "failed": failed,
+        "stale_skus": stale,
+    }
+
+
 @router.get("/inventory-reflection-logs")
 def get_inventory_reflection_logs(limit: int = 100, db: Session = Depends(get_db)):
     limit = max(1, min(limit, 500))
@@ -578,7 +680,7 @@ async def update_product(product_id: int, data: RakutenProductIn, background_tas
         try:
             settings = db.query(RakutenSettings).first()
             if settings and settings.rms_service_secret and settings.rms_license_key:
-                from app.services.rakuten_rms import push_inventory_to_rms
+                from app.services.rakuten_rms import push_inventory_and_record
                 rms_items = []
 
                 # 自分自身をRMSに反映
@@ -627,10 +729,12 @@ async def update_product(product_id: int, data: RakutenProductIn, background_tas
                 db.commit()
 
                 # RMSへのPUTは時間がかかるため、レスポンスを待たせずバックグラウンドで実行する
+                # （失敗はrms_push_failuresに残り、補正pushで再送できる）
                 if rms_items:
                     background_tasks.add_task(
-                        push_inventory_to_rms,
+                        push_inventory_and_record,
                         settings.rms_service_secret, settings.rms_license_key, rms_items,
+                        "stock_edit", "在庫編集",
                     )
         except Exception as e:
             import logging
@@ -706,10 +810,12 @@ async def bulk_update_stock(body: dict, background_tasks: BackgroundTasks, db: S
                 rms_items.append({"manage_number": manage_number, "variant_id": p.sku, "quantity": sku_stock.get(p.sku, 0)})
         if rms_items:
             # RMSへのPUTは時間がかかるため、保存レスポンスを待たせずバックグラウンドで実行する
-            from app.services.rakuten_rms import push_inventory_to_rms
+            # （失敗はrms_push_failuresに残り、補正pushで再送できる）
+            from app.services.rakuten_rms import push_inventory_and_record
             background_tasks.add_task(
-                push_inventory_to_rms,
+                push_inventory_and_record,
                 settings.rms_service_secret, settings.rms_license_key, rms_items,
+                "bulk_update", "在庫一括保存",
             )
 
     return {"ok": True, "updated": len(updated_skus), "rms_pushed": len(rms_items)}
@@ -780,10 +886,11 @@ async def receive_manufacturer_stock(product_id: int, background_tasks: Backgrou
     if settings and settings.rms_service_secret and settings.rms_license_key:
         rms_items = _build_rms_stock_items(all_products, sku_stock, updated_skus)
         if rms_items:
-            from app.services.rakuten_rms import push_inventory_to_rms
+            from app.services.rakuten_rms import push_inventory_and_record
             background_tasks.add_task(
-                push_inventory_to_rms,
+                push_inventory_and_record,
                 settings.rms_service_secret, settings.rms_license_key, rms_items,
+                "manufacturer_receive", "メーカー入荷", event_id,
             )
             db.query(InventoryReflectionLog).filter(
                 InventoryReflectionLog.event_id == event_id,

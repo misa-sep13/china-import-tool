@@ -13,6 +13,8 @@ export default function RakutenStockPage() {
   const [ssSyncResult, setSsSyncResult] = useState(null)
   const [syncingPrices, setSyncingPrices] = useState(false)
   const [syncPriceResult, setSyncPriceResult] = useState(null)
+  const [retryingPush, setRetryingPush] = useState(false)
+  const [retryPushResult, setRetryPushResult] = useState(null)
   const [expanded, setExpanded] = useState({})  // {parentSku: true} 展開中の親
   const toggleExpand = useCallback((sku) => {
     setExpanded(prev => ({ ...prev, [sku]: !prev[sku] }))
@@ -113,6 +115,28 @@ export default function RakutenStockPage() {
     queryKey: ['rakuten-ss-sales'],
     queryFn: () => api.get('/rakuten/ss-sales').then(r => r.data),
   })
+
+  // 楽天RMSへの在庫反映に失敗したSKU（未解決）。放置すると楽天の在庫がズレたままになる。
+  const { data: pushFailures } = useQuery({
+    queryKey: ['rms-push-failures'],
+    queryFn: () => api.get('/rakuten/rms/push-failures').then(r => r.data),
+  })
+  const failedPushes = pushFailures?.items || []
+
+  const handleRetryPush = async () => {
+    setRetryingPush(true)
+    setRetryPushResult(null)
+    try {
+      const res = await api.post('/rakuten/rms/push-failures/retry')
+      setRetryPushResult(res.data)
+      qc.invalidateQueries(['rms-push-failures'])
+      qc.invalidateQueries(['rakuten-stock'])
+    } catch (err) {
+      setRetryPushResult({ error: err.response?.data?.detail || '補正pushでエラーが発生しました' })
+    } finally {
+      setRetryingPush(false)
+    }
+  }
   const ssPeriod = ssSales?.period
   const ssMap = ssSales?.sales ?? {}
 
@@ -264,6 +288,54 @@ export default function RakutenStockPage() {
           {saving ? '保存中...' : `💾 一括保存${dirtyCount > 0 ? `（${dirtyCount}件）` : ''}`}
         </button>
       </div>
+
+      {failedPushes.length > 0 && (
+        <div style={{ border: '1px solid #fca5a5', background: '#fef2f2', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+          <div style={{ fontWeight: 700, color: '#dc2626', marginBottom: 8 }}>
+            ⚠ 楽天RMSへ在庫が反映できていないSKUが {failedPushes.length} 件あります（楽天側の在庫がズレたままです）
+          </div>
+          <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+            <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ textAlign: 'left', color: '#dc2626' }}>
+                  <th style={{ padding: '4px 6px' }}>SKU</th>
+                  <th style={{ padding: '4px 6px' }}>商品名</th>
+                  <th style={{ padding: '4px 6px' }}>管理番号</th>
+                  <th style={{ padding: '4px 6px', textAlign: 'right' }}>在庫数</th>
+                  <th style={{ padding: '4px 6px' }}>HTTP</th>
+                  <th style={{ padding: '4px 6px' }}>理由</th>
+                  <th style={{ padding: '4px 6px' }}>発生元</th>
+                </tr>
+              </thead>
+              <tbody>
+                {failedPushes.map(f => (
+                  <tr key={f.id} style={{ borderTop: '1px solid #fecaca' }}>
+                    <td style={{ padding: '4px 6px', fontFamily: 'monospace' }}>{f.sku}</td>
+                    <td style={{ padding: '4px 6px' }}>{f.name}</td>
+                    <td style={{ padding: '4px 6px', fontFamily: 'monospace' }}>{f.manage_number}</td>
+                    <td style={{ padding: '4px 6px', textAlign: 'right' }}>{f.quantity}</td>
+                    <td style={{ padding: '4px 6px' }}>{f.http_status ?? '-'}</td>
+                    <td style={{ padding: '4px 6px', wordBreak: 'break-all' }}>{f.detail || '-'}</td>
+                    <td style={{ padding: '4px 6px' }}>{f.source_label || f.source}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" style={{ fontSize: 13 }} onClick={handleRetryPush} disabled={retryingPush}>
+              {retryingPush ? '補正push中...' : '🔁 補正push（今の在庫で再送）'}
+            </button>
+            {retryPushResult && (
+              <span style={{ fontSize: 12, color: retryPushResult.error || retryPushResult.push_fail > 0 ? '#dc2626' : '#16a34a' }}>
+                {retryPushResult.error
+                  ? retryPushResult.error
+                  : `再送${retryPushResult.retried}件 → 成功${retryPushResult.push_ok} / 失敗${retryPushResult.push_fail}`}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="card" style={{ padding: '12px 16px', marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
         <input

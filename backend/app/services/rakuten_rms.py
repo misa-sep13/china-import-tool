@@ -450,6 +450,97 @@ async def push_inventory_to_rms(
     return {"ok": ok, "fail": fail, "errors": errors, "details": details}
 
 
+async def push_inventory_and_record(
+    service_secret: str,
+    license_key: str,
+    items: list[dict],
+    source: str,
+    source_label: str = "",
+    event_id: str | None = None,
+) -> dict:
+    """push_inventory_to_rms の結果をDBへ記録するラッパー。
+
+    バックグラウンド実行だと戻り値が捨てられ失敗が消えてしまうため、
+    在庫反映は必ずこの関数を通して失敗を rms_push_failures に残す。
+    成功したSKUは、過去に記録された未解決の失敗を解決済みにする。
+    """
+    result = await push_inventory_to_rms(service_secret, license_key, items)
+    try:
+        _record_push_result(result, items, source, source_label, event_id)
+    except Exception as e:
+        import logging
+        logging.getLogger("rakuten").warning(f"RMS push結果の記録に失敗: {e}")
+    return result
+
+
+def _record_push_result(
+    result: dict,
+    items: list[dict],
+    source: str,
+    source_label: str,
+    event_id: str | None,
+) -> None:
+    from datetime import timezone as _tz
+    from app.core.database import SessionLocal
+    from app.models.rms_push_failure import RmsPushFailure
+
+    details = result.get("details") or []
+    if not details:
+        return
+
+    qty_by_sku = {i["variant_id"]: i.get("quantity", 0) for i in items}
+    mn_by_sku = {i["variant_id"]: i.get("manage_number", "") for i in items}
+    err_by_sku = {e.get("sku"): e for e in (result.get("errors") or [])}
+
+    db = SessionLocal()
+    try:
+        now = datetime.now(_tz.utc)
+        for d in details:
+            sku = d.get("sku")
+            if not sku:
+                continue
+            if d.get("ok"):
+                # 後続のpushで届いたので、未解決の失敗を解決済みにする
+                db.query(RmsPushFailure).filter(
+                    RmsPushFailure.sku == sku,
+                    RmsPushFailure.resolved == False,
+                ).update({"resolved": True, "resolved_at": now})
+                continue
+
+            err = err_by_sku.get(sku) or {}
+            existing = db.query(RmsPushFailure).filter(
+                RmsPushFailure.sku == sku,
+                RmsPushFailure.resolved == False,
+            ).first()
+            if existing:
+                # 同じSKUの未解決失敗は増やさず最新状態に更新する
+                existing.quantity = qty_by_sku.get(sku, existing.quantity)
+                existing.manage_number = mn_by_sku.get(sku, existing.manage_number)
+                existing.http_status = d.get("http")
+                existing.detail = err.get("detail") or existing.detail
+                existing.attempts = d.get("attempts") or existing.attempts
+                if event_id:
+                    existing.event_id = event_id
+                existing.source = source
+                existing.source_label = source_label or existing.source_label
+            else:
+                db.add(RmsPushFailure(
+                    event_id=event_id,
+                    source=source,
+                    source_label=source_label,
+                    sku=sku,
+                    manage_number=mn_by_sku.get(sku, ""),
+                    quantity=qty_by_sku.get(sku, 0),
+                    http_status=d.get("http"),
+                    detail=err.get("detail"),
+                    attempts=d.get("attempts") or 0,
+                    resolved=False,
+                ))
+        db.commit()
+    finally:
+        db.close()
+
+
 async def fetch_recent_orders(
     service_secret: str,
     license_key: str,
