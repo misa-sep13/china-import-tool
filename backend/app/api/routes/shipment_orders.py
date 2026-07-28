@@ -392,9 +392,12 @@ async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db:
             "standard_stock": product.standard_stock or 0,
         }
 
-        # 同一商品の重複行はスキップ（色違い等で同じSKUに複数行照合される場合）
+        # 同一商品の重複行はスキップ（色違い等で同じSKUに複数行照合される場合）。
+        # 紐づけ間違いでも起きるため、黙って捨てずに画面へ出す（在庫が入らず気付けなくなる）。
         if item.product_id in processed_product_ids:
             duplicate_skipped += 1
+            _skip(item, f"同じ商品（{product.sku}）に複数行が紐づいているため未反映。紐づけ先を確認してください",
+                  product.sku or "")
             continue
         processed_product_ids.add(item.product_id)
 
@@ -446,7 +449,10 @@ async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db:
             "standard_stock_after": product.standard_stock or 0,
         })
 
-    # 発注済1が空になったSKUは、残っている発注済2を発注済1へ繰り上げる
+    # 発注済1が空になったSKUは、残っている発注済2を発注済1へ繰り上げる。
+    # SessionLocalはautoflush=Falseなので、消化でセットしたis_deleted=Trueを
+    # 先にflushしないと「消化済みの発注済1がまだ残っている」と誤判定して繰り上げを飛ばす。
+    db.flush()
     promoted = 0
     for sku in consumed_skus:
         remaining_orders = db.query(RakutenOrderHistory).filter(
@@ -454,6 +460,7 @@ async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db:
             RakutenOrderHistory.is_deleted == False,
             RakutenOrderHistory.is_delivered == False,
         ).all()
+        remaining_orders = [o for o in remaining_orders if not o.is_deleted]
         if any((o.stage or 1) == 1 for o in remaining_orders):
             continue
         for o in remaining_orders:

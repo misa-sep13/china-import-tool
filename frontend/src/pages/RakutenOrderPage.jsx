@@ -151,7 +151,9 @@ function ShipmentTab() {
               <p style={{ color: '#166534', fontWeight: 700 }}>入荷処理が完了しました。</p>
               {receiveResult && (
                 <div style={{ fontSize: 13, color: '#475569', marginBottom: 12 }}>
-                  在庫加算: {receiveResult.updated}件 / 未照合スキップ: {receiveResult.skipped}件 / 発注済消化: {receiveResult.order_consumed}件
+                  在庫加算: {receiveResult.updated}件 / 未照合スキップ: {receiveResult.skipped}件
+                  {receiveResult.duplicate_skipped > 0 && ` / 重複スキップ: ${receiveResult.duplicate_skipped}件`}
+                  {' '}/ 発注済消化: {receiveResult.order_consumed}件
                   {' '} / RMS反映: ok {receiveResult.rms_push_ok || 0} / fail {receiveResult.rms_push_fail || 0}
 
                   {receiveResult.skipped_rows?.length > 0 && (
