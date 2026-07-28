@@ -133,10 +133,7 @@ def _migrate():
         ("welfare_work_instructions","note",                 "ALTER TABLE welfare_work_instructions ADD COLUMN note TEXT"),
         ("welfare_work_instructions","created_at",           "ALTER TABLE welfare_work_instructions ADD COLUMN created_at TIMESTAMP"),
         ("welfare_work_instructions","updated_at",           "ALTER TABLE welfare_work_instructions ADD COLUMN updated_at TIMESTAMP"),
-<<<<<<< HEAD
         # インボイス：輸入許可書情報
-=======
->>>>>>> d7bdc04 (FBA納品プラン改修: タオタロウExcel取込・ステータス管理・ナビ位置変更)
         # Amazon商品マスタ：区分
         ("products",      "category",            "ALTER TABLE products ADD COLUMN category VARCHAR DEFAULT '標準'"),
         ("invoices","customs_duty",          "ALTER TABLE invoices ADD COLUMN customs_duty INTEGER DEFAULT 0"),
@@ -145,7 +142,6 @@ def _migrate():
         ("invoices","total_tax",             "ALTER TABLE invoices ADD COLUMN total_tax INTEGER DEFAULT 0"),
         ("invoices","bl_number",             "ALTER TABLE invoices ADD COLUMN bl_number VARCHAR"),
         ("invoices","declaration_no",        "ALTER TABLE invoices ADD COLUMN declaration_no VARCHAR"),
-<<<<<<< HEAD
         # 売上管理：広告比率カラム
         ("rakuten_sales_summaries","ad_rate", "ALTER TABLE rakuten_sales_summaries ADD COLUMN ad_rate FLOAT"),
         # レビューキャンペーン：判定キーワード
@@ -156,14 +152,6 @@ def _migrate():
         ("rakuten_settings","order_qty_cap", "ALTER TABLE rakuten_settings ADD COLUMN order_qty_cap INTEGER DEFAULT 3"),
         # 在庫切れフラグ
         ("rakuten_daily_sales","is_stockout", "ALTER TABLE rakuten_daily_sales ADD COLUMN is_stockout BOOLEAN DEFAULT FALSE"),
-        # Amazon大量買い除外キャップ
-=======
-        ("rakuten_sales_summaries","ad_rate", "ALTER TABLE rakuten_sales_summaries ADD COLUMN ad_rate FLOAT"),
-        ("review_campaigns","keywords", "ALTER TABLE review_campaigns ADD COLUMN keywords TEXT"),
-        ("title_optimizations","manage_number", "ALTER TABLE title_optimizations ADD COLUMN manage_number VARCHAR"),
-        ("rakuten_settings","order_qty_cap", "ALTER TABLE rakuten_settings ADD COLUMN order_qty_cap INTEGER DEFAULT 3"),
-        ("rakuten_daily_sales","is_stockout", "ALTER TABLE rakuten_daily_sales ADD COLUMN is_stockout BOOLEAN DEFAULT FALSE"),
->>>>>>> d7bdc04 (FBA納品プラン改修: タオタロウExcel取込・ステータス管理・ナビ位置変更)
         ("order_settings","order_qty_cap", "ALTER TABLE order_settings ADD COLUMN order_qty_cap INTEGER DEFAULT 3"),
         # FBA納品プラン用リードタイム詳細
         ("order_settings","lt_order_to_warehouse", "ALTER TABLE order_settings ADD COLUMN lt_order_to_warehouse INTEGER DEFAULT 7"),
@@ -173,15 +161,12 @@ def _migrate():
         ("order_settings","free_storage_days", "ALTER TABLE order_settings ADD COLUMN free_storage_days INTEGER DEFAULT 90"),
         ("order_settings","air_threshold_days", "ALTER TABLE order_settings ADD COLUMN air_threshold_days INTEGER DEFAULT 18"),
         ("order_settings","hold_daily_threshold", "ALTER TABLE order_settings ADD COLUMN hold_daily_threshold FLOAT DEFAULT 0.1"),
-<<<<<<< HEAD
         # 配送依頼明細の在庫反映済みフラグ（未反映分だけ再取込するため）
         ("shipment_order_items","is_reflected", "ALTER TABLE shipment_order_items ADD COLUMN is_reflected BOOLEAN DEFAULT FALSE"),
-=======
         # 発注履歴ステータス管理
         ("order_history","status",            "ALTER TABLE order_history ADD COLUMN status VARCHAR DEFAULT 'ordered'"),
         ("order_history","arrived_at",        "ALTER TABLE order_history ADD COLUMN arrived_at TIMESTAMP"),
         ("order_history","taotaro_order_id",  "ALTER TABLE order_history ADD COLUMN taotaro_order_id VARCHAR"),
->>>>>>> d7bdc04 (FBA納品プラン改修: タオタロウExcel取込・ステータス管理・ナビ位置変更)
     ]
 
     inspector = inspect(engine)
