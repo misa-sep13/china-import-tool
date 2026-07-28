@@ -280,6 +280,9 @@ def list_shipment_orders(db: Session = Depends(get_db)):
     for o in orders:
         items = db.query(ShipmentOrderItem).filter(ShipmentOrderItem.shipment_order_id == o.id).all()
         unmatched_count = sum(1 for i in items if not i.is_matched)
+        # 入荷済みなのに在庫へ入っていない行（紐づけ間違い・未照合の取りこぼし）
+        unreflected_count = sum(1 for i in items if not i.is_reflected)
+        pending_reimport = sum(1 for i in items if not i.is_reflected and i.product_id)
         result.append({
             "id": o.id,
             "tracking_no": o.tracking_no,
@@ -292,6 +295,8 @@ def list_shipment_orders(db: Session = Depends(get_db)):
             "note": o.note,
             "item_count": len(items),
             "unmatched_count": unmatched_count,
+            "unreflected_count": unreflected_count,
+            "pending_reimport": pending_reimport,
         })
     return result
 
@@ -314,6 +319,7 @@ def get_shipment_order_items(order_id: int, db: Session = Depends(get_db)):
             "unit_price_cny": item.unit_price_cny,
             "qty": item.qty,
             "is_matched": item.is_matched,
+            "is_reflected": bool(item.is_reflected),
         })
     return result
 
@@ -330,10 +336,45 @@ def match_item(order_id: int, item_id: int, data: ShipmentOrderItemPatch, db: Se
     product = db.query(RakutenProduct).filter(RakutenProduct.id == data.product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="商品が見つかりません")
+
+    # すでに在庫へ反映済みの行を別商品へ付け替える場合、
+    # 元の商品に入れた分を戻してから未反映に戻す。
+    # （戻さないと間違ったSKUに在庫が残ったままになる）
+    reverted = None
+    if item.is_reflected and item.product_id and item.product_id != data.product_id:
+        old = db.query(RakutenProduct).filter(RakutenProduct.id == item.product_id).first()
+        if old:
+            set_size = old.set_size or 1
+            qty_units = item.qty // set_size if set_size > 1 else item.qty
+            before_stock = old.stock or 0
+            old.stock = max(0, before_stock - qty_units)
+            db.add(InventoryReflectionLog(
+                event_id=str(uuid.uuid4()),
+                source="shipment_order",
+                source_label="紐づけ修正（取消）",
+                source_id=order_id,
+                source_ref=f"配送依頼#{order_id}",
+                sku=old.sku,
+                name=old.name,
+                supplier=old.supplier,
+                received_qty=-qty_units,
+                stock_before=before_stock,
+                stock_after=old.stock,
+                inbound_before=old.inbound or 0,
+                inbound_after=old.inbound or 0,
+                standard_stock_before=old.standard_stock or 0,
+                standard_stock_after=old.standard_stock or 0,
+                rms_push_items=0,
+                note="紐づけ先の変更にともない在庫加算を取り消し",
+            ))
+            reverted = {"sku": old.sku, "qty": qty_units,
+                        "stock_before": before_stock, "stock_after": old.stock}
+        item.is_reflected = False
+
     item.product_id = data.product_id
     item.is_matched = True
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "reverted": reverted}
 
 
 @router.post("/{order_id}/receive")
@@ -346,6 +387,33 @@ async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db:
         raise HTTPException(status_code=400, detail="すでに入荷済みです")
 
     items = db.query(ShipmentOrderItem).filter(ShipmentOrderItem.shipment_order_id == order_id).all()
+    return await _apply_receive(db, order, items, mark_received=True)
+
+
+@router.post("/{order_id}/receive-remaining")
+async def receive_remaining(order_id: int, db: Session = Depends(get_db)):
+    """入荷済みの配送依頼のうち、まだ在庫に反映されていない行だけを取り込む。
+
+    紐づけ間違いや未照合で取りこぼした行を、紐づけを直したあとに復旧するための操作。
+    すでに反映済みの行(is_reflected=True)は対象外なので二重加算にはならない。
+    """
+    order = db.query(ShipmentOrder).filter(ShipmentOrder.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="配送依頼が見つかりません")
+
+    items = db.query(ShipmentOrderItem).filter(
+        ShipmentOrderItem.shipment_order_id == order_id,
+        ShipmentOrderItem.is_reflected == False,
+        ShipmentOrderItem.product_id != None,
+    ).all()
+    if not items:
+        raise HTTPException(status_code=400, detail="未反映の行はありません（すべて反映済み、または未照合のままです）")
+
+    return await _apply_receive(db, order, items, mark_received=False)
+
+
+async def _apply_receive(db: Session, order: ShipmentOrder, items, mark_received: bool):
+    """配送依頼の行を在庫へ反映する共通処理。receive / receive-remaining から呼ぶ。"""
     updated = 0
     skipped = 0
     skipped_rows = []   # 取り込めなかった行（画面に理由付きで出す）
@@ -403,6 +471,7 @@ async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db:
 
         # 在庫加算
         product.stock = (product.stock or 0) + received_qty
+        item.is_reflected = True   # 再取り込みで二重加算しないための印
         updated += 1
         updated_skus.add(product.sku)
 
@@ -478,15 +547,17 @@ async def receive_shipment(order_id: int, background_tasks: BackgroundTasks, db:
         _recalc_dependent_set_stock(all_products, sku_stock, updated_skus)
         rms_items = _build_rms_stock_items(all_products, sku_stock, updated_skus)
 
-    order.status = "received"
-    order.received_at = datetime.now(timezone.utc)
+    if mark_received:
+        order.status = "received"
+        order.received_at = datetime.now(timezone.utc)
     event_id = str(uuid.uuid4())
     source_ref = order.tracking_no or order.order_no or f"配送依頼#{order.id}"
+    label = "配送依頼" if mark_received else "配送依頼（未反映分の再取込）"
     for row in reflection_rows:
         db.add(InventoryReflectionLog(
             event_id=event_id,
             source="shipment_order",
-            source_label="配送依頼",
+            source_label=label,
             source_id=order.id,
             source_ref=source_ref,
             note=f"未照合スキップ: {skipped}件 / 発注済消化: {order_consumed}件",

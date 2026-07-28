@@ -162,6 +162,8 @@ def _migrate():
         ("order_settings","free_storage_days", "ALTER TABLE order_settings ADD COLUMN free_storage_days INTEGER DEFAULT 90"),
         ("order_settings","air_threshold_days", "ALTER TABLE order_settings ADD COLUMN air_threshold_days INTEGER DEFAULT 18"),
         ("order_settings","hold_daily_threshold", "ALTER TABLE order_settings ADD COLUMN hold_daily_threshold FLOAT DEFAULT 0.1"),
+        # 配送依頼明細の在庫反映済みフラグ（未反映分だけ再取込するため）
+        ("shipment_order_items","is_reflected", "ALTER TABLE shipment_order_items ADD COLUMN is_reflected BOOLEAN DEFAULT FALSE"),
     ]
 
     inspector = inspect(engine)
@@ -176,6 +178,16 @@ def _migrate():
                 with engine.begin() as conn:
                     conn.execute(text(sql))
                 logger.info(f"migrate: added {table}.{col}")
+                # 既存の入荷済み配送依頼は反映済みとして埋める。
+                # （どの行が実際に反映されたかは遡れないため、二重加算しない側に倒す）
+                if table == "shipment_order_items" and col == "is_reflected":
+                    with engine.begin() as conn:
+                        conn.execute(text(
+                            "UPDATE shipment_order_items SET is_reflected = TRUE "
+                            "WHERE product_id IS NOT NULL AND shipment_order_id IN "
+                            "(SELECT id FROM shipment_orders WHERE status = 'received')"
+                        ))
+                    logger.info("migrate: backfilled shipment_order_items.is_reflected for received orders")
             except Exception as e:
                 logger.warning(f"migrate: {table}.{col} -> {e}")
 

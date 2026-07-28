@@ -94,12 +94,44 @@ export default function ShipmentOrderPage() {
 
   async function handleMatchItem(orderId, itemId, productId) {
     try {
-      await axios.patch(`${API}/shipment-orders/${orderId}/items/${itemId}/match`, { product_id: parseInt(productId) })
+      const r = await axios.patch(`${API}/shipment-orders/${orderId}/items/${itemId}/match`, { product_id: parseInt(productId) })
+      const rev = r.data?.reverted
+      if (rev) {
+        alert(
+          `この行はすでに在庫へ反映済みだったため、${rev.sku} の在庫から ${rev.qty} を戻しました`
+          + `（${rev.stock_before} → ${rev.stock_after}）。\n`
+          + '「未反映の行を取り込む」を押すと、新しい紐づけ先へ加算されます。'
+        )
+      }
       const res = await axios.get(`${API}/shipment-orders/${orderId}/items`)
       setDetailItems(res.data)
       await fetchOrders()
     } catch (e) {
       alert('照合エラー: ' + (e.response?.data?.detail || e.message))
+    }
+  }
+
+  async function handleReceiveRemaining(orderId) {
+    const targets = detailItems.filter(i => !i.is_reflected && i.product_id)
+    if (targets.length === 0) {
+      alert('取り込める行がありません。先に商品を紐づけてください。')
+      return
+    }
+    const list = targets.map(i => `・${i.sku || '(SKU不明)'} ${i.qty}個`).join('\n')
+    if (!confirm(`まだ在庫に入っていない次の行を取り込みます。\n\n${list}\n\nよろしいですか？`)) return
+    try {
+      const res = await axios.post(`${API}/shipment-orders/${orderId}/receive-remaining`)
+      const rmsFail = res.data.rms_push_fail || 0
+      alert(
+        `${res.data.updated}件の在庫を加算しました。\n`
+        + `RMS反映: ok ${res.data.rms_push_ok || 0} / fail ${rmsFail}`
+        + (rmsFail > 0 ? '\n※ 在庫・損益ページの警告から補正pushしてください。' : '')
+      )
+      const r = await axios.get(`${API}/shipment-orders/${orderId}/items`)
+      setDetailItems(r.data)
+      await fetchOrders()
+    } catch (e) {
+      alert('エラー: ' + (e.response?.data?.detail || e.message))
     }
   }
 
@@ -187,6 +219,11 @@ export default function ShipmentOrderPage() {
                       }}>
                         {o.status === 'received' ? '入荷済' : '入荷待ち'}
                       </span>
+                      {o.status === 'received' && o.unreflected_count > 0 && (
+                        <div style={{ fontSize: 11, color: '#b45309', fontWeight: 700, marginTop: 2 }}>
+                          在庫未反映 {o.unreflected_count}件
+                        </div>
+                      )}
                     </td>
                     <td>
                       <button className="btn-secondary" style={{ fontSize: 12, padding: '4px 10px' }} onClick={() => handleShowDetail(o)}>
@@ -218,6 +255,21 @@ export default function ShipmentOrderPage() {
             )}
           </div>
 
+          {detail.status === 'received' && detailItems.some(i => !i.is_reflected) && (
+            <div style={{ border: '1px solid #fcd34d', background: '#fffbeb', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, color: '#92400e', marginBottom: 6 }}>
+                ⚠ 在庫に入っていない行が {detailItems.filter(i => !i.is_reflected).length} 件あります
+              </div>
+              <div style={{ fontSize: 12, color: '#92400e', marginBottom: 10 }}>
+                未照合のままだった行や、同じ商品に複数行が紐づいて弾かれた行です。
+                下の表で正しいSKUを選び直してから「未反映の行を取り込む」を押すと在庫へ加算されます。
+              </div>
+              <button className="btn-primary" onClick={() => handleReceiveRemaining(detail.id)}>
+                未反映の行を取り込む（{detailItems.filter(i => !i.is_reflected && i.product_id).length}件）
+              </button>
+            </div>
+          )}
+
           <table>
             <thead>
               <tr>
@@ -227,12 +279,13 @@ export default function ShipmentOrderPage() {
                 <th style={{ textAlign: 'right' }}>数量</th>
                 <th>照合SKU</th>
                 <th>照合状態</th>
-                {detail.status !== 'received' && <th>手動照合</th>}
+                <th>在庫反映</th>
+                <th>手動照合</th>
               </tr>
             </thead>
             <tbody>
               {detailItems.map(item => (
-                <tr key={item.id}>
+                <tr key={item.id} style={!item.is_reflected && detail.status === 'received' ? { background: '#fffbeb' } : undefined}>
                   <td style={{ fontSize: 12, maxWidth: 200 }}>{item.name_cn}</td>
                   <td style={{ fontSize: 12 }}>{item.color}</td>
                   <td style={{ fontSize: 12 }}>{item.size}</td>
@@ -246,22 +299,24 @@ export default function ShipmentOrderPage() {
                       {item.is_matched ? '照合済' : '未照合'}
                     </span>
                   </td>
-                  {detail.status !== 'received' && (
-                    <td>
-                      {!item.is_matched && (
-                        <select
-                          style={{ fontSize: 12 }}
-                          defaultValue=""
-                          onChange={e => e.target.value && handleMatchItem(detail.id, item.id, e.target.value)}
-                        >
-                          <option value="">-- SKUを選択 --</option>
-                          {allProducts.map(p => (
-                            <option key={p.id} value={p.id}>{p.sku} {p.name}</option>
-                          ))}
-                        </select>
-                      )}
-                    </td>
-                  )}
+                  <td style={{ textAlign: 'center' }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: item.is_reflected ? '#22c55e' : '#f59e0b' }}>
+                      {item.is_reflected ? '反映済' : '未反映'}
+                    </span>
+                  </td>
+                  <td>
+                    {/* 入荷済みでも付け替えできる。反映済みの行を変えると元SKUの在庫は自動で戻す。 */}
+                    <select
+                      style={{ fontSize: 12 }}
+                      value={item.product_id || ''}
+                      onChange={e => e.target.value && handleMatchItem(detail.id, item.id, e.target.value)}
+                    >
+                      <option value="">-- SKUを選択 --</option>
+                      {allProducts.map(p => (
+                        <option key={p.id} value={p.id}>{p.sku} {p.name}</option>
+                      ))}
+                    </select>
+                  </td>
                 </tr>
               ))}
             </tbody>
