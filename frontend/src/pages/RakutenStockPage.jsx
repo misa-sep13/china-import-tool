@@ -123,6 +123,24 @@ export default function RakutenStockPage() {
   })
   const failedPushes = pushFailures?.items || []
 
+  const [resyncing, setResyncing] = useState(false)
+  const [resyncResult, setResyncResult] = useState(null)
+
+  const handleResyncStock = async () => {
+    if (!window.confirm('DBの在庫数を楽天RMSへ再送します（DBは変更しません）。\n楽天側の在庫がこのツールの値で上書きされます。よろしいですか？')) return
+    setResyncing(true)
+    setResyncResult(null)
+    try {
+      const res = await api.post('/rakuten/rms/push-stock', {})
+      setResyncResult(res.data)
+      qc.invalidateQueries(['rms-push-failures'])
+    } catch (err) {
+      setResyncResult({ error: err.response?.data?.detail || '在庫再送でエラーが発生しました' })
+    } finally {
+      setResyncing(false)
+    }
+  }
+
   const handleRetryPush = async () => {
     setRetryingPush(true)
     setRetryPushResult(null)
@@ -272,6 +290,16 @@ export default function RakutenStockPage() {
         {syncPriceResult && (
           <span style={{ fontSize: 12, color: syncPriceResult.error ? '#e53e3e' : '#38a169' }}>
             {syncPriceResult.error || `${syncPriceResult.updated_products}件更新`}
+          </span>
+        )}
+        <button className="btn" style={{ fontSize: 13 }} onClick={handleResyncStock} disabled={resyncing}>
+          {resyncing ? '再送中...' : '🔄 在庫を楽天へ再送'}
+        </button>
+        {resyncResult && (
+          <span style={{ fontSize: 12, color: resyncResult.error || resyncResult.push_fail > 0 ? '#e53e3e' : '#38a169' }}>
+            {resyncResult.error
+              ? resyncResult.error
+              : `${resyncResult.pushed}件送信 → 成功${resyncResult.push_ok} / 失敗${resyncResult.push_fail}`}
           </span>
         )}
         {receiveResult && (

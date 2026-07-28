@@ -74,6 +74,62 @@ def get_rms_push_failures(include_resolved: bool = False, limit: int = 200, db: 
     }
 
 
+class RmsResyncRequest(BaseModel):
+    skus: Optional[List[str]] = None   # 未指定なら全アクティブ商品
+
+
+@router.post("/rms/push-stock")
+async def resync_stock_to_rms(body: RmsResyncRequest, db: Session = Depends(get_db)):
+    """現在のDB在庫を楽天RMSへ再送する（DBは一切書き換えない）。
+    RMS側だけ在庫がズレている状態の復旧用。失敗はrms_push_failuresに記録される。
+    """
+    from app.services.rakuten_rms import push_inventory_and_record
+
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません。")
+
+    all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    target = {(s or "").strip() for s in (body.skus or []) if (s or "").strip()}
+    if target:
+        known = {p.sku for p in all_products}
+        unknown = sorted(target - known)
+        target = target & known
+        if not target:
+            raise HTTPException(400, f"指定SKUが見つかりません: {', '.join(unknown)}")
+    else:
+        unknown = []
+        target = {p.sku for p in all_products if p.sku}
+
+    sku_stock = {p.sku: (p.stock or 0) for p in all_products}
+    _recalc_dependent_set_stock(all_products, sku_stock, target)
+    rms_items = _build_rms_stock_items(all_products, sku_stock, target)
+    if not rms_items:
+        return {"ok": True, "pushed": 0, "push_ok": 0, "push_fail": 0, "failed": [],
+                "unknown_skus": unknown, "message": "送信対象がありません。"}
+
+    result = await push_inventory_and_record(
+        settings.rms_service_secret,
+        settings.rms_license_key,
+        rms_items,
+        source="resync",
+        source_label="在庫再送",
+    )
+    err_by_sku = {e.get("sku"): e.get("detail") for e in (result.get("errors") or [])}
+    failed = [
+        {**d, "detail": err_by_sku.get(d.get("sku"))}
+        for d in (result.get("details") or []) if not d.get("ok")
+    ]
+    return {
+        "ok": result.get("fail", 0) == 0,
+        "pushed": len(rms_items),
+        "push_ok": result.get("ok", 0),
+        "push_fail": result.get("fail", 0),
+        "failed": failed,
+        "unknown_skus": unknown,
+    }
+
+
 @router.post("/rms/push-failures/retry")
 async def retry_rms_push_failures(db: Session = Depends(get_db)):
     """未解決の失敗SKUを、現在のDB在庫で再push（補正push）する。"""
