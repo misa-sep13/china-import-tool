@@ -23,6 +23,13 @@ GETORDER_CONCURRENCY = 3  # getOrder の並列数
 # 本番連動を始めるときに環境変数 RMS_PUSH_ENABLED=true を設定して有効化する。
 RMS_PUSH_ENABLED = os.environ.get("RMS_PUSH_ENABLED", "false").lower() == "true"
 
+# 在庫push(PUT)のレート制限対策。
+# 10件同時＋最大4回リトライ（最大待ち4秒）では23件push時に429で4件落ちたため、
+# 同時数を下げ、バッチ間に間隔を入れ、リトライ回数と待ち時間を増やしている。
+PUSH_CONCURRENCY = 5        # 同時PUT数
+PUSH_BATCH_INTERVAL = 1.0   # バッチ間の待機秒
+PUSH_MAX_ATTEMPTS = 6       # 1SKUあたりの試行回数（429/5xxのみ再試行）
+
 # セット在庫計算の安全マージン（本数）。
 # 複数のセットページが1つの単品プールを共有する構造上、同期の隙間（約1分）に
 # 複数ページで同時に売れると受注合計がプールを超えられる（売り越し）。
@@ -411,6 +418,8 @@ async def push_inventory_to_rms(
 
     import asyncio
 
+    import random
+
     async def _push_one(client, item):
         manage_number = item["manage_number"]
         variant_id = item["variant_id"]
@@ -419,7 +428,7 @@ async def push_inventory_to_rms(
         body = json.dumps({"mode": "ABSOLUTE", "quantity": quantity}, ensure_ascii=False).encode("utf-8")
         last_status = None
         last_detail = None
-        for attempt in range(4):
+        for attempt in range(PUSH_MAX_ATTEMPTS):
             try:
                 res = await client.put(url, headers=headers, content=body)
                 last_status = res.status_code
@@ -427,17 +436,29 @@ async def push_inventory_to_rms(
                     return ("ok", variant_id, quantity, 204, None, attempt + 1)
                 if res.status_code == 429 or 500 <= res.status_code < 600:
                     last_detail = "429 Rate Limit" if res.status_code == 429 else res.text[:100]
-                    await asyncio.sleep(2 ** attempt)
+                    # Retry-Afterがあれば従う。無ければ指数バックオフ＋ジッタ
+                    # （同時に弾かれた複数SKUが一斉に再送して再び429になるのを避ける）
+                    retry_after = res.headers.get("Retry-After")
+                    try:
+                        wait = float(retry_after) if retry_after else 0
+                    except ValueError:
+                        wait = 0
+                    if wait <= 0:
+                        wait = min(2 ** attempt, 30) + random.uniform(0, 1.0)
+                    await asyncio.sleep(wait)
                     continue
                 return ("fail", variant_id, quantity, res.status_code, res.text[:100], attempt + 1)
             except Exception as e:
                 last_detail = str(e)
-                await asyncio.sleep(2 ** attempt)
-        return ("fail", variant_id, quantity, last_status, last_detail or "too many retries", 4)
+                await asyncio.sleep(min(2 ** attempt, 30) + random.uniform(0, 1.0))
+        return ("fail", variant_id, quantity, last_status,
+                last_detail or "too many retries", PUSH_MAX_ATTEMPTS)
 
     async with httpx.AsyncClient(timeout=30) as client:
-        for i in range(0, len(items), 10):
-            batch = items[i:i + 10]
+        for i in range(0, len(items), PUSH_CONCURRENCY):
+            batch = items[i:i + PUSH_CONCURRENCY]
+            if i > 0:
+                await asyncio.sleep(PUSH_BATCH_INTERVAL)
             results = await asyncio.gather(*[_push_one(client, item) for item in batch])
             for status, sku, qty, http_status, detail, attempts in results:
                 details.append({"sku": sku, "qty": qty, "http": http_status, "ok": status == "ok", "attempts": attempts})
