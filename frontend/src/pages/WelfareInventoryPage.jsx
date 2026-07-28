@@ -7,6 +7,15 @@ const fmtDate = (v) => {
   try { return new Date(v).toLocaleString('ja-JP') } catch { return '-' }
 }
 
+// 取り込んだ日（登録日時）をM/Dで返す。シート名から日付が取れないときのタブ名に使う。
+const fmtImportDate = (row) => {
+  const ts = row.created_at || row.updated_at
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
 const fmtWorkDate = (row) => {
   const sheet = String(row.source_sheet || '').trim()
   if (/^\d{2}$/.test(sheet)) return `${Number(sheet.slice(0, 1))}/${Number(sheet.slice(1))}`
@@ -23,7 +32,8 @@ const fmtWorkDate = (row) => {
     const day = d.length === 3 ? Number(d.slice(1)) : Number(d.slice(2))
     return `${month}/${day}${compact[2]}`
   }
-  return sheet || row.order_date || '-'
+  // シート名が日付として読めない場合（例: 物流面单）は取り込んだ日をタブ名にする
+  return fmtImportDate(row) || sheet || row.order_date || '-'
 }
 
 const workDateSortValue = (date) => {
