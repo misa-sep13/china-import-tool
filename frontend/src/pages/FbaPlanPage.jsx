@@ -1,93 +1,133 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import api from '../api/client'
 
+const STATUS_LABELS = { ordered: '発注済', arrived: '到着済', shipped: '配送依頼済' }
+const STATUS_COLORS = { ordered: '#f59e0b', arrived: '#22c55e', shipped: '#6b7280' }
 const SHIP_LABELS = { air: '航空便', sea: '船便', hold: '保留' }
 const SHIP_COLORS = { air: '#ef4444', sea: '#3b82f6', hold: '#9ca3af' }
-const FILTER_OPTIONS = [
-  { value: 'all', label: '全て' },
-  { value: 'air', label: '航空便' },
-  { value: 'sea', label: '船便' },
-  { value: 'hold', label: '保留' },
-  { value: 'need', label: '要納品' },
-]
 
 export default function FbaPlanPage() {
-  const [status, setStatus] = useState('idle')
-  const [jobId, setJobId] = useState(null)
-  const [items, setItems] = useState([])
+  const [orders, setOrders] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState('all')
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState(null)
+  const fileRef = useRef(null)
+
+  // FBA plan state
+  const [planStatus, setPlanStatus] = useState('idle')
+  const [planItems, setPlanItems] = useState([])
   const [planSettings, setPlanSettings] = useState(null)
   const [meta, setMeta] = useState({})
-  const [filter, setFilter] = useState('need')
-  const [sortKey, setSortKey] = useState('pipeline_days')
-  const [sortAsc, setSortAsc] = useState(true)
   const [planQtys, setPlanQtys] = useState({})
   const [excludes, setExcludes] = useState({})
   const [exporting, setExporting] = useState(false)
   const [elapsed, setElapsed] = useState(0)
+  const [sortKey, setSortKey] = useState('pipeline_days')
+  const [sortAsc, setSortAsc] = useState(true)
 
-  const startFetch = async (force = false) => {
-    setStatus('loading')
-    setElapsed(0)
+  const fetchOrders = async () => {
+    setLoading(true)
     try {
-      const { data } = await api.post(`/fba-plan/start?force=${force}`)
-      setJobId(data.job_id)
+      const { data } = await api.get('/fba-plan/orders')
+      setOrders(data)
     } catch (e) {
-      setStatus('error')
+      console.error(e)
+    }
+    setLoading(false)
+  }
+
+  useEffect(() => { fetchOrders() }, [])
+
+  const handleImport = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImporting(true)
+    setImportResult(null)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const { data } = await api.post('/fba-plan/import-taotaro', form)
+      setImportResult(data)
+      fetchOrders()
+    } catch (err) {
+      setImportResult({ error: 'Excel取込に失敗しました' })
+    }
+    setImporting(false)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  const handleStatusChange = async (id, newStatus) => {
+    try {
+      await api.post(`/fba-plan/orders/${id}/status`, { status: newStatus })
+      fetchOrders()
+    } catch (e) {
+      console.error(e)
     }
   }
 
-  useEffect(() => {
-    if (!jobId) return
-    const timer = setInterval(async () => {
-      try {
-        const { data } = await api.get(`/fba-plan/status/${jobId}`)
-        setElapsed(data.elapsed || 0)
-        if (data.status === 'done' && data.result) {
-          setItems(data.result.items || [])
-          setPlanSettings(data.result.settings || null)
-          setMeta({
-            sale_extra_days: data.result.sale_extra_days,
-            target_stock_days: data.result.target_stock_days,
-            lt_sea_total: data.result.lt_sea_total,
-            lt_air_total: data.result.lt_air_total,
-          })
-          const initQtys = {}
-          for (const it of data.result.items || []) {
-            initQtys[it.sku] = it.plan_qty
-          }
-          setPlanQtys(initQtys)
-          setExcludes({})
-          setStatus('done')
-          clearInterval(timer)
-        } else if (data.status === 'error') {
-          setStatus('error')
-          clearInterval(timer)
-        }
-      } catch {
-        setStatus('error')
-        clearInterval(timer)
-      }
-    }, 1500)
-    return () => clearInterval(timer)
-  }, [jobId])
+  const filteredOrders = useMemo(() => {
+    if (tab === 'all') return orders
+    return orders.filter(o => o.status === tab)
+  }, [orders, tab])
 
-  useEffect(() => { startFetch() }, [])
+  const statusCounts = useMemo(() => {
+    const c = { ordered: 0, arrived: 0, shipped: 0 }
+    for (const o of orders) c[o.status] = (c[o.status] || 0) + 1
+    return c
+  }, [orders])
+
+  // ---- FBA Plan (到着済み商品の納品プラン) ----
+  const arrivedOrders = useMemo(() => orders.filter(o => o.status === 'arrived'), [orders])
+
+  const startPlanFetch = async (force = false) => {
+    setPlanStatus('loading')
+    setElapsed(0)
+    try {
+      const { data } = await api.post(`/fba-plan/start?force=${force}`)
+      const jobId = data.job_id
+      const timer = setInterval(async () => {
+        try {
+          const { data: st } = await api.get(`/fba-plan/status/${jobId}`)
+          setElapsed(st.elapsed || 0)
+          if (st.status === 'done' && st.result) {
+            clearInterval(timer)
+            const arrivedSkus = new Set(arrivedOrders.map(o => o.sku))
+            const filtered = (st.result.items || []).filter(it => arrivedSkus.has(it.sku))
+            setPlanItems(filtered)
+            setPlanSettings(st.result.settings || null)
+            setMeta({
+              sale_extra_days: st.result.sale_extra_days,
+              target_stock_days: st.result.target_stock_days,
+              lt_sea_total: st.result.lt_sea_total,
+              lt_air_total: st.result.lt_air_total,
+            })
+            const initQtys = {}
+            for (const it of filtered) initQtys[it.sku] = it.plan_qty
+            setPlanQtys(initQtys)
+            setExcludes({})
+            setPlanStatus('done')
+          } else if (st.status === 'error') {
+            clearInterval(timer)
+            setPlanStatus('error')
+          }
+        } catch {
+          clearInterval(timer)
+          setPlanStatus('error')
+        }
+      }, 1500)
+    } catch {
+      setPlanStatus('error')
+    }
+  }
 
   const handleSort = (key) => {
     if (sortKey === key) setSortAsc(!sortAsc)
     else { setSortKey(key); setSortAsc(true) }
   }
 
-  const filteredItems = useMemo(() => {
-    let list = items.filter(it => {
-      if (filter === 'all') return true
-      if (filter === 'air') return it.ship_method === 'air'
-      if (filter === 'sea') return it.ship_method === 'sea'
-      if (filter === 'hold') return it.ship_method === 'hold'
-      if (filter === 'need') return it.ship_method !== 'hold' && it.recommended_sets > 0
-      return true
-    }).filter(it => !excludes[it.sku])
-
+  const sortedPlanItems = useMemo(() => {
+    const list = planItems.filter(it => !excludes[it.sku])
     list.sort((a, b) => {
       let va = a[sortKey], vb = b[sortKey]
       if (typeof va === 'string') va = va.toLowerCase()
@@ -97,18 +137,17 @@ export default function FbaPlanPage() {
       return 0
     })
     return list
-  }, [items, filter, excludes, sortKey, sortAsc])
+  }, [planItems, excludes, sortKey, sortAsc])
 
-  const summaryByMethod = useMemo(() => {
-    const s = { air: 0, sea: 0, hold: 0 }
-    for (const it of items) {
-      if (!excludes[it.sku]) s[it.ship_method] = (s[it.ship_method] || 0) + 1
-    }
-    return s
-  }, [items, excludes])
+  const totalPlanPieces = useMemo(() => {
+    return sortedPlanItems.reduce((sum, it) => {
+      if (it.ship_method === 'hold' || excludes[it.sku]) return sum
+      return sum + (planQtys[it.sku] || 0) * it.set_size
+    }, 0)
+  }, [sortedPlanItems, planQtys, excludes])
 
   const handleExport = async () => {
-    const exportItems = filteredItems
+    const exportItems = sortedPlanItems
       .filter(it => (planQtys[it.sku] || 0) > 0 && it.ship_method !== 'hold')
       .map(it => ({
         sku: it.sku,
@@ -129,18 +168,11 @@ export default function FbaPlanPage() {
       a.download = `fba_plan_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.xlsx`
       a.click()
       URL.revokeObjectURL(url)
-    } catch (e) {
+    } catch {
       alert('Excel出力に失敗しました')
     }
     setExporting(false)
   }
-
-  const totalPlanPieces = useMemo(() => {
-    return filteredItems.reduce((sum, it) => {
-      if (it.ship_method === 'hold' || excludes[it.sku]) return sum
-      return sum + (planQtys[it.sku] || 0) * it.set_size
-    }, 0)
-  }, [filteredItems, planQtys, excludes])
 
   const SortHeader = ({ label, field, style }) => (
     <th style={{ ...thStyle, cursor: 'pointer', userSelect: 'none', ...style }}
@@ -151,214 +183,315 @@ export default function FbaPlanPage() {
 
   return (
     <div>
-      <h1>📦 FBA納品プラン</h1>
+      <h1>🚢 FBA納品プラン</h1>
 
-      {/* 設定サマリー */}
-      {planSettings && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, fontSize: 13 }}>
-            <div>
-              <span style={{ color: '#6b7280' }}>無料保管: </span>
-              <strong>{planSettings.free_storage_days}日</strong>
-            </div>
-            <div>
-              <span style={{ color: '#6b7280' }}>発注〜倉庫着: </span>
-              <strong>{planSettings.lt_order_to_warehouse}日</strong>
-            </div>
-            <div>
-              <span style={{ color: '#6b7280' }}>配送依頼〜支払: </span>
-              <strong>{planSettings.lt_shipping_request}日</strong>
-            </div>
-            <div>
-              <span style={{ color: '#6b7280' }}>船便→FBA: </span>
-              <strong>{planSettings.lt_sea_to_fba}日</strong>
-              <span style={{ color: '#9ca3af', marginLeft: 4 }}>(合計{meta.lt_sea_total}日)</span>
-            </div>
-            <div>
-              <span style={{ color: '#6b7280' }}>航空便→FBA: </span>
-              <strong>{planSettings.lt_air_to_fba}日</strong>
-              <span style={{ color: '#9ca3af', marginLeft: 4 }}>(合計{meta.lt_air_total}日)</span>
-            </div>
-            <div>
-              <span style={{ color: '#6b7280' }}>航空便閾値: </span>
-              <strong>≤{planSettings.air_threshold_days}日</strong>
-            </div>
-            <div>
-              <span style={{ color: '#6b7280' }}>目標在庫: </span>
-              <strong>{meta.target_stock_days}日</strong>
-              {meta.sale_extra_days > 0 && (
-                <span style={{ color: '#dc2626', marginLeft: 4 }}>+{meta.sale_extra_days}日(セール)</span>
+      {/* タオタロウExcel取込 */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <label
+            style={{
+              padding: '8px 16px', background: '#ea580c', color: '#fff', borderRadius: 6,
+              cursor: 'pointer', fontWeight: 600, fontSize: 13,
+            }}
+          >
+            📥 タオタロウExcel取込
+            <input ref={fileRef} type="file" accept=".xls,.xlsx" onChange={handleImport}
+              style={{ display: 'none' }} />
+          </label>
+          {importing && <span style={{ color: '#6b7280' }}>取込中...</span>}
+          {importResult && !importResult.error && (
+            <span style={{ fontSize: 13 }}>
+              <strong style={{ color: '#16a34a' }}>{importResult.matched}件</strong> 照合成功
+              {importResult.unmatched?.length > 0 && (
+                <span style={{ color: '#9ca3af', marginLeft: 8 }}>
+                  ({importResult.unmatched.length}件 未照合)
+                </span>
               )}
+            </span>
+          )}
+          {importResult?.error && (
+            <span style={{ color: '#ef4444', fontSize: 13 }}>{importResult.error}</span>
+          )}
+          <span style={{ fontSize: 12, color: '#9ca3af' }}>
+            タオタロウ「入庫済み」→ EXCELダウンロード → ここにアップロード
+          </span>
+        </div>
+        {importResult?.unmatched?.length > 0 && (
+          <details style={{ marginTop: 8, fontSize: 12 }}>
+            <summary style={{ cursor: 'pointer', color: '#f59e0b' }}>
+              未照合 {importResult.unmatched.length}件を表示
+            </summary>
+            <div style={{ overflowX: 'auto', marginTop: 4 }}>
+              <table style={{ fontSize: 12, borderCollapse: 'collapse', width: '100%' }}>
+                <thead>
+                  <tr style={{ background: '#fef3c7' }}>
+                    <th style={thStyle}>タオタロウID</th>
+                    <th style={thStyle}>商品名</th>
+                    <th style={thStyle}>色/サイズ</th>
+                    <th style={thStyle}>数量</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {importResult.unmatched.map((u, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={tdStyle}>{u.taotaro_order_id}</td>
+                      <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {u.name_cn}
+                      </td>
+                      <td style={tdStyle}>{[u.color, u.size].filter(Boolean).join(' / ')}</td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>{u.qty}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* アクションバー */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
-        <button className="btn btn-primary" onClick={() => startFetch(true)} disabled={status === 'loading'}>
-          {status === 'loading' ? `取得中... (${elapsed.toFixed(0)}秒)` : '🔄 SP-APIから更新'}
-        </button>
-        <button className="btn" onClick={handleExport} disabled={exporting || status !== 'done'}
-          style={{ background: '#059669', color: '#fff' }}>
-          {exporting ? '出力中...' : '📥 納品プランExcel出力'}
-        </button>
-        <span style={{ fontSize: 13, color: '#6b7280' }}>
-          合計出荷数: <strong style={{ color: '#1e40af' }}>{totalPlanPieces}個</strong>
-        </span>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-          {FILTER_OPTIONS.map(opt => (
-            <button key={opt.value}
-              onClick={() => setFilter(opt.value)}
-              style={{
-                padding: '4px 12px', fontSize: 12, borderRadius: 4, border: '1px solid #d1d5db',
-                background: filter === opt.value ? '#1e40af' : '#fff',
-                color: filter === opt.value ? '#fff' : '#374151',
-                cursor: 'pointer',
-              }}>
-              {opt.label}
-              {opt.value !== 'all' && opt.value !== 'need' && ` (${summaryByMethod[opt.value] || 0})`}
-            </button>
-          ))}
-        </div>
+          </details>
+        )}
       </div>
 
-      {status === 'loading' && (
-        <div className="card" style={{ textAlign: 'center', padding: 40, color: '#6b7280' }}>
-          SP-APIからデータ取得中... ({elapsed.toFixed(0)}秒)
-        </div>
-      )}
+      {/* ステータスフィルタ */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap' }}>
+        <button
+          onClick={() => setTab('all')}
+          style={{
+            padding: '6px 16px', fontSize: 13, borderRadius: 4, border: '1px solid #d1d5db',
+            background: tab === 'all' ? '#1e40af' : '#fff',
+            color: tab === 'all' ? '#fff' : '#374151',
+            cursor: 'pointer', fontWeight: 600,
+          }}
+        >
+          全て ({orders.length})
+        </button>
+        {['ordered', 'arrived'].map(s => (
+          <button key={s}
+            onClick={() => setTab(s)}
+            style={{
+              padding: '6px 16px', fontSize: 13, borderRadius: 4, border: '1px solid #d1d5db',
+              background: tab === s ? STATUS_COLORS[s] : '#fff',
+              color: tab === s ? '#fff' : '#374151',
+              cursor: 'pointer', fontWeight: 600,
+            }}
+          >
+            {STATUS_LABELS[s]} ({statusCounts[s] || 0})
+          </button>
+        ))}
+      </div>
 
-      {status === 'error' && (
-        <div className="card" style={{ textAlign: 'center', padding: 40, color: '#ef4444' }}>
-          データ取得に失敗しました。もう一度お試しください。
+      {/* 発注済みリスト */}
+      {loading ? (
+        <div className="card" style={{ textAlign: 'center', padding: 40, color: '#6b7280' }}>読込中...</div>
+      ) : orders.length === 0 ? (
+        <div className="card" style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}>
+          <div style={{ fontSize: 40 }}>📋</div>
+          <p>発注済みの商品がありません。<br />発注管理で商品を発注してください。</p>
         </div>
-      )}
-
-      {status === 'done' && (
-        <div style={{ overflowX: 'auto' }}>
+      ) : (
+        <div style={{ overflowX: 'auto', marginBottom: 24 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-                <SortHeader label="SKU" field="sku" />
+                <th style={thStyle}>ステータス</th>
+                <th style={thStyle}>発注日</th>
+                <th style={thStyle}>SKU</th>
                 <th style={thStyle}>商品名</th>
-                <SortHeader label="日販" field="daily" style={{ textAlign: 'right' }} />
-                <SortHeader label="FBA" field="fba_available" style={{ textAlign: 'right' }} />
-                <th style={{ ...thStyle, textAlign: 'right' }}>輸送中</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>パイプライン</th>
-                <SortHeader label="FBA残日数" field="fba_days" style={{ textAlign: 'right' }} />
-                <SortHeader label="全体残日数" field="pipeline_days" style={{ textAlign: 'right' }} />
-                <th style={{ ...thStyle, textAlign: 'center' }}>判定</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>推奨(セット)</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>納品数(セット)</th>
-                <th style={{ ...thStyle, textAlign: 'center' }}>除外</th>
+                <th style={thStyle}>色/サイズ</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>数量</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>単価(元)</th>
+                <th style={thStyle}>仕入URL</th>
+                <th style={thStyle}>操作</th>
               </tr>
             </thead>
             <tbody>
-              {filteredItems.map(it => {
-                const daysColor = it.pipeline_days <= (planSettings?.air_threshold_days || 18)
-                  ? '#ef4444'
-                  : it.pipeline_days <= 30 ? '#f59e0b' : '#374151'
-                return (
-                  <tr key={it.sku} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={tdStyle}>
-                      <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{it.sku}</span>
-                    </td>
-                    <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {it.name}
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: 'right', fontFamily: 'monospace' }}>
-                      {it.daily.toFixed(2)}
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: 'right' }}>{it.fba_available}</td>
-                    <td style={{ ...tdStyle, textAlign: 'right', color: '#6b7280' }}>
-                      {it.fba_inbound + it.ordered}
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600 }}>{it.pipeline_stock}</td>
-                    <td style={{ ...tdStyle, textAlign: 'right', color: daysColor, fontWeight: 600 }}>
-                      {it.fba_days > 9000 ? '∞' : `${it.fba_days}日`}
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: 'right', color: daysColor, fontWeight: 600 }}>
-                      {it.pipeline_days > 9000 ? '∞' : `${it.pipeline_days}日`}
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: 'center' }}>
-                      <span style={{
-                        display: 'inline-block', padding: '2px 8px', borderRadius: 4, fontSize: 11,
-                        fontWeight: 700, color: '#fff',
-                        background: SHIP_COLORS[it.ship_method] || '#9ca3af',
-                      }}>
-                        {SHIP_LABELS[it.ship_method] || it.ship_method}
-                      </span>
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: 'right', color: '#6b7280' }}>
-                      {it.recommended_sets}
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: 'right' }}>
-                      <input type="number" min={0}
-                        value={planQtys[it.sku] ?? it.plan_qty}
-                        onChange={e => setPlanQtys(p => ({ ...p, [it.sku]: Math.max(0, parseInt(e.target.value) || 0) }))}
-                        style={{ width: 60, textAlign: 'right', padding: '2px 4px', border: '1px solid #d1d5db', borderRadius: 4 }}
-                      />
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: 'center' }}>
-                      <input type="checkbox"
-                        checked={!!excludes[it.sku]}
-                        onChange={e => setExcludes(p => ({ ...p, [it.sku]: e.target.checked }))}
-                      />
-                    </td>
-                  </tr>
-                )
-              })}
-              {filteredItems.length === 0 && (
-                <tr>
-                  <td colSpan={12} style={{ ...tdStyle, textAlign: 'center', color: '#9ca3af', padding: 32 }}>
-                    該当する商品がありません
+              {filteredOrders.map(o => (
+                <tr key={o.id} style={{
+                  borderBottom: '1px solid #f1f5f9',
+                  background: o.status === 'arrived' ? '#f0fdf4' : 'transparent',
+                }}>
+                  <td style={tdStyle}>
+                    <span style={{
+                      display: 'inline-block', padding: '2px 8px', borderRadius: 4, fontSize: 11,
+                      fontWeight: 700, color: '#fff',
+                      background: STATUS_COLORS[o.status] || '#9ca3af',
+                    }}>
+                      {STATUS_LABELS[o.status] || o.status}
+                    </span>
+                  </td>
+                  <td style={{ ...tdStyle, fontSize: 12, whiteSpace: 'nowrap', color: '#666' }}>
+                    {o.ordered_at ? new Date(o.ordered_at).toLocaleDateString('ja-JP', { month: '2-digit', day: '2-digit' }) : '-'}
+                  </td>
+                  <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 12 }}>{o.sku}</td>
+                  <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {o.name}
+                  </td>
+                  <td style={{ ...tdStyle, fontSize: 12, color: '#666' }}>
+                    {[o.color, o.size].filter(Boolean).join(' / ')}
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600 }}>{o.qty}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{o.price}</td>
+                  <td style={tdStyle}>
+                    {o.buy_url && (
+                      <a href={o.buy_url} target="_blank" rel="noreferrer" style={{ color: '#e94560', fontSize: 12 }}>リンク</a>
+                    )}
+                  </td>
+                  <td style={{ ...tdStyle, whiteSpace: 'nowrap' }}>
+                    {o.status === 'ordered' && (
+                      <button className="btn btn-sm"
+                        style={{ background: '#dcfce7', color: '#166534', fontSize: 11 }}
+                        onClick={() => handleStatusChange(o.id, 'arrived')}
+                      >到着済みにする</button>
+                    )}
+                    {o.status === 'arrived' && (
+                      <button className="btn btn-sm"
+                        style={{ background: '#e0e7ff', color: '#3730a3', fontSize: 11 }}
+                        onClick={() => handleStatusChange(o.id, 'shipped')}
+                      >配送依頼済み</button>
+                    )}
                   </td>
                 </tr>
-              )}
+              ))}
             </tbody>
           </table>
         </div>
       )}
 
-      {/* ロジック説明 */}
-      <div className="card" style={{ marginTop: 32, background: '#fafafa', border: '1px solid #ebebeb' }}>
-        <h2 style={{ color: '#9ca3af', marginBottom: 16 }}>納品プラン判定ロジック</h2>
-        <table style={{ fontSize: 13, borderCollapse: 'collapse', width: '100%' }}>
-          <tbody>
-            <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
-              <td style={{ padding: '8px 12px', fontWeight: 600, color: '#9ca3af', width: 160 }}>目標在庫日数</td>
-              <td style={{ padding: '8px 12px', color: '#6b7280' }}>
-                無料保管期間({planSettings?.free_storage_days || 90}日) − 発注〜倉庫着({planSettings?.lt_order_to_warehouse || 7}日) = {meta.target_stock_days || 83}日
-              </td>
-            </tr>
-            <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
-              <td style={{ padding: '8px 12px', fontWeight: 600, color: '#ef4444' }}>航空便</td>
-              <td style={{ padding: '8px 12px', color: '#6b7280' }}>
-                パイプライン残日数 ≤ {planSettings?.air_threshold_days || 18}日 → 在庫切れが迫っている
-              </td>
-            </tr>
-            <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
-              <td style={{ padding: '8px 12px', fontWeight: 600, color: '#3b82f6' }}>船便</td>
-              <td style={{ padding: '8px 12px', color: '#6b7280' }}>
-                パイプライン残日数 &gt; {planSettings?.air_threshold_days || 18}日 → 余裕あり
-              </td>
-            </tr>
-            <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
-              <td style={{ padding: '8px 12px', fontWeight: 600, color: '#9ca3af' }}>保留</td>
-              <td style={{ padding: '8px 12px', color: '#6b7280' }}>
-                日販 &lt; {planSettings?.hold_daily_threshold || 0.1} → 売れてない商品は送らない（TAO太郎で保管→返品/廃棄も選択可）
-              </td>
-            </tr>
-            <tr>
-              <td style={{ padding: '8px 12px', fontWeight: 600, color: '#9ca3af' }}>推奨納品数</td>
-              <td style={{ padding: '8px 12px', color: '#6b7280' }}>
-                日販 × 成長補正 × 目標日数 − パイプライン在庫（マイナスなら0）
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      {/* 到着済み商品のFBA納品プラン */}
+      {arrivedOrders.length > 0 && (
+        <div style={{ borderTop: '2px solid #e2e8f0', paddingTop: 24 }}>
+          <h2 style={{ marginBottom: 12 }}>📦 到着済み商品のFBA納品プラン</h2>
+
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" onClick={() => startPlanFetch(true)} disabled={planStatus === 'loading'}>
+              {planStatus === 'loading' ? `取得中... (${elapsed.toFixed(0)}秒)` : '🔄 SP-APIから在庫取得'}
+            </button>
+            {planStatus === 'done' && (
+              <>
+                <button className="btn" onClick={handleExport} disabled={exporting}
+                  style={{ background: '#059669', color: '#fff' }}>
+                  {exporting ? '出力中...' : '📥 納品プランExcel出力'}
+                </button>
+                <span style={{ fontSize: 13, color: '#6b7280' }}>
+                  合計出荷数: <strong style={{ color: '#1e40af' }}>{totalPlanPieces}個</strong>
+                </span>
+              </>
+            )}
+          </div>
+
+          {planStatus === 'loading' && (
+            <div className="card" style={{ textAlign: 'center', padding: 40, color: '#6b7280' }}>
+              SP-APIからデータ取得中... ({elapsed.toFixed(0)}秒)
+            </div>
+          )}
+
+          {planStatus === 'error' && (
+            <div className="card" style={{ textAlign: 'center', padding: 40, color: '#ef4444' }}>
+              データ取得に失敗しました。もう一度お試しください。
+            </div>
+          )}
+
+          {planStatus === 'done' && (
+            <>
+              {planSettings && (
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, fontSize: 13 }}>
+                    <div>
+                      <span style={{ color: '#6b7280' }}>目標在庫: </span>
+                      <strong>{meta.target_stock_days}日</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: '#6b7280' }}>船便合計: </span>
+                      <strong>{meta.lt_sea_total}日</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: '#6b7280' }}>航空便合計: </span>
+                      <strong>{meta.lt_air_total}日</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: '#6b7280' }}>航空便閾値: </span>
+                      <strong>≤{planSettings.air_threshold_days}日</strong>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                      <SortHeader label="SKU" field="sku" />
+                      <th style={thStyle}>商品名</th>
+                      <SortHeader label="日販" field="daily" style={{ textAlign: 'right' }} />
+                      <SortHeader label="FBA" field="fba_available" style={{ textAlign: 'right' }} />
+                      <th style={{ ...thStyle, textAlign: 'right' }}>パイプライン</th>
+                      <SortHeader label="全体残日数" field="pipeline_days" style={{ textAlign: 'right' }} />
+                      <th style={{ ...thStyle, textAlign: 'center' }}>判定</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>推奨(セット)</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>納品数(セット)</th>
+                      <th style={{ ...thStyle, textAlign: 'center' }}>除外</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedPlanItems.map(it => {
+                      const daysColor = it.pipeline_days <= (planSettings?.air_threshold_days || 18)
+                        ? '#ef4444'
+                        : it.pipeline_days <= 30 ? '#f59e0b' : '#374151'
+                      return (
+                        <tr key={it.sku} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                          <td style={tdStyle}>
+                            <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{it.sku}</span>
+                          </td>
+                          <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {it.name}
+                          </td>
+                          <td style={{ ...tdStyle, textAlign: 'right', fontFamily: 'monospace' }}>
+                            {it.daily.toFixed(2)}
+                          </td>
+                          <td style={{ ...tdStyle, textAlign: 'right' }}>{it.fba_available}</td>
+                          <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600 }}>{it.pipeline_stock}</td>
+                          <td style={{ ...tdStyle, textAlign: 'right', color: daysColor, fontWeight: 600 }}>
+                            {it.pipeline_days > 9000 ? '∞' : `${it.pipeline_days}日`}
+                          </td>
+                          <td style={{ ...tdStyle, textAlign: 'center' }}>
+                            <span style={{
+                              display: 'inline-block', padding: '2px 8px', borderRadius: 4, fontSize: 11,
+                              fontWeight: 700, color: '#fff',
+                              background: SHIP_COLORS[it.ship_method] || '#9ca3af',
+                            }}>
+                              {SHIP_LABELS[it.ship_method] || it.ship_method}
+                            </span>
+                          </td>
+                          <td style={{ ...tdStyle, textAlign: 'right', color: '#6b7280' }}>
+                            {it.recommended_sets}
+                          </td>
+                          <td style={{ ...tdStyle, textAlign: 'right' }}>
+                            <input type="number" min={0}
+                              value={planQtys[it.sku] ?? it.plan_qty}
+                              onChange={e => setPlanQtys(p => ({ ...p, [it.sku]: Math.max(0, parseInt(e.target.value) || 0) }))}
+                              style={{ width: 60, textAlign: 'right', padding: '2px 4px', border: '1px solid #d1d5db', borderRadius: 4 }}
+                            />
+                          </td>
+                          <td style={{ ...tdStyle, textAlign: 'center' }}>
+                            <input type="checkbox"
+                              checked={!!excludes[it.sku]}
+                              onChange={e => setExcludes(p => ({ ...p, [it.sku]: e.target.checked }))}
+                            />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {sortedPlanItems.length === 0 && (
+                      <tr>
+                        <td colSpan={10} style={{ ...tdStyle, textAlign: 'center', color: '#9ca3af', padding: 32 }}>
+                          到着済み商品のSP-APIデータがありません
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }

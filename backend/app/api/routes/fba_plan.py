@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -9,12 +9,17 @@ import io
 import uuid
 import time
 import threading
+import logging
+import shutil
+import tempfile
 
 from app.core.database import get_db, SessionLocal
 from app.models.product import Product
 from app.models.settings import OrderSettings
 from app.models.order_history import OrderHistory
 from app.services.calc import CalcSettings, weighted_daily, growth_mult, calc_sale_extra_days
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/fba-plan", tags=["fba-plan"])
 
@@ -323,3 +328,158 @@ def export_plan_excel(req: PlanExportRequest, db: Session = Depends(get_db)):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@router.get("/orders")
+def get_fba_orders(db: Session = Depends(get_db)):
+    rows = (
+        db.query(OrderHistory)
+        .filter(OrderHistory.is_deleted == False)
+        .filter(
+            (OrderHistory.asin != None) & (OrderHistory.asin != "")
+            | (OrderHistory.fnsku != None) & (OrderHistory.fnsku != "")
+        )
+        .order_by(OrderHistory.ordered_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "ordered_at": r.ordered_at.isoformat() if r.ordered_at else None,
+            "sku": r.sku,
+            "name": r.name,
+            "color": r.color,
+            "size": r.size,
+            "qty": r.qty,
+            "price": r.price,
+            "buy_url": r.buy_url,
+            "photo_url": r.photo_url,
+            "asin": r.asin,
+            "fnsku": r.fnsku,
+            "note": r.note,
+            "status": getattr(r, "status", None) or "ordered",
+            "arrived_at": r.arrived_at.isoformat() if getattr(r, "arrived_at", None) else None,
+            "taotaro_order_id": getattr(r, "taotaro_order_id", None),
+        }
+        for r in rows
+    ]
+
+
+@router.post("/orders/{order_id}/status")
+def update_order_status(order_id: int, body: dict, db: Session = Depends(get_db)):
+    row = db.query(OrderHistory).filter(OrderHistory.id == order_id).first()
+    if not row:
+        return {"error": "not found"}
+    new_status = body.get("status", "ordered")
+    if new_status not in ("ordered", "arrived", "shipped"):
+        return {"error": "invalid status"}
+    row.status = new_status
+    if new_status == "arrived" and not row.arrived_at:
+        row.arrived_at = datetime.now(timezone.utc)
+    if new_status == "shipped":
+        row.is_deleted = True
+    db.commit()
+    return {"ok": True, "status": row.status}
+
+
+def _normalize_1688_url(url: str) -> str:
+    if not url:
+        return ""
+    import re
+    m = re.search(r'(\d{10,})', url)
+    return m.group(1) if m else url.strip().rstrip("/")
+
+
+@router.post("/import-taotaro")
+async def import_taotaro_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    import openpyxl
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+    try:
+        content = await file.read()
+        tmp.write(content)
+        tmp.close()
+
+        wb = openpyxl.load_workbook(tmp.name)
+        ws = wb.active
+
+        headers = [ws.cell(1, c).value for c in range(1, ws.max_column + 1)]
+        col_map = {}
+        for i, h in enumerate(headers):
+            if h:
+                col_map[h] = i + 1
+
+        taotaro_items = []
+        for r in range(2, ws.max_row + 1):
+            def val(col_name):
+                c = col_map.get(col_name)
+                return ws.cell(r, c).value if c else None
+
+            buy_url = val("商品URL") or ""
+            taotaro_items.append({
+                "taotaro_order_id": str(val("オーダー番号") or ""),
+                "buy_url": buy_url,
+                "buy_url_id": _normalize_1688_url(buy_url),
+                "name_cn": val("商品名") or "",
+                "color": val("色") or "",
+                "size": val("サイズ") or "",
+                "qty": val("数量") or 0,
+                "unit_price": val("単価") or 0,
+                "arrived_at": val("到着時間") or "",
+                "status_text": val("状態") or "",
+            })
+
+        orders = (
+            db.query(OrderHistory)
+            .filter(OrderHistory.is_deleted == False)
+            .filter(OrderHistory.status != "shipped")
+            .all()
+        )
+
+        matched = 0
+        unmatched_items = []
+        for ti in taotaro_items:
+            ti_id = ti["buy_url_id"]
+            if not ti_id:
+                unmatched_items.append(ti)
+                continue
+
+            found = False
+            for oh in orders:
+                oh_id = _normalize_1688_url(oh.buy_url or "")
+                if oh_id == ti_id and oh.status != "arrived":
+                    oh.status = "arrived"
+                    if ti["arrived_at"]:
+                        try:
+                            oh.arrived_at = datetime.fromisoformat(str(ti["arrived_at"]))
+                        except Exception:
+                            oh.arrived_at = datetime.now(timezone.utc)
+                    else:
+                        oh.arrived_at = datetime.now(timezone.utc)
+                    oh.taotaro_order_id = ti["taotaro_order_id"]
+                    matched += 1
+                    found = True
+                    break
+            if not found:
+                unmatched_items.append(ti)
+
+        db.commit()
+
+        return {
+            "matched": matched,
+            "total_excel_rows": len(taotaro_items),
+            "unmatched": [
+                {
+                    "name_cn": u["name_cn"],
+                    "color": u["color"],
+                    "size": u["size"],
+                    "qty": u["qty"],
+                    "buy_url": u["buy_url"],
+                    "taotaro_order_id": u["taotaro_order_id"],
+                }
+                for u in unmatched_items
+            ],
+        }
+    finally:
+        import os
+        os.unlink(tmp.name)

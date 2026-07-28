@@ -18,3 +18,6 @@ class OrderHistory(Base):
     fnsku = Column(String)
     note = Column(String)
     is_deleted = Column(Boolean, default=False)
+    status = Column(String, default="ordered")    # ordered / arrived / shipped
+    arrived_at = Column(DateTime(timezone=True), nullable=True)
+    taotaro_order_id = Column(String, nullable=True)

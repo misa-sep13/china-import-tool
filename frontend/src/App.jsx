@@ -40,6 +40,9 @@ function App() {
         <NavLink to="/" end className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📦 発注管理
         </NavLink>
+        <NavLink to="/fba-plan" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          🚢 納品プラン
+        </NavLink>
         <NavLink to="/stock" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📊 全在庫一覧
         </NavLink>
@@ -54,9 +57,6 @@ function App() {
         </NavLink>
         <NavLink to="/invoices" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📄 仕入管理
-        </NavLink>
-        <NavLink to="/fba-plan" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-          🚢 納品プラン
         </NavLink>
         <NavLink to="/price-adjust" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           💹 価格調整
