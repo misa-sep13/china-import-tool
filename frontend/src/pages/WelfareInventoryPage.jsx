@@ -227,7 +227,14 @@ export default function WelfareInventoryPage() {
 
   const inventoryNameSaveMutation = useMutation({
     mutationFn: ({ id, payload }) => api.patch(`/welfare/inventory/${id}`, payload).then(r => r.data),
-    onSuccess: (_data, vars) => {
+    onSuccess: (data, vars) => {
+      // 荷受け側と同じく、再取得の間に入力が巻き戻って見えるのを防ぐためキャッシュを直接更新する
+      if (data && data.id != null) {
+        qc.setQueriesData({ queryKey: ['welfare-inventory'] }, old => {
+          if (!Array.isArray(old)) return old
+          return old.map(row => (row.id === data.id ? { ...row, ...data } : row))
+        })
+      }
       setInventoryDrafts(prev => {
         const current = prev[vars.id]
         if (current && current.name_jp !== vars.payload.name_jp) return prev
@@ -235,7 +242,6 @@ export default function WelfareInventoryPage() {
         delete next[vars.id]
         return next
       })
-      qc.invalidateQueries(['welfare-inventory'])
     },
   })
 
@@ -252,7 +258,16 @@ export default function WelfareInventoryPage() {
 
   const workSaveMutation = useMutation({
     mutationFn: ({ id, payload }) => api.patch(`/welfare/work-instructions/${id}`, payload).then(r => r.data),
-    onSuccess: (_data, vars) => {
+    onSuccess: (data, vars) => {
+      // 保存後にinvalidateすると、全行の画像(base64)を含む巨大なリストを再取得する間だけ
+      // 入力値が古い値へ巻き戻り「入力が消えた」ように見えるため、
+      // サーバーが返した更新後の行でキャッシュを直接差し替える。
+      if (data && data.id != null) {
+        qc.setQueriesData({ queryKey: ['welfare-work-instructions'] }, old => {
+          if (!Array.isArray(old)) return old
+          return old.map(row => (row.id === data.id ? { ...row, ...data } : row))
+        })
+      }
       setWorkDrafts(prev => {
         const current = prev[vars.id]
         if (
@@ -269,7 +284,6 @@ export default function WelfareInventoryPage() {
         delete next[vars.id]
         return next
       })
-      qc.invalidateQueries(['welfare-work-instructions'])
     },
   })
 
