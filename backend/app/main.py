@@ -167,6 +167,9 @@ def _migrate():
         ("order_history","status",            "ALTER TABLE order_history ADD COLUMN status VARCHAR DEFAULT 'ordered'"),
         ("order_history","arrived_at",        "ALTER TABLE order_history ADD COLUMN arrived_at TIMESTAMP"),
         ("order_history","taotaro_order_id",  "ALTER TABLE order_history ADD COLUMN taotaro_order_id VARCHAR"),
+        # 就労支援荷受けの在庫反映済みフラグ（荷受け処理後に残の数量だけ在庫化するため）
+        ("welfare_work_instructions","is_reflected", "ALTER TABLE welfare_work_instructions ADD COLUMN is_reflected BOOLEAN DEFAULT FALSE"),
+        ("welfare_work_instructions","reflected_at", "ALTER TABLE welfare_work_instructions ADD COLUMN reflected_at TIMESTAMP WITH TIME ZONE"),
     ]
 
     inspector = inspect(engine)
@@ -183,6 +186,12 @@ def _migrate():
                 logger.info(f"migrate: added {table}.{col}")
                 # 既存の入荷済み配送依頼は反映済みとして埋める。
                 # （どの行が実際に反映されたかは遡れないため、二重加算しない側に倒す）
+                # 既存の荷受け行は取込時に在庫加算済みなので反映済みとして埋める
+                # （新しい取込分だけが「未反映」になり、反映ボタンの対象になる）
+                if table == "welfare_work_instructions" and col == "is_reflected":
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE welfare_work_instructions SET is_reflected = TRUE"))
+                    logger.info("migrate: backfilled welfare_work_instructions.is_reflected")
                 if table == "shipment_order_items" and col == "is_reflected":
                     with engine.begin() as conn:
                         conn.execute(text(

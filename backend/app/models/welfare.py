@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, Text, ForeignKey
 from sqlalchemy.sql import func
 from app.core.database import Base
 
@@ -71,5 +71,9 @@ class WelfareWorkInstruction(Base):
     remaining_units = Column(Integer, default=0)
     remaining_qty = Column(Integer, default=0)
     note = Column(Text)
+    # 就労支援在庫へ反映済みか。取込時点では反映せず、荷受け処理（指示・残の確定）後に
+    # 「就労支援在庫に反映」で残の数量だけを在庫化する。二重計上防止用。
+    is_reflected = Column(Boolean, default=False, index=True)
+    reflected_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -297,6 +297,21 @@ export default function WelfareInventoryPage() {
     },
   })
 
+  const [reflectResult, setReflectResult] = useState(null)
+
+  const reflectMutation = useMutation({
+    mutationFn: (ids) => api.post('/welfare/work-instructions/reflect', ids ? { ids } : {}).then(r => r.data),
+    onSuccess: (data) => {
+      setReflectResult(data)
+      qc.invalidateQueries(['welfare-work-instructions'])
+      qc.invalidateQueries(['welfare-inventory'])
+      qc.invalidateQueries(['welfare-movements'])
+    },
+    onError: (err) => {
+      setReflectResult({ error: err.response?.data?.detail || '反映でエラーが発生しました' })
+    },
+  })
+
   const workDeleteMutation = useMutation({
     mutationFn: (id) => api.delete(`/welfare/work-instructions/${id}`).then(r => r.data),
     onSuccess: (_data, id) => {
@@ -478,9 +493,12 @@ export default function WelfareInventoryPage() {
       {importResult && (
         <div className="card" style={{ borderLeft: importResult.unmatched ? '4px solid #d97706' : '4px solid #16a34a' }}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>
-            取込完了{importResult.file_count > 1 ? `（${importResult.file_count}ファイル）` : ''}: 在庫 {importResult.imported}行 / 就労支援荷受け {importResult.work_imported ?? importResult.imported}行
+            取込完了{importResult.file_count > 1 ? `（${importResult.file_count}ファイル）` : ''}: 就労支援荷受け {importResult.work_imported ?? importResult.imported}行
             {importResult.unmatched > 0 && <span style={{ color: '#d97706' }}> / 未照合 {importResult.unmatched}行</span>}
             {importResult.skipped_items?.length > 0 && <span style={{ color: '#64748b' }}> / 既取込済 {importResult.skipped_items.length}行</span>}
+          </div>
+          <div style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 6, padding: '6px 10px', marginBottom: 8 }}>
+            この時点では就労支援在庫には入っていません。「就労支援荷受け」タブで指示と残を確定してから「就労支援在庫に反映」を押してください。
           </div>
 
           {importResult.imported_items?.length > 0 && (
@@ -678,13 +696,61 @@ export default function WelfareInventoryPage() {
                 </button>
               ))}
             </div>
+            {(() => {
+              const unreflected = activeWorkInstructions.filter(r => !r.is_reflected && r.product_id)
+              const keepRows = unreflected.filter(r => (r.remaining_qty || 0) > 0)
+              const zeroRows = unreflected.filter(r => (r.remaining_qty || 0) <= 0)
+              if (unreflected.length === 0) return null
+              return (
+                <div style={{ border: '1px solid #fcd34d', background: '#fffbeb', borderRadius: 8, padding: 12, marginBottom: 10 }}>
+                  <div style={{ fontWeight: 700, color: '#92400e', marginBottom: 6 }}>
+                    ⚠ まだ就労支援在庫に反映していない荷受けが {unreflected.length} 行あります
+                  </div>
+                  <div style={{ fontSize: 12, color: '#92400e', marginBottom: 8 }}>
+                    指示と「残」を確定してから反映してください。<b>残＝施設に置いておく数</b>です。
+                    戻し（全部持ち帰る）は残0にすれば在庫化されません。
+                    <br />
+                    反映すると 在庫化 {keepRows.length}行 ／ 在庫化しない（残0） {zeroRows.length}行 になります。
+                  </div>
+                  <button
+                    className="btn btn-primary"
+                    disabled={reflectMutation.isPending}
+                    onClick={() => {
+                      const total = keepRows.reduce((s, r) => s + (r.remaining_qty || 0), 0)
+                      if (!window.confirm(
+                        `就労支援在庫に反映します。\n\n在庫化する行: ${keepRows.length}件（合計 ${total}）\n`
+                        + `在庫化しない行（残0）: ${zeroRows.length}件\n\nよろしいですか？`
+                      )) return
+                      setReflectResult(null)
+                      reflectMutation.mutate(null)
+                    }}
+                  >
+                    {reflectMutation.isPending ? '反映中...' : '就労支援在庫に反映'}
+                  </button>
+                  {reflectResult && (
+                    <span style={{ marginLeft: 10, fontSize: 12, color: reflectResult.error ? '#dc2626' : '#16a34a' }}>
+                      {reflectResult.error
+                        ? reflectResult.error
+                        : `在庫化 ${reflectResult.reflected}件 / 残0でスキップ ${reflectResult.skipped_zero}件`}
+                    </span>
+                  )}
+                </div>
+              )
+            })()}
             {checkedWorkIds.size > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#eff6ff', borderRadius: 8, marginBottom: 10 }}>
                 <span style={{ fontSize: 13, fontWeight: 600 }}>{checkedWorkIds.size}件選択中</span>
                 {WORK_INSTRUCTION_OPTIONS.map(opt => (
                   <button key={opt} className="btn btn-sm" style={{ fontSize: 12 }} onClick={() => {
                     const next = { ...workDrafts }
-                    checkedWorkIds.forEach(id => { next[id] = { ...(next[id] || {}), instruction: opt } })
+                    checkedWorkIds.forEach(id => {
+                      // 「戻し」= 全部こちらに持ち帰るので、施設に残す数(残)は0にする。
+                      // 一部だけ戻す場合は残を手で入れ直す（例: 50個中30個戻し → 残20）。
+                      const patch = opt === '戻し'
+                        ? { instruction: opt, remaining_qty: 0 }
+                        : { instruction: opt }
+                      next[id] = { ...(next[id] || {}), ...patch }
+                    })
                     setWorkDrafts(next)
                     setCheckedWorkIds(new Set())
                   }}>{opt}</button>
@@ -693,7 +759,7 @@ export default function WelfareInventoryPage() {
               </div>
             )}
             <div style={{ overflowX: 'auto' }}>
-              <table className="welfare-work-table" style={{ width: 1200, minWidth: 1200 }}>
+              <table className="welfare-work-table" style={{ width: 1272, minWidth: 1272 }}>
                 <thead>
                   <tr>
                     <th style={{ width: 56 }}></th>
@@ -716,6 +782,7 @@ export default function WelfareInventoryPage() {
                     </th>
                     <th style={{ width: 126 }}>指示</th>
                     <th style={{ width: 180 }}>備考</th>
+                    <th style={{ width: 72 }}>在庫反映</th>
                     <th style={{ width: 90 }}>発注時間</th>
                   </tr>
                 </thead>
@@ -779,6 +846,11 @@ export default function WelfareInventoryPage() {
                             onChange={e => updateWorkDraft(row, { note: e.target.value })}
                             placeholder="備考"
                           />
+                        </td>
+                        <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                          {row.is_reflected
+                            ? <span style={{ fontSize: 11, fontWeight: 700, color: '#22c55e' }}>反映済</span>
+                            : <span style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b' }}>未反映</span>}
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}>{row.order_date || fmtWorkDate(row)}</td>
                       </tr>

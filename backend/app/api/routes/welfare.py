@@ -261,6 +261,8 @@ def _work_out(row: WelfareWorkInstruction):
         "remaining_units": row.remaining_units if row.remaining_units is not None else (row.remaining_qty or 0) * (row.unit_per_set or 1),
         "remaining_qty": row.remaining_qty or 0,
         "note": row.note or "",
+        "is_reflected": bool(row.is_reflected),
+        "reflected_at": row.reflected_at.isoformat() if row.reflected_at else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
@@ -399,7 +401,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                     fallback_name = prev[0]
 
         if not already_work:
-            db.add(WelfareWorkInstruction(
+            new_work = WelfareWorkInstruction(
                 product_id=product.id if product else None,
                 sku=product.sku if product else None,
                 order_date=row.get("order_date") or None,
@@ -421,10 +423,15 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 remaining_units=remaining_units_value,
                 remaining_qty=remaining_qty,
                 note=None,
-            ))
+                is_reflected=False,
+            )
+            db.add(new_work)
             work_imported += 1
         if not product:
             continue
+        # 取込では就労支援在庫へ加算しない。
+        # 「こっちに持ち帰る分(戻し)」と「施設で保管する分」は荷受け処理で仕分けるため、
+        # 指示と残を確定したあとに POST /welfare/work-instructions/reflect で残の数量だけ在庫化する。
         if already_imported:
             skipped_items.append({
                 "sku": product.sku,
@@ -434,66 +441,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 "status": "既取込済",
             })
             continue
-
-        item = None
-        item = db.query(WelfareInventoryItem).filter(WelfareInventoryItem.product_id == product.id).first()
-        is_new = item is None
-        before_qty = (item.remaining_qty or 0) if item else 0
-        if not item:
-            item = WelfareInventoryItem(
-                product_id=product.id,
-                sku=product.sku,
-                name_jp=product.name,
-                name_cn=row["name_cn"],
-                supplier_spec=row.get("supplier_spec"),
-                buy_url=row.get("buy_url"),
-                image_data_url=row.get("image_data_url"),
-                unit_per_set=unit,
-                total_received_units=0,
-                total_received_qty=0,
-                withdrawn_qty=0,
-                remaining_qty=0,
-            )
-            db.add(item)
-            db.flush()
-
-        item.name_cn = row["name_cn"] or item.name_cn
-        item.supplier_spec = row.get("supplier_spec") or item.supplier_spec
-        item.buy_url = row.get("buy_url") or item.buy_url
-        item.image_data_url = row.get("image_data_url") or item.image_data_url
-        item.unit_per_set = unit
-        item.total_received_units = (item.total_received_units or 0) + row["units"]
-        item.total_received_qty = (item.total_received_qty or 0) + qty
-        item.remaining_qty = (item.remaining_qty or 0) + remaining_qty
-        item.last_received_at = now
-
-        imported_items.append({
-            "sku": product.sku,
-            "name_jp": product.name,
-            "units": row["units"],
-            "qty": qty,
-            "before_qty": before_qty,
-            "after_qty": item.remaining_qty,
-            "status": "新規" if is_new else "追加",
-        })
-
-        db.add(WelfareInventoryMovement(
-            item_id=item.id,
-            product_id=item.product_id,
-            sku=item.sku,
-            movement_type="import",
-            source_file=source_file,
-            source_sheet=row.get("sheet"),
-            source_order_no=row.get("order_no"),
-            name_cn=row.get("name_cn"),
-            supplier_spec=row.get("supplier_spec"),
-            buy_url=row.get("buy_url"),
-            units=row["units"],
-            qty=qty,
-            note=f"{row.get('sheet', '')} から取込",
-        ))
         existing_movement_keys.add(key)
-        imported += 1
     db.commit()
     return {
         "imported": imported,
@@ -503,6 +451,111 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
         "skipped_items": skipped_items,
         "unmatched_items": unmatched_items,
     }
+
+
+class WelfareReflectIn(BaseModel):
+    ids: Optional[list[int]] = None   # 未指定なら未反映の全行
+
+
+@router.post("/work-instructions/reflect")
+def reflect_work_instructions(data: WelfareReflectIn, db: Session = Depends(get_db)):
+    """荷受け行の「残」の数量だけを就労支援在庫へ反映する。
+
+    取込時点では在庫化せず、指示（保管／戻し）と残を確定したあとにこれを実行する。
+    残が0の行（＝全部こちらに持ち帰る＝戻し）は在庫化されない。
+    反映済みの行は対象外なので、何度押しても二重計上しない。
+    """
+    q = db.query(WelfareWorkInstruction).filter(
+        WelfareWorkInstruction.is_reflected == False,
+        WelfareWorkInstruction.product_id != None,
+    )
+    if data.ids:
+        q = q.filter(WelfareWorkInstruction.id.in_(data.ids))
+    rows = q.all()
+    if not rows:
+        return {"reflected": 0, "skipped_zero": 0, "items": [],
+                "message": "反映できる行がありません（すべて反映済み、または商品未照合です）"}
+
+    now = datetime.now(timezone.utc)
+    reflected = 0
+    skipped_zero = 0
+    results = []
+    for w in rows:
+        product = db.query(RakutenProduct).filter(RakutenProduct.id == w.product_id).first()
+        if not product:
+            continue
+        unit = w.unit_per_set or 1
+        keep_units = w.remaining_units if w.remaining_units is not None else (w.remaining_qty or 0) * unit
+        keep_qty = (w.remaining_qty if w.remaining_qty is not None else keep_units // unit) or 0
+
+        # 残0＝施設に置かない（全部持ち帰る）。在庫は作らず反映済みにして次回対象から外す。
+        if keep_qty <= 0:
+            w.is_reflected = True
+            w.reflected_at = now
+            skipped_zero += 1
+            results.append({"sku": w.sku, "name_jp": w.name_jp, "keep_qty": 0,
+                            "instruction": w.instruction or "", "status": "在庫化せず（残0）"})
+            continue
+
+        item = db.query(WelfareInventoryItem).filter(WelfareInventoryItem.product_id == product.id).first()
+        is_new = item is None
+        before_qty = (item.remaining_qty or 0) if item else 0
+        if not item:
+            item = WelfareInventoryItem(
+                product_id=product.id,
+                sku=product.sku,
+                name_jp=product.name,
+                name_cn=w.source_product_name,
+                supplier_spec=w.supplier_spec,
+                buy_url=w.buy_url,
+                image_data_url=w.image_data_url,
+                unit_per_set=unit,
+                total_received_units=0,
+                total_received_qty=0,
+                withdrawn_qty=0,
+                remaining_qty=0,
+            )
+            db.add(item)
+            db.flush()
+
+        item.name_cn = w.source_product_name or item.name_cn
+        item.supplier_spec = w.supplier_spec or item.supplier_spec
+        item.buy_url = w.buy_url or item.buy_url
+        item.image_data_url = w.image_data_url or item.image_data_url
+        item.unit_per_set = unit
+        item.total_received_units = (item.total_received_units or 0) + keep_units
+        item.total_received_qty = (item.total_received_qty or 0) + keep_qty
+        item.remaining_qty = (item.remaining_qty or 0) + keep_qty
+        item.last_received_at = now
+        if w.instruction:
+            item.instruction = w.instruction
+
+        db.add(WelfareInventoryMovement(
+            item_id=item.id,
+            product_id=item.product_id,
+            sku=item.sku,
+            movement_type="import",
+            source_file=w.source_file,
+            source_sheet=w.source_sheet,
+            source_order_no=w.source_order_no,
+            name_cn=w.source_product_name,
+            supplier_spec=w.supplier_spec,
+            buy_url=w.buy_url,
+            units=keep_units,
+            qty=keep_qty,
+            note=f"荷受け反映（{w.instruction or '指示なし'}）",
+        ))
+        w.is_reflected = True
+        w.reflected_at = now
+        reflected += 1
+        results.append({
+            "sku": w.sku, "name_jp": w.name_jp, "keep_qty": keep_qty,
+            "instruction": w.instruction or "",
+            "before_qty": before_qty, "after_qty": item.remaining_qty,
+            "status": "新規" if is_new else "追加",
+        })
+    db.commit()
+    return {"reflected": reflected, "skipped_zero": skipped_zero, "items": results}
 
 
 @router.post("/import-google-sheet")
@@ -851,11 +904,15 @@ def backfill_from_product(db: Session = Depends(get_db)):
 
 
 @router.get("/movements")
-def list_movements(item_id: Optional[int] = None, db: Session = Depends(get_db)):
+def list_movements(item_id: Optional[int] = None, limit: int = 200,
+                   movement_type: Optional[str] = None, db: Session = Depends(get_db)):
+    limit = max(1, min(limit, 5000))
     query = db.query(WelfareInventoryMovement)
     if item_id:
         query = query.filter(WelfareInventoryMovement.item_id == item_id)
-    rows = query.order_by(WelfareInventoryMovement.id.desc()).limit(200).all()
+    if movement_type:
+        query = query.filter(WelfareInventoryMovement.movement_type == movement_type)
+    rows = query.order_by(WelfareInventoryMovement.id.desc()).limit(limit).all()
     return [{
         "id": r.id,
         "item_id": r.item_id,
