@@ -2117,34 +2117,57 @@ def _match_items_to_columns(
     n = len(items)
     assignments: list[int | None] = [None] * n
 
+    # 許容する誤差（元）。BPR按分係数は商品金額の単純合計なので、本来は誤差0で一致する。
+    # 端数丸めのぶれだけを吸収する幅に留める。ここを広げると
+    # 「たまたま合計が近い別の組合せ」を誤って選ぶ（例: 360.00の欄に315+45.35=360.35を割当）。
+    _MATCH_DELTAS = [0.0, 0.01, -0.01, 0.02, -0.02, 0.05, -0.05, 0.1, -0.1]
+
     def _find_subset_for_target(indices: list[int], target: float) -> list[int] | None:
-        """indicesの中からitem_amountsの合計がtargetに一致する部分集合を探す。"""
+        """indicesの中からitem_amountsの合計がtargetに一致する部分集合を探す。
+
+        誤差が小さい組合せを優先し、同じ誤差なら品目数が少ない組合せを選ぶ。
+        （単品でぴったり一致するならそれが正解である可能性が高い）
+        meet-in-the-middleで全組合せを評価するので、最初に見つかった順には依存しない。
+        """
         k = len(indices)
-        if k <= 25:
-            for mask in range(1 << k):
-                total = sum(item_amounts[indices[j]] for j in range(k) if mask & (1 << j))
-                if abs(total - target) <= 1.0:
-                    return [indices[j] for j in range(k) if mask & (1 << j)]
+        if k == 0:
             return None
-        # 商品数が多い場合: meet-in-the-middle (2^13 * 2 ≈ 16K)
         half = k // 2
         left_indices = indices[:half]
         right_indices = indices[half:]
-        left_sums: dict[float, int] = {}
+
+        # 左半分: 合計金額 -> (品目数, mask)。同じ合計なら品目数が少ない方を残す
+        left_sums: dict[float, tuple[int, int]] = {}
         for mask in range(1 << len(left_indices)):
-            total = sum(item_amounts[left_indices[j]] for j in range(len(left_indices)) if mask & (1 << j))
-            rounded = round(total, 2)
-            left_sums[rounded] = mask
+            total = round(sum(item_amounts[left_indices[j]] for j in range(len(left_indices)) if mask & (1 << j)), 2)
+            pc = bin(mask).count("1")
+            cur = left_sums.get(total)
+            if cur is None or pc < cur[0]:
+                left_sums[total] = (pc, mask)
+
+        best_key = None      # (誤差, 品目数)
+        best_result = None
         for rmask in range(1 << len(right_indices)):
-            rtotal = sum(item_amounts[right_indices[j]] for j in range(len(right_indices)) if rmask & (1 << j))
+            rtotal = round(sum(item_amounts[right_indices[j]] for j in range(len(right_indices)) if rmask & (1 << j)), 2)
+            rpc = bin(rmask).count("1")
             need = round(target - rtotal, 2)
-            for delta in [0, 0.01, -0.01, 0.02, -0.02]:
-                lmask = left_sums.get(round(need + delta, 2))
-                if lmask is not None:
-                    result = [left_indices[j] for j in range(len(left_indices)) if lmask & (1 << j)]
-                    result += [right_indices[j] for j in range(len(right_indices)) if rmask & (1 << j)]
-                    return result
-        return None
+            for delta in _MATCH_DELTAS:
+                hit = left_sums.get(round(need + delta, 2))
+                if hit is None:
+                    continue
+                lpc, lmask = hit
+                if lpc + rpc == 0:
+                    continue  # 空集合は無効
+                key = (abs(delta), lpc + rpc)
+                if best_key is None or key < best_key:
+                    best_key = key
+                    best_result = (
+                        [left_indices[j] for j in range(len(left_indices)) if lmask & (1 << j)]
+                        + [right_indices[j] for j in range(len(right_indices)) if rmask & (1 << j)]
+                    )
+            if best_key == (0.0, 1):
+                break  # 単品ぴったり一致。これ以上良い候補はない
+        return best_result
 
     remaining = list(range(n))
     # 欄を小さいBPR順に処理（小さい方がマッチしやすい）、最後の欄は残り全部
