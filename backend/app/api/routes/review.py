@@ -359,10 +359,16 @@ def bulk_status(ids: str = Query(...), status: str = Query(...), db: Session = D
 
 # ── RMS 問い合わせ取得 ───────────────────────────────────
 
-def _detect_campaign(message: str, item_name: str, campaigns: list) -> str | None:
-    text = (message or "") + " " + (item_name or "")
-    text_lower = text.lower()
-    # (keyword, code) のリストを長いキーワード優先で並べる
+def _detect_campaign(
+    message: str, item_name: str, campaigns: list, allow_item_fallback: bool = True
+) -> str | None:
+    """お客様メッセージ（と購入商品名）からプレゼントのキャンペーンを判定する。
+
+    購入商品名は「A」「F」など1文字キーワードが偶然含まれて誤判定するため
+    （例: アームカバーの商品名に含まれる F を拾って review-F と誤判定）、
+    商品名に対しては2文字以上のキーワードだけを使う。
+    1文字キーワードはお客様が明示的に書いたメッセージにのみ適用する。
+    """
     kw_code: list[tuple[str, str]] = []
     for c in campaigns:
         if not c.is_active or not c.keywords:
@@ -370,9 +376,19 @@ def _detect_campaign(message: str, item_name: str, campaigns: list) -> str | Non
         for kw in [k.strip() for k in c.keywords.split(",") if k.strip()]:
             kw_code.append((kw, c.code))
     kw_code.sort(key=lambda x: len(x[0]), reverse=True)
+
+    # 1) お客様が書いた本文（「Gでお願いします」等）は全キーワードで判定
+    msg_lower = (message or "").lower()
     for kw, code in kw_code:
-        if kw.lower() in text_lower:
+        if kw.lower() in msg_lower:
             return code
+
+    # 2) 本文に指定が無い場合のみ商品名で補完（ガーゼ・母乳パッド等の商品紐づけ用）
+    if allow_item_fallback:
+        item_lower = (item_name or "").lower()
+        for kw, code in kw_code:
+            if len(kw) >= 2 and kw.lower() in item_lower:
+                return code
     return None
 
 
@@ -475,7 +491,16 @@ async def fetch_inquiries(
         has_review_context = any(
             kw in message for kw in ["レビュー", "れびゅー", "review", "プレゼント", "特典", "希望"]
         )
-        detected = _detect_campaign(message, item_name, campaigns_list) if has_review_context else None
+        # 商品名での補完は「希望」だけの問い合わせには使わない。
+        # 「色変更希望」のようなレビューと無関係な問い合わせで、商品名に含まれる語
+        # （例: パッド）を拾って誤判定するため。
+        strong_review_context = any(
+            kw in message for kw in ["レビュー", "れびゅー", "review", "プレゼント", "特典"]
+        )
+        detected = (
+            _detect_campaign(message, item_name, campaigns_list, allow_item_fallback=strong_review_context)
+            if has_review_context else None
+        )
 
         # 返信ステータス判定
         replies = inq.get("replies") or []
@@ -517,6 +542,9 @@ async def fetch_inquiries(
             "awaiting_choice": awaiting_choice,
             "detected_campaign": detected,
             "detected_campaign_name": campaigns[detected].name if detected and detected in campaigns else None,
+            # お客様メッセージからの判定とショップ返信からの判定が食い違う行は
+            # どちらかが誤りの可能性が高いので画面で警告する
+            "campaign_conflict": bool(detected and reply_campaign and detected != reply_campaign),
             "already_registered": order_number in existing_orders if order_number else False,
         })
 

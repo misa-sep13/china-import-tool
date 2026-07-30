@@ -366,16 +366,26 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
                         {inq.already_registered ? (
                           <span style={{ color: '#16a34a', fontWeight: 600, fontSize: 11 }}>登録済み</span>
                         ) : (
-                          <select
-                            value={campaign}
-                            onChange={e => setLocalCampaigns(prev => ({ ...prev, [inq.inquiry_number]: e.target.value }))}
-                            style={{ width: '100%', fontSize: 11 }}
-                          >
-                            <option value="">-- 未選択 --</option>
-                            {campaigns.map(c => (
-                              <option key={c.code} value={c.code}>{c.code} ({c.name})</option>
-                            ))}
-                          </select>
+                          <>
+                            <select
+                              value={campaign}
+                              onChange={e => setLocalCampaigns(prev => ({ ...prev, [inq.inquiry_number]: e.target.value }))}
+                              style={{
+                                width: '100%', fontSize: 11,
+                                border: inq.campaign_conflict && !localCampaigns[inq.inquiry_number] ? '2px solid #dc2626' : undefined,
+                              }}
+                            >
+                              <option value="">-- 未選択 --</option>
+                              {campaigns.map(c => (
+                                <option key={c.code} value={c.code}>{c.code} ({c.name})</option>
+                              ))}
+                            </select>
+                            {inq.campaign_conflict && !localCampaigns[inq.inquiry_number] && (
+                              <div style={{ fontSize: 10, color: '#dc2626', fontWeight: 700, marginTop: 2 }}>
+                                ⚠ 返信では {inq.reply_campaign} です。要確認
+                              </div>
+                            )}
+                          </>
                         )}
                       </td>
                       <td>
