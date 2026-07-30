@@ -55,6 +55,17 @@ const workDateSortValue = (date) => {
 const workRemainingQty = (row) => row.remaining_qty ?? 0
 
 const WORK_INSTRUCTION_OPTIONS = ['作業保管', '保管', '戻し']
+
+// 「全量こちらに戻す」指示か。戻しの行も残には返す個数を入れたままにするため、
+// 在庫へ入れるかどうかは残ではなく指示で判定する（backendの_is_full_returnと同じ規則）。
+// 「戻し」=在庫化しない / 「作業後戻し」=作業するので在庫化 / 「30戻し」=一部戻しなので残を在庫化
+const isFullReturn = (instruction) => {
+  const s = String(instruction || '').trim()
+  if (!s.includes('戻し')) return false
+  if (s.includes('作業')) return false
+  if (/\d/.test(s)) return false
+  return true
+}
 const DELETE_UNDO_MS = 8000
 const JA_SORT_OPTIONS = { numeric: true, sensitivity: 'base' }
 
@@ -698,8 +709,10 @@ export default function WelfareInventoryPage() {
             </div>
             {(() => {
               const unreflected = activeWorkInstructions.filter(r => !r.is_reflected && r.product_id)
-              const keepRows = unreflected.filter(r => (r.remaining_qty || 0) > 0)
-              const zeroRows = unreflected.filter(r => (r.remaining_qty || 0) <= 0)
+              const returnRows = unreflected.filter(r => isFullReturn(getWorkDraftValue(r, workDrafts[r.id] || {}).instruction))
+              const rest = unreflected.filter(r => !returnRows.includes(r))
+              const keepRows = rest.filter(r => (getWorkDraftValue(r, workDrafts[r.id] || {}).remaining_qty || 0) > 0)
+              const zeroRows = rest.filter(r => (getWorkDraftValue(r, workDrafts[r.id] || {}).remaining_qty || 0) <= 0)
               if (unreflected.length === 0) return null
               return (
                 <div style={{ border: '1px solid #fcd34d', background: '#fffbeb', borderRadius: 8, padding: 12, marginBottom: 10 }}>
@@ -707,19 +720,25 @@ export default function WelfareInventoryPage() {
                     ⚠ まだ就労支援在庫に反映していない荷受けが {unreflected.length} 行あります
                   </div>
                   <div style={{ fontSize: 12, color: '#92400e', marginBottom: 8 }}>
-                    指示と「残」を確定してから反映してください。<b>残＝施設に置いておく数</b>です。
-                    戻し（全部持ち帰る）は残0にすれば在庫化されません。
+                    指示と「残」を確定してから反映してください。
+                    <b>指示が「戻し」の行は残の数字が入っていても在庫化しません</b>（返す個数を残したままにできます）。
                     <br />
-                    反映すると 在庫化 {keepRows.length}行 ／ 在庫化しない（残0） {zeroRows.length}行 になります。
+                    反映すると 在庫化 <b>{keepRows.length}行</b>
+                    ／ 戻しで在庫化しない <b>{returnRows.length}行</b>
+                    {zeroRows.length > 0 && <> ／ 残0で在庫化しない {zeroRows.length}行</>}
+                    になります。
                   </div>
                   <button
                     className="btn btn-primary"
                     disabled={reflectMutation.isPending}
                     onClick={() => {
-                      const total = keepRows.reduce((s, r) => s + (r.remaining_qty || 0), 0)
+                      const total = keepRows.reduce((s, r) => s + (getWorkDraftValue(r, workDrafts[r.id] || {}).remaining_qty || 0), 0)
                       if (!window.confirm(
-                        `就労支援在庫に反映します。\n\n在庫化する行: ${keepRows.length}件（合計 ${total}）\n`
-                        + `在庫化しない行（残0）: ${zeroRows.length}件\n\nよろしいですか？`
+                        `就労支援在庫に反映します。\n\n`
+                        + `在庫化する行: ${keepRows.length}件（合計 ${total}）\n`
+                        + `戻しで在庫化しない行: ${returnRows.length}件\n`
+                        + (zeroRows.length > 0 ? `残0で在庫化しない行: ${zeroRows.length}件\n` : '')
+                        + `\nよろしいですか？`
                       )) return
                       setReflectResult(null)
                       reflectMutation.mutate(null)
@@ -731,7 +750,7 @@ export default function WelfareInventoryPage() {
                     <span style={{ marginLeft: 10, fontSize: 12, color: reflectResult.error ? '#dc2626' : '#16a34a' }}>
                       {reflectResult.error
                         ? reflectResult.error
-                        : `在庫化 ${reflectResult.reflected}件 / 残0でスキップ ${reflectResult.skipped_zero}件`}
+                        : `在庫化 ${reflectResult.reflected}件 / 戻し ${reflectResult.skipped_return ?? 0}件 / 残0 ${reflectResult.skipped_zero}件`}
                     </span>
                   )}
                 </div>
@@ -743,14 +762,9 @@ export default function WelfareInventoryPage() {
                 {WORK_INSTRUCTION_OPTIONS.map(opt => (
                   <button key={opt} className="btn btn-sm" style={{ fontSize: 12 }} onClick={() => {
                     const next = { ...workDrafts }
-                    checkedWorkIds.forEach(id => {
-                      // 「戻し」= 全部こちらに持ち帰るので、施設に残す数(残)は0にする。
-                      // 一部だけ戻す場合は残を手で入れ直す（例: 50個中30個戻し → 残20）。
-                      const patch = opt === '戻し'
-                        ? { instruction: opt, remaining_qty: 0 }
-                        : { instruction: opt }
-                      next[id] = { ...(next[id] || {}), ...patch }
-                    })
+                    // 「戻し」でも残の数字はそのまま残す（施設側が何個返すか分からなくなるため）。
+                    // 在庫へ反映しない判定は指示で行う（isFullReturn）。
+                    checkedWorkIds.forEach(id => { next[id] = { ...(next[id] || {}), instruction: opt } })
                     setWorkDrafts(next)
                     setCheckedWorkIds(new Set())
                   }}>{opt}</button>
@@ -850,7 +864,9 @@ export default function WelfareInventoryPage() {
                         <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
                           {row.is_reflected
                             ? <span style={{ fontSize: 11, fontWeight: 700, color: '#22c55e' }}>反映済</span>
-                            : <span style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b' }}>未反映</span>}
+                            : isFullReturn(instruction)
+                              ? <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b' }} title="戻しなので在庫には入れません">対象外</span>
+                              : <span style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b' }}>未反映</span>}
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}>{row.order_date || fmtWorkDate(row)}</td>
                       </tr>

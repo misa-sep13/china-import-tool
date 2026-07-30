@@ -457,6 +457,26 @@ class WelfareReflectIn(BaseModel):
     ids: Optional[list[int]] = None   # 未指定なら未反映の全行
 
 
+def _is_full_return(instruction: Optional[str]) -> bool:
+    """指示が「全量こちらに戻す」かどうか。
+
+    戻しの行でも「残」には返す個数を入れたままにする運用（施設側が何個返すか分かるように）なので、
+    在庫へ入れるかどうかは残の値ではなく指示で判定する。
+    - 「戻し」           → 全量戻し（在庫化しない）
+    - 「作業後戻し」等   → 施設で作業してから戻すので在庫化する
+    - 「30戻し」「戻し10」→ 一部だけ戻す。残が施設に置く数なので在庫化する
+    """
+    import re
+    s = (instruction or "").strip()
+    if "戻し" not in s:
+        return False
+    if "作業" in s:
+        return False
+    if re.search(r"\d", s):
+        return False
+    return True
+
+
 @router.post("/work-instructions/reflect")
 def reflect_work_instructions(data: WelfareReflectIn, db: Session = Depends(get_db)):
     """荷受け行の「残」の数量だけを就労支援在庫へ反映する。
@@ -473,12 +493,13 @@ def reflect_work_instructions(data: WelfareReflectIn, db: Session = Depends(get_
         q = q.filter(WelfareWorkInstruction.id.in_(data.ids))
     rows = q.all()
     if not rows:
-        return {"reflected": 0, "skipped_zero": 0, "items": [],
+        return {"reflected": 0, "skipped_zero": 0, "skipped_return": 0, "items": [],
                 "message": "反映できる行がありません（すべて反映済み、または商品未照合です）"}
 
     now = datetime.now(timezone.utc)
     reflected = 0
     skipped_zero = 0
+    skipped_return = 0
     results = []
     for w in rows:
         product = db.query(RakutenProduct).filter(RakutenProduct.id == w.product_id).first()
@@ -488,7 +509,16 @@ def reflect_work_instructions(data: WelfareReflectIn, db: Session = Depends(get_
         keep_units = w.remaining_units if w.remaining_units is not None else (w.remaining_qty or 0) * unit
         keep_qty = (w.remaining_qty if w.remaining_qty is not None else keep_units // unit) or 0
 
-        # 残0＝施設に置かない（全部持ち帰る）。在庫は作らず反映済みにして次回対象から外す。
+        # 「戻し」の行は残に返す個数が入っていても在庫化しない
+        if _is_full_return(w.instruction):
+            w.is_reflected = True
+            w.reflected_at = now
+            skipped_return += 1
+            results.append({"sku": w.sku, "name_jp": w.name_jp, "keep_qty": 0,
+                            "instruction": w.instruction or "", "status": "在庫化せず（戻し）"})
+            continue
+
+        # 残0＝施設に置かない。在庫は作らず反映済みにして次回対象から外す。
         if keep_qty <= 0:
             w.is_reflected = True
             w.reflected_at = now
@@ -555,7 +585,8 @@ def reflect_work_instructions(data: WelfareReflectIn, db: Session = Depends(get_
             "status": "新規" if is_new else "追加",
         })
     db.commit()
-    return {"reflected": reflected, "skipped_zero": skipped_zero, "items": results}
+    return {"reflected": reflected, "skipped_zero": skipped_zero,
+            "skipped_return": skipped_return, "items": results}
 
 
 @router.post("/import-google-sheet")
