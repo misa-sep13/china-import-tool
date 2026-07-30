@@ -21,6 +21,77 @@ function ShipmentTab() {
   const [retrying, setRetrying] = useState(false)
   const [retryResult, setRetryResult] = useState(null)
 
+  // 入荷済みなのに在庫へ入っていない行（未照合・紐づけ間違いで弾かれた行）の復旧用
+  const [pastOrders, setPastOrders] = useState([])
+  const [openPastId, setOpenPastId] = useState(null)
+  const [pastItems, setPastItems] = useState([])
+  const [reimporting, setReimporting] = useState(false)
+  const [reimportResult, setReimportResult] = useState(null)
+
+  async function loadPastOrders() {
+    try {
+      const res = await axios.get(`${API}/shipment-orders/`)
+      setPastOrders((res.data || []).filter(o => o.status === 'received' && (o.unreflected_count || 0) > 0))
+    } catch { /* 一覧が取れなくても取込自体は継続できる */ }
+  }
+
+  async function openPast(order) {
+    if (openPastId === order.id) { setOpenPastId(null); setPastItems([]); return }
+    setOpenPastId(order.id)
+    setReimportResult(null)
+    try {
+      const res = await axios.get(`${API}/shipment-orders/${order.id}/items`)
+      setPastItems(res.data || [])
+    } catch (e) {
+      alert('明細の取得に失敗しました: ' + (e.response?.data?.detail || e.message))
+    }
+  }
+
+  async function relinkPastItem(orderId, itemId, productId) {
+    try {
+      const r = await axios.patch(`${API}/shipment-orders/${orderId}/items/${itemId}/match`, { product_id: parseInt(productId) })
+      const rev = r.data?.reverted
+      if (rev) {
+        alert(
+          `この行はすでに在庫へ反映済みだったため、${rev.sku} の在庫から ${rev.qty} を戻しました`
+          + `（${rev.stock_before} → ${rev.stock_after}）。\n`
+          + '「未反映の行を取り込む」を押すと新しい紐づけ先へ加算されます。'
+        )
+      }
+      const res = await axios.get(`${API}/shipment-orders/${orderId}/items`)
+      setPastItems(res.data || [])
+      await loadPastOrders()
+      qc.invalidateQueries(['rakuten-stock'])
+    } catch (e) {
+      alert('紐づけエラー: ' + (e.response?.data?.detail || e.message))
+    }
+  }
+
+  async function receiveRemaining(orderId) {
+    const targets = pastItems.filter(i => !i.is_reflected && i.product_id)
+    if (targets.length === 0) {
+      alert('取り込める行がありません。先に正しいSKUを紐づけてください。')
+      return
+    }
+    const list = targets.map(i => `・${i.sku || '(SKU不明)'} ${i.qty}`).join('\n')
+    if (!confirm(`まだ在庫に入っていない次の行を取り込みます。\n\n${list}\n\nよろしいですか？`)) return
+    setReimporting(true)
+    setReimportResult(null)
+    try {
+      const res = await axios.post(`${API}/shipment-orders/${orderId}/receive-remaining`)
+      setReimportResult(res.data)
+      const r = await axios.get(`${API}/shipment-orders/${orderId}/items`)
+      setPastItems(r.data || [])
+      await loadPastOrders()
+      qc.invalidateQueries(['rakuten-stock'])
+      qc.invalidateQueries(['rakuten-all-products-order'])
+    } catch (e) {
+      setReimportResult({ error: e.response?.data?.detail || e.message })
+    } finally {
+      setReimporting(false)
+    }
+  }
+
   async function handleRetryPush() {
     setRetrying(true)
     setRetryResult(null)
@@ -38,6 +109,7 @@ function ShipmentTab() {
 
   useEffect(() => {
     axios.get(`${API}/rakuten/products/`).then(r => setAllProducts(r.data)).catch(() => {})
+    loadPastOrders()
   }, [])
 
   async function handleFile(e) {
@@ -249,6 +321,89 @@ function ShipmentTab() {
               <button className="btn btn-secondary" onClick={resetImport}>続けて取り込む</button>
             </div>
           : <>
+              {pastOrders.length > 0 && (
+                <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #f59e0b' }}>
+                  <h3 style={{ marginBottom: 6, color: '#92400e' }}>⚠ 在庫に入っていない行が残っている配送依頼</h3>
+                  <div style={{ fontSize: 12, color: '#92400e', marginBottom: 10 }}>
+                    未照合だった行や、同じ商品に複数行が紐づいて弾かれた行です。
+                    正しいSKUを選び直してから「未反映の行を取り込む」を押すと在庫へ加算されます。
+                  </div>
+                  {pastOrders.map(o => (
+                    <div key={o.id} style={{ borderTop: '1px solid #e2e8f0', paddingTop: 8, marginTop: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                        <b style={{ fontFamily: 'monospace', fontSize: 13 }}>{o.tracking_no}</b>
+                        <span style={{ fontSize: 12, color: '#64748b' }}>{o.shipped_date}</span>
+                        <span style={{ fontSize: 12, color: '#b45309', fontWeight: 700 }}>未反映 {o.unreflected_count}件</span>
+                        {o.pending_reimport > 0 && (
+                          <span style={{ fontSize: 12, color: '#16a34a', fontWeight: 700 }}>取込可 {o.pending_reimport}件</span>
+                        )}
+                        <button className="btn btn-secondary" style={{ fontSize: 12, padding: '4px 10px' }} onClick={() => openPast(o)}>
+                          {openPastId === o.id ? '閉じる' : '明細を見る'}
+                        </button>
+                      </div>
+
+                      {openPastId === o.id && (
+                        <div style={{ marginTop: 10 }}>
+                          <div style={{ overflowX: 'auto' }}>
+                            <table style={{ width: '100%', fontSize: 12 }}>
+                              <thead>
+                                <tr>
+                                  <th style={{ textAlign: 'left' }}>商品名(中)</th>
+                                  <th style={{ textAlign: 'left' }}>色</th>
+                                  <th style={{ textAlign: 'left' }}>サイズ</th>
+                                  <th style={{ textAlign: 'right' }}>数量</th>
+                                  <th style={{ textAlign: 'left' }}>紐づけ</th>
+                                  <th>在庫反映</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {pastItems.map(item => (
+                                  <tr key={item.id} style={!item.is_reflected ? { background: '#fffbeb' } : undefined}>
+                                    <td style={{ maxWidth: 220 }}>{item.name_cn}</td>
+                                    <td>{item.color}</td>
+                                    <td>{item.size}</td>
+                                    <td style={{ textAlign: 'right' }}>{item.qty}</td>
+                                    <td>
+                                      <select
+                                        style={{ fontSize: 12, maxWidth: 260 }}
+                                        value={item.product_id || ''}
+                                        onChange={e => e.target.value && relinkPastItem(o.id, item.id, e.target.value)}
+                                      >
+                                        <option value="">-- SKUを選択 --</option>
+                                        {allProducts.map(p => (
+                                          <option key={p.id} value={p.id}>{p.sku} {p.name}</option>
+                                        ))}
+                                      </select>
+                                    </td>
+                                    <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                                      <span style={{ fontWeight: 700, color: item.is_reflected ? '#22c55e' : '#f59e0b' }}>
+                                        {item.is_reflected ? '反映済' : '未反映'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                            <button className="btn btn-primary" style={{ fontSize: 13 }} disabled={reimporting} onClick={() => receiveRemaining(o.id)}>
+                              {reimporting ? '取込中...' : `未反映の行を取り込む（${pastItems.filter(i => !i.is_reflected && i.product_id).length}件）`}
+                            </button>
+                            {reimportResult && (
+                              <span style={{ fontSize: 12, color: reimportResult.error ? '#dc2626' : '#16a34a' }}>
+                                {reimportResult.error
+                                  ? reimportResult.error
+                                  : `在庫加算 ${reimportResult.updated}件 / RMS反映 ok ${reimportResult.rms_push_ok || 0} / fail ${reimportResult.rms_push_fail || 0}`}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="card" style={{ marginBottom: 16 }}>
                 <h3 style={{ marginBottom: 12 }}>配送依頼ファイル（send-order-list.xls）</h3>
                 <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={uploading} />

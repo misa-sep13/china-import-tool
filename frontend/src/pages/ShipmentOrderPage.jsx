@@ -1,3 +1,6 @@
+// ※このページはApp.jsxのルートに登録されていない未使用ファイル。
+// 実際に使われている配送依頼の画面は RakutenOrderPage.jsx の ShipmentTab（楽天 発注管理 → 配送依頼タブ）。
+// 機能を追加するときはRakutenOrderPage側を編集すること（ここを直しても画面には出ない）。
 import { useState, useEffect } from 'react'
 import axios from 'axios'
 
