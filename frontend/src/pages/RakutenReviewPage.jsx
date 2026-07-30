@@ -380,9 +380,19 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
                                 <option key={c.code} value={c.code}>{c.code} ({c.name})</option>
                               ))}
                             </select>
+                            {!localCampaigns[inq.inquiry_number] && inq.campaign_confirmed && (
+                              <div style={{ fontSize: 10, color: '#16a34a', fontWeight: 700, marginTop: 2 }}>
+                                ✓ 返信で確定
+                              </div>
+                            )}
+                            {!localCampaigns[inq.inquiry_number] && !inq.campaign_confirmed && campaign && (
+                              <div style={{ fontSize: 10, color: '#d97706', fontWeight: 700, marginTop: 2 }}>
+                                ⚠ 未返信のため推測。要確認
+                              </div>
+                            )}
                             {inq.campaign_conflict && !localCampaigns[inq.inquiry_number] && (
                               <div style={{ fontSize: 10, color: '#dc2626', fontWeight: 700, marginTop: 2 }}>
-                                ⚠ 返信では {inq.reply_campaign} です。要確認
+                                ⚠ 本文からの判定と違います。要確認
                               </div>
                             )}
                           </>

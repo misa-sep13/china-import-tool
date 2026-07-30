@@ -392,6 +392,26 @@ def _detect_campaign(
     return None
 
 
+_CONFIRM_RE = re.compile(r"(.{0,25})承知(?:いた|致)しました")
+
+
+def _detect_campaign_from_confirmation(merchant_replies: list, campaigns: list) -> str | None:
+    """ショップ返信の「〇〇承知いたしました」からプレゼント商品を確定する。
+
+    定型文（例:「Dポーチ承知いたしました😊」）で必ず返信しているため、
+    お客様本文や購入商品名からの推測よりこちらが確実。
+    後から訂正返信することがあるので、新しい返信から順に見て最初に取れたものを採用する。
+    「グレーへの変更承知いたしました」のようにキャンペーン語を含まない確定文は無視される。
+    """
+    for r in reversed(merchant_replies or []):
+        text = r.get("message") or ""
+        for snippet in reversed(_CONFIRM_RE.findall(text)):
+            code = _detect_campaign(snippet, "", campaigns, allow_item_fallback=False)
+            if code:
+                return code
+    return None
+
+
 @router.get("/inquiries")
 async def fetch_inquiries(
     from_date: str = Query(None),
@@ -511,8 +531,19 @@ async def fetch_inquiries(
         # ショップ側の最新返信テキスト
         merchant_reply_text = merchant_replies[-1].get("message", "") if merchant_replies else ""
 
-        # 返信テキストからプレゼント商品名を判定
-        reply_campaign = _detect_campaign(merchant_reply_text, "", campaigns_list) if merchant_reply_text else None
+        # ショップ返信の「〇〇承知いたしました」で確定した商品を最優先で採用する。
+        # 定型文で必ず返信しているため、これが最も確実な確定情報。
+        confirmed = _detect_campaign_from_confirmation(merchant_replies, campaigns_list)
+
+        # 返信テキストからプレゼント商品名を判定（確定文が無い場合のフォールバック）
+        reply_campaign = confirmed or (
+            _detect_campaign(merchant_reply_text, "", campaigns_list) if merchant_reply_text else None
+        )
+
+        # 確定文があればそれを採用。無ければお客様本文（→商品名）からの判定を使う
+        message_detected = detected
+        if confirmed:
+            detected = confirmed
 
         # 「選べるプレゼント」を含む返信 → 商品未選択のお客様
         awaiting_choice = has_merchant_reply and "選べるプレゼント" in merchant_reply_text
@@ -542,9 +573,11 @@ async def fetch_inquiries(
             "awaiting_choice": awaiting_choice,
             "detected_campaign": detected,
             "detected_campaign_name": campaigns[detected].name if detected and detected in campaigns else None,
-            # お客様メッセージからの判定とショップ返信からの判定が食い違う行は
-            # どちらかが誤りの可能性が高いので画面で警告する
-            "campaign_conflict": bool(detected and reply_campaign and detected != reply_campaign),
+            # ショップが確定返信した商品と、お客様本文からの判定が食い違う行は
+            # どちらかが誤りの可能性があるので画面で警告する
+            "campaign_conflict": bool(confirmed and message_detected and confirmed != message_detected),
+            # 確定返信（「〇〇承知いたしました」）から取れたか
+            "campaign_confirmed": bool(confirmed),
             "already_registered": order_number in existing_orders if order_number else False,
         })
 
