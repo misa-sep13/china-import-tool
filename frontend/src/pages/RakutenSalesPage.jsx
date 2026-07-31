@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import { normalizeSearch } from '../searchUtil'
+import PeriodInventoryPanel from '../components/PeriodInventoryPanel'
 
 const fmtYen = (v) => v == null ? '—' : `¥${Math.round(Number(v) || 0).toLocaleString()}`
 const fmtNum = (v) => Number(v || 0).toLocaleString()
@@ -86,6 +87,8 @@ export default function RakutenSalesPage() {
           )) : <option value={period}>{period}</option>}
         </select>
       </div>
+
+      <PeriodInventoryPanel platform="rakuten" title="📦 期末在庫金額（楽天）" />
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="form-grid" style={{ gridTemplateColumns: '130px repeat(4, minmax(170px, 1fr)) auto', alignItems: 'end', marginBottom: 0 }}>

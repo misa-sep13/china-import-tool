@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import { normalizeSearch } from '../searchUtil'
+import PeriodInventoryPanel from '../components/PeriodInventoryPanel'
 
 const POLL_INTERVAL = 3000
 
@@ -219,6 +220,8 @@ export default function StockPage() {
   return (
     <div>
       <h1>📊 全在庫一覧</h1>
+
+      <PeriodInventoryPanel platform="amazon" title="📦 期末在庫金額（Amazon）" />
 
       <div className="card">
         <div className="top-actions">
