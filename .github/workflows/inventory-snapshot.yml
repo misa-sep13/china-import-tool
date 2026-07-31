@@ -1,0 +1,40 @@
+name: Month-end Inventory Snapshot
+
+on:
+  schedule:
+    # 毎月28〜31日の 14:59 UTC（= JST 23:59）に起動し、
+    # スクリプト側で「その日が月末か」を判定して最終日だけ確定する
+    - cron: '59 14 28-31 * *'
+  workflow_dispatch:
+    inputs:
+      period:
+        description: '対象月（YYYY-MM）。空なら実行日の月'
+        required: false
+        default: ''
+      platforms:
+        description: '対象（rakuten,amazon）'
+        required: false
+        default: 'rakuten,amazon'
+      force:
+        description: '月末でなくても実行する'
+        required: false
+        default: 'false'
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install deps
+        run: pip install httpx
+      - name: 月末在庫を確定
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          PERIOD: ${{ github.event.inputs.period }}
+          PLATFORMS: ${{ github.event.inputs.platforms || 'rakuten,amazon' }}
+          FORCE: ${{ github.event.inputs.force }}
+        run: python scripts/capture_inventory_snapshot.py
