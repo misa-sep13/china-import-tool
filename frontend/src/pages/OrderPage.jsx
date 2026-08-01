@@ -109,6 +109,46 @@ export default function OrderPage() {
     onSuccess: () => qc.invalidateQueries(['orderHistory']),
   })
 
+  // FBA納品プランと突合した「納品済みとみなせる発注」の候補
+  const [checking, setChecking] = useState(false)
+  const [candidates, setCandidates] = useState(null)
+  const [pickedIds, setPickedIds] = useState(new Set())
+  const [marking, setMarking] = useState(false)
+
+  const checkDelivered = async () => {
+    setChecking(true)
+    setError('')
+    try {
+      const res = await api.get('/orders/delivery-candidates')
+      if (res.data.error) { setError(res.data.error); setCandidates(null) }
+      else {
+        setCandidates(res.data)
+        // 発注数を満たしている分だけ初期チェック。部分一致は手動判断に委ねる
+        setPickedIds(new Set(res.data.candidates.filter(c => c.full_match).map(c => c.id)))
+      }
+    } catch {
+      setError('納品状況の確認に失敗しました')
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  const markShipped = async () => {
+    if (!pickedIds.size) return
+    setMarking(true)
+    try {
+      await api.post('/orders/mark-shipped', { ids: [...pickedIds] })
+      setCandidates(null)
+      setPickedIds(new Set())
+      qc.invalidateQueries(['orderHistory'])
+      sessionStorage.removeItem('order_items')  // 発注済の数が変わるので再取得させる
+    } catch {
+      setError('納品済みの記録に失敗しました')
+    } finally {
+      setMarking(false)
+    }
+  }
+
   const updateQty = (productId, val) => {
     setQtyOverrides(prev => ({ ...prev, [productId]: Number(val) }))
   }
@@ -405,6 +445,97 @@ export default function OrderPage() {
       )}
 
       {tab === 'history' && (
+        <>
+        <div className="card" style={{ marginBottom: 16 }}>
+          <p style={{ marginBottom: 12, color: '#555', fontSize: 13 }}>
+            FBAの納品プランと照合し、すでに納品済みとみられる発注を探します。<br />
+            納品済みにすると発注管理の「発注済」から外れ、在庫の二重計上がなくなります。
+          </p>
+          <button className="btn btn-secondary" onClick={checkDelivered} disabled={checking}>
+            {checking ? '確認中...' : '🔍 納品済みの発注を確認'}
+          </button>
+          {error && <p className="error-msg">{error}</p>}
+
+          {candidates && candidates.candidates.length === 0 && (
+            <p style={{ marginTop: 12, color: '#666', fontSize: 13 }}>
+              納品プランと一致する発注はありませんでした。
+            </p>
+          )}
+
+          {candidates && candidates.candidates.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>
+                納品済みとみられる発注（{candidates.candidates.length}件）
+              </div>
+              <table style={{ fontSize: 13 }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: 36 }}></th>
+                    <th>SKU</th>
+                    <th>発注日</th>
+                    <th style={{ textAlign: 'right' }}>発注数</th>
+                    <th style={{ textAlign: 'right' }}>納品プラン</th>
+                    <th>プラン作成日</th>
+                    <th>判定</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {candidates.candidates.map(c => (
+                    <tr key={c.id} style={{ background: pickedIds.has(c.id) ? '#eff6ff' : undefined }}>
+                      <td style={{ textAlign: 'center' }}>
+                        <input type="checkbox"
+                          checked={pickedIds.has(c.id)}
+                          onChange={() => setPickedIds(prev => {
+                            const next = new Set(prev)
+                            next.has(c.id) ? next.delete(c.id) : next.add(c.id)
+                            return next
+                          })}
+                        />
+                      </td>
+                      <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{c.sku}</td>
+                      <td style={{ fontSize: 12, color: '#666' }}>{(c.ordered_at || '').slice(0, 10)}</td>
+                      <td style={{ textAlign: 'right' }}>{c.qty}</td>
+                      <td style={{ textAlign: 'right' }}>{c.plan_total}</td>
+                      <td style={{ fontSize: 12, color: '#666' }}>{(c.plan_dates || []).join(', ')}</td>
+                      <td style={{ fontSize: 12 }}>
+                        {c.full_match
+                          ? <span style={{ color: '#16a34a', fontWeight: 700 }}>一致</span>
+                          : <span style={{ color: '#ea580c', fontWeight: 700 }}>一部のみ（{c.covered_qty}/{c.qty}）</span>}
+                        {c.has_duplicate && (
+                          <span style={{ color: '#dc2626', marginLeft: 6 }} title="同じ数量のプランが近い日に複数あり、作り直しの可能性があります">⚠ 重複あり</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {candidates.duplicates?.length > 0 && (
+                <div style={{ marginTop: 10, border: '1px solid #fcd34d', background: '#fffbeb', borderRadius: 8, padding: 10, fontSize: 12 }}>
+                  <b style={{ color: '#92400e' }}>作り直しとみなして除外したプラン（{candidates.duplicates.length}件）</b>
+                  <div style={{ color: '#92400e', marginTop: 4 }}>
+                    {candidates.duplicates.map((d, i) => (
+                      <div key={i}>{d.created_at} {d.sku} {d.qty}個</div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 4, color: '#92400e' }}>
+                    ※ 同一SKU・同一数量が7日以内に複数あるものは、同じ納品の作り直しとして1件だけ数えています。
+                  </div>
+                </div>
+              )}
+
+              <div style={{ marginTop: 12 }}>
+                <button className="btn btn-primary" onClick={markShipped} disabled={marking || pickedIds.size === 0}>
+                  {marking ? '記録中...' : `チェックした${pickedIds.size}件を納品済みにする`}
+                </button>
+                <span style={{ marginLeft: 10, fontSize: 12, color: '#888' }}>
+                  発注済みリストからは消えず、発注数の集計から外れます
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
         <div className="card">
           <h2>発注済みリスト（{history.length}件）</h2>
           {history.length === 0 ? (
@@ -424,13 +555,14 @@ export default function OrderPage() {
                     <th>発注数</th>
                     <th>単価(元)</th>
                     <th>小計(元)</th>
+                    <th>状態</th>
                     <th>仕入URL</th>
                     <th></th>
                   </tr>
                 </thead>
                 <tbody>
                   {history.map(row => (
-                    <tr key={row.id}>
+                    <tr key={row.id} style={{ opacity: row.status === 'shipped' ? 0.55 : 1 }}>
                       <td style={{ fontSize: 12, whiteSpace: 'nowrap', color: '#666' }}>
                         {new Date(row.ordered_at).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
                       </td>
@@ -440,6 +572,13 @@ export default function OrderPage() {
                       <td style={{ textAlign: 'right', fontWeight: 600 }}>{row.qty}</td>
                       <td style={{ textAlign: 'right' }}>{row.price}</td>
                       <td style={{ textAlign: 'right', fontWeight: 600 }}>{(row.qty * row.price).toFixed(0)}</td>
+                      <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
+                        {row.status === 'shipped' ? (
+                          <span style={{ color: '#16a34a', fontWeight: 700 }} title="発注数の集計から外れています">✓ 納品済</span>
+                        ) : (
+                          <span style={{ color: '#888' }}>未納品</span>
+                        )}
+                      </td>
                       <td>
                         {row.buy_url && (
                           <a href={row.buy_url} target="_blank" rel="noreferrer" style={{ color: '#e94560', fontSize: 12 }}>リンク</a>
@@ -466,12 +605,14 @@ export default function OrderPage() {
                     </td>
                     <td></td>
                     <td></td>
+                    <td></td>
                   </tr>
                 </tfoot>
               </table>
             </div>
           )}
         </div>
+        </>
       )}
     </div>
   )

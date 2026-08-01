@@ -514,6 +514,75 @@ def _fetch_price_and_fee_one(sku: str, asin: str = "", fallback_price: Optional[
     return sku, selling_price, fba_fee, price_source, fee_source
 
 
+# ---------- FBA納品プラン（Fulfillment Inbound API 2024-03-20） ----------
+
+def fetch_inbound_plans() -> List[dict]:
+    """FBA納品プランをSKU単位で返す。発注済みリストの消し込み候補の算出に使う。
+
+    旧APIの /fba/inbound/v0/shipments は Send to Amazon 移行後の納品をほとんど
+    返さない（過去1年を全ステータスで検索しても1件しか取れなかった）ため、
+    2024-03-20 の inboundPlans を使う。
+
+    戻り値: [{plan_id, created_at, status, sku, qty}, ...]（作成日の新しい順）
+    """
+    cached = _cache_get("inbound_plans")
+    if cached is not None:
+        return cached
+
+    plans: List[dict] = []
+    token = None
+    while True:
+        params = {"pageSize": 30}
+        if token:
+            params["paginationToken"] = token
+        data = _call_sp_api(f"/inbound/fba/2024-03-20/inboundPlans?{urllib.parse.urlencode(params)}")
+        plans.extend(data.get("inboundPlans") or [])
+        token = (data.get("pagination") or {}).get("nextToken")
+        if not token:
+            break
+
+    def _fetch_items(plan: dict) -> List[dict]:
+        pid = plan.get("inboundPlanId")
+        if not pid:
+            return []
+        rows = []
+        item_token = None
+        while True:
+            params = {"pageSize": 100}
+            if item_token:
+                params["paginationToken"] = item_token
+            try:
+                data = _call_sp_api(
+                    f"/inbound/fba/2024-03-20/inboundPlans/{pid}/items?{urllib.parse.urlencode(params)}"
+                )
+            except Exception:
+                return rows
+            for it in (data.get("items") or []):
+                msku = it.get("msku") or ""
+                qty = it.get("quantity") or 0
+                if msku and qty:
+                    rows.append({
+                        "plan_id": pid,
+                        "created_at": plan.get("createdAt") or "",
+                        "status": plan.get("status") or "",
+                        "sku": msku,
+                        "qty": qty,
+                    })
+            item_token = (data.get("pagination") or {}).get("nextToken")
+            if not item_token:
+                break
+        return rows
+
+    result: List[dict] = []
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        for rows in ex.map(_fetch_items, plans):
+            result.extend(rows)
+
+    result.sort(key=lambda r: r["created_at"], reverse=True)
+    _cache[("inbound_plans")] = {"value": result, "expires_at": time.time() + _CACHE_TTL_LONG}
+    return result
+
+
 def fetch_sales_period(days: int, offset_days: int, asin_list: List[str]) -> Dict[str, float]:
     """offset_days前〜(offset_days+days)前の期間の日販を取得"""
     from datetime import datetime, timedelta, timezone

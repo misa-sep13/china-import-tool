@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
+from datetime import datetime
 import io
 import uuid
 import time
@@ -548,9 +549,131 @@ def get_order_history(db: Session = Depends(get_db)):
             "asin": r.asin,
             "fnsku": r.fnsku,
             "note": r.note,
+            "status": getattr(r, "status", None) or "ordered",
         }
         for r in rows
     ]
+
+
+def _dedupe_inbound_plans(rows: List[dict]) -> tuple:
+    """納品プランから重複（作り直しの残骸）を除いた数量をSKUごとに返す。
+
+    Send to Amazonではプランを作り直しても古いプランがACTIVEのまま残るため、
+    単純合計すると実際の納品より多くなる（y84_blackは発注130に対しプラン計210）。
+    同一SKU・同一数量が7日以内に複数ある場合は同じ納品の作り直しとみなし、
+    最新の1件だけを数える。
+
+    戻り値: (SKUごとの採用数量, 重複とみなして除外した行)
+    """
+    by_sku: dict = {}
+    for r in rows:
+        by_sku.setdefault(r["sku"], []).append(r)
+
+    adopted: dict = {}
+    duplicates: List[dict] = []
+    for sku, items in by_sku.items():
+        # 新しい順（fetch_inbound_plans側でソート済みだが念のため）
+        items = sorted(items, key=lambda x: x["created_at"], reverse=True)
+        kept: List[dict] = []
+        for it in items:
+            dup_of = None
+            for k in kept:
+                if k["qty"] != it["qty"]:
+                    continue
+                try:
+                    d1 = datetime.fromisoformat(k["created_at"].replace("Z", "+00:00"))
+                    d2 = datetime.fromisoformat(it["created_at"].replace("Z", "+00:00"))
+                    if abs((d1 - d2).days) <= 7:
+                        dup_of = k
+                        break
+                except Exception:
+                    continue
+            if dup_of:
+                duplicates.append({**it, "duplicate_of": dup_of["plan_id"]})
+            else:
+                kept.append(it)
+        adopted[sku] = sum(k["qty"] for k in kept)
+    return adopted, duplicates
+
+
+@router.get("/delivery-candidates")
+def get_delivery_candidates(db: Session = Depends(get_db)):
+    """FBA納品プランと突合し、納品済みとみなせる発注の候補を返す。
+
+    自動では消さない。判定は納品プラン（＝作成した時点で手元に在庫がある）に
+    基づく推測を含むため、画面で確認してから確定する。
+    """
+    from app.core.config import settings as app_settings
+    if not app_settings.SP_API_REFRESH_TOKEN:
+        return {"candidates": [], "duplicates": [], "error": "SP-API未設定"}
+
+    from app.services.amazon_api import fetch_inbound_plans
+    try:
+        plan_rows = fetch_inbound_plans()
+    except Exception as e:
+        return {"candidates": [], "duplicates": [], "error": f"納品プランの取得に失敗しました: {e}"}
+
+    adopted, duplicates = _dedupe_inbound_plans(plan_rows)
+
+    orders = (
+        db.query(OrderHistory)
+        .filter(OrderHistory.is_deleted == False)
+        .filter(_not_shipped())
+        .order_by(OrderHistory.ordered_at.asc())  # 古い発注から消し込む（先入先出）
+        .all()
+    )
+
+    remaining = dict(adopted)
+    candidates = []
+    for o in orders:
+        avail = remaining.get(o.sku, 0)
+        if avail <= 0:
+            continue
+        covered = min(avail, o.qty or 0)
+        if covered <= 0:
+            continue
+        remaining[o.sku] = avail - covered
+        plans_for_sku = [p for p in plan_rows if p["sku"] == o.sku]
+        candidates.append({
+            "id": o.id,
+            "sku": o.sku,
+            "name": o.name,
+            "qty": o.qty,
+            "ordered_at": o.ordered_at.isoformat() if o.ordered_at else None,
+            "covered_qty": covered,
+            "full_match": covered >= (o.qty or 0),
+            "plan_total": adopted.get(o.sku, 0),
+            "plan_dates": sorted({p["created_at"][:10] for p in plans_for_sku}, reverse=True),
+            "has_duplicate": any(d["sku"] == o.sku for d in duplicates),
+        })
+
+    return {
+        "candidates": candidates,
+        "duplicates": [
+            {"sku": d["sku"], "qty": d["qty"], "created_at": d["created_at"][:10], "plan_id": d["plan_id"]}
+            for d in duplicates
+        ],
+        "plan_totals": adopted,
+    }
+
+
+class MarkShippedRequest(BaseModel):
+    ids: List[int]
+
+
+@router.post("/mark-shipped")
+def mark_orders_shipped(req: MarkShippedRequest, db: Session = Depends(get_db)):
+    """指定した発注を納品済み(shipped)にする。発注済みの集計から外れる。"""
+    if not req.ids:
+        return {"ok": True, "updated": 0}
+    rows = db.query(OrderHistory).filter(OrderHistory.id.in_(req.ids)).all()
+    updated = 0
+    for r in rows:
+        if getattr(r, "status", None) != "shipped":
+            r.status = "shipped"
+            updated += 1
+    db.commit()
+    return {"ok": True, "updated": updated}
 
 
 @router.delete("/history/{history_id}")
