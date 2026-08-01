@@ -545,6 +545,23 @@ def fetch_inbound_plans() -> List[dict]:
         pid = plan.get("inboundPlanId")
         if not pid:
             return []
+
+        # listInboundPlans の status は作り直しやキャンセル後も ACTIVE のままなので、
+        # 個別GETで shipments の実ステータスを見る。出荷が1件も無いプラン
+        # （＝画面上の「キャンセル済み」や配置未確定）は納品として数えない。
+        shipment_status = ""
+        try:
+            detail = _call_sp_api(f"/inbound/fba/2024-03-20/inboundPlans/{pid}")
+            shipments = detail.get("shipments") or []
+            if not shipments:
+                return []
+            shipment_status = shipments[0].get("status") or ""
+            if shipment_status in ("CANCELLED", "DELETED", "VOID"):
+                return []
+        except Exception:
+            # 取得できない場合は判断材料が無いので、数えない側に倒す
+            return []
+
         rows = []
         item_token = None
         while True:
@@ -565,6 +582,7 @@ def fetch_inbound_plans() -> List[dict]:
                         "plan_id": pid,
                         "created_at": plan.get("createdAt") or "",
                         "status": plan.get("status") or "",
+                        "shipment_status": shipment_status,
                         "sku": msku,
                         "qty": qty,
                     })
