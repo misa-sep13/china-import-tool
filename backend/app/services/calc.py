@@ -96,6 +96,19 @@ def growth_mult(sales_7, sales_15, sales_90, s: CalcSettings) -> float:
         return decline_mult_val
     return 1.0
 
+def growth_rate_pct(sales_7, sales_15, sales_90) -> float:
+    """直近(7日・15日平均) vs 90日 の増減率を%で返す（表示用）。
+
+    発注数の補正に使う growth_mult() と同じ基準で比較するので、
+    表示された成長率と実際の発注計算がずれない。
+    90日実績が無い商品は判断材料が無いので0%とする。
+    """
+    if (sales_90 or 0) <= 0:
+        return 0.0
+    recent = ((sales_7 or 0) + (sales_15 or 0)) / 2
+    return round((recent / sales_90 - 1.0) * 100, 1)
+
+
 def calc_order_qty(
     available: int, inbound: int, processing: int, extra_stock: int,
     sales_7: float, sales_15: float, sales_30: float, sales_60: float,

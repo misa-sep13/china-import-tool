@@ -337,6 +337,7 @@ export default function OrderPage() {
                       <th>全在庫</th>
                       <th>発注済</th>
                       <th>日販</th>
+                      <th>成長率</th>
                       <th>発注数</th>
                       <th>単価(元)</th>
                       <th>小計(元)</th>
@@ -372,6 +373,14 @@ export default function OrderPage() {
                           {item.ordered > 0 ? item.ordered : '-'}
                         </td>
                         <td style={{ textAlign: 'right' }}>{item.daily}</td>
+                        <td style={{ textAlign: 'right' }}>
+                          <span style={{
+                            color: item.growth_rate > 0 ? '#16a34a' : item.growth_rate < 0 ? '#dc2626' : '#999',
+                            fontWeight: 600,
+                          }}>
+                            {item.growth_rate ? `${item.growth_rate > 0 ? '+' : ''}${item.growth_rate}%` : '—'}
+                          </span>
+                        </td>
                         <td>
                           <input
                             type="number"
@@ -405,7 +414,7 @@ export default function OrderPage() {
                   </tbody>
                   <tfoot>
                     <tr>
-                      <td colSpan={12} style={{ textAlign: 'right', fontWeight: 700, paddingTop: 12 }}>合計（選択分）</td>
+                      <td colSpan={13} style={{ textAlign: 'right', fontWeight: 700, paddingTop: 12 }}>合計（選択分）</td>
                       <td style={{ textAlign: 'right', fontWeight: 700 }}>
                         {totalYuan.toFixed(0)} 元
                       </td>
@@ -431,15 +440,9 @@ export default function OrderPage() {
           )}
 
           {!isLoading && jobStatus === 'done' && (
-            <>
-              <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
-                ※ <span style={{ color: '#ea580c', fontWeight: 700 }}>オレンジ行</span> = 推奨発注数が1以上 → 発注タイミング
-              </div>
-              {/* 右下フローティングトグルボタン */}
-              <div style={{ position: 'fixed', bottom: 32, right: 32, zIndex: 1000 }}>
-                {toggleBtn}
-              </div>
-            </>
+            <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
+              ※ <span style={{ color: '#ea580c', fontWeight: 700 }}>オレンジ行</span> = 推奨発注数が1以上 → 発注タイミング
+            </div>
           )}
         </>
       )}

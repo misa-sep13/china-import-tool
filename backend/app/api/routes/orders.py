@@ -12,7 +12,7 @@ from app.core.database import get_db, SessionLocal
 from app.models.product import Product
 from app.models.settings import OrderSettings
 from app.models.order_history import OrderHistory
-from app.services.calc import CalcSettings, calc_order_qty
+from app.services.calc import CalcSettings, calc_order_qty, growth_rate_pct
 from app.services.excel_export import build_taotaro_excel
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -188,6 +188,7 @@ def _run_preview_job(job_id: str):
                 "recommended_qty": calc.qty,
                 "qty": calc.qty,
                 "needs_order": calc.qty > 0,
+                "growth_rate": growth_rate_pct(s7, s15, s90),
             })
 
         with _jobs_lock:
@@ -438,6 +439,7 @@ def preview_orders(db: Session = Depends(get_db)):
             "recommended_qty": calc.qty,
             "qty": calc.qty,
             "needs_order": calc.qty > 0,
+            "growth_rate": growth_rate_pct(s7, s15, s90),
         })
 
     return result
