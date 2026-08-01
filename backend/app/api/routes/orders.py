@@ -144,9 +144,6 @@ def _run_preview_job(job_id: str):
                 sales_7=s7, sales_15=s15, sales_30=s30, sales_60=s60,
                 set_size=p.set_size or 1, s=s, sales_90=s90,
             )
-            if calc.qty == 0:
-                continue
-
             result.append({
                 "product_id": p.id,
                 "sku": p.sku or "",
@@ -178,6 +175,7 @@ def _run_preview_job(job_id: str):
                 "stock": calc.stock,
                 "recommended_qty": calc.qty,
                 "qty": calc.qty,
+                "needs_order": calc.qty > 0,
             })
 
         with _jobs_lock:
@@ -394,9 +392,6 @@ def preview_orders(db: Session = Depends(get_db)):
             sales_7=s7, sales_15=s15, sales_30=s30, sales_60=s60,
             set_size=p.set_size or 1, s=s, sales_90=s90,
         )
-        if calc.qty == 0:
-            continue
-
         result.append({
             "product_id": p.id,
             "sku": p.sku or "",
@@ -428,6 +423,7 @@ def preview_orders(db: Session = Depends(get_db)):
             "stock": calc.stock,
             "recommended_qty": calc.qty,
             "qty": calc.qty,
+            "needs_order": calc.qty > 0,
         })
 
     return result

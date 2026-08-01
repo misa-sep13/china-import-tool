@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
+import { normalizeSearch } from '../searchUtil'
 
 const POLL_INTERVAL = 3000 // 3秒ごとにポーリング
 
@@ -13,6 +14,8 @@ export default function OrderPage() {
   const [qtyOverrides, setQtyOverrides] = useState({})
   const [ordering, setOrdering] = useState(null)
   const [justOrdered, setJustOrdered] = useState(new Set())
+  const [search, setSearch] = useState('')
+  const [onlyRecommended, setOnlyRecommended] = useState(true)
 
   // バックグラウンドジョブ管理
   const [jobId, setJobId] = useState(null)
@@ -80,11 +83,20 @@ export default function OrderPage() {
     return () => stopPolling()
   }, [])
 
-  const items = rawItems.map((item, i) => ({
+  const allItems = rawItems.map((item) => ({
     ...item,
     qty: qtyOverrides[item.product_id] ?? item.qty,
-    _idx: i,
   }))
+
+  // 発注推奨のみ / 全商品 の切替 ＋ SKU・商品名での絞り込み
+  const items = allItems.filter(item => {
+    if (onlyRecommended && !item.needs_order) return false
+    if (!search) return true
+    const q = normalizeSearch(search)
+    return normalizeSearch(item.sku || '').includes(q) || normalizeSearch(item.name || '').includes(q)
+  })
+
+  const recommendedCount = allItems.filter(i => i.needs_order).length
 
   const { data: history = [] } = useQuery({
     queryKey: ['orderHistory'],
@@ -103,25 +115,25 @@ export default function OrderPage() {
 
   const currentSelected = selected ?? new Set()
 
-  const toggleSelect = (idx) => {
+  const toggleSelect = (productId) => {
     setSelected(prev => {
       const base = prev ?? new Set()
       const next = new Set(base)
-      next.has(idx) ? next.delete(idx) : next.add(idx)
+      next.has(productId) ? next.delete(productId) : next.add(productId)
       return next
     })
   }
 
+  // 全選択は「今表示されている行」に対して働く
+  const allDisplayedChecked = items.length > 0 && items.every(it => currentSelected.has(it.product_id))
+
   const toggleAll = () => {
-    if (currentSelected.size === items.length) {
-      setSelected(new Set())
-    } else {
-      setSelected(new Set(items.map((_, i) => i)))
-    }
+    setSelected(allDisplayedChecked ? new Set() : new Set(items.map(it => it.product_id)))
   }
 
   const handleExport = async () => {
-    const targets = items.filter((item, i) => currentSelected.has(i) && item.qty > 0)
+    // フィルタ・検索で今は隠れている行も、チェック済みなら出力対象に含める
+    const targets = allItems.filter(item => currentSelected.has(item.product_id) && item.qty > 0)
     if (!targets.length) { setError('選択された商品がないか、発注数が0です'); return }
     setExporting(true)
     try {
@@ -172,9 +184,24 @@ export default function OrderPage() {
     return <span className="badge badge-ok">{days}日</span>
   }
 
-  const selectedItems = items.filter((item, i) => currentSelected.has(i) && item.qty > 0)
+  // 件数・合計も「表示中か否か」ではなくチェック状態を基準にする
+  const selectedItems = allItems.filter(item => currentSelected.has(item.product_id) && item.qty > 0)
   const totalYuan = selectedItems.reduce((s, i) => s + i.qty * i.price, 0)
   const isLoading = jobStatus === 'running' || jobStatus === 'idle'
+
+  const toggleBtn = (
+    <button
+      onClick={() => setOnlyRecommended(v => !v)}
+      style={{
+        padding: '8px 18px', fontSize: 14, fontWeight: 700, borderRadius: 24, border: 'none', cursor: 'pointer',
+        background: onlyRecommended ? '#ea580c' : '#e2e8f0',
+        color: onlyRecommended ? '#fff' : '#374151',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+      }}
+    >
+      {onlyRecommended ? `発注推奨のみ（${recommendedCount}件）` : `全商品（${allItems.length}件）`}
+    </button>
+  )
 
   return (
     <div>
@@ -212,6 +239,18 @@ export default function OrderPage() {
             {error && <p className="error-msg">{error}</p>}
           </div>
 
+          {/* 表示切替＋検索 */}
+          {!isLoading && jobStatus === 'done' && (
+            <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              {toggleBtn}
+              <input
+                type="text" placeholder="SKU・商品名で絞り込み"
+                value={search} onChange={e => setSearch(e.target.value)}
+                style={{ width: 280 }}
+              />
+            </div>
+          )}
+
           {isLoading && (
             <div className="card" style={{ textAlign: 'center', color: '#555', padding: 40 }}>
               <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
@@ -235,14 +274,14 @@ export default function OrderPage() {
 
           {!isLoading && jobStatus === 'done' && items.length > 0 && (
             <div className="card">
-              <h2>発注推奨リスト（{items.length}件）</h2>
+              <h2>{onlyRecommended ? '発注推奨リスト' : '全商品リスト'}（{items.length}件）</h2>
               <div style={{ overflowX: 'auto' }}>
                 <table>
                   <thead>
                     <tr>
                       <th style={{ width: 36, cursor: 'pointer' }} onClick={toggleAll}>
                         <input type="checkbox"
-                          checked={currentSelected.size === items.length}
+                          checked={allDisplayedChecked}
                           onChange={toggleAll}
                           onClick={e => e.stopPropagation()}
                         />
@@ -263,15 +302,18 @@ export default function OrderPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((item) => (
-                      <tr key={item.product_id} style={{ background: currentSelected.has(item._idx) ? '#eff6ff' : undefined }}>
+                    {items.map((item) => {
+                      const isChecked = currentSelected.has(item.product_id)
+                      const rowBg = isChecked ? '#eff6ff' : item.needs_order ? '#fff7ed' : undefined
+                      return (
+                      <tr key={item.product_id} style={{ background: rowBg }}>
                         <td
                           style={{ textAlign: 'center', cursor: 'pointer' }}
-                          onClick={() => toggleSelect(item._idx)}
+                          onClick={() => toggleSelect(item.product_id)}
                         >
                           <input type="checkbox"
-                            checked={currentSelected.has(item._idx)}
-                            onChange={() => toggleSelect(item._idx)}
+                            checked={isChecked}
+                            onChange={() => toggleSelect(item.product_id)}
                             onClick={e => e.stopPropagation()}
                           />
                         </td>
@@ -299,7 +341,7 @@ export default function OrderPage() {
                         </td>
                         <td style={{ textAlign: 'right' }}>{item.price}</td>
                         <td style={{ textAlign: 'right', fontWeight: 600 }}>
-                          {currentSelected.has(item._idx) ? (item.qty * item.price).toFixed(0) : '-'}
+                          {isChecked ? (item.qty * item.price).toFixed(0) : '-'}
                         </td>
                         <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
                           {justOrdered.has(item.product_id) ? (
@@ -316,7 +358,8 @@ export default function OrderPage() {
                           )}
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                   <tfoot>
                     <tr>
@@ -334,9 +377,27 @@ export default function OrderPage() {
 
           {!isLoading && jobStatus === 'done' && items.length === 0 && (
             <div className="card empty-state">
-              <div style={{ fontSize: 40 }}>✅</div>
-              <p>現在、発注が必要な商品はありません。</p>
+              <div style={{ fontSize: 40 }}>{search ? '🔍' : '✅'}</div>
+              <p>
+                {search
+                  ? '検索条件に一致する商品はありません。'
+                  : onlyRecommended
+                  ? '現在、発注が必要な商品はありません。'
+                  : '商品がありません。'}
+              </p>
             </div>
+          )}
+
+          {!isLoading && jobStatus === 'done' && (
+            <>
+              <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
+                ※ <span style={{ color: '#ea580c', fontWeight: 700 }}>オレンジ行</span> = 推奨発注数が1以上 → 発注タイミング
+              </div>
+              {/* 右下フローティングトグルボタン */}
+              <div style={{ position: 'fixed', bottom: 32, right: 32, zIndex: 1000 }}>
+                {toggleBtn}
+              </div>
+            </>
           )}
         </>
       )}
