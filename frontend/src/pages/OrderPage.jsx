@@ -276,8 +276,9 @@ export default function OrderPage() {
           {!isLoading && jobStatus === 'done' && items.length > 0 && (
             <div className="card">
               <h2>{onlyRecommended ? '発注推奨リスト' : '全商品リスト'}（{items.length}件）</h2>
-              <div style={{ overflowX: 'auto' }}>
-                <table>
+              {/* スクロールしても見出し行が残るよう、楽天(在庫・損益)と同じsticky-tableを使う */}
+              <div className="sticky-table-wrap">
+                <table className="sticky-table">
                   <thead>
                     <tr>
                       <th style={{ width: 36, cursor: 'pointer' }} onClick={toggleAll}>

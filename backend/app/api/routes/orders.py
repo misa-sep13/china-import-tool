@@ -16,6 +16,16 @@ from app.services.excel_export import build_taotaro_excel
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
+
+def _not_shipped():
+    """発注済みとして数えるべき行の条件。
+
+    FBAへ納品済み(status='shipped')の発注は、その分がSP-APIの在庫側に
+    現れるため、発注済みとしても数えると二重計上になり在庫過多と判定されて
+    発注が漏れる。status未設定(NULL)の古いデータは未納品として扱う。"""
+    return (OrderHistory.status == None) | (OrderHistory.status != "shipped")  # noqa: E711
+
+
 # バックグラウンドジョブ管理（メモリ内）
 _jobs: dict = {}
 _jobs_lock = threading.Lock()
@@ -121,6 +131,7 @@ def _run_preview_job(job_id: str):
         ordered_qty_by_sku = dict(
             db.query(OrderHistory.sku, sqlfunc.sum(OrderHistory.qty))
             .filter(OrderHistory.is_deleted == False)
+            .filter(_not_shipped())
             .group_by(OrderHistory.sku)
             .all()
         )
@@ -225,6 +236,7 @@ def _run_stock_job(job_id: str):
         ordered_qty_by_sku = dict(
             db.query(OrderHistory.sku, sqlfunc.sum(OrderHistory.qty))
             .filter(OrderHistory.is_deleted == False)
+            .filter(_not_shipped())
             .group_by(OrderHistory.sku)
             .all()
         )
@@ -369,6 +381,7 @@ def preview_orders(db: Session = Depends(get_db)):
     ordered_qty_by_sku = dict(
         db.query(OrderHistory.sku, sqlfunc.sum(OrderHistory.qty))
         .filter(OrderHistory.is_deleted == False)
+        .filter(_not_shipped())
         .group_by(OrderHistory.sku)
         .all()
     )
