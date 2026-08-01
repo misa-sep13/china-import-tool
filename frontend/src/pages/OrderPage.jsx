@@ -257,7 +257,8 @@ export default function OrderPage() {
               <p style={{ fontWeight: 600, marginBottom: 8 }}>SP-APIからデータを取得中...</p>
               <p style={{ fontSize: 13, color: '#888' }}>
                 Amazon SP-APIから全商品の在庫・売上データを取得しています。<br />
-                商品数によっては2〜3分かかる場合があります。
+                キャッシュがあれば数秒で終わりますが、期限切れの場合は<br />
+                Amazon側のレート制限のため<b>7〜8分</b>かかります。このまま開いてお待ちください。
               </p>
               {jobElapsed > 0 && (
                 <p style={{ fontSize: 13, color: '#aaa', marginTop: 8 }}>経過時間: {jobElapsed}秒</p>
