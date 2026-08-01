@@ -448,7 +448,7 @@ export default function OrderPage() {
         <>
         <div className="card" style={{ marginBottom: 16 }}>
           <p style={{ marginBottom: 12, color: '#555', fontSize: 13 }}>
-            FBAの納品プランと照合し、すでに納品済みとみられる発注を探します。<br />
+            FBAへの発送実績と照合し、すでに納品済みとみられる発注を探します。<br />
             納品済みにすると発注管理の「発注済」から外れ、在庫の二重計上がなくなります。
           </p>
           <button className="btn btn-secondary" onClick={checkDelivered} disabled={checking}>
@@ -474,8 +474,8 @@ export default function OrderPage() {
                     <th>SKU</th>
                     <th>発注日</th>
                     <th style={{ textAlign: 'right' }}>発注数</th>
-                    <th style={{ textAlign: 'right' }}>納品プラン</th>
-                    <th>プラン作成日</th>
+                    <th style={{ textAlign: 'right' }}>FBA発送済</th>
+                    <th>納品日</th>
                     <th>判定</th>
                   </tr>
                 </thead>
@@ -495,34 +495,30 @@ export default function OrderPage() {
                       <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{c.sku}</td>
                       <td style={{ fontSize: 12, color: '#666' }}>{(c.ordered_at || '').slice(0, 10)}</td>
                       <td style={{ textAlign: 'right' }}>{c.qty}</td>
-                      <td style={{ textAlign: 'right' }}>{c.plan_total}</td>
-                      <td style={{ fontSize: 12, color: '#666' }}>{(c.plan_dates || []).join(', ')}</td>
+                      <td style={{ textAlign: 'right' }}>{c.shipped_total}</td>
+                      <td style={{ fontSize: 12, color: '#666' }}>
+                        {(c.shipments || []).map((s, i) => (
+                          <div key={i}>
+                            {s.date} {s.qty}個
+                            {s.received < s.qty && (
+                              <span style={{ color: '#ea580c' }}>（受領{s.received}）</span>
+                            )}
+                          </div>
+                        ))}
+                      </td>
                       <td style={{ fontSize: 12 }}>
                         {c.full_match
                           ? <span style={{ color: '#16a34a', fontWeight: 700 }}>一致</span>
                           : <span style={{ color: '#ea580c', fontWeight: 700 }}>一部のみ（{c.covered_qty}/{c.qty}）</span>}
-                        {c.has_duplicate && (
-                          <span style={{ color: '#dc2626', marginLeft: 6 }} title="同じ数量のプランが近い日に複数あり、作り直しの可能性があります">⚠ 重複あり</span>
-                        )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
 
-              {candidates.duplicates?.length > 0 && (
-                <div style={{ marginTop: 10, border: '1px solid #fcd34d', background: '#fffbeb', borderRadius: 8, padding: 10, fontSize: 12 }}>
-                  <b style={{ color: '#92400e' }}>作り直しとみなして除外したプラン（{candidates.duplicates.length}件）</b>
-                  <div style={{ color: '#92400e', marginTop: 4 }}>
-                    {candidates.duplicates.map((d, i) => (
-                      <div key={i}>{d.created_at} {d.sku} {d.qty}個</div>
-                    ))}
-                  </div>
-                  <div style={{ marginTop: 4, color: '#92400e' }}>
-                    ※ 同一SKU・同一数量が7日以内に複数あるものは、同じ納品の作り直しとして1件だけ数えています。
-                  </div>
-                </div>
-              )}
+              <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
+                ※ 実際にFBAへ発送した数量が根拠です。発注日より前の納品は別ロットとして数えていません。
+              </div>
 
               <div style={{ marginTop: 12 }}>
                 <button className="btn btn-primary" onClick={markShipped} disabled={marking || pickedIds.size === 0}>

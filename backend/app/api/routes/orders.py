@@ -555,65 +555,44 @@ def get_order_history(db: Session = Depends(get_db)):
     ]
 
 
-def _dedupe_inbound_plans(rows: List[dict]) -> tuple:
-    """納品プランから重複（作り直しの残骸）を除いた数量をSKUごとに返す。
+def _drop_same_day_duplicates(shipments: List[dict]) -> List[dict]:
+    """同じ日・同じ数量の納品は作り直しとみなして1件に寄せる。
 
-    Send to Amazonではプランを作り直しても古いプランがACTIVEのまま残るため、
-    単純合計すると実際の納品より多くなる（y84_blackは発注130に対しプラン計210）。
-    同一SKU・同一数量が7日以内に複数ある場合は同じ納品の作り直しとみなし、
-    最新の1件だけを数える。
-
-    戻り値: (SKUごとの採用数量, 重複とみなして除外した行)
+    Send to Amazonでは納品を作り直すと、キャンセルした分とは別に同内容の納品が
+    複数できる（2026-07-28にy84_black 70個が WORKING と READY_TO_SHIP で2件）。
+    両方数えると実際の倍になるため、受領済みを優先して1件だけ残す。
     """
-    by_sku: dict = {}
-    for r in rows:
-        by_sku.setdefault(r["sku"], []).append(r)
-
-    adopted: dict = {}
-    duplicates: List[dict] = []
-    for sku, items in by_sku.items():
-        # 新しい順（fetch_inbound_plans側でソート済みだが念のため）
-        items = sorted(items, key=lambda x: x["created_at"], reverse=True)
-        kept: List[dict] = []
-        for it in items:
-            dup_of = None
-            for k in kept:
-                if k["qty"] != it["qty"]:
-                    continue
-                try:
-                    d1 = datetime.fromisoformat(k["created_at"].replace("Z", "+00:00"))
-                    d2 = datetime.fromisoformat(it["created_at"].replace("Z", "+00:00"))
-                    if abs((d1 - d2).days) <= 7:
-                        dup_of = k
-                        break
-                except Exception:
-                    continue
-            if dup_of:
-                duplicates.append({**it, "duplicate_of": dup_of["plan_id"]})
-            else:
-                kept.append(it)
-        adopted[sku] = sum(k["qty"] for k in kept)
-    return adopted, duplicates
+    best: dict = {}
+    for s in shipments:
+        key = (s["shipped_at"], s["shipped"])
+        cur = best.get(key)
+        # 受領済みの実績がある方を残す（同条件なら先勝ち）
+        if cur is None or (s.get("received") or 0) > (cur.get("received") or 0):
+            best[key] = s
+    return list(best.values())
 
 
 @router.get("/delivery-candidates")
 def get_delivery_candidates(db: Session = Depends(get_db)):
-    """FBA納品プランと突合し、納品済みとみなせる発注の候補を返す。
+    """FBAへの実発送実績と突合し、納品済みとみなせる発注の候補を返す。
 
-    自動では消さない。判定は納品プラン（＝作成した時点で手元に在庫がある）に
-    基づく推測を含むため、画面で確認してから確定する。
+    根拠は「実際にFBAへ発送した数量」（v0 getShipments の QuantityShipped）。
+    納品プランは作り直すと古いものがACTIVEのまま残り実態と合わないため使わない。
+
+    発注日より前の納品は別ロットなので数えない。同じSKUを繰り返し発注・納品して
+    いるため、累計で突合すると過去の納品で新しい発注まで消えてしまう。
+
+    自動では消さない。画面で確認してから確定する。
     """
     from app.core.config import settings as app_settings
     if not app_settings.SP_API_REFRESH_TOKEN:
-        return {"candidates": [], "duplicates": [], "error": "SP-API未設定"}
+        return {"candidates": [], "error": "SP-API未設定"}
 
-    from app.services.amazon_api import fetch_inbound_plans
+    from app.services.amazon_api import fetch_inbound_shipments
     try:
-        plan_rows = fetch_inbound_plans()
+        by_sku = fetch_inbound_shipments()
     except Exception as e:
-        return {"candidates": [], "duplicates": [], "error": f"納品プランの取得に失敗しました: {e}"}
-
-    adopted, duplicates = _dedupe_inbound_plans(plan_rows)
+        return {"candidates": [], "error": f"納品実績の取得に失敗しました: {e}"}
 
     orders = (
         db.query(OrderHistory)
@@ -623,17 +602,29 @@ def get_delivery_candidates(db: Session = Depends(get_db)):
         .all()
     )
 
-    remaining = dict(adopted)
+    # 同じ納品を複数の発注に二重に充当しないよう、使った分を減らしていく
+    used: dict = {}
     candidates = []
     for o in orders:
-        avail = remaining.get(o.sku, 0)
+        rec = by_sku.get(o.sku)
+        if not rec:
+            continue
+        ordered_day = o.ordered_at.date().isoformat() if o.ordered_at else ""
+        # 発注日以降に発送されたものだけを充当対象にする
+        usable = [
+            s for s in rec["shipments"]
+            if s["shipped_at"] and ordered_day and s["shipped_at"] >= ordered_day
+        ]
+        usable = _drop_same_day_duplicates(usable)
+        if not usable:
+            continue
+        avail = sum(s["shipped"] for s in usable) - used.get(o.sku, 0)
         if avail <= 0:
             continue
         covered = min(avail, o.qty or 0)
         if covered <= 0:
             continue
-        remaining[o.sku] = avail - covered
-        plans_for_sku = [p for p in plan_rows if p["sku"] == o.sku]
+        used[o.sku] = used.get(o.sku, 0) + covered
         candidates.append({
             "id": o.id,
             "sku": o.sku,
@@ -642,19 +633,18 @@ def get_delivery_candidates(db: Session = Depends(get_db)):
             "ordered_at": o.ordered_at.isoformat() if o.ordered_at else None,
             "covered_qty": covered,
             "full_match": covered >= (o.qty or 0),
-            "plan_total": adopted.get(o.sku, 0),
-            "plan_dates": sorted({p["created_at"][:10] for p in plans_for_sku}, reverse=True),
-            "has_duplicate": any(d["sku"] == o.sku for d in duplicates),
+            "shipped_total": sum(s["shipped"] for s in usable),
+            "shipments": sorted(
+                [
+                    {"date": s["shipped_at"], "qty": s["shipped"],
+                     "received": s["received"], "status": s["status"]}
+                    for s in usable
+                ],
+                key=lambda x: x["date"], reverse=True,
+            ),
         })
 
-    return {
-        "candidates": candidates,
-        "duplicates": [
-            {"sku": d["sku"], "qty": d["qty"], "created_at": d["created_at"][:10], "plan_id": d["plan_id"]}
-            for d in duplicates
-        ],
-        "plan_totals": adopted,
-    }
+    return {"candidates": candidates}
 
 
 class MarkShippedRequest(BaseModel):

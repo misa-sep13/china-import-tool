@@ -514,14 +514,127 @@ def _fetch_price_and_fee_one(sku: str, asin: str = "", fallback_price: Optional[
     return sku, selling_price, fba_fee, price_source, fee_source
 
 
-# ---------- FBA納品プラン（Fulfillment Inbound API 2024-03-20） ----------
+# ---------- FBA納品（Fulfillment Inbound API） ----------
+
+# 納品(shipment)のステータス。v0の getShipments は ShipmentStatusList を
+# 複数まとめて渡すと1件しか返さないため、1つずつ問い合わせて結合する。
+_SHIPMENT_STATUSES = [
+    "WORKING", "READY_TO_SHIP", "SHIPPED", "IN_TRANSIT", "DELIVERED",
+    "CHECKED_IN", "RECEIVING", "CLOSED",
+]
+
+
+def fetch_inbound_shipments(days: int = 180) -> Dict[str, dict]:
+    """FBAへ実際に発送した数量をSKU単位で返す。発注済みの消し込みに使う。
+
+    戻り値: {sku: {"shipped": 出荷数, "received": 受領数, "shipments": [...]}}
+
+    納品プラン(2024-03-20 inboundPlans)は作り直しても古いものがACTIVEのまま残り、
+    実際の発送数と一致しない（同じ70個のプランが3日連続で作られていた）。
+    こちらは実際に発送された数なので、消し込みの根拠として確実。
+
+    キャンセル・削除された納品は_SHIPMENT_STATUSESに含めていないので数えない。
+    """
+    cache_key = f"inbound_shipments_{days}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    from datetime import datetime, timedelta, timezone
+    mp = "A1VC38T7YXB528"
+    now = datetime.now(timezone.utc)
+    base = {
+        "MarketplaceId": mp,
+        "QueryType": "DATE_RANGE",
+        "LastUpdatedAfter": (now - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        "LastUpdatedBefore": now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+    }
+
+    def _list_by_status(status: str) -> Dict[str, dict]:
+        found: Dict[str, dict] = {}
+        q = urllib.parse.urlencode(base) + f"&ShipmentStatusList={status}"
+        try:
+            data = _call_sp_api(f"/fba/inbound/v0/shipments?{q}")
+        except Exception:
+            return found
+        while True:
+            payload = data.get("payload") or {}
+            for s in (payload.get("ShipmentData") or []):
+                sid = s.get("ShipmentId")
+                if sid:
+                    found[sid] = s
+            token = payload.get("NextToken")
+            if not token:
+                break
+            try:
+                data = _call_sp_api(
+                    f"/fba/inbound/v0/shipments?"
+                    + urllib.parse.urlencode({"MarketplaceId": mp, "QueryType": "NEXT_TOKEN", "NextToken": token})
+                )
+            except Exception:
+                break
+        return found
+
+    shipments: Dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        for found in ex.map(_list_by_status, _SHIPMENT_STATUSES):
+            shipments.update(found)
+
+    def _items(sid: str) -> List[tuple]:
+        try:
+            data = _call_sp_api(
+                f"/fba/inbound/v0/shipments/{sid}/items?"
+                + urllib.parse.urlencode({"MarketplaceId": mp})
+            )
+        except Exception:
+            return []
+        rows = []
+        for it in ((data.get("payload") or {}).get("ItemData") or []):
+            sku = it.get("SellerSKU") or ""
+            if sku:
+                rows.append((sku, it.get("QuantityShipped") or 0, it.get("QuantityReceived") or 0, sid))
+        return rows
+
+    result: Dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        for rows in ex.map(_items, list(shipments)):
+            for sku, shipped, received, sid in rows:
+                rec = result.setdefault(sku, {"shipped": 0, "received": 0, "shipments": []})
+                rec["shipped"] += shipped
+                rec["received"] += received
+                s = shipments.get(sid) or {}
+                name = s.get("ShipmentName") or ""
+                rec["shipments"].append({
+                    "shipment_id": sid,
+                    "name": name,
+                    "status": s.get("ShipmentStatus") or "",
+                    "shipped": shipped,
+                    "received": received,
+                    "shipped_at": _shipment_date(name),
+                })
+
+    _cache_set(cache_key, result)
+    return result
+
+
+def _shipment_date(shipment_name: str) -> str:
+    """納品名から作成日を取り出す。'FBA STA (2026/07/02 05:35)-XJE2' -> '2026-07-02'
+
+    v0のShipmentDataには日付フィールドが無く、名前に埋まっているものしか手がかりが
+    ない。取れない場合は空文字を返し、呼び出し側で日付不明として扱う。
+    """
+    import re
+    m = re.search(r"(\d{4})/(\d{2})/(\d{2})", shipment_name or "")
+    if not m:
+        return ""
+    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+
 
 def fetch_inbound_plans() -> List[dict]:
-    """FBA納品プランをSKU単位で返す。発注済みリストの消し込み候補の算出に使う。
+    """FBA納品プランをSKU単位で返す（作成済みだが未発送のものを含む）。
 
-    旧APIの /fba/inbound/v0/shipments は Send to Amazon 移行後の納品をほとんど
-    返さない（過去1年を全ステータスで検索しても1件しか取れなかった）ため、
-    2024-03-20 の inboundPlans を使う。
+    実際に発送された数は fetch_inbound_shipments() を使うこと。こちらは
+    作り直した残骸もACTIVEのまま残るため、単純合計は実態と一致しない。
 
     戻り値: [{plan_id, created_at, status, sku, qty}, ...]（作成日の新しい順）
     """
