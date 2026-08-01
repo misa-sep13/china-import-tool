@@ -474,8 +474,8 @@ export default function OrderPage() {
                     <th>SKU</th>
                     <th>発注日</th>
                     <th style={{ textAlign: 'right' }}>発注数</th>
-                    <th style={{ textAlign: 'right' }}>FBA発送済</th>
-                    <th>納品日</th>
+                    <th style={{ textAlign: 'right' }}>充当数</th>
+                    <th>対応する納品</th>
                     <th>判定</th>
                   </tr>
                 </thead>
@@ -495,14 +495,14 @@ export default function OrderPage() {
                       <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{c.sku}</td>
                       <td style={{ fontSize: 12, color: '#666' }}>{(c.ordered_at || '').slice(0, 10)}</td>
                       <td style={{ textAlign: 'right' }}>{c.qty}</td>
-                      <td style={{ textAlign: 'right' }}>{c.shipped_total}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{c.covered_qty}</td>
                       <td style={{ fontSize: 12, color: '#666' }}>
                         {(c.shipments || []).map((s, i) => (
                           <div key={i}>
                             {s.date} {s.qty}個
-                            {s.received < s.qty && (
-                              <span style={{ color: '#ea580c' }}>（受領{s.received}）</span>
-                            )}
+                            {s.received >= s.shipment_qty
+                              ? <span style={{ color: '#16a34a', marginLeft: 4 }}>受領済</span>
+                              : <span style={{ color: '#ea580c', marginLeft: 4 }}>受領待ち</span>}
                           </div>
                         ))}
                       </td>
@@ -517,7 +517,9 @@ export default function OrderPage() {
               </table>
 
               <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
-                ※ 実際にFBAへ発送した数量が根拠です。発注日より前の納品は別ロットとして数えていません。
+                ※ {candidates.match_since} 以降の納品のみを対象に、古い発注から順に割り当てています。<br />
+                ※ <span style={{ color: '#ea580c' }}>受領待ち</span>はFBAへ発送済みですがAmazon側の受領がまだの分です。
+                発注済から外すと、受領されるまでの間はどちらにも計上されません。
               </div>
 
               <div style={{ marginTop: 12 }}>

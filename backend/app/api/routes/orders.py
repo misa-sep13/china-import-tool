@@ -555,6 +555,13 @@ def get_order_history(db: Session = Depends(get_db)):
     ]
 
 
+# 消し込みに使う納品の基準日。これより前の納品は突合しない。
+# 過去の発注データと実際の納品数には食い違いがあり（7/02は発注black60/blue40に対し
+# 納品black48/blue60）、そこまで遡って自動で辻褄を合わせようとすると誤って
+# 消し込んでしまう。運用を始めた2026-07-27の納品以降だけを対象にする。
+DELIVERY_MATCH_SINCE = "2026-07-27"
+
+
 def _drop_same_day_duplicates(shipments: List[dict]) -> List[dict]:
     """同じ日・同じ数量の納品は作り直しとみなして1件に寄せる。
 
@@ -602,29 +609,47 @@ def get_delivery_candidates(db: Session = Depends(get_db)):
         .all()
     )
 
-    # 同じ納品を複数の発注に二重に充当しないよう、使った分を減らしていく
-    used: dict = {}
+    # SKUごとに「割り当て可能な納品」を用意する。1つの納品を複数の発注へ
+    # 二重に充当しないよう、割り当てた分を各納品から減らしていく。
+    pool: dict = {}
+    for sku, rec in by_sku.items():
+        rows = [
+            dict(s) for s in rec["shipments"]
+            if s["shipped_at"] and s["shipped_at"] >= DELIVERY_MATCH_SINCE
+        ]
+        rows = _drop_same_day_duplicates(rows)
+        for r in rows:
+            r["left"] = r["shipped"]
+        pool[sku] = sorted(rows, key=lambda x: x["shipped_at"])
+
     candidates = []
     for o in orders:
-        rec = by_sku.get(o.sku)
-        if not rec:
-            continue
+        rows = pool.get(o.sku) or []
         ordered_day = o.ordered_at.date().isoformat() if o.ordered_at else ""
-        # 発注日以降に発送されたものだけを充当対象にする
-        usable = [
-            s for s in rec["shipments"]
-            if s["shipped_at"] and ordered_day and s["shipped_at"] >= ordered_day
-        ]
-        usable = _drop_same_day_duplicates(usable)
-        if not usable:
+        need = o.qty or 0
+        assigned = []
+        for s in rows:
+            if need <= 0:
+                break
+            if s["left"] <= 0:
+                continue
+            # 発注より前に発送されたものは別ロットなので充当しない
+            if ordered_day and s["shipped_at"] < ordered_day:
+                continue
+            take = min(s["left"], need)
+            s["left"] -= take
+            need -= take
+            assigned.append({
+                "date": s["shipped_at"],
+                "qty": take,
+                "shipment_qty": s["shipped"],
+                "received": s["received"],
+                "status": s["status"],
+                "shipment_id": s["shipment_id"],
+            })
+        if not assigned:
             continue
-        avail = sum(s["shipped"] for s in usable) - used.get(o.sku, 0)
-        if avail <= 0:
-            continue
-        covered = min(avail, o.qty or 0)
-        if covered <= 0:
-            continue
-        used[o.sku] = used.get(o.sku, 0) + covered
+        covered = sum(a["qty"] for a in assigned)
         candidates.append({
             "id": o.id,
             "sku": o.sku,
@@ -633,18 +658,12 @@ def get_delivery_candidates(db: Session = Depends(get_db)):
             "ordered_at": o.ordered_at.isoformat() if o.ordered_at else None,
             "covered_qty": covered,
             "full_match": covered >= (o.qty or 0),
-            "shipped_total": sum(s["shipped"] for s in usable),
-            "shipments": sorted(
-                [
-                    {"date": s["shipped_at"], "qty": s["shipped"],
-                     "received": s["received"], "status": s["status"]}
-                    for s in usable
-                ],
-                key=lambda x: x["date"], reverse=True,
-            ),
+            # 受領が終わっていない納品を含む場合は、まだFBA在庫に反映されていない
+            "pending_receive": any(a["received"] < a["shipment_qty"] for a in assigned),
+            "shipments": sorted(assigned, key=lambda x: x["date"], reverse=True),
         })
 
-    return {"candidates": candidates}
+    return {"candidates": candidates, "match_since": DELIVERY_MATCH_SINCE}
 
 
 class MarkShippedRequest(BaseModel):
