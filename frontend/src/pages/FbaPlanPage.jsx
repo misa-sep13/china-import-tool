@@ -185,6 +185,31 @@ export default function FbaPlanPage() {
     <div>
       <h1>🚢 FBA納品プラン</h1>
 
+      {/* 手順メモ。普段は畳んでおき、必要なときだけ開く */}
+      <details style={{ marginBottom: 16 }}>
+        <summary style={{
+          cursor: 'pointer', padding: '8px 14px', background: '#f1f5f9',
+          border: '1px solid #e2e8f0', borderRadius: 6,
+          fontSize: 13, fontWeight: 600, color: '#334155', userSelect: 'none',
+          display: 'inline-block',
+        }}>
+          📋 タオタロウFBA直送の流れ
+        </summary>
+        <div style={{
+          marginTop: 8, padding: '14px 18px', background: '#fff',
+          border: '1px solid #e2e8f0', borderRadius: 6,
+        }}>
+          <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 2, color: '#334155' }}>
+            <li>配送依頼をかける</li>
+            <li>FBA指示書をダウンロード</li>
+            <li>指示書と商品ラベルを一緒にDingtalkに送る</li>
+            <li>インボイス作成完了のお知らせが来る</li>
+            <li>支払い</li>
+            <li>配送ラベルをDingtalkに送る</li>
+          </ol>
+        </div>
+      </details>
+
       {/* タオタロウExcel取込 */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
