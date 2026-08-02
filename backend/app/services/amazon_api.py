@@ -15,7 +15,10 @@ _cache: Dict[str, dict] = {}
 # TTL70分では日中でもキャッシュ切れ→画面を開くと7分待ちになっていた）。
 # 日販は数時間で大きく動かないため、発注判断への影響よりも待ち時間の解消を優先する。
 _CACHE_TTL = 14400
-_CACHE_TTL_LONG = 86400 # 画像・在庫など: 1日
+_CACHE_TTL_LONG = 86400 # 画像など: 1日
+# 在庫: 5分。売れたり納品されたりで刻々と変わるうえ、取得は1リクエスト数秒で済む。
+# 売上（220リクエスト・約7分）と同じTTLにすると、在庫まで数時間古いままになる。
+_CACHE_TTL_INVENTORY = 300
 
 def _cache_get(key: str):
     entry = _cache.get(key)
@@ -133,7 +136,8 @@ def fetch_inventory() -> Dict[str, dict]:
         if not next_token:
             break
 
-    _cache_set("inventory", result)
+    # 在庫は短命。売上と同じ4時間だと、納品や販売が反映されず画面がずれる
+    _cache["inventory"] = {"value": result, "expires_at": time.time() + _CACHE_TTL_INVENTORY}
     return result
 
 def fetch_item_name(asin: str) -> str:

@@ -50,7 +50,8 @@ export default function OrderPage() {
             stopPolling()
             const items = status.data.result || []
             setRawItems(items)
-            sessionStorage.setItem('order_items', JSON.stringify(items))
+            // 取得時刻も残す。古い在庫を表示し続けないよう次回に判定する
+            sessionStorage.setItem('order_items', JSON.stringify({ items, savedAt: Date.now() }))
             setJobStatus('done')
           } else if (status.data.status === 'error') {
             stopPolling()
@@ -73,17 +74,21 @@ export default function OrderPage() {
   // sessionStorageはハードリロードでも残るため、これが無いと再計算を押すまで
   // 新しい列（成長率・作業中など）が空のままになる。
   const REQUIRED_FIELDS = ['growth_rate', 'processing', 'needs_order']
+  // 在庫は売れたり納品されたりで変わるので、これより古い表示は作り直す
+  const CACHE_MAX_AGE_MS = 10 * 60 * 1000
 
-  // マウント時：sessionStorageにキャッシュがあれば即表示、なければ取得
+  // マウント時：sessionStorageに新しいキャッシュがあれば即表示、なければ取得
   useEffect(() => {
     const cached = sessionStorage.getItem('order_items')
     if (cached) {
       try {
         const parsed = JSON.parse(cached)
-        const isFresh = parsed.length === 0
-          || REQUIRED_FIELDS.every(f => f in parsed[0])
-        if (isFresh) {
-          setRawItems(parsed)
+        const items = Array.isArray(parsed) ? parsed : parsed.items
+        const savedAt = Array.isArray(parsed) ? 0 : parsed.savedAt
+        const hasFields = items.length === 0 || REQUIRED_FIELDS.every(f => f in items[0])
+        const isRecent = savedAt && (Date.now() - savedAt) < CACHE_MAX_AGE_MS
+        if (hasFields && isRecent) {
+          setRawItems(items)
           setJobStatus('done')
           return () => {}
         }
