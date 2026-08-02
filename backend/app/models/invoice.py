@@ -14,6 +14,14 @@ class Invoice(Base):
     total_weight = Column(Float, default=0)        # 総重量（kg）
     total_volume = Column(Float, default=0)        # 総容積（m3）
     note = Column(Text)
+    # 輸入許可書から取得する税額
+    customs_duty = Column(Integer, default=0)          # 関税
+    consumption_tax = Column(Integer, default=0)       # 消費税
+    local_consumption_tax = Column(Integer, default=0) # 地方消費税
+    total_tax = Column(Integer, default=0)             # 納税額合計
+    import_tax_jpy = Column(Float, default=0)          # 輸入税合計（原価按分に使う）
+    bl_number = Column(String)                         # B/L番号
+    declaration_no = Column(String)                    # 申告番号
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -32,3 +40,8 @@ class InvoiceItem(Base):
     freight_alloc_cny = Column(Float, default=0)   # 按分送料（元）
     cost_per_unit_jpy = Column(Float, default=0)   # 1個あたり原価（円）
     buy_url = Column(String)                       # 1688リンク
+    # 申告欄ごとの税率で計算した内訳
+    tax_alloc_jpy = Column(Float, default=0)       # 按分された輸入税（円）
+    duty_jpy = Column(Float, default=0)            # 関税（円）
+    col_no = Column(Integer)                       # 対応する申告欄番号
+    tariff_rate = Column(Float, default=0)         # 適用した関税率（%）

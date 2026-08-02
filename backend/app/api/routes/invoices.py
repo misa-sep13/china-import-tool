@@ -5,19 +5,33 @@ from app.models.invoice import Invoice, InvoiceItem
 from app.models.product import Product
 from pydantic import BaseModel
 from typing import List, Optional
+from app.services import invoice_calc
 import io, re
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
 
 class InvoiceItemIn(BaseModel):
-    sku: str
+    sku: str = ""            # 空欄=対象外としてスキップする
     asin: str = ""
     name_cn: str = ""
     name_jp: str = ""
     qty: int
     unit_price_cny: float
     buy_url: str = ""
+    permit_col: Optional[int] = None  # 手動で指定した申告欄番号
+
+
+class PermitColumnIn(BaseModel):
+    col_no: int
+    item_name: str = ""
+    hs_code: str = ""
+    cif_jpy: int = 0
+    tariff_rate: float = 0.0
+    tariff_rate_str: str = ""
+    duty_jpy: int = 0
+    bpr_coeff: float = 0.0
+
 
 class InvoiceIn(BaseModel):
     invoice_no: str
@@ -33,9 +47,11 @@ class InvoiceIn(BaseModel):
     consumption_tax: int = 0
     local_consumption_tax: int = 0
     total_tax: int = 0
+    import_tax_jpy: float = 0   # 輸入税合計（関税+消費税+地方消費税）。原価へ按分する
     bl_number: str = ""
     declaration_no: str = ""
     items: List[InvoiceItemIn]
+    permit_columns: List[PermitColumnIn] = []  # 空=従来の一律按分
 
 
 @router.post("/parse-excel")
@@ -147,6 +163,10 @@ async def parse_import_permit(file: UploadFile = File(...)):
     bl_number = find_value(r'Ｂ／Ｌ番号\(1\)(\S+)', text, str, "")
     declaration_no = find_value(r'申告番号\s+([\d\s]+)', text, lambda x: x.replace(" ", ""), "")
 
+    # 申告欄ごとの関税率（楽天と同じ共通処理）。欄が取れれば税率別計算ができる
+    permit_columns = invoice_calc.parse_permit_columns(text)
+    import_tax_jpy = total_tax or (customs_duty + consumption_tax + local_consumption_tax)
+
     return {
         "bl_number": bl_number,
         "declaration_no": declaration_no,
@@ -155,7 +175,9 @@ async def parse_import_permit(file: UploadFile = File(...)):
         "consumption_tax": consumption_tax,
         "local_consumption_tax": local_consumption_tax,
         "total_tax": total_tax,
+        "import_tax_jpy": import_tax_jpy,
         "invoice_cny": invoice_cny,
+        "permit_columns": permit_columns,
     }
 
 
@@ -216,38 +238,135 @@ async def validate_pair(
     }
 
 
-@router.post("/calculate")
-def calculate_cost(data: InvoiceIn):
-    total_qty = sum(item.qty for item in data.items)
-    total_cny = sum(item.qty * item.unit_price_cny for item in data.items)
-    total_freight_cny = data.domestic_freight + data.international_freight
+def _find_invoice_product(db: Session, item: InvoiceItemIn):
+    """明細に対応する商品マスタを探す。SKU → ASIN の順で照合する。"""
+    sku = (item.sku or "").strip()
+    if sku:
+        p = db.query(Product).filter(Product.sku == sku).first()
+        if p:
+            return p
+    if item.asin:
+        return db.query(Product).filter(Product.asin == item.asin).first()
+    return None
 
-    result = []
-    for item in data.items:
-        item_total_cny = item.qty * item.unit_price_cny
-        # 金額比で送料を按分
-        freight_alloc = (item_total_cny / total_cny * total_freight_cny) if total_cny > 0 else 0
-        cost_per_unit_jpy = ((item_total_cny + freight_alloc) / item.qty * data.exchange_rate) if item.qty > 0 else 0
-        result.append({
-            **item.model_dump(),
-            "total_price_cny": round(item_total_cny, 2),
+
+def _build_cost_rows(data: InvoiceIn, db: Session):
+    """明細ごとの原価を計算する。calculate と save で同じ結果になるよう共通化する。
+
+    - SKUが空欄の行は対象外としてスキップ（Amazon以外の同梱品など）
+    - permit_columns があれば申告欄ごとの税率、無ければ金額比の一律按分
+    - 原価 = (小計 + 按分送料) × 為替 + 按分税額 を set_size で割った1個あたり
+    """
+    total_cny = sum(i.qty * i.unit_price_cny for i in data.items)
+    total_freight = data.domestic_freight + data.international_freight
+    import_tax_jpy = data.import_tax_jpy or 0
+    use_tariff = bool(data.permit_columns)
+
+    valid_items = [
+        (idx, item.qty * item.unit_price_cny)
+        for idx, item in enumerate(data.items)
+        if (item.sku or "").strip()
+    ]
+
+    tariff_info = {}
+    if use_tariff and valid_items:
+        tariff_info = invoice_calc.calc_tariff_tax(
+            valid_items,
+            exchange_rate=data.exchange_rate,
+            domestic_freight=data.domestic_freight,
+            international_freight=data.international_freight,
+            permit_cols_by_index={idx: data.items[idx].permit_col for idx, _ in valid_items},
+            columns=data.permit_columns,
+        )
+
+    rows = []
+    skipped = 0
+    for idx, item in enumerate(data.items):
+        if not (item.sku or "").strip():
+            skipped += 1
+            continue
+        item_total = item.qty * item.unit_price_cny
+        freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
+
+        ti = tariff_info.get(idx) if use_tariff else None
+        if ti:
+            tax_alloc_jpy = ti["total_tax_jpy"]
+        else:
+            tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
+
+        product = _find_invoice_product(db, item)
+        set_size = (product.set_size or 1) if product else 1
+        sell_units = item.qty / set_size if item.qty > 0 else 0
+        cost_jpy = (
+            ((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / sell_units
+        ) if sell_units > 0 else 0
+
+        rows.append({
+            "index": idx,
+            "item": item,
+            "product": product,
+            "total_price_cny": round(item_total, 2),
             "freight_alloc_cny": round(freight_alloc, 2),
-            "cost_per_unit_jpy": round(cost_per_unit_jpy, 1),
+            "tax_alloc_jpy": round(tax_alloc_jpy, 1),
+            "cost_per_unit_jpy": round(cost_jpy, 1),
+            "set_size": set_size,
+            "col_no": ti["col_no"] if ti else None,
+            "tariff_rate": ti["tariff_rate"] if ti else None,
+            "tariff_rate_str": ti["tariff_rate_str"] if ti else None,
+            "duty_jpy": ti["duty_jpy"] if ti else None,
         })
 
     return {
-        "items": result,
-        "total_qty": total_qty,
+        "rows": rows,
+        "skipped": skipped,
+        "total_cny": total_cny,
+        "total_freight_cny": total_freight,
+        "import_tax_jpy": import_tax_jpy,
+        "use_tariff": use_tariff,
+    }
+
+
+@router.post("/calculate")
+def calculate_cost(data: InvoiceIn, db: Session = Depends(get_db)):
+    calc = _build_cost_rows(data, db)
+
+    items = []
+    for r in calc["rows"]:
+        item = r["item"]
+        items.append({
+            **item.model_dump(),
+            "name_jp": item.name_jp or (r["product"].name if r["product"] else ""),
+            "matched_sku": r["product"].sku if r["product"] else "",
+            "set_size": r["set_size"],
+            "total_price_cny": r["total_price_cny"],
+            "freight_alloc_cny": r["freight_alloc_cny"],
+            "tax_alloc_jpy": r["tax_alloc_jpy"],
+            "cost_per_unit_jpy": r["cost_per_unit_jpy"],
+            "col_no": r["col_no"],
+            "tariff_rate": r["tariff_rate"],
+            "tariff_rate_str": r["tariff_rate_str"],
+            "duty_jpy": r["duty_jpy"],
+        })
+
+    total_cny = calc["total_cny"]
+    total_freight = calc["total_freight_cny"]
+    return {
+        "items": items,
+        "skipped": calc["skipped"],
+        "use_tariff": calc["use_tariff"],
+        "total_qty": sum(r["item"].qty for r in calc["rows"]),
         "total_cny": round(total_cny, 2),
-        "total_freight_cny": round(total_freight_cny, 2),
-        "grand_total_jpy": round((total_cny + total_freight_cny) * data.exchange_rate, 0),
+        "total_freight_cny": round(total_freight, 2),
+        "import_tax_jpy": round(calc["import_tax_jpy"], 0),
+        "grand_total_jpy": round(
+            (total_cny + total_freight) * data.exchange_rate + calc["import_tax_jpy"], 0
+        ),
     }
 
 
 @router.post("/save")
 def save_invoice(data: InvoiceIn, db: Session = Depends(get_db)):
-    total_cny = sum(item.qty * item.unit_price_cny for item in data.items)
-    total_freight_cny = data.domestic_freight + data.international_freight
+    calc = _build_cost_rows(data, db)
 
     invoice = Invoice(
         invoice_no=data.invoice_no,
@@ -262,6 +381,7 @@ def save_invoice(data: InvoiceIn, db: Session = Depends(get_db)):
         consumption_tax=data.consumption_tax,
         local_consumption_tax=data.local_consumption_tax,
         total_tax=data.total_tax,
+        import_tax_jpy=calc["import_tax_jpy"],
         bl_number=data.bl_number,
         declaration_no=data.declaration_no,
     )
@@ -269,39 +389,42 @@ def save_invoice(data: InvoiceIn, db: Session = Depends(get_db)):
     db.flush()
 
     updated_products = 0
-    for item in data.items:
-        item_total_cny = item.qty * item.unit_price_cny
-        freight_alloc = (item_total_cny / total_cny * total_freight_cny) if total_cny > 0 else 0
-        cost_per_unit_jpy = ((item_total_cny + freight_alloc) / item.qty * data.exchange_rate) if item.qty > 0 else 0
+    for r in calc["rows"]:
+        item = r["item"]
+        product = r["product"]
 
-        # 商品マスタとSKU→ASINの順で紐付け
-        product = db.query(Product).filter(Product.sku == item.sku).first()
-        if not product and item.asin:
-            product = db.query(Product).filter(Product.asin == item.asin).first()
-        product_id = product.id if product else None
-
-        inv_item = InvoiceItem(
+        db.add(InvoiceItem(
             invoice_id=invoice.id,
             sku=item.sku,
-            product_id=product_id,
+            product_id=product.id if product else None,
             name_cn=item.name_cn,
-            name_jp=item.name_jp,
+            name_jp=item.name_jp or (product.name if product else ""),
             qty=item.qty,
             unit_price_cny=item.unit_price_cny,
-            total_price_cny=round(item_total_cny, 2),
-            freight_alloc_cny=round(freight_alloc, 2),
-            cost_per_unit_jpy=round(cost_per_unit_jpy, 1),
+            total_price_cny=r["total_price_cny"],
+            freight_alloc_cny=r["freight_alloc_cny"],
+            cost_per_unit_jpy=r["cost_per_unit_jpy"],
             buy_url=item.buy_url,
-        )
-        db.add(inv_item)
+            tax_alloc_jpy=r["tax_alloc_jpy"],
+            duty_jpy=r["duty_jpy"] or 0,
+            col_no=r["col_no"],
+            tariff_rate=r["tariff_rate"] or 0,
+        ))
 
-        # 商品マスタの単価を更新
+        # 円建て原価は cost_jpy に入れる。price は元単価のまま残す
+        # （price を上書きすると発注管理の「単価(元)」が円に化けるため）
         if product:
-            product.price = round(cost_per_unit_jpy, 1)
+            product.cost_jpy = r["cost_per_unit_jpy"]
+            if item.unit_price_cny:
+                product.price = item.unit_price_cny
             updated_products += 1
 
     db.commit()
-    return {"invoice_id": invoice.id, "updated_products": updated_products}
+    return {
+        "invoice_id": invoice.id,
+        "updated_products": updated_products,
+        "skipped": calc["skipped"],
+    }
 
 
 @router.get("/")

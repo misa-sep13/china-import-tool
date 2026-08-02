@@ -76,6 +76,7 @@ class ProductOut(ProductCreate):
     fba_fee: Optional[float] = None
     fees_updated_at: Optional[datetime] = None
     category: Optional[str] = "標準"
+    cost_jpy: Optional[float] = None  # 仕入管理で算出した1個あたり原価（円）
 
     class Config:
         from_attributes = True

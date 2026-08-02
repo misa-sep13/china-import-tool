@@ -18,6 +18,7 @@ class Product(Base):
     color = Column(String)
     size = Column(String)
     price = Column(Float, default=0)        # 仕入れ単価（元）
+    cost_jpy = Column(Float, nullable=True) # 1個あたり原価（円）: 送料・輸入税込み
     repack = Column(String)                 # リパック要否
     spec = Column(String)                   # 仕様（Excel用・色/サイズをまとめた表示用）
     customer_memo = Column(Text)            # お客様専用メモ（Excel出力用）
