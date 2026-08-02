@@ -119,7 +119,13 @@ export default function OrderPage() {
 
   const deleteHistory = useMutation({
     mutationFn: (id) => api.delete(`/orders/history/${id}`),
-    onSuccess: () => qc.invalidateQueries(['orderHistory']),
+    onSuccess: () => {
+      qc.invalidateQueries(['orderHistory'])
+      // 発注済の数が変わるので、発注推奨リストのキャッシュも捨てて取り直させる
+      sessionStorage.removeItem('order_items')
+      setRawItems([])
+      startFetch()
+    },
   })
 
   // FBA納品プランと突合した「納品済みとみなせる発注」の候補
@@ -154,7 +160,10 @@ export default function OrderPage() {
       setCandidates(null)
       setPickedIds(new Set())
       qc.invalidateQueries(['orderHistory'])
-      sessionStorage.removeItem('order_items')  // 発注済の数が変わるので再取得させる
+      // 発注済の数が変わるので、キャッシュを捨てて発注推奨リストを取り直す
+      sessionStorage.removeItem('order_items')
+      setRawItems([])
+      startFetch()
     } catch {
       setError('納品済みの記録に失敗しました')
     } finally {
