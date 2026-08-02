@@ -144,6 +144,14 @@ def _migrate():
         ("invoices","total_tax",             "ALTER TABLE invoices ADD COLUMN total_tax INTEGER DEFAULT 0"),
         ("invoices","bl_number",             "ALTER TABLE invoices ADD COLUMN bl_number VARCHAR"),
         ("invoices","declaration_no",        "ALTER TABLE invoices ADD COLUMN declaration_no VARCHAR"),
+        ("invoices","import_tax_jpy",        "ALTER TABLE invoices ADD COLUMN import_tax_jpy FLOAT DEFAULT 0"),
+        # インボイス明細：申告欄ごとの税率で計算した内訳
+        ("invoice_items","tax_alloc_jpy",    "ALTER TABLE invoice_items ADD COLUMN tax_alloc_jpy FLOAT DEFAULT 0"),
+        ("invoice_items","duty_jpy",         "ALTER TABLE invoice_items ADD COLUMN duty_jpy FLOAT DEFAULT 0"),
+        ("invoice_items","col_no",           "ALTER TABLE invoice_items ADD COLUMN col_no INTEGER"),
+        ("invoice_items","tariff_rate",      "ALTER TABLE invoice_items ADD COLUMN tariff_rate FLOAT DEFAULT 0"),
+        # Amazon商品マスタ：円建て原価（priceは元単価のまま残す）
+        ("products","cost_jpy",              "ALTER TABLE products ADD COLUMN cost_jpy FLOAT"),
         # 売上管理：広告比率カラム
         ("rakuten_sales_summaries","ad_rate", "ALTER TABLE rakuten_sales_summaries ADD COLUMN ad_rate FLOAT"),
         # レビューキャンペーン：判定キーワード
