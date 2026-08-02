@@ -69,15 +69,28 @@ export default function OrderPage() {
     }
   }
 
+  // 機能追加でitemの項目が増えたら、古い形のキャッシュは捨てて取り直す。
+  // sessionStorageはハードリロードでも残るため、これが無いと再計算を押すまで
+  // 新しい列（成長率・作業中など）が空のままになる。
+  const REQUIRED_FIELDS = ['growth_rate', 'processing', 'needs_order']
+
   // マウント時：sessionStorageにキャッシュがあれば即表示、なければ取得
   useEffect(() => {
     const cached = sessionStorage.getItem('order_items')
     if (cached) {
       try {
-        setRawItems(JSON.parse(cached))
-        setJobStatus('done')
-        return () => {}
-      } catch {}
+        const parsed = JSON.parse(cached)
+        const isFresh = parsed.length === 0
+          || REQUIRED_FIELDS.every(f => f in parsed[0])
+        if (isFresh) {
+          setRawItems(parsed)
+          setJobStatus('done')
+          return () => {}
+        }
+        sessionStorage.removeItem('order_items')
+      } catch {
+        sessionStorage.removeItem('order_items')
+      }
     }
     startFetch()
     return () => stopPolling()
