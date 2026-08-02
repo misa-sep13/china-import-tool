@@ -627,12 +627,14 @@ def get_delivery_candidates(db: Session = Depends(get_db)):
             r["left"] = r["shipped"]
         pool[sku] = sorted(rows, key=lambda x: x["shipped_at"])
 
-    candidates = []
-    for o in orders:
+    assigned_by_order: dict = {}
+
+    def _assign(o, exact_only: bool):
+        """発注oに納品を割り当てる。exact_only=Trueなら数量が完全一致する納品のみ。"""
         rows = pool.get(o.sku) or []
         ordered_day = o.ordered_at.date().isoformat() if o.ordered_at else ""
-        need = o.qty or 0
-        assigned = []
+        got = assigned_by_order.setdefault(o.id, [])
+        need = (o.qty or 0) - sum(a["qty"] for a in got)
         for s in rows:
             if need <= 0:
                 break
@@ -641,10 +643,12 @@ def get_delivery_candidates(db: Session = Depends(get_db)):
             # 発注より前に発送されたものは別ロットなので充当しない
             if ordered_day and s["shipped_at"] < ordered_day:
                 continue
+            if exact_only and s["left"] != need:
+                continue
             take = min(s["left"], need)
             s["left"] -= take
             need -= take
-            assigned.append({
+            got.append({
                 "date": s["shipped_at"],
                 "qty": take,
                 "shipment_qty": s["shipped"],
@@ -652,6 +656,19 @@ def get_delivery_candidates(db: Session = Depends(get_db)):
                 "status": s["status"],
                 "shipment_id": s["shipment_id"],
             })
+
+    # 1周目: 発注数と納品数がぴったり一致するものを先に確定させる。
+    # 単純な先入先出だと、7/21発注の70個に対する7/28納品の70個が
+    # 先に7/02発注へ吸われてしまい、本来消えるべき発注が消せなくなる。
+    for o in orders:
+        _assign(o, exact_only=True)
+    # 2周目: 残りを古い発注から順に充当する
+    for o in orders:
+        _assign(o, exact_only=False)
+
+    candidates = []
+    for o in orders:
+        assigned = assigned_by_order.get(o.id) or []
         if not assigned:
             continue
         covered = sum(a["qty"] for a in assigned)
