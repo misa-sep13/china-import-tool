@@ -142,6 +142,8 @@ def _run_preview_job(job_id: str):
             inv = inventory.get(p.fnsku, {})
             available   = inv.get("available", 0)
             inbound     = inv.get("inbound", 0)
+            # FC間移動中は「まだ売れない在庫」ではなくFBA在庫なので販売可能側に足す
+            available  += inv.get("transshipment", 0)
             processing  = inv.get("processing", 0)
             ordered     = ordered_qty_by_sku.get(p.sku, 0)
             s7  = sales_7.get(p.asin, 0)
@@ -176,7 +178,8 @@ def _run_preview_job(job_id: str):
                 "set_size": p.set_size or 1,
                 "available": available,
                 "inbound": inbound,
-                "processing": processing,
+                # セラーセントラルの「入出荷作業中」は庫内作業＋出荷準備中の合計
+                "processing": processing + inv.get("pending_order", 0),
                 "ordered": ordered,
                 "sales_7": s7,
                 "sales_15": s15,
@@ -249,6 +252,7 @@ def _run_stock_job(job_id: str):
             inv = inventory.get(p.fnsku, {})
             available  = inv.get("available", 0)
             inbound    = inv.get("inbound", 0)
+            available += inv.get("transshipment", 0)
             processing = inv.get("processing", 0)
             ordered    = ordered_qty_by_sku.get(p.sku, 0)
             s7  = sales_7.get(p.asin, 0)
@@ -291,7 +295,8 @@ def _run_stock_job(job_id: str):
                 "set_size": p.set_size or 1,
                 "available": available,
                 "inbound": inbound,
-                "processing": processing,
+                # セラーセントラルの「入出荷作業中」は庫内作業＋出荷準備中の合計
+                "processing": processing + inv.get("pending_order", 0),
                 "ordered": ordered,
                 "sales_7": s7,
                 "sales_15": s15,
@@ -395,6 +400,7 @@ def preview_orders(db: Session = Depends(get_db)):
         inv = inventory.get(p.fnsku, {})
         available   = inv.get("available", 0)
         inbound     = inv.get("inbound", 0)
+        available  += inv.get("transshipment", 0)
         processing  = inv.get("processing", 0)
         ordered     = ordered_qty_by_sku.get(p.sku, 0)
         s7  = sales_7.get(p.asin, 0)
@@ -429,7 +435,7 @@ def preview_orders(db: Session = Depends(get_db)):
             "set_size": p.set_size or 1,
             "available": available,
             "inbound": inbound,
-            "processing": processing,
+            "processing": processing + inv.get("pending_order", 0),
             "ordered": ordered,
             "sales_7": s7,
             "sales_15": s15,

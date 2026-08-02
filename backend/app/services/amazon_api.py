@@ -106,7 +106,16 @@ def fetch_inventory() -> Dict[str, dict]:
                 + (details.get("inboundShippedQuantity") or 0)
                 + (details.get("inboundReceivingQuantity") or 0)
             )
-            reserved = (details.get("reservedQuantity") or {}).get("totalReservedQuantity") or 0
+            # reservedQuantityは中身で意味が違うので分けて扱う。
+            #   pendingCustomerOrder : 注文が入り出荷準備中（≒売れた分）
+            #   pendingTransshipment : FC間を移動中。すでにFBAにある在庫
+            #   fcProcessing         : 倉庫内で作業中（セラーセントラルの「入出荷作業中」）
+            # 合計を processing として扱うと、移動中の在庫まで「まだ売れない」扱いになり
+            # 実際には在庫があるのに発注推奨が出てしまう。
+            rq = details.get("reservedQuantity") or {}
+            pending_order = rq.get("pendingCustomerOrderQuantity") or 0
+            transshipment = rq.get("pendingTransshipmentQuantity") or 0
+            fc_processing = rq.get("fcProcessingQuantity") or 0
             result[fnsku] = {
                 "fnsku": fnsku,
                 "asin": asin,
@@ -114,7 +123,10 @@ def fetch_inventory() -> Dict[str, dict]:
                 "name": item.get("productName", ""),
                 "available": fulfillable if fulfillable is not None else item.get("totalQuantity", 0),
                 "inbound": inbound,
-                "processing": reserved,
+                # FC間移動中は在庫としてすぐ戻るので、販売可能の側に含める
+                "transshipment": transshipment,
+                "processing": fc_processing,
+                "pending_order": pending_order,
             }
 
         next_token = data.get("pagination", {}).get("nextToken")
