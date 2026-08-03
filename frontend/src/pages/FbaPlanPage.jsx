@@ -235,13 +235,32 @@ export default function FbaPlanPage() {
           border: '1px solid #e2e8f0', borderRadius: 6,
         }}>
           <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 2, color: '#334155' }}>
-            <li>配送依頼をかける</li>
+            <li>
+              タオタロウで配送依頼をかける
+              <span style={{ color: '#d97706', fontWeight: 600 }}>（FBA送付先は未定のままでOK）</span>
+            </li>
             <li>FBA指示書をダウンロード</li>
+            <li>
+              この画面で<b>「Amazonに納品プランを作成」</b>
+              <span style={{ color: '#64748b' }}> → 納品先FCが決まる</span>
+            </li>
+            <li>セラーセントラルで<b>商品ラベル</b>をダウンロード</li>
             <li>指示書と商品ラベルを一緒にDingtalkに送る</li>
             <li>インボイス作成完了のお知らせが来る</li>
             <li>支払い</li>
-            <li>配送ラベルをDingtalkに送る</li>
+            <li>配送ラベル（納品先FCの住所）をDingtalkに送る</li>
           </ol>
+          <div style={{
+            marginTop: 12, padding: '10px 14px', background: '#fffbeb',
+            border: '1px solid #fcd34d', borderRadius: 6,
+            fontSize: 12, color: '#92400e', lineHeight: 1.8,
+          }}>
+            <b>なぜ送付先を未定で出すか</b><br />
+            配送依頼にFBA送付先が要るが、納品先FCはAmazonで納品プランを作らないと決まらない。
+            先に送付先を知ろうとしてセラーセントラルの梱包を飛ばすと、
+            配送モードがパレット輸送（LTL）かトラック配送（FTL）に限定され、船便・航空便が選べなくなる。
+            未定のまま出して後から配送ラベルを送る方が確実。
+          </div>
         </div>
       </details>
 
