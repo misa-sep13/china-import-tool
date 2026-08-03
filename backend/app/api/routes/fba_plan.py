@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, BackgroundTasks, UploadFile, File
+from fastapi import APIRouter, Depends, BackgroundTasks, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -257,6 +257,77 @@ class PlanExportItem(BaseModel):
 
 class PlanExportRequest(BaseModel):
     items: list[PlanExportItem]
+
+
+@router.post("/create-inbound-plan")
+def create_inbound_plan_api(req: PlanExportRequest, db: Session = Depends(get_db)):
+    """画面で決めた納品数でAmazonにFBA納品プランを作成する。
+
+    作れるのはSKUと数量まで。梱包（何箱に分けるか）や配送業者はタオタロウが
+    決めるため、ここでは確定しない。作成後はセラーセントラルで商品ラベルを
+    ダウンロードしてDingtalkへ送る運用になる。
+    """
+    from app.core.config import settings as app_settings
+    if not app_settings.SP_API_REFRESH_TOKEN:
+        raise HTTPException(status_code=400, detail="SP-APIが設定されていません")
+    if not req.items:
+        raise HTTPException(status_code=400, detail="納品する商品がありません")
+
+    from app.services.amazon_api import (
+        create_inbound_plan, fetch_default_source_address,
+    )
+
+    source = fetch_default_source_address()
+    if not source:
+        raise HTTPException(
+            status_code=400,
+            detail="発送元住所を取得できませんでした。セラーセントラルで一度納品プランを作ると、その住所を引き継げます",
+        )
+
+    # plan_qtyはセット数なのでピース数に直して送る
+    items = [
+        {"sku": it.sku, "qty": it.plan_qty * max(1, it.set_size)}
+        for it in req.items
+        if it.plan_qty > 0
+    ]
+    if not items:
+        raise HTTPException(status_code=400, detail="納品数が1以上の商品がありません")
+
+    try:
+        result = create_inbound_plan(
+            items,
+            source_address=source,
+            name=f"FBA納品 {date.today().strftime('%Y/%m/%d')}",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"納品プランの作成に失敗しました: {e}")
+
+    return {
+        "ok": True,
+        "inbound_plan_id": result["inbound_plan_id"],
+        "operation_id": result["operation_id"],
+        "total_pieces": sum(i["qty"] for i in items),
+        "sku_count": len(items),
+        # セラーセントラルの納品管理画面（ここで商品ラベルをDLする）
+        "seller_central_url": "https://sellercentral.amazon.co.jp/fba/sendtoamazon",
+    }
+
+
+@router.get("/inbound-operation/{operation_id}")
+def get_inbound_operation(operation_id: str):
+    """createInboundPlanは非同期なので、完了したかを確認する。"""
+    from app.core.config import settings as app_settings
+    if not app_settings.SP_API_REFRESH_TOKEN:
+        raise HTTPException(status_code=400, detail="SP-APIが設定されていません")
+    from app.services.amazon_api import get_inbound_operation_status
+    try:
+        d = get_inbound_operation_status(operation_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "status": d.get("operationStatus") or "",
+        "errors": d.get("operationProblems") or [],
+    }
 
 
 @router.post("/export-excel")

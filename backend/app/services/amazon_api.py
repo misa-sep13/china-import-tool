@@ -646,6 +646,90 @@ def _shipment_date(shipment_name: str) -> str:
     return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
 
 
+def _post_sp_api(path: str, body: dict) -> dict:
+    """SP-APIへのPOST。_call_sp_apiはGET専用なので書き込み用に用意する。"""
+    token = _get_access_token()
+    req = urllib.request.Request(
+        "https://sellingpartnerapi-fe.amazon.com" + path,
+        data=json.dumps(body).encode(),
+        method="POST",
+        headers={"x-amz-access-token": token, "Content-Type": "application/json"},
+    )
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as res:
+                return json.loads(res.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                time.sleep(2 ** (attempt + 1))
+                continue
+            raise Exception(f"HTTP {e.code}: {e.read().decode()[:500]}")
+    raise Exception("SP-API rate limited after retries: " + path)
+
+
+def fetch_default_source_address() -> Optional[dict]:
+    """納品プランの発送元住所を、直近のプランから引き継ぐ。
+
+    住所をコードや設定に持たせるとセラーセントラル側で変更したときにずれるため、
+    実際に使われた住所をそのまま再利用する。
+    """
+    try:
+        data = _call_sp_api(
+            "/inbound/fba/2024-03-20/inboundPlans?"
+            + urllib.parse.urlencode({"pageSize": 1})
+        )
+    except Exception:
+        return None
+    plans = data.get("inboundPlans") or []
+    if not plans:
+        return None
+    return plans[0].get("sourceAddress") or None
+
+
+def create_inbound_plan(items: List[dict], source_address: dict, name: str = "") -> dict:
+    """FBA納品プランを作成する。
+
+    items: [{"sku": SKU, "qty": 個数}, ...]（個数はピース単位）
+    戻り値: {"inbound_plan_id": ..., "operation_id": ...}
+
+    梱包や配送業者の指定はしない。箱詰めはタオタロウが行うため、
+    こちらで確定できるのはSKUと数量までになる。
+    """
+    mp = "A1VC38T7YXB528"
+    payload_items = [
+        {
+            "msku": it["sku"],
+            "quantity": int(it["qty"]),
+            # 商品ラベルの貼付・準備はこちら（出品者）で行う
+            "labelOwner": "SELLER",
+            "prepOwner": "SELLER",
+        }
+        for it in items
+        if it.get("sku") and int(it.get("qty") or 0) > 0
+    ]
+    if not payload_items:
+        raise ValueError("納品数が1以上の商品がありません")
+
+    body = {
+        "destinationMarketplaces": [mp],
+        "sourceAddress": source_address,
+        "items": payload_items,
+    }
+    if name:
+        body["name"] = name
+
+    data = _post_sp_api("/inbound/fba/2024-03-20/inboundPlans", body)
+    return {
+        "inbound_plan_id": data.get("inboundPlanId") or "",
+        "operation_id": data.get("operationId") or "",
+    }
+
+
+def get_inbound_operation_status(operation_id: str) -> dict:
+    """createInboundPlanは非同期。operationIdで完了したかを確認する。"""
+    return _call_sp_api(f"/inbound/fba/2024-03-20/operations/{operation_id}")
+
+
 def fetch_inbound_plans() -> List[dict]:
     """FBA納品プランをSKU単位で返す（作成済みだが未発送のものを含む）。
 

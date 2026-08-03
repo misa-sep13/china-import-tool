@@ -22,6 +22,8 @@ export default function FbaPlanPage() {
   const [planQtys, setPlanQtys] = useState({})
   const [excludes, setExcludes] = useState({})
   const [exporting, setExporting] = useState(false)
+  const [creatingPlan, setCreatingPlan] = useState(false)
+  const [createResult, setCreateResult] = useState(null)
   const [elapsed, setElapsed] = useState(0)
   const [sortKey, setSortKey] = useState('pipeline_days')
   const [sortAsc, setSortAsc] = useState(true)
@@ -145,6 +147,39 @@ export default function FbaPlanPage() {
       return sum + (planQtys[it.sku] || 0) * it.set_size
     }, 0)
   }, [sortedPlanItems, planQtys, excludes])
+
+  // Amazonへの納品プラン作成。作れるのはSKUと数量まで（箱詰めはタオタロウが決める）
+  const handleCreateInboundPlan = async () => {
+    const targets = sortedPlanItems
+      .filter(it => (planQtys[it.sku] || 0) > 0 && it.ship_method !== 'hold')
+      .map(it => ({
+        sku: it.sku,
+        fnsku: it.fnsku,
+        plan_qty: planQtys[it.sku] || 0,
+        set_size: it.set_size,
+      }))
+    if (!targets.length) {
+      alert('納品数が1以上の商品がありません')
+      return
+    }
+    const pieces = targets.reduce((s, t) => s + t.plan_qty * t.set_size, 0)
+    const detail = targets.map(t => `  ${t.sku}: ${t.plan_qty * t.set_size}個`).join('\n')
+    if (!confirm(
+      `Amazonに納品プランを作成します。\n\n${detail}\n\n` +
+      `計 ${targets.length}SKU / ${pieces}個\n\n` +
+      `作成後はセラーセントラルで商品ラベルをダウンロードしてください。`
+    )) return
+
+    setCreatingPlan(true)
+    setCreateResult(null)
+    try {
+      const { data } = await api.post('/fba-plan/create-inbound-plan', { items: targets })
+      setCreateResult(data)
+    } catch (e) {
+      setCreateResult({ error: e.response?.data?.detail || '納品プランの作成に失敗しました' })
+    }
+    setCreatingPlan(false)
+  }
 
   const handleExport = async () => {
     const exportItems = sortedPlanItems
@@ -390,6 +425,11 @@ export default function FbaPlanPage() {
             </button>
             {planStatus === 'done' && (
               <>
+                <button className="btn" onClick={handleCreateInboundPlan} disabled={creatingPlan}
+                  style={{ background: '#ea580c', color: '#fff', fontWeight: 700 }}
+                  title="この内容でAmazonに納品プランを作成します">
+                  {creatingPlan ? '作成中...' : '🚀 Amazonに納品プランを作成'}
+                </button>
                 <button className="btn" onClick={handleExport} disabled={exporting}
                   style={{ background: '#059669', color: '#fff' }}>
                   {exporting ? '出力中...' : '📥 納品プランExcel出力'}
@@ -400,6 +440,43 @@ export default function FbaPlanPage() {
               </>
             )}
           </div>
+
+          {/* 納品プラン作成の結果。作成後にやることを続けて示す */}
+          {createResult && (
+            <div className="card" style={{
+              marginBottom: 16,
+              borderLeft: `4px solid ${createResult.error ? '#ef4444' : '#16a34a'}`,
+            }}>
+              {createResult.error ? (
+                <div style={{ color: '#dc2626', fontSize: 13 }}>{createResult.error}</div>
+              ) : (
+                <>
+                  <div style={{ fontWeight: 700, color: '#166534', marginBottom: 8 }}>
+                    納品プランを作成しました（{createResult.sku_count}SKU / {createResult.total_pieces}個）
+                  </div>
+                  <div style={{ fontSize: 12, color: '#475569', marginBottom: 10 }}>
+                    プランID: <span style={{ fontFamily: 'monospace' }}>{createResult.inbound_plan_id}</span>
+                  </div>
+                  <div style={{ fontSize: 13, color: '#334155', marginBottom: 10 }}>
+                    次にやること:
+                    <ol style={{ margin: '6px 0 0', paddingLeft: 20, lineHeight: 1.9 }}>
+                      <li>セラーセントラルでこのプランを開き、<b>商品ラベルをダウンロード</b></li>
+                      <li>タオタロウのFBA指示書と一緒に<b>Dingtalkへ送る</b></li>
+                      <li>（梱包・配送業者はタオタロウが決めるのでこちらでは指定しません）</li>
+                    </ol>
+                  </div>
+                  <a href={createResult.seller_central_url} target="_blank" rel="noreferrer"
+                    style={{
+                      display: 'inline-block', padding: '8px 16px', background: '#1e40af',
+                      color: '#fff', borderRadius: 6, fontSize: 13, fontWeight: 600,
+                      textDecoration: 'none',
+                    }}>
+                    セラーセントラルで開く →
+                  </a>
+                </>
+              )}
+            </div>
+          )}
 
           {planStatus === 'loading' && (
             <div className="card" style={{ textAlign: 'center', padding: 40, color: '#6b7280' }}>
