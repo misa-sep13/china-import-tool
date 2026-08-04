@@ -30,6 +30,8 @@ class ProductCreate(BaseModel):
     extra_stock: Optional[int] = 0
     amazon_fee_rate: Optional[float] = 0.1
     category: Optional[str] = "標準"
+    purchase_components: Optional[str] = None  # JSON文字列（発注用付属品・在庫連動しない）
+    is_component: Optional[bool] = False       # 付属品（他商品から参照される側）フラグ
 
 def _restore_deleted_product(existing: Product, data: ProductCreate, db: Session) -> Product:
     for k, v in data.model_dump().items():
@@ -66,6 +68,8 @@ class ProductUpdate(BaseModel):
     selling_price: Optional[float] = None
     fba_fee: Optional[float] = None
     category: Optional[str] = None
+    purchase_components: Optional[str] = None
+    is_component: Optional[bool] = None
 
 class ProductOut(ProductCreate):
     id: int
