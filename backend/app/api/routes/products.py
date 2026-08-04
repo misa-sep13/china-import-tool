@@ -10,44 +10,6 @@ from app.models.product import Product
 router = APIRouter(prefix="/products", tags=["products"])
 
 
-@router.get("/_diag")
-def diag_products_schema(db: Session = Depends(get_db)):
-    """一時診断用: productsテーブルの実カラムと、不足列の手動追加結果を返す。
-
-    GET /products/ が本番でUndefinedColumnエラーを起こしている原因を
-    直接確認するためのもの。原因が分かり次第このエンドポイントは削除する。
-    """
-    from sqlalchemy import inspect as sa_inspect, text
-    from app.core.database import engine
-
-    result = {"existing_columns": [], "alter_attempts": []}
-    try:
-        inspector = sa_inspect(engine)
-        result["existing_columns"] = sorted(c["name"] for c in inspector.get_columns("products"))
-    except Exception as e:
-        result["inspect_error"] = f"{type(e).__name__}: {e}"
-
-    needed = [
-        ("purchase_components", "ALTER TABLE products ADD COLUMN purchase_components TEXT"),
-        ("is_component", "ALTER TABLE products ADD COLUMN is_component BOOLEAN DEFAULT FALSE"),
-    ]
-    for col, sql in needed:
-        if col in result["existing_columns"]:
-            result["alter_attempts"].append({"col": col, "status": "already_exists"})
-            continue
-        try:
-            with engine.begin() as conn:
-                conn.execute(text(sql))
-            result["alter_attempts"].append({"col": col, "status": "added_now"})
-        except Exception as e:
-            result["alter_attempts"].append({
-                "col": col, "status": "failed",
-                "error_type": type(e).__name__, "error": str(e)[:800],
-            })
-
-    return result
-
-
 class ProductCreate(BaseModel):
     sku: str
     fnsku: Optional[str] = ""
