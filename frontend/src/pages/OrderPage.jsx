@@ -280,7 +280,6 @@ export default function OrderPage() {
 
   // 件数・合計も「表示中か否か」ではなくチェック状態を基準にする
   const selectedItems = allItems.filter(item => currentSelected.has(item.product_id) && item.qty > 0)
-  const totalYuan = selectedItems.reduce((s, i) => s + i.qty * i.price, 0)
   const isLoading = jobStatus === 'running' || jobStatus === 'idle'
 
   const toggleBtn = (
@@ -394,8 +393,6 @@ export default function OrderPage() {
                       <th>日販</th>
                       <th>成長率</th>
                       <th>発注数</th>
-                      <th>単価(元)</th>
-                      <th>小計(元)</th>
                       <th>発注</th>
                     </tr>
                   </thead>
@@ -449,10 +446,6 @@ export default function OrderPage() {
                             onChange={e => updateQty(item.product_id, e.target.value)}
                           />
                         </td>
-                        <td style={{ textAlign: 'right' }}>{item.price}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 600 }}>
-                          {isChecked ? (item.qty * item.price).toFixed(0) : '-'}
-                        </td>
                         <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
                           {justOrdered.has(item.product_id) ? (
                             <span style={{ color: '#16a34a', fontWeight: 700, fontSize: 12 }}>✓ 発注済</span>
@@ -473,9 +466,12 @@ export default function OrderPage() {
                   </tbody>
                   <tfoot>
                     <tr>
-                      <td colSpan={14} style={{ textAlign: 'right', fontWeight: 700, paddingTop: 12 }}>合計（選択分）</td>
+                      {/* 合計行は「発注数」列に数を出す。前12列＋発注数＋発注ボタンで計14列 */}
+                      <td colSpan={12} style={{ textAlign: 'right', fontWeight: 700, paddingTop: 12 }}>
+                        選択中
+                      </td>
                       <td style={{ textAlign: 'right', fontWeight: 700 }}>
-                        {totalYuan.toFixed(0)} 元
+                        {selectedItems.reduce((s, i) => s + i.qty, 0)} 個
                       </td>
                       <td></td>
                     </tr>
