@@ -26,6 +26,12 @@ class Product(Base):
     set_size = Column(Integer, default=1)   # 1セットあたりのピース数
     extra_stock = Column(Integer, default=0)  # 別個数在庫
     order_qty = Column(Integer, default=0)  # 手動発注数
+    # 発注用付属品（在庫連動しない）: JSON文字列 "[{\"sku\":\"y48_bag\",\"qty\":1}]"
+    # 楽天のrakuten_products.purchase_componentsと同じ役割。
+    # 本体を発注するとき、この部品も一緒にタオタロウへ発注する必要があるが、
+    # FBA在庫の計算には一切関与しない（main.pyの在庫連動ロジックはこれを参照しない）
+    purchase_components = Column(Text, nullable=True)
+    is_component = Column(Boolean, default=False)  # 付属品（他商品から参照される側）フラグ
     # 利益計算用
     selling_price = Column(Float, nullable=True)       # 販売価格（円）
     fba_fee = Column(Float, nullable=True)             # FBA手数料（円）

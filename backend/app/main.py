@@ -152,6 +152,9 @@ def _migrate():
         ("invoice_items","tariff_rate",      "ALTER TABLE invoice_items ADD COLUMN tariff_rate FLOAT DEFAULT 0"),
         # Amazon商品マスタ：円建て原価（priceは元単価のまま残す）
         ("products","cost_jpy",              "ALTER TABLE products ADD COLUMN cost_jpy FLOAT"),
+        # Amazon商品マスタ：発注用付属品（楽天のpurchase_componentsと同じ役割）
+        ("products","purchase_components",   "ALTER TABLE products ADD COLUMN purchase_components TEXT"),
+        ("products","is_component",          "ALTER TABLE products ADD COLUMN is_component BOOLEAN DEFAULT FALSE"),
         # 売上管理：広告比率カラム
         ("rakuten_sales_summaries","ad_rate", "ALTER TABLE rakuten_sales_summaries ADD COLUMN ad_rate FLOAT"),
         # レビューキャンペーン：判定キーワード

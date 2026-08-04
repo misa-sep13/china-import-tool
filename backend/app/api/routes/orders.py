@@ -5,6 +5,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
 import io
+import json
 import uuid
 import time
 import threading
@@ -454,6 +455,62 @@ def preview_orders(db: Session = Depends(get_db)):
     return result
 
 
+def _expand_purchase_components(item: "OrderItem", db: Session) -> list:
+    """本体行の下に、発注用付属品(purchase_components)を展開した行を追加する。
+
+    楽天のrakuten.py export と同じロジック。付属品は在庫連動しない
+    （FBA在庫の計算には一切関与しない）が、タオタロウへは本体と一緒に
+    発注する必要がある行として出力する。
+    """
+    product = db.query(Product).filter(Product.sku == item.sku).first()
+    if not product:
+        return []
+
+    try:
+        pcomps = json.loads(getattr(product, "purchase_components", None) or "[]")
+    except Exception:
+        pcomps = []
+    if not pcomps:
+        return []
+
+    rows = []
+    for comp in pcomps:
+        comp_sku = comp.get("sku")
+        comp_qty = comp.get("qty", 1)
+        comp_url = comp.get("buy_url", "")
+        comp_spec = comp.get("supplier_spec", "") or comp.get("spec", "")
+        comp_price = comp.get("price", None)
+
+        if not comp_url or not comp_spec or comp_price is None:
+            c = db.query(Product).filter(Product.sku == comp_sku).first() if comp_sku else None
+            if c and c.is_component:
+                comp_url = comp_url or c.buy_url or ""
+                comp_spec = comp_spec or c.spec or ""
+                comp_price = comp_price if comp_price is not None else (c.price or 0)
+            elif not comp_url:
+                continue  # URLも商品マスタも無ければスキップ
+
+        rows.append({
+            "sku": comp_sku or "",
+            "name": comp.get("name", ""),
+            "amazon_url": "",
+            "buy_url": comp_url,
+            "photo_url": "",
+            "color": "",
+            "size": "",
+            "spec": comp_spec,
+            "customer_memo": comp.get("customer_memo", ""),
+            "qty": item.qty * comp_qty,
+            "price": comp_price or 0,
+            "repack": "",
+            "note": comp.get("note", ""),
+            "set_size": 1,
+            "asin": "",
+            "fnsku": "",
+        })
+    return rows
+
+
 @router.post("/export")
 def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
     """発注リストをタオタロウ形式のExcelとしてダウンロードし、発注履歴に保存"""
@@ -482,6 +539,8 @@ def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
             "asin": item.asin,
             "fnsku": item.fnsku,
         })
+        # 発注用付属品（在庫連動しない）を追加行として展開する
+        items_data.extend(_expand_purchase_components(item, db))
 
     if not items_data:
         raise HTTPException(status_code=400, detail="発注数が0の商品しかありません")
