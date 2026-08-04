@@ -198,6 +198,27 @@ export default function OrderPage() {
     setSelected(allDisplayedChecked ? new Set() : new Set(items.map(it => it.product_id)))
   }
 
+  // 発注した分を画面の「発注済」に反映する。
+  // サーバーは正しい値を返すが、次に取り直すまで表示が古いままになるのを防ぐ。
+  // 併せてsessionStorageを捨て、次回開いたときに必ず取り直させる。
+  const applyOrderedLocally = (updates) => {
+    // updates: [{product_id, qty}, ...]
+    const byId = new Map(updates.map(u => [u.product_id, u.qty]))
+    setRawItems(prev => prev.map(it => {
+      const add = byId.get(it.product_id)
+      if (!add) return it
+      const ordered = (it.ordered || 0) + add
+      const stock = (it.stock || 0) + add
+      return {
+        ...it,
+        ordered,
+        stock,
+        days_left: it.daily > 0 ? Math.floor(stock / it.daily) : it.days_left,
+      }
+    }))
+    sessionStorage.removeItem('order_items')
+  }
+
   const handleExport = async () => {
     // フィルタ・検索で今は隠れている行も、チェック済みなら出力対象に含める
     const targets = allItems.filter(item => currentSelected.has(item.product_id) && item.qty > 0)
@@ -212,6 +233,8 @@ export default function OrderPage() {
       a.click()
       window.URL.revokeObjectURL(url)
       qc.invalidateQueries(['orderHistory'])
+      // Excel出力＝発注済みリストに記録されるので、画面の発注済にも反映する
+      applyOrderedLocally(targets.map(t => ({ product_id: t.product_id, qty: t.qty })))
       setQtyOverrides({})
       setSelected(null)
     } catch {
@@ -233,6 +256,10 @@ export default function OrderPage() {
       }] })
       setJustOrdered(prev => new Set(prev).add(item.product_id))
       qc.invalidateQueries(['orderHistory'])
+      // 発注済の数が変わるので、画面の値をその場で反映しつつキャッシュは捨てる。
+      // ここで再取得（7分）を走らせると続けて発注できなくなるため、
+      // 表示だけ先に更新し、次に開いたときに取り直させる。
+      applyOrderedLocally([{ product_id: item.product_id, qty: item.qty }])
     } catch {
       setError('発注の記録に失敗しました')
     } finally {
