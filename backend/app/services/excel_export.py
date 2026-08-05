@@ -46,17 +46,9 @@ def build_taotaro_excel(items: List[Dict]) -> bytes:
     thin = Side(style="thin")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    # 1行目：タイトル（A1を結合して「導入例」）
-    ws.merge_cells("A1:H1")
-    title_cell = ws["A1"]
-    title_cell.value = "導入例"
-    title_cell.font = Font(bold=True)
-    title_cell.alignment = Alignment(horizontal="center", vertical="center")
-    title_cell.fill = PatternFill("solid", fgColor="D9E1F2")
-    ws.row_dimensions[1].height = 20
-
-    # 2行目：ヘッダー
-    # A: 発注先URL（「↓※発注先URLをここに入れる」付き）
+    # 1行目：ヘッダー（タオタロウの取り込みは1行目をヘッダーとして読み飛ばし、
+    # 2行目からデータとして読む。タイトル行を入れるとヘッダー行が商品として
+    # 誤読される（公式テンプレートの導入内容シートも1行目ヘッダー・2行目データ））
     headers = [
         "発注先URL　↓※発注先URLをここに入れる",  # A
         "仕様",       # B
@@ -70,16 +62,16 @@ def build_taotaro_excel(items: List[Dict]) -> bytes:
     header_fill = PatternFill("solid", fgColor="E2EFDA")
     header_font = Font(bold=True)
     for col, h in enumerate(headers, 1):
-        cell = ws.cell(row=2, column=col, value=h)
+        cell = ws.cell(row=1, column=col, value=h)
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = border
-    ws.row_dimensions[2].height = 25
+    ws.row_dimensions[1].height = 25
 
-    # 3行目以降：データ
+    # 2行目以降：データ
     for i, item in enumerate(items):
-        row_num = 3 + i
+        row_num = 2 + i
         spec = item.get("spec") or "　".join(filter(None, [item.get("color", ""), item.get("size", "")]))
         spec = normalize_taotaro_spec(spec)
         values = [
