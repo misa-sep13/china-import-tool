@@ -122,6 +122,12 @@ export default function OrderPage() {
     enabled: tab === 'history',
   })
 
+  const { data: exchangeRate = 21.0 } = useQuery({
+    queryKey: ['settingsExchangeRate'],
+    queryFn: () => api.get('/settings/').then(r => r.data.exchange_rate ?? 21.0),
+    enabled: tab === 'history',
+  })
+
   const deleteHistory = useMutation({
     mutationFn: (id) => api.delete(`/orders/history/${id}`),
     onSuccess: () => {
@@ -609,8 +615,8 @@ export default function OrderPage() {
                     <th>商品名</th>
                     <th>色/サイズ</th>
                     <th>発注数</th>
-                    <th>単価(元)</th>
-                    <th>小計(元)</th>
+                    <th>単価(円)</th>
+                    <th>小計(円)</th>
                     <th>状態</th>
                     <th>仕入URL</th>
                     <th></th>
@@ -626,8 +632,8 @@ export default function OrderPage() {
                       <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</td>
                       <td style={{ fontSize: 12, color: '#666' }}>{[row.color, row.size].filter(Boolean).join(' / ')}</td>
                       <td style={{ textAlign: 'right', fontWeight: 600 }}>{row.qty}</td>
-                      <td style={{ textAlign: 'right' }}>{row.price}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{(row.qty * row.price).toFixed(0)}</td>
+                      <td style={{ textAlign: 'right' }}>{Math.round(row.price * exchangeRate)}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{Math.round(row.qty * row.price * exchangeRate)}</td>
                       <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
                         {row.status === 'shipped' ? (
                           <span style={{ color: '#16a34a', fontWeight: 700 }} title="発注数の集計から外れています">✓ 納品済</span>
@@ -657,7 +663,7 @@ export default function OrderPage() {
                   <tr>
                     <td colSpan={6} style={{ textAlign: 'right', fontWeight: 700, paddingTop: 12 }}>合計</td>
                     <td style={{ textAlign: 'right', fontWeight: 700 }}>
-                      {history.reduce((s, r) => s + r.qty * r.price, 0).toFixed(0)} 元
+                      {Math.round(history.reduce((s, r) => s + r.qty * r.price, 0) * exchangeRate)} 円
                     </td>
                     <td></td>
                     <td></td>

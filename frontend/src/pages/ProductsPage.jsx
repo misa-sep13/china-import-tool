@@ -441,7 +441,7 @@ export default function ProductsPage() {
                   <input {...f('spec')} placeholder="例: 燕麦色、S 建议75-95斤" />
                 </div>
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                  <label>お客様専用メモ（Excel出力用）</label>
+                  <label>お客様専用メモ</label>
                   <textarea {...f('customer_memo')} rows={2} style={{ resize: 'vertical' }} />
                 </div>
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
