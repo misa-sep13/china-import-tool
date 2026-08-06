@@ -339,6 +339,9 @@ def save_shipment_order(data: ShipmentOrderSaveIn, db: Session = Depends(get_db)
             unit_price_cny=item.get("unit_price_cny", 0),
             qty=item.get("qty", 0),
             is_matched=bool(item.get("product_id")),
+            # アップロード画面で「対象外」にした行はここで確定させる。
+            # 反映しないと入荷後に「未反映の行が残っている配送依頼」へ毎回再登場してしまう。
+            is_excluded=bool(item.get("excluded")),
         ))
 
     db.commit()
