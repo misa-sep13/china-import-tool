@@ -41,7 +41,9 @@ class ShipmentOrderItemPatch(BaseModel):
 @router.get("/debug-match-score")
 def debug_match_score(buy_url: str, color: str = "", size: str = "", unit_price_cny: float = 0, qty: int = 0, db: Session = Depends(get_db)):
     """デバッグ用: 指定した仕入URLに紐づく全候補のスコア内訳を返す（一時的な調査用）"""
-    rakuten_products = db.query(RakutenProduct).filter(RakutenProduct.buy_url.isnot(None)).all()
+    rakuten_products = db.query(RakutenProduct).filter(
+        RakutenProduct.buy_url.isnot(None), RakutenProduct.is_active == True
+    ).all()
     pending_rows = (
         db.query(RakutenOrderHistory.sku, sqlfunc.sum(RakutenOrderHistory.qty))
         .filter(RakutenOrderHistory.is_deleted == False, RakutenOrderHistory.is_delivered == False)
@@ -214,7 +216,9 @@ async def parse_excel(file: UploadFile = File(...)):
 @router.post("/match")
 def match_products(items: List[dict], db: Session = Depends(get_db)):
     """配送依頼明細を楽天商品マスタと照合して照合結果を返す"""
-    rakuten_products = db.query(RakutenProduct).filter(RakutenProduct.buy_url.isnot(None)).all()
+    rakuten_products = db.query(RakutenProduct).filter(
+        RakutenProduct.buy_url.isnot(None), RakutenProduct.is_active == True
+    ).all()
     pending_rows = (
         db.query(RakutenOrderHistory.sku, sqlfunc.sum(RakutenOrderHistory.qty))
         .filter(RakutenOrderHistory.is_deleted == False, RakutenOrderHistory.is_delivered == False)
