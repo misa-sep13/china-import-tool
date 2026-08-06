@@ -351,10 +351,12 @@ def list_shipment_orders(db: Session = Depends(get_db)):
     result = []
     for o in orders:
         items = db.query(ShipmentOrderItem).filter(ShipmentOrderItem.shipment_order_id == o.id).all()
-        unmatched_count = sum(1 for i in items if not i.is_matched)
-        # 入荷済みなのに在庫へ入っていない行（紐づけ間違い・未照合の取りこぼし）
-        unreflected_count = sum(1 for i in items if not i.is_reflected)
-        pending_reimport = sum(1 for i in items if not i.is_reflected and i.product_id)
+        unmatched_count = sum(1 for i in items if not i.is_matched and not i.is_excluded)
+        # 入荷済みなのに在庫へ入っていない行（紐づけ間違い・未照合の取りこぼし）。
+        # 対象外にした行（梱包材など）は集計から除外する。
+        unreflected_count = sum(1 for i in items if not i.is_reflected and not i.is_excluded)
+        pending_reimport = sum(1 for i in items if not i.is_reflected and not i.is_excluded and i.product_id)
+        excluded_count = sum(1 for i in items if i.is_excluded)
         result.append({
             "id": o.id,
             "tracking_no": o.tracking_no,
@@ -369,6 +371,7 @@ def list_shipment_orders(db: Session = Depends(get_db)):
             "unmatched_count": unmatched_count,
             "unreflected_count": unreflected_count,
             "pending_reimport": pending_reimport,
+            "excluded_count": excluded_count,
         })
     return result
 
@@ -392,8 +395,23 @@ def get_shipment_order_items(order_id: int, db: Session = Depends(get_db)):
             "qty": item.qty,
             "is_matched": item.is_matched,
             "is_reflected": bool(item.is_reflected),
+            "is_excluded": bool(item.is_excluded),
         })
     return result
+
+
+@router.patch("/{order_id}/items/{item_id}/exclude")
+def exclude_shipment_item(order_id: int, item_id: int, data: dict, db: Session = Depends(get_db)):
+    """在庫に入れる必要がない行（梱包材など）を未反映カウントから除外する／解除する。"""
+    item = db.query(ShipmentOrderItem).filter(
+        ShipmentOrderItem.id == item_id,
+        ShipmentOrderItem.shipment_order_id == order_id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="アイテムが見つかりません")
+    item.is_excluded = bool(data.get("excluded", True))
+    db.commit()
+    return {"ok": True, "is_excluded": item.is_excluded}
 
 
 @router.patch("/{order_id}/items/{item_id}/match")
@@ -476,6 +494,7 @@ async def receive_remaining(order_id: int, db: Session = Depends(get_db)):
     items = db.query(ShipmentOrderItem).filter(
         ShipmentOrderItem.shipment_order_id == order_id,
         ShipmentOrderItem.is_reflected == False,
+        ShipmentOrderItem.is_excluded == False,
         ShipmentOrderItem.product_id != None,
     ).all()
     if not items:

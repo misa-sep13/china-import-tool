@@ -32,3 +32,4 @@ class ShipmentOrderItem(Base):
     qty = Column(Integer, default=0)
     is_matched = Column(Boolean, default=False)  # 商品マスタと照合済みか
     is_reflected = Column(Boolean, default=False)  # 在庫へ反映済みか（再取込の二重加算防止）
+    is_excluded = Column(Boolean, default=False)  # 対象外（梱包材など在庫に入れる必要がない行。未反映カウントから除外）
