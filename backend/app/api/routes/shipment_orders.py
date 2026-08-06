@@ -38,6 +38,74 @@ class ShipmentOrderItemPatch(BaseModel):
     product_id: int
 
 
+@router.get("/debug-match-score")
+def debug_match_score(buy_url: str, color: str = "", size: str = "", unit_price_cny: float = 0, qty: int = 0, db: Session = Depends(get_db)):
+    """デバッグ用: 指定した仕入URLに紐づく全候補のスコア内訳を返す（一時的な調査用）"""
+    rakuten_products = db.query(RakutenProduct).filter(RakutenProduct.buy_url.isnot(None)).all()
+    pending_rows = (
+        db.query(RakutenOrderHistory.sku, sqlfunc.sum(RakutenOrderHistory.qty))
+        .filter(RakutenOrderHistory.is_deleted == False, RakutenOrderHistory.is_delivered == False)
+        .group_by(RakutenOrderHistory.sku)
+        .all()
+    )
+    pending_by_sku = {sku: qty2 or 0 for sku, qty2 in pending_rows}
+    url_key_counts = {}
+    for p in rakuten_products:
+        key = _url_match_key(p.buy_url or "")
+        if key:
+            url_key_counts[key] = url_key_counts.get(key, 0) + 1
+
+    item = {"buy_url": buy_url, "color": color, "size": size, "unit_price_cny": unit_price_cny, "qty": qty}
+    target_key = _url_match_key(buy_url)
+    results = []
+    for p in rakuten_products:
+        pk = _url_match_key(p.buy_url or "")
+        if pk != target_key:
+            continue
+        detail = {}
+        score = 0
+        item_key = _url_match_key(item.get("buy_url", ""))
+        product_key = pk
+        detail["url_match"] = bool(item_key and product_key and item_key == product_key)
+        if detail["url_match"]:
+            score += 45
+            detail["url_unique_bonus"] = url_key_counts.get(product_key, 0) == 1
+            if detail["url_unique_bonus"]:
+                score += 10
+        color_n = _norm_text(item.get("color", ""))
+        size_n = _norm_text(item.get("size", ""))
+        spec_n = _norm_text(p.supplier_spec or "")
+        combo1 = _norm_text(f"{item.get('color', '')}、{item.get('size', '')}")
+        combo2 = _norm_text(f"{item.get('color', '')} {item.get('size', '')}")
+        detail["spec"] = p.supplier_spec
+        detail["spec_norm"] = spec_n
+        detail["color_norm"] = color_n
+        detail["combo1"] = combo1
+        detail["combo2"] = combo2
+        if spec_n and color_n and spec_n == color_n:
+            score += 35
+            detail["spec_branch"] = "exact"
+        elif spec_n and color_n and size_n and spec_n in {combo1, combo2}:
+            score += 35
+            detail["spec_branch"] = "combo"
+        elif spec_n and color_n and (spec_n in color_n or color_n in spec_n):
+            score += 18
+            detail["spec_branch"] = "partial"
+        else:
+            detail["spec_branch"] = None
+        try:
+            ip = float(item.get("unit_price_cny") or 0)
+            pp = float(p.price or 0)
+            detail["price_match"] = ip > 0 and abs(ip - pp) < 0.011
+            if detail["price_match"]:
+                score += 15
+        except Exception:
+            detail["price_match"] = "error"
+        results.append({"sku": p.sku, "id": p.id, "score": score, "detail": detail})
+    results.sort(key=lambda x: -x["score"])
+    return {"item": item, "url_key": target_key, "candidates": results}
+
+
 @router.post("/parse-excel")
 async def parse_excel(file: UploadFile = File(...)):
     content = await file.read()
