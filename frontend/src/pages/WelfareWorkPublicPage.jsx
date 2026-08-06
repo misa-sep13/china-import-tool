@@ -120,6 +120,7 @@ export default function WelfareWorkPublicPage() {
 
         <div className="top-actions">
           <input
+            className="search-input-ja"
             style={{ maxWidth: 360 }}
             value={search}
             onChange={e => setSearch(e.target.value)}

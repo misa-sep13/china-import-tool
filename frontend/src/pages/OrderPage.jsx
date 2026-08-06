@@ -344,6 +344,7 @@ export default function OrderPage() {
               {toggleBtn}
               <input
                 type="text" placeholder="SKU・商品名で絞り込み"
+                className="search-input-ja"
                 value={search} onChange={e => setSearch(e.target.value)}
                 style={{ width: 280 }}
               />

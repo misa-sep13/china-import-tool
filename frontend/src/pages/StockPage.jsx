@@ -233,6 +233,7 @@ export default function StockPage() {
           </button>
           <input
             type="text" placeholder="SKU・商品名・色/サイズで絞り込み"
+            className="search-input-ja"
             value={search} onChange={e => setSearch(e.target.value)}
             style={{ width: 260, flex: '0 0 260px' }}
           />

@@ -242,6 +242,7 @@ export default function ProductsPage() {
       <div style={{ margin: '12px 0', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <input
           type="text"
+          className="search-input-ja"
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="SKU・商品名・ASIN・FNSKUで絞り込み"

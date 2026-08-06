@@ -776,6 +776,7 @@ export default function RakutenOrderPage() {
           <div style={{ marginBottom: 12 }}>
             <input
               type="text" placeholder="SKU・商品名で絞り込み"
+              className="search-input-ja"
               value={search} onChange={e => setSearch(e.target.value)}
               style={{ width: 280 }}
             />
