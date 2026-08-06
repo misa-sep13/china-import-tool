@@ -245,7 +245,13 @@ def match_products(items: List[dict], db: Session = Depends(get_db)):
         color = _norm_text(item.get("color", ""))
         size = _norm_text(item.get("size", ""))
         spec = _norm_text(product.supplier_spec or "")
+        # 1688仕入元によっては色/仕様の情報が「色」欄ではなく「サイズ」欄に入ることがある
+        # （例: 色欄が空でサイズ欄に"蓝色12粒"のように色名込みで入っている）。
+        # 色欄だけで判定すると常に不一致になり単価だけが決め手になってしまうため、
+        # サイズ欄単独でもspecと突き合わせる。
         if spec and color and spec == color:
+            score += 35
+        elif spec and size and spec == size:
             score += 35
         elif spec and color and size and spec in {
             _norm_text(f"{item.get('color', '')}、{item.get('size', '')}"),
@@ -253,6 +259,8 @@ def match_products(items: List[dict], db: Session = Depends(get_db)):
         }:
             score += 35
         elif spec and color and (spec in color or color in spec):
+            score += 18
+        elif spec and size and (spec in size or size in spec):
             score += 18
 
         try:
