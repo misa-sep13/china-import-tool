@@ -74,7 +74,7 @@ def scrape_ranking(client: httpx.Client, keyword: str) -> dict:
 
         if page_size < 45:
             break
-        time.sleep(1.5)
+        time.sleep(0.8)
 
     return {"keyword": keyword, "total_items": total_items, "my_ranks": my_ranks}
 
@@ -138,7 +138,7 @@ def main():
                 })
                 print("  -> 圏外")
 
-            time.sleep(2)
+            time.sleep(1)
 
     print(f"\nスクレイピング完了: {len(results)}件, エラー: {errors}件")
 
