@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
-from app.core.database import get_db
+from app.core.database import get_db, SessionLocal
 from app.models.seo import SeoKeyword, SeoRanking
 
 router = APIRouter(prefix="/seo", tags=["SEO"])
@@ -93,63 +93,94 @@ def delete_keyword(keyword_id: int, db: Session = Depends(get_db)):
 
 # ---------- 順位チェック ----------
 
-@router.post("/check")
-async def check_rankings(keyword_ids: list[int] = None, db: Session = Depends(get_db)):
+_check_jobs: dict = {}
+
+
+async def _run_check_job(job_id: str, keyword_ids: Optional[list[int]]):
     from app.services.rakuten_seo import check_ranking
 
-    if keyword_ids:
-        keywords = db.query(SeoKeyword).filter(SeoKeyword.id.in_(keyword_ids)).all()
-    else:
-        keywords = db.query(SeoKeyword).filter(SeoKeyword.is_active == True).all()
+    db = SessionLocal()
+    try:
+        if keyword_ids:
+            keywords = db.query(SeoKeyword).filter(SeoKeyword.id.in_(keyword_ids)).all()
+        else:
+            keywords = db.query(SeoKeyword).filter(SeoKeyword.is_active == True).all()
 
-    if not keywords:
-        raise HTTPException(400, "チェック対象のキーワードがありません")
+        results = []
+        now = datetime.now(JST)
 
-    results = []
-    now = datetime.now(JST)
+        for kw in keywords:
+            try:
+                data = await check_ranking(kw.keyword)
+            except Exception as e:
+                results.append({"keyword_id": kw.id, "keyword": kw.keyword, "error": str(e)})
+                continue
 
-    for kw in keywords:
-        try:
-            data = await check_ranking(kw.keyword)
-        except Exception as e:
-            results.append({"keyword_id": kw.id, "keyword": kw.keyword, "error": str(e)})
-            continue
-
-        if data["my_ranks"]:
-            for r in data["my_ranks"]:
-                ranking = SeoRanking(
+            if data["my_ranks"]:
+                for r in data["my_ranks"]:
+                    db.add(SeoRanking(
+                        seo_keyword_id=kw.id,
+                        keyword=kw.keyword,
+                        product_sku=kw.product_sku,
+                        rank=r["rank"],
+                        page=r["page"],
+                        total_items=data["total_items"],
+                        card_type=r["card_type"],
+                        checked_at=now,
+                    ))
+            else:
+                db.add(SeoRanking(
                     seo_keyword_id=kw.id,
                     keyword=kw.keyword,
                     product_sku=kw.product_sku,
-                    rank=r["rank"],
-                    page=r["page"],
+                    rank=None,
+                    page=None,
                     total_items=data["total_items"],
-                    card_type=r["card_type"],
+                    card_type=None,
                     checked_at=now,
-                )
-                db.add(ranking)
-        else:
-            ranking = SeoRanking(
-                seo_keyword_id=kw.id,
-                keyword=kw.keyword,
-                product_sku=kw.product_sku,
-                rank=None,
-                page=None,
-                total_items=data["total_items"],
-                card_type=None,
-                checked_at=now,
-            )
-            db.add(ranking)
+                ))
 
-        results.append({
-            "keyword_id": kw.id,
-            "keyword": kw.keyword,
-            "total_items": data["total_items"],
-            "ranks": data["my_ranks"],
-        })
+            results.append({
+                "keyword_id": kw.id,
+                "keyword": kw.keyword,
+                "total_items": data["total_items"],
+                "ranks": data["my_ranks"],
+            })
+            db.commit()
 
-    db.commit()
-    return {"results": results, "checked_at": now.isoformat()}
+        _check_jobs[job_id] = {"status": "done", "results": results, "checked_at": now.isoformat()}
+    except Exception as e:
+        _check_jobs[job_id] = {"status": "error", "error": str(e)}
+    finally:
+        db.close()
+
+
+@router.post("/check")
+def check_rankings(background_tasks: BackgroundTasks, keyword_ids: list[int] = None, db: Session = Depends(get_db)):
+    """SEO順位チェックをバックグラウンドで開始する。
+    208キーワード×最大8ページを楽天APIへ順次リクエストするため数分かかり、
+    Render側のリクエストタイムアウトに収まらない。同期応答はせず即座にjob_idを返す。"""
+    import uuid
+
+    if keyword_ids:
+        exists = db.query(SeoKeyword.id).filter(SeoKeyword.id.in_(keyword_ids)).first()
+    else:
+        exists = db.query(SeoKeyword.id).filter(SeoKeyword.is_active == True).first()
+    if not exists:
+        raise HTTPException(400, "チェック対象のキーワードがありません")
+
+    job_id = str(uuid.uuid4())
+    _check_jobs[job_id] = {"status": "running"}
+    background_tasks.add_task(_run_check_job, job_id, keyword_ids)
+    return {"job_id": job_id}
+
+
+@router.get("/check/status/{job_id}")
+def get_check_status(job_id: str):
+    job = _check_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "ジョブが見つかりません")
+    return job
 
 
 @router.post("/check-single")

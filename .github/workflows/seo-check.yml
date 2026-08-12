@@ -16,8 +16,8 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install deps
-        run: pip install httpx beautifulsoup4
-      - name: SEO順位チェック（楽天検索スクレイピング → Render送信）
+        run: pip install httpx
+      - name: SEO順位チェックをトリガー（実処理はRenderサーバー側/楽天ウェブサービスAPI経由）
         env:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
         run: python scripts/check_seo_rankings.py

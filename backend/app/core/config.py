@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     ADS_API_CLIENT_SECRET: Optional[str] = None
     ADS_API_REFRESH_TOKEN: Optional[str] = None
 
+    # 楽天ウェブサービス（IchibaItem/Search、SEO順位チェック用）
+    RAKUTEN_APP_ID: Optional[str] = None
+    RAKUTEN_ACCESS_KEY: Optional[str] = None
+
     class Config:
         env_file = ".env"
 

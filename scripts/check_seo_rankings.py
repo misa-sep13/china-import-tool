@@ -1,157 +1,49 @@
-"""SEO順位を楽天検索からチェックしてRenderに送信するスクリプト（GH Actions用）"""
+"""SEO順位チェックをRenderのバックエンドに実行させ、完了までポーリングするスクリプト（GH Actions用）。
+
+楽天へのアクセスはGitHub ActionsのIPがブロックされて機能しないため、
+実際の順位取得はRenderサーバー側（/api/seo/check、楽天ウェブサービスAPI経由）で行う。
+このスクリプトはジョブを開始し、完了をポーリングして結果を表示するだけ。
+"""
 import httpx
-from bs4 import BeautifulSoup
-import re
-import time
 import os
-from datetime import datetime, timezone, timedelta
+import time
 
 BACKEND = os.environ.get("BACKEND_URL", "https://china-import-tool.onrender.com")
-SHOP_ID = "411150"
-SEARCH_URL = "https://search.rakuten.co.jp/search/mall/{keyword}/"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-}
-MAX_PAGES = 5
-JST = timezone(timedelta(hours=9))
-
-
-def scrape_ranking(client: httpx.Client, keyword: str) -> dict:
-    my_ranks = []
-    total_items = 0
-
-    for page in range(1, MAX_PAGES + 1):
-        params = {}
-        if page > 1:
-            params["p"] = page
-        try:
-            resp = client.get(
-                SEARCH_URL.format(keyword=keyword),
-                params=params,
-                headers=HEADERS,
-                timeout=20,
-                follow_redirects=True,
-            )
-            if not resp.is_success:
-                print(f"  WARNING: HTTP {resp.status_code} for '{keyword}' page={page}")
-                break
-        except Exception as e:
-            print(f"  WARNING: Request failed for '{keyword}' page={page}: {e}")
-            break
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        if page == 1:
-            count_el = soup.select_one("._count")
-            if count_el:
-                m = re.search(r"[\d,]+", count_el.text)
-                if m:
-                    total_items = int(m.group().replace(",", ""))
-
-        cards = soup.select(
-            "[data-track-container] .searchresultitem, "
-            ".dui-card.searchresultitem, "
-            "div.searchresultitem"
-        )
-        if not cards:
-            cards = soup.select("[class*='searchresultitem']")
-        if not cards:
-            break
-
-        page_size = len(cards)
-        for i, card in enumerate(cards):
-            rank = (page - 1) * 45 + i + 1
-            card_shop_id = card.get("data-shop-id", "")
-            card_type = card.get("data-card-type", "item")
-            if str(card_shop_id) == SHOP_ID:
-                my_ranks.append({"rank": rank, "page": page, "card_type": card_type})
-
-        if page_size < 45:
-            break
-        time.sleep(1.5)
-
-    return {"keyword": keyword, "total_items": total_items, "my_ranks": my_ranks}
+POLL_INTERVAL_SEC = 15
+MAX_WAIT_SEC = 3000
 
 
 def main():
-    with httpx.Client(timeout=30) as api:
-        res = api.get(f"{BACKEND}/api/seo/keywords?active_only=true")
+    with httpx.Client(timeout=30) as client:
+        print("SEO順位チェックジョブを開始します（Renderサーバー側で実行）...")
+        res = client.post(f"{BACKEND}/api/seo/check")
         res.raise_for_status()
-        keywords = res.json().get("keywords", [])
+        job_id = res.json()["job_id"]
+        print(f"job_id={job_id}")
 
-    print(f"チェック対象: {len(keywords)}件")
-    if not keywords:
-        return
+        waited = 0
+        while waited < MAX_WAIT_SEC:
+            time.sleep(POLL_INTERVAL_SEC)
+            waited += POLL_INTERVAL_SEC
+            status_res = client.get(f"{BACKEND}/api/seo/check/status/{job_id}")
+            status_res.raise_for_status()
+            data = status_res.json()
+            if data["status"] == "done":
+                results = data.get("results", [])
+                errors = [r for r in results if r.get("error")]
+                ok = [r for r in results if not r.get("error")]
+                hit = [r for r in ok if r.get("ranks")]
+                print(f"完了: {len(results)}件処理, ヒット{len(hit)}件, 圏外{len(ok) - len(hit)}件, エラー{len(errors)}件")
+                for r in errors[:10]:
+                    print(f"  ERROR: {r.get('keyword')}: {r.get('error')}")
+                return
+            if data["status"] == "error":
+                print(f"ジョブ失敗: {data.get('error')}")
+                raise SystemExit(1)
+            print(f"実行中... ({waited}秒経過)")
 
-    now = datetime.now(JST)
-    checked_at = now.isoformat()
-    results = []
-    errors = 0
-
-    with httpx.Client() as scraper:
-        for i, kw in enumerate(keywords):
-            print(f"[{i+1}/{len(keywords)}] {kw['keyword']} (SKU: {kw.get('product_sku', '-')})")
-            try:
-                data = scrape_ranking(scraper, kw["keyword"])
-            except Exception as e:
-                print(f"  ERROR: {e}")
-                errors += 1
-                results.append({
-                    "seo_keyword_id": kw["id"],
-                    "keyword": kw["keyword"],
-                    "product_sku": kw.get("product_sku"),
-                    "rank": None,
-                    "page": None,
-                    "total_items": None,
-                    "card_type": None,
-                })
-                continue
-
-            if data["my_ranks"]:
-                for r in data["my_ranks"]:
-                    results.append({
-                        "seo_keyword_id": kw["id"],
-                        "keyword": kw["keyword"],
-                        "product_sku": kw.get("product_sku"),
-                        "rank": r["rank"],
-                        "page": r["page"],
-                        "total_items": data["total_items"],
-                        "card_type": r["card_type"],
-                    })
-                    best = min(r["rank"] for r in data["my_ranks"])
-                    print(f"  -> {best}位")
-            else:
-                results.append({
-                    "seo_keyword_id": kw["id"],
-                    "keyword": kw["keyword"],
-                    "product_sku": kw.get("product_sku"),
-                    "rank": None,
-                    "page": None,
-                    "total_items": data["total_items"],
-                    "card_type": None,
-                })
-                print("  -> 圏外")
-
-            time.sleep(2)
-
-    print(f"\nスクレイピング完了: {len(results)}件, エラー: {errors}件")
-
-    BATCH = 100
-    with httpx.Client(timeout=300) as api:
-        for i in range(0, len(results), BATCH):
-            batch = results[i:i + BATCH]
-            res = api.post(
-                f"{BACKEND}/api/seo/rankings/bulk",
-                json={"checked_at": checked_at, "results": batch},
-            )
-            res.raise_for_status()
-            r = res.json()
-            print(f"  送信済み: {r.get('imported', 0)}件")
-
-    print("完了")
+        print("タイムアウト: ジョブが時間内に完了しませんでした")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

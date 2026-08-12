@@ -1,83 +1,71 @@
 import httpx
-from bs4 import BeautifulSoup
 import logging
-import asyncio
-import re
 
 logger = logging.getLogger("rakuten_seo")
 
-SEARCH_URL = "https://search.rakuten.co.jp/search/mall/{keyword}/"
-MISORA_SHOP_ID = "411150"
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-}
+SEARCH_API_URL = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701"
+MISORA_SHOP_CODE = "misora-mart"
+HITS_PER_PAGE = 30
 
 
-async def check_ranking(keyword: str, shop_id: str = MISORA_SHOP_ID,
-                        max_pages: int = 5) -> dict:
-    results = []
+async def check_ranking(keyword: str, shop_code: str = MISORA_SHOP_CODE,
+                        max_pages: int = 8) -> dict:
+    """楽天ウェブサービス IchibaItem/Search で自店舗の検索順位を調べる。
+    sort=standardで楽天の検索結果と同じ並び順を取得する。"""
+    from app.core.config import settings
+
+    if not settings.RAKUTEN_APP_ID or not settings.RAKUTEN_ACCESS_KEY:
+        raise Exception("RAKUTEN_APP_ID/RAKUTEN_ACCESS_KEYが未設定です")
+
     my_ranks = []
     total_items = 0
 
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers=HEADERS) as client:
+    async with httpx.AsyncClient(timeout=20) as client:
         for page in range(1, max_pages + 1):
-            url = SEARCH_URL.format(keyword=httpx.URL(keyword).raw_path.decode() if False else keyword)
-            params = {}
-            if page > 1:
-                params["p"] = page
+            params = {
+                "applicationId": settings.RAKUTEN_APP_ID,
+                "accessKey": settings.RAKUTEN_ACCESS_KEY,
+                "keyword": keyword,
+                "sort": "standard",
+                "hits": HITS_PER_PAGE,
+                "page": page,
+            }
             try:
-                resp = await client.get(
-                    f"https://search.rakuten.co.jp/search/mall/{keyword}/",
-                    params=params,
-                )
+                resp = await client.get(SEARCH_API_URL, params=params)
                 if not resp.is_success:
-                    logger.warning(f"楽天検索エラー: {resp.status_code} page={page}")
+                    logger.warning(f"楽天API検索エラー: {resp.status_code} keyword={keyword} page={page} body={resp.text[:300]}")
                     break
+                data = resp.json()
             except Exception as e:
-                logger.warning(f"楽天検索リクエスト失敗: {e}")
+                logger.warning(f"楽天API検索リクエスト失敗: keyword={keyword} page={page} error={e}")
                 break
-
-            soup = BeautifulSoup(resp.text, "html.parser")
 
             if page == 1:
-                count_el = soup.select_one("._count")
-                if count_el:
-                    m = re.search(r"[\d,]+", count_el.text)
-                    if m:
-                        total_items = int(m.group().replace(",", ""))
+                total_items = data.get("count", 0)
 
-            cards = soup.select("[data-track-container] .searchresultitem, .dui-card.searchresultitem, div.searchresultitem")
-            if not cards:
-                cards = soup.select("[class*='searchresultitem']")
-
-            if not cards:
+            items = data.get("Items", [])
+            if not items:
                 break
 
-            page_size = len(cards)
-            for i, card in enumerate(cards):
-                rank = (page - 1) * 45 + i + 1
-                card_shop_id = card.get("data-shop-id", "")
-                card_type = card.get("data-card-type", "item")
-
-                if str(card_shop_id) == str(shop_id):
+            for i, wrapped in enumerate(items):
+                item = wrapped.get("Item", wrapped)
+                rank = (page - 1) * HITS_PER_PAGE + i + 1
+                if item.get("shopCode") == shop_code:
                     my_ranks.append({
                         "rank": rank,
                         "page": page,
-                        "card_type": card_type,
+                        "card_type": "item",
                     })
 
-            if page_size < 45:
+            if len(items) < HITS_PER_PAGE:
                 break
-
-            await asyncio.sleep(1.5)
+            if page * HITS_PER_PAGE >= total_items:
+                break
 
     return {
         "keyword": keyword,
-        "shop_id": shop_id,
+        "shop_id": shop_code,
         "total_items": total_items,
-        "searched_pages": min(max_pages, max(1, len(results) + 1 if not my_ranks else max_pages)),
+        "searched_pages": max_pages,
         "my_ranks": my_ranks,
     }
