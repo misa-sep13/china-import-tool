@@ -159,6 +159,25 @@ async def check_single(keyword: str):
     return data
 
 
+@router.get("/_outbound-ip")
+async def _outbound_ip():
+    """RenderからのアウトバウンドIPを確認する（楽天APIのIPホワイトリスト登録用）。
+    確認が済んだら削除する一時的なエンドポイント。"""
+    import httpx
+    out = {}
+    async with httpx.AsyncClient(timeout=15) as client:
+        for name, url in (
+            ("ipify", "https://api.ipify.org?format=json"),
+            ("aws", "https://checkip.amazonaws.com"),
+        ):
+            try:
+                r = await client.get(url)
+                out[name] = r.text.strip()
+            except Exception as e:
+                out[name] = f"error: {e}"
+    return out
+
+
 # ---------- 順位履歴 ----------
 
 @router.get("/rankings/{keyword_id}")
