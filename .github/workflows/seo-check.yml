@@ -1,9 +1,11 @@
 name: Daily SEO Ranking Check
 
+# 楽天のAllowed IP設定がCIDR非対応で、Renderの共有IPはデプロイのたびに変わるため、
+# GitHub Actions/Render経由の自動実行では継続的に機能しない。
+# 実際のSEOチェックはローカルPCから scripts/check_seo_rankings_local.py を
+# Windowsタスクスケジューラで実行する運用に切り替えた。
+# このワークフローは楽天ウェブサービスAPI経由の動作確認用に手動実行のみ残す。
 on:
-  schedule:
-    # 毎日 15:00 UTC（= JST 0:00）
-    - cron: '0 15 * * *'
   workflow_dispatch:
 
 jobs:
