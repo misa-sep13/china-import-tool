@@ -19,6 +19,7 @@ async def check_ranking(keyword: str, shop_code: str = MISORA_SHOP_CODE,
 
     my_ranks = []
     total_items = 0
+    debug_error = None
 
     async with httpx.AsyncClient(timeout=20) as client:
         for page in range(1, max_pages + 1):
@@ -34,10 +35,12 @@ async def check_ranking(keyword: str, shop_code: str = MISORA_SHOP_CODE,
                 resp = await client.get(SEARCH_API_URL, params=params)
                 if not resp.is_success:
                     logger.warning(f"楽天API検索エラー: {resp.status_code} keyword={keyword} page={page} body={resp.text[:300]}")
+                    debug_error = f"HTTP {resp.status_code}: {resp.text[:300]}"
                     break
                 data = resp.json()
             except Exception as e:
                 logger.warning(f"楽天API検索リクエスト失敗: keyword={keyword} page={page} error={e}")
+                debug_error = f"request error: {e}"
                 break
 
             if page == 1:
@@ -68,4 +71,5 @@ async def check_ranking(keyword: str, shop_code: str = MISORA_SHOP_CODE,
         "total_items": total_items,
         "searched_pages": max_pages,
         "my_ranks": my_ranks,
+        "debug_error": debug_error,
     }
