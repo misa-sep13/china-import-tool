@@ -129,13 +129,20 @@ export default function WelfareInventoryPage() {
     })
   }
 
-  const getWorkDraftValue = (row, draft = {}) => ({
-    name_jp: draft.name_jp ?? row.name_jp ?? '',
-    source_product_name: draft.source_product_name ?? row.name_jp ?? row.source_product_name ?? '',
-    instruction: draft.instruction ?? row.instruction ?? '',
-    remaining_qty: draft.remaining_qty ?? workRemainingQty(row),
-    note: draft.note ?? row.note ?? '',
-  })
+  const getWorkDraftValue = (row, draft = {}) => {
+    // name_jp（商品名）は空文字と未設定を区別しない。
+    // 以前は ?? だけで繋いでいたため、一度でも空文字で保存されると
+    // 以後ずっと「空文字が入っている」扱いになりsource_product_nameへフォールバックできず、
+    // 指示だけを変更しても商品名欄が空になってしまっていた。
+    const fallbackName = row.name_jp || row.source_product_name || ''
+    return {
+      name_jp: draft.name_jp ?? (row.name_jp || ''),
+      source_product_name: draft.source_product_name ?? fallbackName,
+      instruction: draft.instruction ?? row.instruction ?? '',
+      remaining_qty: draft.remaining_qty ?? workRemainingQty(row),
+      note: draft.note ?? row.note ?? '',
+    }
+  }
 
   const updateWorkDraft = (row, patch) => {
     setWorkDrafts(prev => {
@@ -471,7 +478,8 @@ export default function WelfareInventoryPage() {
 
       <div className="top-actions">
         <input
-          style={{ maxWidth: 320, imeMode: 'active' }}
+          className="search-input-ja"
+          style={{ maxWidth: 320 }}
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="SKU・商品名・仕様で検索"

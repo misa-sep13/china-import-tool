@@ -67,8 +67,19 @@ function ShipmentTab() {
     }
   }
 
+  async function excludePastItem(orderId, itemId, excluded) {
+    try {
+      await axios.patch(`${API}/shipment-orders/${orderId}/items/${itemId}/exclude`, { excluded })
+      const res = await axios.get(`${API}/shipment-orders/${orderId}/items`)
+      setPastItems(res.data || [])
+      await loadPastOrders()
+    } catch (e) {
+      alert('対象外の切り替えに失敗しました: ' + (e.response?.data?.detail || e.message))
+    }
+  }
+
   async function receiveRemaining(orderId) {
-    const targets = pastItems.filter(i => !i.is_reflected && i.product_id)
+    const targets = pastItems.filter(i => !i.is_reflected && !i.is_excluded && i.product_id)
     if (targets.length === 0) {
       alert('取り込める行がありません。先に正しいSKUを紐づけてください。')
       return
@@ -354,6 +365,7 @@ function ShipmentTab() {
                                   <th style={{ textAlign: 'right' }}>数量</th>
                                   <th style={{ textAlign: 'left' }}>紐づけ</th>
                                   <th>在庫反映</th>
+                                  <th></th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -376,9 +388,25 @@ function ShipmentTab() {
                                       </select>
                                     </td>
                                     <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
-                                      <span style={{ fontWeight: 700, color: item.is_reflected ? '#22c55e' : '#f59e0b' }}>
-                                        {item.is_reflected ? '反映済' : '未反映'}
-                                      </span>
+                                      {item.is_excluded ? (
+                                        <span style={{ fontWeight: 700, color: '#94a3b8' }}>対象外</span>
+                                      ) : (
+                                        <span style={{ fontWeight: 700, color: item.is_reflected ? '#22c55e' : '#f59e0b' }}>
+                                          {item.is_reflected ? '反映済' : '未反映'}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td style={{ whiteSpace: 'nowrap' }}>
+                                      {!item.is_reflected && (
+                                        <button
+                                          className="btn btn-secondary"
+                                          style={{ fontSize: 11, padding: '2px 8px', color: item.is_excluded ? undefined : '#94a3b8' }}
+                                          title="梱包材など、在庫に入れる必要がない行を未反映カウントから外します"
+                                          onClick={() => excludePastItem(o.id, item.id, !item.is_excluded)}
+                                        >
+                                          {item.is_excluded ? '対象外を解除' : '対象外にする'}
+                                        </button>
+                                      )}
                                     </td>
                                   </tr>
                                 ))}
@@ -387,7 +415,7 @@ function ShipmentTab() {
                           </div>
                           <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                             <button className="btn btn-primary" style={{ fontSize: 13 }} disabled={reimporting} onClick={() => receiveRemaining(o.id)}>
-                              {reimporting ? '取込中...' : `未反映の行を取り込む（${pastItems.filter(i => !i.is_reflected && i.product_id).length}件）`}
+                              {reimporting ? '取込中...' : `未反映の行を取り込む（${pastItems.filter(i => !i.is_reflected && !i.is_excluded && i.product_id).length}件）`}
                             </button>
                             {reimportResult && (
                               <span style={{ fontSize: 12, color: reimportResult.error ? '#dc2626' : '#16a34a' }}>
@@ -748,6 +776,7 @@ export default function RakutenOrderPage() {
           <div style={{ marginBottom: 12 }}>
             <input
               type="text" placeholder="SKU・商品名で絞り込み"
+              className="search-input-ja"
               value={search} onChange={e => setSearch(e.target.value)}
               style={{ width: 280 }}
             />

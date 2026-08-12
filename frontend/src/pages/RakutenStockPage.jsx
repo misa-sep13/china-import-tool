@@ -368,6 +368,7 @@ export default function RakutenStockPage() {
       <div className="card" style={{ padding: '12px 16px', marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
         <input
           type="text" placeholder="SKU・商品名・仕様で絞り込み"
+          className="search-input-ja"
           value={search} onChange={e => setSearch(e.target.value)}
           style={{ width: 220, flex: '0 0 220px' }}
         />

@@ -192,6 +192,7 @@ export default function AnalyticsPage() {
                 <input
                   type="text"
                   placeholder="SKU・商品名・ASINで検索"
+                  className="search-input-ja"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   style={{ padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, width: 220, outline: 'none' }}

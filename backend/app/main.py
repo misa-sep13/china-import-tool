@@ -176,6 +176,8 @@ def _migrate():
         ("order_settings","hold_daily_threshold", "ALTER TABLE order_settings ADD COLUMN hold_daily_threshold FLOAT DEFAULT 0.1"),
         # 配送依頼明細の在庫反映済みフラグ（未反映分だけ再取込するため）
         ("shipment_order_items","is_reflected", "ALTER TABLE shipment_order_items ADD COLUMN is_reflected BOOLEAN DEFAULT FALSE"),
+        # 配送依頼明細の対象外フラグ（梱包材など在庫に入れる必要がない行を未反映カウントから除外）
+        ("shipment_order_items","is_excluded", "ALTER TABLE shipment_order_items ADD COLUMN is_excluded BOOLEAN DEFAULT FALSE"),
         # 発注履歴ステータス管理
         ("order_history","status",            "ALTER TABLE order_history ADD COLUMN status VARCHAR DEFAULT 'ordered'"),
         ("order_history","arrived_at",        "ALTER TABLE order_history ADD COLUMN arrived_at TIMESTAMP"),
