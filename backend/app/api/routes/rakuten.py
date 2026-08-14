@@ -424,6 +424,7 @@ def _sales_summary_out(row: RakutenSalesSummary) -> dict:
         "platform_fee_rate": row.platform_fee_rate,
         "shipping_cost": row.shipping_cost or 0,
         "product_cost": row.product_cost or 0,
+        "cost_rate": row.cost_rate,
         "profit": row.profit or 0,
         "profit_rate": row.profit_rate,
         "rpp_rate": row.rpp_rate,
@@ -479,8 +480,23 @@ def get_sales_summary(period: str, level: str = "parent", db: Session = Depends(
         "units": round(sum((r.units or 0) for r in rows), 2),
         "sales": round(sum((r.sales or 0) for r in rows), 2),
         "profit": round(sum((r.profit or 0) for r in rows), 2),
+        "product_cost": round(sum((r.product_cost or 0) for r in rows), 2),
     }
     totals["profit_rate"] = round(totals["profit"] / totals["sales"] * 100, 2) if totals["sales"] else None
+
+    # 梱包資材は売上原価だが、仕入時点ではどの商品に何枚使うか決まらないので
+    # 商品ごとの原価には配れない。全体の原価率にだけ加算する。
+    from app.models.material_cost import MaterialCost
+    material_cost = (
+        db.query(func.coalesce(func.sum(MaterialCost.total_cost_jpy), 0))
+        .filter(MaterialCost.invoice_date.like(f"{period}%"))
+        .scalar()
+    ) or 0
+    totals["material_cost"] = round(material_cost, 2)
+    total_cost = totals["product_cost"] + material_cost
+    totals["total_cost"] = round(total_cost, 2)
+    totals["cost_rate"] = round(total_cost / totals["sales"] * 100, 2) if totals["sales"] else None
+
     return {
         "import": _sales_import_out(info) if info else None,
         "totals": totals,
@@ -631,6 +647,7 @@ class RakutenProductIn(BaseModel):
     set_components:   Optional[str] = None  # JSON文字列（在庫連動用）
     purchase_components: Optional[str] = None  # JSON文字列（発注用付属品・在庫連動しない）
     is_component:     bool = False          # 単品（セット構成用内部管理）フラグ
+    is_material:      bool = False          # 発送用の梱包資材（商品原価に載せず資材費に計上）
     is_active:        bool = True
 
 class RakutenProductOut(RakutenProductIn):
@@ -1627,6 +1644,7 @@ CSV_COLUMNS = [
     "set_size", "rakuten_item_url", "rakuten_sku_id", "supplier", "standard_stock",
     "stock", "inbound", "sales_30_recent", "sales_30_prev",
     "customer_memo", "notes", "memo", "set_components", "purchase_components", "is_component",
+    "is_material",
 ]
 
 CSV_COLUMN_LABELS = {
@@ -1652,6 +1670,7 @@ CSV_COLUMN_LABELS = {
     "set_components":   "セット構成JSON(在庫連動用)",
     "purchase_components": "発注用付属品JSON(在庫連動しない)",
     "is_component":     "単品フラグ(TRUE/FALSE)",
+    "is_material":      "発送資材フラグ(TRUE/FALSE)",
 }
 
 @router.get("/products/csv/template")
@@ -1703,6 +1722,7 @@ def export_products_csv(db: Session = Depends(get_db)):
             p.set_components or "",
             getattr(p, 'purchase_components', '') or "",
             "TRUE" if p.is_component else "FALSE",
+            "TRUE" if getattr(p, "is_material", False) else "FALSE",
         ])
     output.seek(0)
     content = "﻿" + output.getvalue()
@@ -1790,6 +1810,10 @@ def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_
             "purchase_components": normalized.get("purchase_components") or None,
             "is_component":     is_component,
         }
+        # is_material列が無い古いCSVで既存の資材フラグを消さないよう、
+        # 列が存在するときだけ更新対象に含める
+        if "is_material" in normalized:
+            data["is_material"] = normalized.get("is_material", "").upper() in ("TRUE", "1", "YES", "はい")
 
         existing = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
         if existing:

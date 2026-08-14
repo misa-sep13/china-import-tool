@@ -8,6 +8,15 @@ const fmtYen = (v) => v == null ? '—' : `¥${Math.round(Number(v) || 0).toLoca
 const fmtNum = (v) => Number(v || 0).toLocaleString()
 const fmtPct = (v) => v == null ? '—' : `${Number(v).toFixed(1)}%`
 
+// cost_rateは後から追加した項目なので、既にインポート済みの月はDBに入っていない。
+// その場合は原価と売上から計算して表示する（再インポートしなくても見えるように）
+const costRateOf = (r) => {
+  if (r?.cost_rate != null) return r.cost_rate
+  const sales = Number(r?.sales || 0)
+  if (!sales) return null
+  return Number(r?.product_cost || 0) / sales * 100
+}
+
 function currentMonth() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
@@ -122,11 +131,21 @@ export default function RakutenSalesPage() {
         <ImportGuide />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(130px, 1fr))', gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(130px, 1fr))', gap: 12, marginBottom: 12 }}>
         <Metric label="売上" value={fmtYen(totals.sales)} tone="#2563eb" />
         <Metric label="利益" value={fmtYen(totals.profit)} tone={Number(totals.profit || 0) >= 0 ? '#16a34a' : '#dc2626'} />
         <Metric label="利益率" value={fmtPct(totals.profit_rate)} tone={Number(totals.profit_rate || 0) >= 20 ? '#16a34a' : '#d97706'} />
         <Metric label="販売数" value={fmtNum(totals.units)} tone="#334155" />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(130px, 1fr))', gap: 12, marginBottom: 16 }}>
+        {/* 原価率は商品原価＋梱包資材費。資材は商品ごとに配れないので合計にだけ含める */}
+        <Metric
+          label="原価"
+          value={fmtYen(totals.total_cost)}
+          tone="#b45309"
+          sub={Number(totals.material_cost || 0) > 0 ? `商品 ${fmtYen(totals.product_cost)} ＋ 資材 ${fmtYen(totals.material_cost)}` : undefined}
+        />
+        <Metric label="原価率" value={fmtPct(totals.cost_rate)} tone={Number(totals.cost_rate || 0) <= 40 ? '#16a34a' : '#dc2626'} />
         <Metric label="広告費" value={fmtYen(totalAd)} tone="#7c3aed" />
         <Metric label="広告比率" value={fmtPct(Number(totals.sales || 0) > 0 ? totalAd / Number(totals.sales) * 100 : null)} tone={totalAd / Number(totals.sales || 1) * 100 >= 30 ? '#dc2626' : '#7c3aed'} />
       </div>
@@ -168,6 +187,7 @@ export default function RakutenSalesPage() {
                 <th style={{ textAlign: 'right' }}>楽天手数料</th>
                 <th style={{ textAlign: 'right' }}>送料</th>
                 <th style={{ textAlign: 'right' }}>原価</th>
+                <th style={{ textAlign: 'right' }}>原価率</th>
                 <th style={{ textAlign: 'right' }}>利益</th>
                 <th style={{ textAlign: 'right' }}>利益率</th>
                 <th style={{ textAlign: 'right' }}>RPP比率</th>
@@ -176,10 +196,10 @@ export default function RakutenSalesPage() {
             </thead>
             <tbody>
               {summaryQuery.isLoading && (
-                <tr><td colSpan={level === 'sku' ? 18 : 17} style={{ textAlign: 'center', padding: 32, color: '#999' }}>読み込み中...</td></tr>
+                <tr><td colSpan={level === 'sku' ? 19 : 18} style={{ textAlign: 'center', padding: 32, color: '#999' }}>読み込み中...</td></tr>
               )}
               {!summaryQuery.isLoading && filteredRows.length === 0 && (
-                <tr><td colSpan={level === 'sku' ? 18 : 17} style={{ textAlign: 'center', padding: 32, color: '#999' }}>データがありません</td></tr>
+                <tr><td colSpan={level === 'sku' ? 19 : 18} style={{ textAlign: 'center', padding: 32, color: '#999' }}>データがありません</td></tr>
               )}
               {filteredRows.map(r => (
                 <tr key={`${r.product_key}-${r.sku_key || ''}`}>
@@ -197,6 +217,7 @@ export default function RakutenSalesPage() {
                   <td style={{ textAlign: 'right' }}>{fmtYen(r.platform_fee)}</td>
                   <td style={{ textAlign: 'right' }}>{fmtYen(r.shipping_cost)}</td>
                   <td style={{ textAlign: 'right' }}>{fmtYen(r.product_cost)}</td>
+                  <td style={{ textAlign: 'right', color: Number(costRateOf(r) || 0) <= 40 ? '#16a34a' : '#dc2626' }}>{fmtPct(costRateOf(r))}</td>
                   <td style={{ textAlign: 'right', fontWeight: 700, color: Number(r.profit || 0) >= 0 ? '#16a34a' : '#dc2626' }}>{fmtYen(r.profit)}</td>
                   <td style={{ textAlign: 'right', fontWeight: 700, color: Number(r.profit_rate || 0) >= 20 ? '#16a34a' : '#d97706' }}>{fmtPct(r.profit_rate)}</td>
                   <td style={{ textAlign: 'right' }}>{fmtPct(r.rpp_rate)}</td>
@@ -264,11 +285,12 @@ function ImportGuide() {
   )
 }
 
-function Metric({ label, value, tone }) {
+function Metric({ label, value, tone, sub }) {
   return (
     <div className="card" style={{ marginBottom: 0, padding: '14px 16px', borderTop: `3px solid ${tone}` }}>
       <div style={{ color: '#64748b', fontSize: 12, marginBottom: 6 }}>{label}</div>
       <div style={{ color: tone, fontSize: 18, fontWeight: 800 }}>{value}</div>
+      {sub && <div style={{ color: '#64748b', fontSize: 11, marginTop: 4 }}>{sub}</div>}
     </div>
   )
 }

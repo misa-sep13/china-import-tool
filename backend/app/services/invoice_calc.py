@@ -3,8 +3,141 @@
 輸入許可書の申告欄ごとの関税率を使った税額計算は、楽天・Amazonで同じ仕組みなので
 ここに集約する。元は rakuten.py にあったものを、ルータのスキーマに依存しない形へ
 切り出した（計算内容は変更していない）。
+
+明細の分類（classify_invoice_lines）もここに置く。1便に楽天商品・Amazon商品・
+発送資材が混ざるため、どちらのマスタも見て振り分ける必要がある。
 """
 import re
+
+
+# 明細の行き先
+KIND_RAKUTEN = "rakuten"      # 楽天商品 → 楽天マスタのcost_jpyへ
+KIND_AMAZON = "amazon"        # Amazon商品 → Amazonマスタのcost_jpyへ
+KIND_MATERIAL = "material"    # 発送資材 → 資材費として記録（商品原価に載せない）
+KIND_UNKNOWN = "unknown"      # どのマスタにも無い → カバー率の警告対象
+
+
+def classify_invoice_lines(db, items, url_key_fn=None) -> list[dict]:
+    """インボイス明細を「楽天商品 / Amazon商品 / 発送資材 / 未登録」に振り分ける。
+
+    1便に楽天とAmazonの商品が混載されるため、片方のマスタだけを見ると
+    相手側の明細が按分対象から漏れ、その分の送料・税がどの原価にもならず消える。
+    （実測: カバー率50%の便で送料・税の半分が行方不明になっていた）
+
+    そのため両方のマスタを照合し、便の実額を全明細へ配り切れるようにする。
+
+    items: sku / buy_url / asin を持つ明細オブジェクトのリスト
+    url_key_fn: 仕入URLを正規化する関数（楽天の_url_keyを渡す。省略時はURL照合しない）
+    戻り値: [{index, kind, product, source}] のリスト
+    """
+    from app.models.product import Product
+    from app.models.rakuten_product import RakutenProduct
+
+    # URL照合用に一度だけ全件読む（明細ごとにクエリを投げると便あたり数百回になる）
+    rak_by_url = {}
+    amz_by_url = {}
+    if url_key_fn:
+        for p in db.query(RakutenProduct).filter(
+            RakutenProduct.is_active == True,  # noqa: E712
+            RakutenProduct.buy_url != None,    # noqa: E711
+        ).all():
+            k = url_key_fn(p.buy_url)
+            if k and k not in rak_by_url:
+                rak_by_url[k] = p
+        for p in db.query(Product).filter(
+            Product.is_active == True,  # noqa: E712
+            Product.buy_url != None,    # noqa: E711
+        ).all():
+            k = url_key_fn(p.buy_url)
+            if k and k not in amz_by_url:
+                amz_by_url[k] = p
+
+    result = []
+    for idx, item in enumerate(items):
+        sku = (getattr(item, "sku", "") or "").strip()
+        asin = (getattr(item, "asin", "") or "").strip()
+        buy_url = getattr(item, "buy_url", "") or ""
+        product = None
+        kind = KIND_UNKNOWN
+
+        # 1) 楽天マスタ: SKU一致
+        if sku:
+            p = db.query(RakutenProduct).filter(
+                RakutenProduct.sku == sku,
+                RakutenProduct.is_active == True,  # noqa: E712
+            ).first()
+            if p:
+                product, kind = p, KIND_RAKUTEN
+
+        # 2) Amazonマスタ: SKU一致 → ASIN一致
+        if product is None and sku:
+            p = db.query(Product).filter(
+                Product.sku == sku,
+                Product.is_active == True,  # noqa: E712
+            ).first()
+            if p:
+                product, kind = p, KIND_AMAZON
+        if product is None and asin:
+            p = db.query(Product).filter(
+                Product.asin == asin,
+                Product.is_active == True,  # noqa: E712
+            ).first()
+            if p:
+                product, kind = p, KIND_AMAZON
+
+        # 3) 仕入URLで照合（SKUが伝票に入っていない便向け）
+        if product is None and url_key_fn:
+            k = url_key_fn(buy_url)
+            if k:
+                if k in rak_by_url:
+                    product, kind = rak_by_url[k], KIND_RAKUTEN
+                elif k in amz_by_url:
+                    product, kind = amz_by_url[k], KIND_AMAZON
+
+        # 資材フラグが立っていれば、どちらのマスタで見つかっても資材として扱う
+        if product is not None and getattr(product, "is_material", False):
+            kind = KIND_MATERIAL
+
+        result.append({
+            "index": idx,
+            "kind": kind,
+            "product": product,
+            "source": KIND_RAKUTEN if kind == KIND_RAKUTEN else (
+                KIND_AMAZON if kind == KIND_AMAZON else (
+                    # 資材はどちらのマスタで見つかったかを保持する
+                    KIND_RAKUTEN if isinstance(product, RakutenProduct) else KIND_AMAZON
+                ) if product is not None else ""
+            ),
+        })
+    return result
+
+
+def calc_coverage(classified: list[dict], item_totals: list[float]) -> dict:
+    """カバー率（母数完全性）を返す。
+
+    どのマスタにも無い明細が混ざっている便では、その明細に按分された送料・税が
+    どの原価にもならず消える。何割が原価に反映されたかを出して画面で警告する。
+    """
+    total = sum(item_totals) or 0.0
+    covered = sum(
+        item_totals[c["index"]] for c in classified if c["kind"] != KIND_UNKNOWN
+    )
+    unknown_rows = [c["index"] for c in classified if c["kind"] == KIND_UNKNOWN]
+    rate = (covered / total * 100) if total > 0 else 100.0
+    if rate >= 95:
+        level = "ok"
+    elif rate >= 80:
+        level = "low"       # 使うが精度低め
+    else:
+        level = "critical"  # 代表原価から外すべき
+    return {
+        "coverage_rate": round(rate, 1),
+        "covered_cny": round(covered, 2),
+        "total_cny": round(total, 2),
+        "unknown_count": len(unknown_rows),
+        "unknown_indexes": unknown_rows,
+        "level": level,
+    }
 
 
 def parse_permit_columns(text: str) -> list[dict]:

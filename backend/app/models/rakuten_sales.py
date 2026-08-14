@@ -57,6 +57,7 @@ class RakutenSalesSummary(Base):
     platform_fee_rate = Column(Float, default=0)
     shipping_cost = Column(Float, default=0)
     product_cost = Column(Float, default=0)
+    cost_rate = Column(Float)                  # 原価率(%) = 原価 ÷ 売上高
     profit = Column(Float, default=0)
     profit_rate = Column(Float)
     rpp_rate = Column(Float)

@@ -32,6 +32,11 @@ class Product(Base):
     # FBA在庫の計算には一切関与しない（main.pyの在庫連動ロジックはこれを参照しない）
     purchase_components = Column(Text, nullable=True)
     is_component = Column(Boolean, default=False)  # 付属品（他商品から参照される側）フラグ
+    # 発送用の梱包資材（宅配袋・ダンボール等）。is_componentとは別物で、
+    # is_component=商品に付属して一緒に売るもの（売上原価）、
+    # is_material=商品を届けるために使うもの（販売費）。
+    # 仕入時に送料・税の按分は受けるが、商品原価(cost_jpy)には計上しない。
+    is_material = Column(Boolean, default=False)
     # 利益計算用
     selling_price = Column(Float, nullable=True)       # 販売価格（円）
     fba_fee = Column(Float, nullable=True)             # FBA手数料（円）

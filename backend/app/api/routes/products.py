@@ -32,6 +32,7 @@ class ProductCreate(BaseModel):
     category: Optional[str] = "標準"
     purchase_components: Optional[str] = None  # JSON文字列（発注用付属品・在庫連動しない）
     is_component: Optional[bool] = False       # 付属品（他商品から参照される側）フラグ
+    is_material: Optional[bool] = False        # 発送用の梱包資材（商品原価に載せず資材費に計上）
 
 def _restore_deleted_product(existing: Product, data: ProductCreate, db: Session) -> Product:
     for k, v in data.model_dump().items():
@@ -70,6 +71,7 @@ class ProductUpdate(BaseModel):
     category: Optional[str] = None
     purchase_components: Optional[str] = None
     is_component: Optional[bool] = None
+    is_material: Optional[bool] = None
 
 class ProductOut(ProductCreate):
     id: int

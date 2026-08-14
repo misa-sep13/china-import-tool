@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import Base, engine
 from app.api.routes import products, orders, settings, fba, invoices, price_adjustments, analytics, shipment_orders, fba_plan
 from app.api.routes import inventory_snapshots
+from app.api.routes import material_costs
 from app.api.routes import welfare
 from app.api.routes import rakuten
 from app.api.routes import ads
@@ -28,6 +29,7 @@ from app.models import seo as seo_models
 from app.models import rakuten_daily_sales as rakuten_daily_sales_models
 from app.models import rms_push_failure as rms_push_failure_models
 from app.models import inventory_snapshot as inventory_snapshot_models
+from app.models import material_cost as material_cost_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -155,8 +157,13 @@ def _migrate():
         # Amazon商品マスタ：発注用付属品（楽天のpurchase_componentsと同じ役割）
         ("products","purchase_components",   "ALTER TABLE products ADD COLUMN purchase_components TEXT"),
         ("products","is_component",          "ALTER TABLE products ADD COLUMN is_component BOOLEAN DEFAULT FALSE"),
+        # 発送用の梱包資材フラグ（宅配袋等）。商品原価には計上せず資材費として集計する
+        ("products","is_material",           "ALTER TABLE products ADD COLUMN is_material BOOLEAN DEFAULT FALSE"),
+        ("rakuten_products","is_material",   "ALTER TABLE rakuten_products ADD COLUMN is_material BOOLEAN DEFAULT FALSE"),
         # 売上管理：広告比率カラム
         ("rakuten_sales_summaries","ad_rate", "ALTER TABLE rakuten_sales_summaries ADD COLUMN ad_rate FLOAT"),
+        # 売上管理：原価率（原価÷売上高）
+        ("rakuten_sales_summaries","cost_rate", "ALTER TABLE rakuten_sales_summaries ADD COLUMN cost_rate FLOAT"),
         # レビューキャンペーン：判定キーワード
         ("review_campaigns","keywords", "ALTER TABLE review_campaigns ADD COLUMN keywords TEXT"),
         # キーワード分析：商品管理番号
@@ -1169,6 +1176,7 @@ app.include_router(keyword_analysis_routes.router, prefix="/api")
 app.include_router(seo_routes.router, prefix="/api")
 app.include_router(fba_plan.router, prefix="/api")
 app.include_router(inventory_snapshots.router, prefix="/api")
+app.include_router(material_costs.router, prefix="/api")
 
 @app.get("/")
 def root():
