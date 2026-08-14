@@ -190,6 +190,19 @@ def parse_permit_columns(text: str) -> list[dict]:
         if n:
             bpr_coeff = float(n.group(1).replace(",", ""))
 
+        # 欄ごとの内国消費税の実額。税率から再計算すると許可書と合わないため
+        # （税関の評価額は運賃・保険込みで、商品代×為替とは一致しない）、
+        # 紙に書いてある額をそのまま使う。
+        consumption_tax_jpy = 0
+        n = re.search(r"税率\s+7\.8%\s*\n?\s*税額\s*[\\¥￥]?\s*([0-9,]+)", after)
+        if n:
+            consumption_tax_jpy = int(n.group(1).replace(",", ""))
+
+        local_tax_jpy = 0
+        n = re.search(r"税率\s+22/78\s*\n?\s*税額\s*[\\¥￥]?\s*([0-9,]+)", after)
+        if n:
+            local_tax_jpy = int(n.group(1).replace(",", ""))
+
         columns.append({
             "col_no": col_no,
             "item_name": item_name,
@@ -198,6 +211,8 @@ def parse_permit_columns(text: str) -> list[dict]:
             "tariff_rate": tariff_rate,
             "tariff_rate_str": tariff_rate_str,
             "duty_jpy": duty_jpy,
+            "consumption_tax_jpy": consumption_tax_jpy,
+            "local_tax_jpy": local_tax_jpy,
             "bpr_coeff": bpr_coeff,
         })
     return columns
@@ -342,6 +357,12 @@ def calc_tariff_tax(
         for j, ui in enumerate(unassigned):
             assignments[ui] = auto_assignments[j]
 
+    # 欄ごとに、その欄へ割り当たった商品の金額合計を出す（実額を配る母数）
+    col_item_totals: dict[int, float] = {}
+    for i, (_, item_total) in enumerate(items_with_totals):
+        ci = assignments[i] if assignments[i] is not None else 0
+        col_item_totals[ci] = col_item_totals.get(ci, 0.0) + item_total
+
     result = {}
     for i, (item_idx, item_total) in enumerate(items_with_totals):
         col_idx = assignments[i]
@@ -349,17 +370,20 @@ def calc_tariff_tax(
             col_idx = 0
         col = col_dicts[col_idx]
         tariff_rate = col["tariff_rate"]
-        item_cif_jpy = round(item_total * exchange_rate)
-        # 送料按分を加えたCIF相当額に関税率を適用
-        total_cny = sum(t for _, t in items_with_totals)
-        total_freight = domestic_freight + international_freight
-        freight_alloc_cny = (item_total / total_cny * total_freight) if total_cny > 0 else 0
-        cif_with_freight_jpy = (item_total + freight_alloc_cny) * exchange_rate
 
-        duty_jpy = round(cif_with_freight_jpy * tariff_rate / 100)
-        taxable = cif_with_freight_jpy + duty_jpy
-        consumption_tax_jpy = round(taxable * 7.8 / 100)
-        local_tax_jpy = round(consumption_tax_jpy * 22 / 78)
+        # 許可書に書かれた実額を、その欄に属する商品の金額比で割り振る。
+        # 税率を掛け直すと許可書と合わない（税関の評価額CIFは運賃・保険込みで、
+        # 商品代×為替より大きい。実測で1.379倍・税額23.8%の乖離があった）。
+        col_total = col_item_totals.get(col_idx, 0.0)
+        share = (item_total / col_total) if col_total > 0 else 0
+
+        col_duty = col.get("duty_jpy") or 0
+        col_consumption = col.get("consumption_tax_jpy") or 0
+        col_local = col.get("local_tax_jpy") or 0
+
+        duty_jpy = round(col_duty * share)
+        consumption_tax_jpy = round(col_consumption * share)
+        local_tax_jpy = round(col_local * share)
 
         result[item_idx] = {
             "tariff_rate": tariff_rate,
