@@ -1188,6 +1188,7 @@ def get_recommendations(db: Session = Depends(get_db)):
         and p.sku not in parent_comp_skus
         and p.sku not in parent_orders
         and not (not p.is_component and p.set_components)  # セット販売商品（parent_ordersに入らなかったもの）は除外
+        and not getattr(p, "is_material", False)  # 発送資材は販売商品ではないので発注推奨に出さない
     ]
 
     # 通常単品 + 親発注品を合わせて計算
@@ -1293,8 +1294,14 @@ def get_all_products_order(db: Session = Depends(get_db)):
             unit_sales[unit_sku]["prev"]   += (p.sales_30_prev   or 0) * qty
 
     # is_component=False・buy_urlあり（内部SKUのみ除外、セット組・本体はすべて表示）
+    # 発送資材(is_material)は販売商品ではないので在庫一覧にも出さない
     targets = sorted(
-        [p for p in all_products if not p.is_component and (p.buy_url or "").strip()],
+        [
+            p for p in all_products
+            if not p.is_component
+            and not getattr(p, "is_material", False)
+            and (p.buy_url or "").strip()
+        ],
         key=lambda p: p.sku or ""
     )
     items = []

@@ -368,6 +368,49 @@ export default function RakutenInvoicePage() {
             総原価: ¥{calculated.grand_total_jpy?.toLocaleString()}
             {calculated.skipped ? ` ／ スキップ: ${calculated.skipped}件` : ''}
           </div>
+
+          {/* 未登録の明細があると、その分の送料・税がどの原価にもならず消える。
+              新しい発送資材を登録し忘れたときもここで気づけるようにする */}
+          {calculated.coverage && calculated.coverage.unknown_count > 0 && (
+            <div style={{
+              marginBottom: 12, padding: '10px 14px', borderRadius: 6, fontSize: 13,
+              background: calculated.coverage.level === 'critical' ? '#fef2f2' : '#fffbeb',
+              border: `1px solid ${calculated.coverage.level === 'critical' ? '#fca5a5' : '#fcd34d'}`,
+              color: calculated.coverage.level === 'critical' ? '#991b1b' : '#92400e',
+            }}>
+              <b>⚠ 商品マスタに無い明細が {calculated.coverage.unknown_count} 件あります</b>
+              （カバー率 {calculated.coverage.coverage_rate}%）
+              <div style={{ marginTop: 4, fontSize: 12 }}>
+                未登録の明細に按分された送料・輸入税は、どの商品の原価にもなりません。
+                発送資材（宅配袋など）の場合は、商品マスタに登録して
+                「発送資材」にチェックを入れると資材費として計上されます。
+              </div>
+              {calculated.coverage.unknown_indexes?.length > 0 && (
+                <div style={{ marginTop: 6, fontSize: 12 }}>
+                  該当行: {calculated.coverage.unknown_indexes.map(i => {
+                    const it = parsed?.items?.[i]
+                    return it ? (it.name_jp || it.sku || `${i + 1}行目`) : `${i + 1}行目`
+                  }).join(' / ')}
+                </div>
+              )}
+            </div>
+          )}
+
+          {calculated.materials?.length > 0 && (
+            <div style={{
+              marginBottom: 12, padding: '10px 14px', borderRadius: 6, fontSize: 13,
+              background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af',
+            }}>
+              <b>📦 発送資材 {calculated.materials.length} 件</b>
+              （合計 ¥{(calculated.material_total_jpy || 0).toLocaleString()}）
+              <div style={{ marginTop: 4, fontSize: 12 }}>
+                商品原価には含めず、資材費として月次で集計します。
+              </div>
+              <div style={{ marginTop: 6, fontSize: 12 }}>
+                {calculated.materials.map(m => `${m.name || m.sku}（¥${Math.round(m.total_cost_jpy).toLocaleString()}）`).join(' / ')}
+              </div>
+            </div>
+          )}
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
