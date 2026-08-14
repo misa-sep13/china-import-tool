@@ -89,17 +89,25 @@ async def parse_excel(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="商品データが見つかりません")
 
     items = []
+    added_value = 0
     domestic_freight = 0
     international_freight = 0
 
     for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
-        if row[0] and str(row[0]).startswith("Domestic"):
+        label = str(row[0]) if row[0] else ""
+        # Added Value(増値費用)は検品・ラベル貼付などの加工費。便全体で1行にまとまっており
+        # 商品ごとの内訳は無いので、国内送料と同じく金額比で按分する。
+        # これを拾わないと原価に一切反映されず、丸ごと漏れる。
+        if label and ("Added Value" in label or "增值" in label or "増値" in label):
+            added_value = row[8] or 0
+            continue
+        if label.startswith("Domestic") or "国内运费" in label or "国内送料" in label:
             domestic_freight = row[8] or 0
             continue
-        if row[0] and str(row[0]).startswith("International"):
+        if label.startswith("International") or "国际运费" in label or "国際送料" in label:
             international_freight = row[8] or 0
             continue
-        if row[0] and str(row[0]).startswith("MADE IN"):
+        if label.startswith("MADE IN"):
             break
         if row[0] is None and row[6] and row[7]:
             asin_val = str(row[col_asin] or "") if col_asin is not None and col_asin < len(row) else ""
@@ -126,8 +134,10 @@ async def parse_excel(file: UploadFile = File(...)):
 
     return {
         "invoice_no": invoice_no,
-        "domestic_freight": domestic_freight,
-        "international_freight": international_freight,
+        # 楽天版と同じく Added Value は国内送料に合算して按分対象にする
+        "domestic_freight": round(domestic_freight + added_value, 2),
+        "added_value": round(added_value, 2),  # 内訳確認用
+        "international_freight": round(international_freight, 2),
         "total_weight": round(total_weight, 2),
         "total_volume": round(total_volume, 4),
         "items": items,
@@ -253,20 +263,29 @@ def _find_invoice_product(db: Session, item: InvoiceItemIn):
 def _build_cost_rows(data: InvoiceIn, db: Session):
     """明細ごとの原価を計算する。calculate と save で同じ結果になるよう共通化する。
 
-    - SKUが空欄の行は対象外としてスキップ（Amazon以外の同梱品など）
+    1便に楽天商品・Amazon商品・発送資材が混載されるため、両方のマスタを照合して
+    便の実額（送料・税）を全明細へ配り切る。片方のマスタだけを見ていた頃は、
+    相手側の明細が按分の分母には残るのに原価には反映されず、その分が消えていた。
+
     - permit_columns があれば申告欄ごとの税率、無ければ金額比の一律按分
     - 原価 = (小計 + 按分送料) × 為替 + 按分税額 を set_size で割った1個あたり
+    - 資材(is_material)は商品原価を更新せず、資材費として別途記録する
+    - どのマスタにも無い明細はカバー率として警告する
     """
     total_cny = sum(i.qty * i.unit_price_cny for i in data.items)
     total_freight = data.domestic_freight + data.international_freight
     import_tax_jpy = data.import_tax_jpy or 0
     use_tariff = bool(data.permit_columns)
 
-    valid_items = [
-        (idx, item.qty * item.unit_price_cny)
-        for idx, item in enumerate(data.items)
-        if (item.sku or "").strip()
-    ]
+    classified = invoice_calc.classify_invoice_lines(db, data.items)
+    kind_by_index = {c["index"]: c["kind"] for c in classified}
+    product_by_index = {c["index"]: c["product"] for c in classified}
+
+    item_totals = [i.qty * i.unit_price_cny for i in data.items]
+    coverage = invoice_calc.calc_coverage(classified, item_totals)
+
+    # 税額の按分対象は全明細。資材や相手側商品を外すと、その分の税が宙に浮く
+    valid_items = [(idx, total) for idx, total in enumerate(item_totals)]
 
     tariff_info = {}
     if use_tariff and valid_items:
@@ -280,12 +299,10 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
         )
 
     rows = []
-    skipped = 0
+    material_rows = []
+    unknown = 0
     for idx, item in enumerate(data.items):
-        if not (item.sku or "").strip():
-            skipped += 1
-            continue
-        item_total = item.qty * item.unit_price_cny
+        item_total = item_totals[idx]
         freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
 
         ti = tariff_info.get(idx) if use_tariff else None
@@ -294,17 +311,37 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
         else:
             tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
 
-        product = _find_invoice_product(db, item)
+        kind = kind_by_index.get(idx, invoice_calc.KIND_UNKNOWN)
+        product = product_by_index.get(idx)
+        total_cost_jpy = (item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy
+
+        if kind == invoice_calc.KIND_MATERIAL:
+            # 梱包資材は売上原価だが、仕入時点ではどの商品に何枚使うか決まらないので
+            # 商品ごとの原価には配らず、資材費として月次で集計する
+            material_rows.append({
+                "index": idx,
+                "item": item,
+                "product": product,
+                "total_price_cny": round(item_total, 2),
+                "freight_alloc_cny": round(freight_alloc, 2),
+                "tax_alloc_jpy": round(tax_alloc_jpy, 1),
+                "total_cost_jpy": round(total_cost_jpy, 1),
+            })
+            continue
+
+        if kind == invoice_calc.KIND_UNKNOWN:
+            unknown += 1
+            continue
+
         set_size = (product.set_size or 1) if product else 1
         sell_units = item.qty / set_size if item.qty > 0 else 0
-        cost_jpy = (
-            ((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / sell_units
-        ) if sell_units > 0 else 0
+        cost_jpy = (total_cost_jpy / sell_units) if sell_units > 0 else 0
 
         rows.append({
             "index": idx,
             "item": item,
             "product": product,
+            "kind": kind,
             "total_price_cny": round(item_total, 2),
             "freight_alloc_cny": round(freight_alloc, 2),
             "tax_alloc_jpy": round(tax_alloc_jpy, 1),
@@ -318,7 +355,9 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
 
     return {
         "rows": rows,
-        "skipped": skipped,
+        "material_rows": material_rows,
+        "skipped": unknown,
+        "coverage": coverage,
         "total_cny": total_cny,
         "total_freight_cny": total_freight,
         "import_tax_jpy": import_tax_jpy,
@@ -348,10 +387,26 @@ def calculate_cost(data: InvoiceIn, db: Session = Depends(get_db)):
             "duty_jpy": r["duty_jpy"],
         })
 
+    materials = [
+        {
+            "sku": r["item"].sku,
+            "name": (r["product"].name if r["product"] else "") or r["item"].name_jp,
+            "qty": r["item"].qty,
+            "total_price_cny": r["total_price_cny"],
+            "freight_alloc_cny": r["freight_alloc_cny"],
+            "tax_alloc_jpy": r["tax_alloc_jpy"],
+            "total_cost_jpy": r["total_cost_jpy"],
+        }
+        for r in calc["material_rows"]
+    ]
+
     total_cny = calc["total_cny"]
     total_freight = calc["total_freight_cny"]
     return {
         "items": items,
+        "materials": materials,
+        "material_total_jpy": round(sum(m["total_cost_jpy"] for m in materials), 0),
+        "coverage": calc["coverage"],
         "skipped": calc["skipped"],
         "use_tariff": calc["use_tariff"],
         "total_qty": sum(r["item"].qty for r in calc["rows"]),
@@ -389,14 +444,17 @@ def save_invoice(data: InvoiceIn, db: Session = Depends(get_db)):
     db.flush()
 
     updated_products = 0
+    updated_rakuten = 0
     for r in calc["rows"]:
         item = r["item"]
         product = r["product"]
+        is_amazon = r["kind"] == invoice_calc.KIND_AMAZON
 
         db.add(InvoiceItem(
             invoice_id=invoice.id,
             sku=item.sku,
-            product_id=product.id if product else None,
+            # product_id は Amazon products への外部キーなので、楽天商品ならNoneにする
+            product_id=product.id if (product and is_amazon) else None,
             name_cn=item.name_cn,
             name_jp=item.name_jp or (product.name if product else ""),
             qty=item.qty,
@@ -413,16 +471,43 @@ def save_invoice(data: InvoiceIn, db: Session = Depends(get_db)):
 
         # 円建て原価は cost_jpy に入れる。price は元単価のまま残す
         # （price を上書きすると発注管理の「単価(元)」が円に化けるため）
+        # 同じ便に混載された楽天商品も、楽天マスタ側の原価を更新する
         if product:
             product.cost_jpy = r["cost_per_unit_jpy"]
             if item.unit_price_cny:
                 product.price = item.unit_price_cny
-            updated_products += 1
+            if is_amazon:
+                updated_products += 1
+            else:
+                updated_rakuten += 1
+
+    # 発送資材は商品原価に載せず、資材費として月次集計用に記録する
+    from app.models.material_cost import MaterialCost
+    for r in calc["material_rows"]:
+        item = r["item"]
+        product = r["product"]
+        db.add(MaterialCost(
+            invoice_no=data.invoice_no,
+            invoice_date=data.invoice_date,
+            source="amazon",
+            sku=item.sku,
+            name=(product.name if product else "") or item.name_jp,
+            qty=item.qty,
+            unit_price_cny=item.unit_price_cny,
+            total_price_cny=r["total_price_cny"],
+            freight_alloc_cny=r["freight_alloc_cny"],
+            tax_alloc_jpy=r["tax_alloc_jpy"],
+            total_cost_jpy=r["total_cost_jpy"],
+            exchange_rate=data.exchange_rate,
+        ))
 
     db.commit()
     return {
         "invoice_id": invoice.id,
         "updated_products": updated_products,
+        "updated_rakuten": updated_rakuten,
+        "material_count": len(calc["material_rows"]),
+        "coverage": calc["coverage"],
         "skipped": calc["skipped"],
     }
 

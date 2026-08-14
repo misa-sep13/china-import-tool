@@ -2007,7 +2007,10 @@ def _parse_rakuten_invoice_workbook(wb):
 
     return {
         "invoice_no": invoice_no,
+        # Added Value(増値費用=検品・ラベル貼付などの加工費)は便全体で1行にまとまっており
+        # 商品ごとの内訳が無いため、国内送料と同じく金額比で按分する
         "domestic_freight": round(domestic_freight + added_value, 2),
+        "added_value": round(added_value, 2),  # 内訳確認用
         "international_freight": round(international_freight, 2),
         "items": items,
     }
@@ -2234,60 +2237,104 @@ def _calc_tariff_tax(
     )
 
 
-@router.post("/invoices/calculate")
-def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
+def _rakuten_build_cost_rows(data: "RakutenInvoiceIn", db: Session):
+    """明細ごとの原価を計算する。calculate と save で同じ結果になるよう共通化する。
+
+    1便に楽天商品・Amazon商品・発送資材が混載されるため、両方のマスタを照合して
+    便の実額（送料・税）を全明細へ配り切る。楽天マスタだけを見ていた頃は、
+    Amazon商品の明細が按分の分母には残るのに原価には反映されず、その分が消えていた。
+    """
     total_cny = sum(i.qty * i.unit_price_cny for i in data.items)
     total_freight = data.domestic_freight + data.international_freight
     import_tax_jpy = data.import_tax_jpy or 0
     use_tariff = bool(data.permit_columns)
 
-    # 税率別計算用: 有効な商品のインデックスと金額を収集
-    valid_items: list[tuple[int, float]] = []
-    for idx, item in enumerate(data.items):
-        if not (item.sku or "").strip():
-            continue
-        valid_items.append((idx, item.qty * item.unit_price_cny))
+    classified = invoice_calc.classify_invoice_lines(db, data.items, url_key_fn=_url_key)
+    kind_by_index = {c["index"]: c["kind"] for c in classified}
+    product_by_index = {c["index"]: c["product"] for c in classified}
+
+    item_totals = [i.qty * i.unit_price_cny for i in data.items]
+    coverage = invoice_calc.calc_coverage(classified, item_totals)
+
+    # 税額の按分対象は全明細。資材や相手側商品を外すと、その分の税が宙に浮く
+    valid_items = [(idx, total) for idx, total in enumerate(item_totals)]
 
     tariff_info = {}
     if use_tariff and valid_items:
         tariff_info = _calc_tariff_tax(valid_items, data, data.permit_columns)
 
-    result = []
-    skipped = 0
+    rows = []
+    material_rows = []
+    unknown = 0
     for idx, item in enumerate(data.items):
-        if not (item.sku or "").strip():
-            skipped += 1
-            continue
-        item_total = item.qty * item.unit_price_cny
+        item_total = item_totals[idx]
         freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
-        product = _find_invoice_product(db, item)
-        if not product:
-            skipped += 1
+
+        ti = tariff_info.get(idx) if use_tariff else None
+        tax_alloc_jpy = ti["total_tax_jpy"] if ti else (
+            (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
+        )
+
+        kind = kind_by_index.get(idx, invoice_calc.KIND_UNKNOWN)
+        product = product_by_index.get(idx)
+        total_cost_jpy = (item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy
+
+        if kind == invoice_calc.KIND_MATERIAL:
+            material_rows.append({
+                "index": idx, "item": item, "product": product,
+                "total_price_cny": round(item_total, 2),
+                "freight_alloc_cny": round(freight_alloc, 2),
+                "tax_alloc_jpy": round(tax_alloc_jpy, 1),
+                "total_cost_jpy": round(total_cost_jpy, 1),
+            })
             continue
-        set_size = product.set_size or 1
+
+        if kind == invoice_calc.KIND_UNKNOWN:
+            unknown += 1
+            continue
+
+        set_size = (product.set_size or 1) if product else 1
         sell_units = item.qty / set_size if item.qty > 0 else 0
+        cost_jpy = (total_cost_jpy / sell_units) if sell_units > 0 else 0
 
-        if use_tariff and idx in tariff_info:
-            ti = tariff_info[idx]
-            tax_alloc_jpy = ti["total_tax_jpy"]
-        else:
-            ti = None
-            tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
-
-        cost_jpy = (((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / sell_units) if sell_units > 0 else 0
-        customer_memo = product.customer_memo
-        result_item = item.model_dump()
-        result_item["sku"] = product.sku
-        if product.name:
-            result_item["name_jp"] = product.name
-        row = {
-            **result_item,
+        rows.append({
+            "index": idx, "item": item, "product": product, "kind": kind,
             "total_price_cny": round(item_total, 2),
             "freight_alloc_cny": round(freight_alloc, 2),
             "tax_alloc_jpy": round(tax_alloc_jpy, 0),
             "cost_jpy": round(cost_jpy, 1),
-            "customer_memo": customer_memo,
-            "matched_sku": product.sku,
+            "set_size": set_size,
+            "tariff": ti,
+        })
+
+    return {
+        "rows": rows, "material_rows": material_rows, "skipped": unknown,
+        "coverage": coverage, "total_cny": total_cny,
+        "total_freight_cny": total_freight, "import_tax_jpy": import_tax_jpy,
+        "use_tariff": use_tariff,
+    }
+
+
+@router.post("/invoices/calculate")
+def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
+    calc = _rakuten_build_cost_rows(data, db)
+
+    result = []
+    for r in calc["rows"]:
+        item, product, ti = r["item"], r["product"], r["tariff"]
+        result_item = item.model_dump()
+        result_item["sku"] = product.sku if product else item.sku
+        if product and product.name:
+            result_item["name_jp"] = product.name
+        row = {
+            **result_item,
+            "total_price_cny": r["total_price_cny"],
+            "freight_alloc_cny": r["freight_alloc_cny"],
+            "tax_alloc_jpy": r["tax_alloc_jpy"],
+            "cost_jpy": r["cost_jpy"],
+            "customer_memo": getattr(product, "customer_memo", None) if product else None,
+            "matched_sku": product.sku if product else "",
+            "kind": r["kind"],
         }
         if ti:
             row["tariff_rate"] = ti["tariff_rate"]
@@ -2297,60 +2344,76 @@ def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)
             row["hs_code"] = ti["hs_code"]
         result.append(row)
 
+    materials = [
+        {
+            "sku": r["item"].sku,
+            "name": (r["product"].name if r["product"] else "") or r["item"].name_jp,
+            "qty": r["item"].qty,
+            "total_price_cny": r["total_price_cny"],
+            "freight_alloc_cny": r["freight_alloc_cny"],
+            "tax_alloc_jpy": r["tax_alloc_jpy"],
+            "total_cost_jpy": r["total_cost_jpy"],
+        }
+        for r in calc["material_rows"]
+    ]
+
+    total_cny = calc["total_cny"]
+    total_freight = calc["total_freight_cny"]
     return {
         "items": result,
+        "materials": materials,
+        "material_total_jpy": round(sum(m["total_cost_jpy"] for m in materials), 0),
+        "coverage": calc["coverage"],
         "total_cny": round(total_cny, 2),
         "total_freight_cny": round(total_freight, 2),
-        "import_tax_jpy": import_tax_jpy,
-        "grand_total_jpy": round((total_cny + total_freight) * data.exchange_rate + import_tax_jpy, 0),
-        "skipped": skipped,
-        "use_tariff": use_tariff,
+        "import_tax_jpy": calc["import_tax_jpy"],
+        "grand_total_jpy": round((total_cny + total_freight) * data.exchange_rate + calc["import_tax_jpy"], 0),
+        "skipped": calc["skipped"],
+        "use_tariff": calc["use_tariff"],
     }
 
 @router.post("/invoices/save")
 def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
-    total_cny = sum(i.qty * i.unit_price_cny for i in data.items)
-    total_freight = data.domestic_freight + data.international_freight
+    calc = _rakuten_build_cost_rows(data, db)
+
     updated = 0
-    skipped = 0
-    updated_skus: dict[str, float] = {}  # sku -> cost_jpy
-    use_tariff = bool(data.permit_columns)
+    updated_amazon = 0
+    skipped = calc["skipped"]
+    updated_skus: dict[str, float] = {}  # sku -> cost_jpy（セット商品の再計算に使う）
 
-    import_tax_jpy = data.import_tax_jpy or 0
-
-    valid_items: list[tuple[int, float]] = []
-    for idx, item in enumerate(data.items):
-        if not (item.sku or "").strip():
-            continue
-        valid_items.append((idx, item.qty * item.unit_price_cny))
-
-    tariff_info = {}
-    if use_tariff and valid_items:
-        tariff_info = _calc_tariff_tax(valid_items, data, data.permit_columns)
-
-    for idx, item in enumerate(data.items):
-        if not (item.sku or "").strip():
+    for r in calc["rows"]:
+        item, product = r["item"], r["product"]
+        if not product:
             skipped += 1
             continue
-        item_total = item.qty * item.unit_price_cny
-        freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
-
-        if use_tariff and idx in tariff_info:
-            tax_alloc_jpy = tariff_info[idx]["total_tax_jpy"]
-        else:
-            tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
-
-        product = _find_invoice_product(db, item)
-        if product:
-            set_size = product.set_size or 1
-            sell_units = item.qty / set_size if item.qty > 0 else 0
-            cost_jpy = round((((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / sell_units), 1) if sell_units > 0 else 0
-            product.cost_jpy = cost_jpy
-            product.price = item.unit_price_cny if item.unit_price_cny else product.price
+        cost_jpy = r["cost_jpy"]
+        product.cost_jpy = cost_jpy
+        product.price = item.unit_price_cny if item.unit_price_cny else product.price
+        if r["kind"] == invoice_calc.KIND_RAKUTEN:
             updated_skus[product.sku] = cost_jpy
             updated += 1
         else:
-            skipped += 1
+            # 同じ便に混載されたAmazon商品。Amazonマスタ側の原価も更新する
+            updated_amazon += 1
+
+    # 発送資材は商品原価に載せず、資材費として月次集計用に記録する
+    from app.models.material_cost import MaterialCost
+    for r in calc["material_rows"]:
+        item, product = r["item"], r["product"]
+        db.add(MaterialCost(
+            invoice_no=data.invoice_no,
+            invoice_date=data.invoice_date,
+            source="rakuten",
+            sku=item.sku,
+            name=(product.name if product else "") or item.name_jp,
+            qty=item.qty,
+            unit_price_cny=item.unit_price_cny,
+            total_price_cny=r["total_price_cny"],
+            freight_alloc_cny=r["freight_alloc_cny"],
+            tax_alloc_jpy=r["tax_alloc_jpy"],
+            total_cost_jpy=r["total_cost_jpy"],
+            exchange_rate=data.exchange_rate,
+        ))
 
     # set_componentsを持つセット商品の原価を自動再計算
     set_products = db.query(RakutenProduct).filter(
@@ -2386,7 +2449,13 @@ def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
             updated += 1
 
     db.commit()
-    return {"updated": updated, "skipped": skipped}
+    return {
+        "updated": updated,
+        "updated_amazon": updated_amazon,
+        "material_count": len(calc["material_rows"]),
+        "coverage": calc["coverage"],
+        "skipped": skipped,
+    }
 
 
 # ============================================================
