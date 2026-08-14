@@ -664,12 +664,17 @@ def list_products(db: Session = Depends(get_db)):
 
 @router.get("/stock")
 def list_stock(db: Session = Depends(get_db)):
-    """在庫・損益一覧（バリエーション商品のみ、is_component=Falseを対象）"""
+    """在庫・損益一覧（バリエーション商品のみ、is_component=Falseを対象）。
+    発送資材(is_material)は販売商品ではないので除外する。"""
     settings = _get_or_create_settings(db)
     commission_rate = settings.commission_rate or 0.09
     products = (
         db.query(RakutenProduct)
-        .filter(RakutenProduct.is_active == True, RakutenProduct.is_component == False)
+        .filter(
+            RakutenProduct.is_active == True,
+            RakutenProduct.is_component == False,
+            RakutenProduct.is_material == False,
+        )
         .order_by(RakutenProduct.sku.asc())
         .all()
     )
@@ -1483,6 +1488,7 @@ def migrate_legacy_inbound(body: Optional[dict] = None, db: Session = Depends(ge
     products = db.query(RakutenProduct).filter(
         RakutenProduct.is_active == True,
         RakutenProduct.is_component == False,
+        RakutenProduct.is_material == False,  # 発送資材は発注対象に含めない
     ).order_by(RakutenProduct.sku.asc()).all()
 
     rows = []
