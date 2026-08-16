@@ -211,7 +211,9 @@ async def _outbound_ip():
 
 # ---------- 順位履歴 ----------
 
-@router.get("/rankings/{keyword_id}")
+# パスは上から順に照合されるので、数字だけに限定しないと
+# /rankings/matrix がこちらに吸われて422になる（実際そうなっていた）
+@router.get("/rankings/{keyword_id:int}")
 def get_rankings(keyword_id: int, days: int = 30, db: Session = Depends(get_db)):
     cutoff = datetime.now(JST) - timedelta(days=days)
     rows = (
