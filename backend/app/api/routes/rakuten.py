@@ -2476,6 +2476,22 @@ def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
             # 同じ便に混載されたAmazon商品。Amazonマスタ側の原価も更新する
             updated_amazon += 1
 
+    # 便ごとの原価実績を残す。商品マスタのcost_jpyは最後の便で上書きされるため、
+    # ここに積んでおかないと後から加重平均に切り替えられない。
+    # 混載便なので、楽天商品は rakuten・Amazon商品は amazon として分けて記録する
+    fm = "money" if calc["freight_method"]["fallback"] else "weight"
+    for src, kind in (("rakuten", invoice_calc.KIND_RAKUTEN),
+                      ("amazon", invoice_calc.KIND_AMAZON)):
+        invoice_calc.record_cost_history(
+            db, [r for r in calc["rows"] if r["kind"] == kind],
+            source=src,
+            invoice_no=data.invoice_no,
+            invoice_date=data.invoice_date,
+            exchange_rate=data.exchange_rate,
+            coverage=calc["coverage"],
+            freight_method=fm,
+        )
+
     # 発送資材は商品原価に載せず、資材費として月次集計用に記録する
     from app.models.material_cost import MaterialCost
     for r in calc["material_rows"]:

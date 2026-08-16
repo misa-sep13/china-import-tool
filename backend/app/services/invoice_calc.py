@@ -324,6 +324,95 @@ def calc_freight_by_weight(
 CUSTOMS_FEE_SEA_JPY = 2000   # 船便の通関料（一律）。航空便は無し
 
 
+def record_cost_history(
+    db,
+    rows: list[dict],
+    *,
+    source: str,
+    invoice_no: str,
+    invoice_date: str,
+    exchange_rate: float,
+    coverage: dict,
+    freight_method: str,
+) -> int:
+    """便ごとの原価実績を残す。
+
+    商品マスタの cost_jpy は最後の便で上書きされてしまうので、
+    「どの便でいくらだったか」をここに積む。便が貯まったら加重平均
+    （直近ほど重く見る）へ切り替えられる。
+
+    同じ便を再保存したときは (source, sku, invoice_no) で置き換える。
+    """
+    from app.models.cost_history import CostHistory
+
+    if not invoice_no:
+        return 0   # 便を識別できないと重複を潰せないので記録しない
+
+    # 同じSKUが1便の中で複数行に分かれることがある（色違いで同URL、分納など）。
+    # 便あたり1行に合算しないと、行ごとに上書きし合って最後の行しか残らない。
+    agg: dict[str, dict] = {}
+    for r in rows:
+        item = r.get("item")
+        product = r.get("product")
+        sku = (getattr(product, "sku", None) or getattr(item, "sku", "") or "").strip()
+        if not sku:
+            continue
+
+        set_size = r.get("set_size") or 1
+        qty = getattr(item, "qty", 0) or 0
+        cost = r.get("cost_jpy")
+        if cost is None:
+            cost = r.get("cost_per_unit_jpy") or 0
+
+        a = agg.setdefault(sku, {
+            "qty": 0, "set_size": set_size, "cost_x_units": 0.0, "sell_units": 0.0,
+            "total_price_cny": 0.0, "freight_alloc_cny": 0.0,
+            "tax_alloc_jpy": 0.0, "customs_fee_alloc_jpy": 0.0,
+        })
+        units = (qty / set_size) if set_size else 0
+        a["qty"] += qty
+        a["sell_units"] += units
+        # 1セット原価は販売セット数で重み付けして平均する（単純平均だと小口の行に引きずられる）
+        a["cost_x_units"] += float(cost) * units
+        a["total_price_cny"] += r.get("total_price_cny") or 0
+        a["freight_alloc_cny"] += r.get("freight_alloc_cny") or 0
+        a["tax_alloc_jpy"] += r.get("tax_alloc_jpy") or 0
+        a["customs_fee_alloc_jpy"] += r.get("customs_fee_alloc_jpy") or 0
+
+    saved = 0
+    for sku, a in agg.items():
+        existing = (
+            db.query(CostHistory)
+            .filter(
+                CostHistory.source == source,
+                CostHistory.sku == sku,
+                CostHistory.invoice_no == invoice_no,
+            )
+            .first()
+        )
+        target = existing or CostHistory(
+            source=source, sku=sku, invoice_no=invoice_no,
+        )
+        units = a["sell_units"]
+        target.invoice_date = invoice_date or ""
+        target.qty = int(a["qty"])
+        target.set_size = int(a["set_size"])
+        target.sell_units = round(units, 3)
+        target.cost_jpy = round(a["cost_x_units"] / units, 1) if units > 0 else 0
+        target.total_price_cny = round(a["total_price_cny"], 2)
+        target.freight_alloc_cny = round(a["freight_alloc_cny"], 2)
+        target.tax_alloc_jpy = round(a["tax_alloc_jpy"], 1)
+        target.customs_fee_alloc_jpy = round(a["customs_fee_alloc_jpy"], 1)
+        target.exchange_rate = exchange_rate
+        target.coverage_rate = (coverage or {}).get("coverage_rate") or 0
+        target.freight_method = freight_method
+        if existing is None:
+            db.add(target)
+        saved += 1
+
+    return saved
+
+
 def guess_shipping_method(wb) -> str:
     """インボイスのシート構成から配送方法を推測する。
 
