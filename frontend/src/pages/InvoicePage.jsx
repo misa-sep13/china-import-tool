@@ -259,7 +259,14 @@ function InvoiceTab() {
       const res = await api.post('/invoices/save', buildPayload())
       setSaved(res.data)
     } catch (err) {
-      alert('保存エラー: ' + (err.response?.data?.detail || err.message))
+      const d = err.response?.data?.detail
+      // 検算NGのときは detail がオブジェクトで返る。何が合わないかを出す
+      if (d && typeof d === 'object' && d.failed) {
+        const lines = d.failed.map(c => `・${c.name}: ${c.detail}`).join('\n')
+        alert(`${d.message}\n\n${lines}\n\n原因を直してから計算し直してください。`)
+      } else {
+        alert('保存エラー: ' + (typeof d === 'string' ? d : err.message))
+      }
     } finally {
       setSaving(false)
     }
@@ -506,6 +513,88 @@ function InvoiceTab() {
             総原価: ¥{calculated.grand_total_jpy?.toLocaleString()}
             {calculated.skipped ? ` ／ スキップ: ${calculated.skipped}件` : ''}
           </div>
+
+          {/* 検算。総額が合っていても配り方が偏っていることはあるので、
+              配り切れたか・どこへ配ったかを毎回チェックする */}
+          {calculated.verification && (() => {
+            const v = calculated.verification
+            const ngs = v.checks.filter(c => !c.ok)
+            if (v.ok && ngs.length === 0) {
+              return (
+                <div style={{
+                  marginBottom: 12, padding: '8px 14px', borderRadius: 6, fontSize: 13,
+                  background: '#f0fdf4', border: '1px solid #86efac', color: '#166534',
+                }}>
+                  ✓ 検算 {v.checks.length}項目すべて一致（送料・税を配り切れています）
+                </div>
+              )
+            }
+            return (
+              <div style={{
+                marginBottom: 12, padding: '10px 14px', borderRadius: 6, fontSize: 13,
+                background: v.ok ? '#fffbeb' : '#fef2f2',
+                border: `1px solid ${v.ok ? '#fcd34d' : '#fca5a5'}`,
+                color: v.ok ? '#92400e' : '#991b1b',
+              }}>
+                <b>{v.ok ? '⚠ 検算に警告があります' : '✕ 検算NG — このままでは保存できません'}</b>
+                <div style={{ marginTop: 6 }}>
+                  {ngs.map((c, i) => (
+                    <div key={i} style={{ marginTop: 3, fontSize: 12 }}>
+                      ・<b>{c.name}</b>: {c.detail}
+                    </div>
+                  ))}
+                </div>
+                {!v.ok && (
+                  <div style={{ marginTop: 6, fontSize: 12 }}>
+                    誤った原価が値付け・発注判断に使われるのを防ぐため保存を止めています。
+                    原因を直してから計算し直してください。
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+
+          {calculated.coverage && calculated.coverage.unknown_count > 0 && (
+            <div style={{
+              marginBottom: 12, padding: '10px 14px', borderRadius: 6, fontSize: 13,
+              background: calculated.coverage.level === 'critical' ? '#fef2f2' : '#fffbeb',
+              border: `1px solid ${calculated.coverage.level === 'critical' ? '#fca5a5' : '#fcd34d'}`,
+              color: calculated.coverage.level === 'critical' ? '#991b1b' : '#92400e',
+            }}>
+              <b>⚠ 商品マスタに無い明細が {calculated.coverage.unknown_count} 件あります</b>
+              （カバー率 {calculated.coverage.coverage_rate}%）
+              <div style={{ marginTop: 4, fontSize: 12 }}>
+                未登録の明細に按分された送料・輸入税は、どの商品の原価にもなりません。
+                発送資材（宅配袋など）の場合は、商品マスタに登録して
+                「発送資材」にチェックを入れると資材費として計上されます。
+              </div>
+              {calculated.coverage.unknown_indexes?.length > 0 && (
+                <div style={{ marginTop: 6, fontSize: 12 }}>
+                  該当行: {calculated.coverage.unknown_indexes.map(i => {
+                    const it = parsed?.items?.[i]
+                    return it ? (it.name_jp || it.sku || `${i + 1}行目`) : `${i + 1}行目`
+                  }).join(' / ')}
+                </div>
+              )}
+            </div>
+          )}
+
+          {calculated.materials?.length > 0 && (
+            <div style={{
+              marginBottom: 12, padding: '10px 14px', borderRadius: 6, fontSize: 13,
+              background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af',
+            }}>
+              <b>📦 発送資材 {calculated.materials.length} 件</b>
+              （合計 ¥{(calculated.material_total_jpy || 0).toLocaleString()}）
+              <div style={{ marginTop: 4, fontSize: 12 }}>
+                商品原価には含めず、資材費として月次で集計します。
+              </div>
+              <div style={{ marginTop: 6, fontSize: 12 }}>
+                {calculated.materials.map(m => `${m.name || m.sku}（¥${Math.round(m.total_cost_jpy).toLocaleString()}）`).join(' / ')}
+              </div>
+            </div>
+          )}
+
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>

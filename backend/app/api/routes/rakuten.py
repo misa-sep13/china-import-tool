@@ -1868,6 +1868,9 @@ class PermitColumnIn(BaseModel):
     tariff_rate: float = 0.0
     tariff_rate_str: str = ""
     duty_jpy: int = 0
+    # 欄ごとの内国消費税の実額。税率から再計算せずこの額を按分する
+    consumption_tax_jpy: int = 0
+    local_tax_jpy: int = 0
     bpr_coeff: float = 0.0
 
 class RakutenInvoiceIn(BaseModel):
@@ -1879,6 +1882,7 @@ class RakutenInvoiceIn(BaseModel):
     import_tax_jpy: float = 0  # 輸入税合計（円）：関税＋消費税＋地方消費税
     items: List[RakutenInvoiceItemIn]
     permit_columns: List[PermitColumnIn] = []  # 許可書の申告欄情報（空=従来の一律按分）
+    force_save: bool = False  # 検算NGでも承知の上で保存する
 
 
 def _num(value, default=0.0):
@@ -2320,9 +2324,16 @@ def _rakuten_build_cost_rows(data: "RakutenInvoiceIn", db: Session):
             "tariff": ti,
         })
 
+    verification = invoice_calc.verify_allocation(
+        rows, material_rows, coverage,
+        total_freight_cny=total_freight,
+        import_tax_jpy=import_tax_jpy,
+        permit_columns=data.permit_columns,
+    )
+
     return {
         "rows": rows, "material_rows": material_rows, "skipped": unknown,
-        "coverage": coverage, "total_cny": total_cny,
+        "coverage": coverage, "verification": verification, "total_cny": total_cny,
         "total_freight_cny": total_freight, "import_tax_jpy": import_tax_jpy,
         "use_tariff": use_tariff,
     }
@@ -2377,6 +2388,7 @@ def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)
         "materials": materials,
         "material_total_jpy": round(sum(m["total_cost_jpy"] for m in materials), 0),
         "coverage": calc["coverage"],
+        "verification": calc["verification"],
         "total_cny": round(total_cny, 2),
         "total_freight_cny": round(total_freight, 2),
         "import_tax_jpy": calc["import_tax_jpy"],
@@ -2388,6 +2400,17 @@ def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)
 @router.post("/invoices/save")
 def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
     calc = _rakuten_build_cost_rows(data, db)
+
+    # 検算NGのまま保存すると、誤った原価が最新版として値付け・発注判断に使われる。
+    # 保存を止めて、何が合わないかを画面に返す（force_save で承知の上の強行は可能）
+    v = calc["verification"]
+    if not v["ok"] and not data.force_save:
+        ng = [c for c in v["checks"] if not c["ok"] and c["level"] == "error"]
+        raise HTTPException(400, {
+            "message": "検算に失敗したため保存しませんでした",
+            "failed": ng,
+            "verification": v,
+        })
 
     updated = 0
     updated_amazon = 0

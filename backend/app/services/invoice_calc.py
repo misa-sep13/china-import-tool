@@ -140,6 +140,126 @@ def calc_coverage(classified: list[dict], item_totals: list[float]) -> dict:
     }
 
 
+def verify_allocation(
+    rows: list[dict],
+    material_rows: list[dict],
+    coverage: dict,
+    total_freight_cny: float,
+    import_tax_jpy: float,
+    permit_columns: list | None = None,
+) -> dict:
+    """配賦結果を検算する。総額が合っていても配り方が偏っていることはあるので、
+    「配り切れたか」だけでなく「どこへ配ったか」も見る。
+
+    NGが出たら保存を止める。誤った原価が最新版として出回るほうが危ないため。
+    戻り値: {"ok": bool, "checks": [{name, ok, level, detail}, ...]}
+    level: "error"=保存を止める / "warn"=保存はするが画面に出す
+    """
+    checks: list[dict] = []
+
+    def add(name, ok, level, detail):
+        checks.append({"name": name, "ok": bool(ok), "level": level, "detail": detail})
+
+    all_rows = list(rows) + list(material_rows)
+    covered_ratio = (coverage.get("coverage_rate") or 0) / 100.0
+
+    # ① 送料の配賦: 配った送料 ＋ 未登録分 ＝ 便の運賃
+    alloc_freight = sum(r.get("freight_alloc_cny") or 0 for r in all_rows)
+    expected_freight = total_freight_cny * covered_ratio
+    diff_f = abs(alloc_freight - expected_freight)
+    add(
+        "送料の配賦",
+        diff_f <= max(1.0, total_freight_cny * 0.005),
+        "error",
+        f"配賦{round(alloc_freight, 2)}元 / 期待{round(expected_freight, 2)}元"
+        f"（便の運賃{round(total_freight_cny, 2)}元 × カバー率{coverage.get('coverage_rate')}%）",
+    )
+
+    # ② 税額の配賦: 配った税 ＋ 未登録分 ＝ 便の税
+    alloc_tax = sum(r.get("tax_alloc_jpy") or 0 for r in all_rows)
+    expected_tax = import_tax_jpy * covered_ratio
+    diff_t = abs(alloc_tax - expected_tax)
+    add(
+        "税額の配賦",
+        diff_t <= max(10.0, import_tax_jpy * 0.005),
+        "error",
+        f"配賦¥{round(alloc_tax)} / 期待¥{round(expected_tax)}"
+        f"（便の税¥{round(import_tax_jpy)} × カバー率{coverage.get('coverage_rate')}%）",
+    )
+
+    # ③ 許可書の実額と配賦額の一致（欄ごとの実額を使っている場合のみ）
+    if permit_columns:
+        cols = [c if isinstance(c, dict) else c.model_dump() for c in permit_columns]
+        permit_total = sum(
+            (c.get("duty_jpy") or 0)
+            + (c.get("consumption_tax_jpy") or 0)
+            + (c.get("local_tax_jpy") or 0)
+            for c in cols
+        )
+        if permit_total > 0:
+            add(
+                "許可書との一致",
+                abs(alloc_tax - permit_total * covered_ratio) <= max(10.0, permit_total * 0.01),
+                "error",
+                f"許可書の実額¥{round(permit_total)} × カバー率 vs 配賦¥{round(alloc_tax)}",
+            )
+            # 許可書に税額があるのに1円も配られていない（配り忘れ）
+            add(
+                "税の配り忘れ",
+                alloc_tax > 0,
+                "error",
+                f"許可書に¥{round(permit_total)}あるが配賦額が0" if alloc_tax == 0 else "配賦済み",
+            )
+
+    # ④ 共通費の行き先: 販売数が無い行に原価が乗っていないか
+    bad_units = [
+        r for r in rows
+        if (r.get("item") is not None and getattr(r["item"], "qty", 0) <= 0)
+        and (r.get("cost_per_unit_jpy") or r.get("cost_jpy") or 0) > 0
+    ]
+    add(
+        "共通費の行き先",
+        not bad_units,
+        "error",
+        f"数量0なのに原価が付いた行が{len(bad_units)}件" if bad_units else "問題なし",
+    )
+
+    # ⑤ 二重計上: 同じSKUが商品行と資材行の両方に出ていないか
+    row_skus = {getattr(r.get("item"), "sku", None) for r in rows}
+    mat_skus = {getattr(r.get("item"), "sku", None) for r in material_rows}
+    dup = {s for s in (row_skus & mat_skus) if s}
+    add(
+        "二重計上",
+        not dup,
+        "error",
+        f"商品と資材の両方に出たSKU: {', '.join(sorted(dup))}" if dup else "問題なし",
+    )
+
+    # ⑥ カバー率（低い便は代表原価に使うべきでない）
+    lvl = coverage.get("level")
+    add(
+        "カバー率",
+        lvl == "ok",
+        "error" if lvl == "critical" else "warn",
+        f"{coverage.get('coverage_rate')}%（未登録{coverage.get('unknown_count')}件）",
+    )
+
+    # ⑦ 桁違いの検出: 1個原価が極端な行（入力ミス・単位混在の兆候）
+    odd = [
+        r for r in rows
+        if (r.get("cost_per_unit_jpy") or r.get("cost_jpy") or 0) > 100000
+    ]
+    add(
+        "桁違いの原価",
+        not odd,
+        "warn",
+        f"1個10万円超の行が{len(odd)}件（単位の混在かも）" if odd else "問題なし",
+    )
+
+    has_error = any((not c["ok"]) and c["level"] == "error" for c in checks)
+    return {"ok": not has_error, "checks": checks}
+
+
 def parse_permit_columns(text: str) -> list[dict]:
     """輸入許可書から申告欄ごとの関税率・BPR按分係数・品名・税表番号を抽出する。"""
     columns = []

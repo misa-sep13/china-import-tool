@@ -121,7 +121,14 @@ export default function RakutenInvoicePage() {
       const res = await api.post('/rakuten/invoices/save', buildPayload())
       setSaved(res.data)
     } catch (err) {
-      alert('保存エラー: ' + (err.response?.data?.detail || err.message))
+      const d = err.response?.data?.detail
+      // 検算NGのときは detail がオブジェクトで返る。何が合わないかを出す
+      if (d && typeof d === 'object' && d.failed) {
+        const lines = d.failed.map(c => `・${c.name}: ${c.detail}`).join('\n')
+        alert(`${d.message}\n\n${lines}\n\n原因を直してから計算し直してください。`)
+      } else {
+        alert('保存エラー: ' + (typeof d === 'string' ? d : err.message))
+      }
     } finally {
       setSaving(false)
     }
@@ -368,6 +375,47 @@ export default function RakutenInvoicePage() {
             総原価: ¥{calculated.grand_total_jpy?.toLocaleString()}
             {calculated.skipped ? ` ／ スキップ: ${calculated.skipped}件` : ''}
           </div>
+
+          {/* 検算。総額が合っていても配り方が偏っていることはあるので、
+              配り切れたか・どこへ配ったかを毎回チェックする。
+              NGのまま保存すると誤った原価が値付けに使われるため保存を止める */}
+          {calculated.verification && (() => {
+            const v = calculated.verification
+            const ngs = v.checks.filter(c => !c.ok)
+            if (v.ok && ngs.length === 0) {
+              return (
+                <div style={{
+                  marginBottom: 12, padding: '8px 14px', borderRadius: 6, fontSize: 13,
+                  background: '#f0fdf4', border: '1px solid #86efac', color: '#166534',
+                }}>
+                  ✓ 検算 {v.checks.length}項目すべて一致（送料・税を配り切れています）
+                </div>
+              )
+            }
+            return (
+              <div style={{
+                marginBottom: 12, padding: '10px 14px', borderRadius: 6, fontSize: 13,
+                background: v.ok ? '#fffbeb' : '#fef2f2',
+                border: `1px solid ${v.ok ? '#fcd34d' : '#fca5a5'}`,
+                color: v.ok ? '#92400e' : '#991b1b',
+              }}>
+                <b>{v.ok ? '⚠ 検算に警告があります' : '✕ 検算NG — このままでは保存できません'}</b>
+                <div style={{ marginTop: 6 }}>
+                  {ngs.map((c, i) => (
+                    <div key={i} style={{ marginTop: 3, fontSize: 12 }}>
+                      ・<b>{c.name}</b>: {c.detail}
+                    </div>
+                  ))}
+                </div>
+                {!v.ok && (
+                  <div style={{ marginTop: 6, fontSize: 12 }}>
+                    誤った原価が値付け・発注判断に使われるのを防ぐため保存を止めています。
+                    原因を直してから計算し直してください。
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           {/* 未登録の明細があると、その分の送料・税がどの原価にもならず消える。
               新しい発送資材を登録し忘れたときもここで気づけるようにする */}
