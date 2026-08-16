@@ -7,11 +7,19 @@ GitHub ActionsやRenderのデータセンターIPからは楽天にブロック�
 import httpx
 from bs4 import BeautifulSoup
 import re
+import sys
 import time
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
+
+# 進捗をその場で出す。既定のバッファリングだと、タスクスケジューラやログへ
+# リダイレクトしたときに出力が溜まり、動いているのか止まったのか分からなくなる
+try:
+    sys.stdout.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 BACKEND = os.environ.get("BACKEND_URL", "https://china-import-tool.onrender.com")
 SHOP_ID = "411150"
