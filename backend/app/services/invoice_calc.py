@@ -140,6 +140,187 @@ def calc_coverage(classified: list[dict], item_totals: list[float]) -> dict:
     }
 
 
+def parse_box_sheets(wb) -> dict:
+    """インボイスの箱シート（箱规・箱单）から、箱の計費重量と中身を読む。
+
+    タオタロウのインボイスには箱ごとの実測重量・三辺と、どの箱に何が何個入ったかが
+    入っている。これがあると送料を金額比ではなく重量で配れる。
+    （金額比だと、安くて嵩張るものが送料をほとんど負担しない。実測で17倍の差が出た）
+
+    戻り値: {
+      "boxes": {箱番号: {"billing_weight", "actual_weight", "volume", "l","w","h"}},
+      "contents": [{"box", "goods_id", "qty"}],
+      "total_billing_weight": float,
+      "available": bool,   # 配賦に使えるだけのデータが揃っているか
+    }
+    """
+    empty = {"boxes": {}, "contents": [], "total_billing_weight": 0.0, "available": False}
+
+    def find_sheet(*names):
+        for n in names:
+            if n in wb.sheetnames:
+                return wb[n]
+        return None
+
+    ws_spec = find_sheet("箱规", "箱規", "箱規格")
+    ws_list = find_sheet("箱单", "箱單", "packing list", "Packing List")
+    if ws_list is None:
+        return empty
+
+    boxes: dict[int, dict] = {}
+    if ws_spec is not None:
+        for r in range(2, ws_spec.max_row + 1):
+            bno = ws_spec.cell(row=r, column=1).value
+            if bno is None:
+                continue
+            try:
+                bno = int(bno)
+            except (TypeError, ValueError):
+                continue
+            boxes[bno] = {
+                "l": ws_spec.cell(row=r, column=3).value,
+                "w": ws_spec.cell(row=r, column=4).value,
+                "h": ws_spec.cell(row=r, column=5).value,
+                "actual_weight": _f(ws_spec.cell(row=r, column=6).value),
+                "volume": _f(ws_spec.cell(row=r, column=7).value),
+                "billing_weight": 0.0,
+            }
+
+    # 箱单: 箱号は箱の先頭行にだけ入り、以降の行は空欄で同じ箱の続き
+    contents: list[dict] = []
+    cur_box = None
+    for r in range(2, ws_list.max_row + 1):
+        bno = ws_list.cell(row=r, column=1).value
+        if bno is not None:
+            try:
+                cur_box = int(bno)
+            except (TypeError, ValueError):
+                continue
+            bw = _f(ws_list.cell(row=r, column=7).value)  # 计费重量KG
+            if cur_box not in boxes:
+                boxes[cur_box] = {
+                    "l": ws_list.cell(row=r, column=2).value,
+                    "w": ws_list.cell(row=r, column=3).value,
+                    "h": ws_list.cell(row=r, column=4).value,
+                    "actual_weight": _f(ws_list.cell(row=r, column=5).value),
+                    "volume": _f(ws_list.cell(row=r, column=6).value),
+                    "billing_weight": 0.0,
+                }
+            if bw > 0:
+                boxes[cur_box]["billing_weight"] = bw
+
+        gid = ws_list.cell(row=r, column=9).value    # 商品ID
+        qty = _f(ws_list.cell(row=r, column=10).value)
+        if cur_box is not None and gid and qty > 0:
+            contents.append({"box": cur_box, "goods_id": str(gid).strip(), "qty": qty})
+
+    # 計費重量が無い箱は実重量で代用（それも無ければ配賦に使えない）
+    for b in boxes.values():
+        if not b.get("billing_weight"):
+            b["billing_weight"] = b.get("actual_weight") or 0.0
+
+    total_bw = sum(b["billing_weight"] for b in boxes.values())
+    return {
+        "boxes": boxes,
+        "contents": contents,
+        "total_billing_weight": round(total_bw, 3),
+        "available": bool(contents) and total_bw > 0,
+    }
+
+
+def _f(v) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def calc_freight_by_weight(
+    goods_ids: list[str],
+    item_totals: list[float],
+    box_data: dict,
+    total_freight_cny: float,
+) -> dict:
+    """送料を重量ベースで配る（2段階）。
+
+      STEP1  便の運賃 → 各箱へ（箱の計費重量比）
+      STEP2  箱の運賃 → 中身へ（同じ箱の中は個数比）
+
+    箱の中の商品ごとの重量は分からないので、箱の中だけは個数比で割る。
+    箱をまたぐ配分が実測重量で決まるぶん、金額比よりはるかに実態に近い。
+
+    goods_ids: 明細ごとの商品ID（箱单と突き合わせるキー）。空文字は箱不明。
+    戻り値: {"alloc": {明細index: 送料}, "fallback": bool, "reason": str,
+             "unmatched_indexes": [...]}
+    """
+    n = len(goods_ids)
+    total_cny = sum(item_totals) or 0.0
+
+    def by_money(reason: str, unmatched=None):
+        alloc = {
+            i: (total_freight_cny * item_totals[i] / total_cny) if total_cny > 0 else 0.0
+            for i in range(n)
+        }
+        return {"alloc": alloc, "fallback": True, "reason": reason,
+                "unmatched_indexes": unmatched or list(range(n))}
+
+    if not box_data or not box_data.get("available"):
+        return by_money("箱データが無いため金額比で按分")
+
+    boxes = box_data["boxes"]
+    contents = box_data["contents"]
+    total_bw = box_data["total_billing_weight"]
+    if total_bw <= 0:
+        return by_money("計費重量が取れないため金額比で按分")
+
+    # 明細index ↔ 商品ID
+    idx_by_gid: dict[str, list[int]] = {}
+    for i, g in enumerate(goods_ids):
+        if g:
+            idx_by_gid.setdefault(str(g).strip(), []).append(i)
+
+    # 箱单にあるのに明細に無い／その逆があると配り切れない
+    content_gids = {c["goods_id"] for c in contents}
+    line_gids = set(idx_by_gid.keys())
+    unmatched = [i for i, g in enumerate(goods_ids)
+                 if not g or str(g).strip() not in content_gids]
+    if unmatched:
+        return by_money(
+            f"箱の中身と紐づかない明細が{len(unmatched)}件あるため金額比で按分",
+            unmatched,
+        )
+
+    # STEP1: 便の運賃 → 箱へ
+    box_freight = {
+        b: total_freight_cny * info["billing_weight"] / total_bw
+        for b, info in boxes.items()
+    }
+
+    # STEP2: 箱の運賃 → 中身へ（個数比）
+    qty_in_box: dict[int, float] = {}
+    for c in contents:
+        qty_in_box[c["box"]] = qty_in_box.get(c["box"], 0.0) + c["qty"]
+
+    alloc: dict[int, float] = {i: 0.0 for i in range(n)}
+    for c in contents:
+        bq = qty_in_box.get(c["box"], 0.0)
+        if bq <= 0:
+            continue
+        share = c["qty"] / bq
+        amount = box_freight.get(c["box"], 0.0) * share
+        targets = idx_by_gid.get(c["goods_id"], [])
+        if not targets:
+            continue
+        # 同じ商品IDが明細に複数行ある場合は、その行の金額比で分ける
+        tot = sum(item_totals[i] for i in targets) or 0.0
+        for i in targets:
+            w = (item_totals[i] / tot) if tot > 0 else (1.0 / len(targets))
+            alloc[i] += amount * w
+
+    return {"alloc": alloc, "fallback": False,
+            "reason": "箱の計費重量で按分（箱内は個数比）", "unmatched_indexes": []}
+
+
 def verify_allocation(
     rows: list[dict],
     material_rows: list[dict],

@@ -239,6 +239,8 @@ function InvoiceTab() {
       declaration_no: permit?.declaration_no || '',
       items: parsed.items,
       permit_columns: useTariff ? cols : [],
+      // 箱シートがあれば送料を実測重量で配る。無ければサーバ側で金額比に落ちる
+      box_data: parsed.box_data || null,
     }
   }
 
@@ -513,6 +515,24 @@ function InvoiceTab() {
             総原価: ¥{calculated.grand_total_jpy?.toLocaleString()}
             {calculated.skipped ? ` ／ スキップ: ${calculated.skipped}件` : ''}
           </div>
+
+          {/* 送料の配り方。黙って金額比に落ちているのが一番危ないので必ず出す */}
+          {calculated.freight_method && (
+            <div style={{
+              marginBottom: 12, padding: '8px 14px', borderRadius: 6, fontSize: 13,
+              background: calculated.freight_method.fallback ? '#fffbeb' : '#f0fdf4',
+              border: `1px solid ${calculated.freight_method.fallback ? '#fcd34d' : '#86efac'}`,
+              color: calculated.freight_method.fallback ? '#92400e' : '#166534',
+            }}>
+              {calculated.freight_method.fallback ? '⚠' : '✓'} 送料の配分: {calculated.freight_method.reason}
+              {calculated.freight_method.fallback && (
+                <div style={{ marginTop: 4, fontSize: 12 }}>
+                  金額比だと、安くて嵩張るものが送料をほとんど負担しません。
+                  箱シート（箱规・箱单）付きのインボイスなら実測重量で配れます。
+                </div>
+              )}
+            </div>
+          )}
 
           {/* 検算。総額が合っていても配り方が偏っていることはあるので、
               配り切れたか・どこへ配ったかを毎回チェックする */}

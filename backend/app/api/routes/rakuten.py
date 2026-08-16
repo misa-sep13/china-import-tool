@@ -1859,6 +1859,7 @@ class RakutenInvoiceItemIn(BaseModel):
     buy_url: str = ""
     asin_memo: str = ""  # J列（ASIN/商品番号）：商品内訳メモ
     permit_col: int | None = None  # 手動で指定した申告欄番号（1始まり）
+    goods_id: str = ""   # M列（商品ID）：箱单シートと突き合わせて送料を重量配賦する
 
 class PermitColumnIn(BaseModel):
     col_no: int
@@ -1883,6 +1884,8 @@ class RakutenInvoiceIn(BaseModel):
     items: List[RakutenInvoiceItemIn]
     permit_columns: List[PermitColumnIn] = []  # 許可書の申告欄情報（空=従来の一律按分）
     force_save: bool = False  # 検算NGでも承知の上で保存する
+    # 箱シートから読んだ箱の計費重量と中身。あれば送料を重量で配る
+    box_data: dict | None = None
 
 
 def _num(value, default=0.0):
@@ -2007,6 +2010,8 @@ def _parse_rakuten_invoice_workbook(wb):
             "total_price_cny": total_price or round(qty * unit_price, 2),
             "buy_url": buy_url,
             "asin_memo": invoice_code,
+            # 箱单シートと突き合わせるキー。送料を重量で配るのに使う
+            "goods_id": _code(_row_value(row, 12)),
         })
 
     if not items:
@@ -2022,6 +2027,9 @@ def _parse_rakuten_invoice_workbook(wb):
         elif "International" in joined and ("Freight" in joined or "运费" in joined or "送料" in joined):
             international_freight += _invoice_fee_amount(row)
 
+    # 箱シート（箱规・箱单）があれば送料を重量で配れる。無ければ従来の金額比
+    box_data = invoice_calc.parse_box_sheets(wb)
+
     return {
         "invoice_no": invoice_no,
         # Added Value(増値費用=検品・ラベル貼付などの加工費)は便全体で1行にまとまっており
@@ -2030,6 +2038,8 @@ def _parse_rakuten_invoice_workbook(wb):
         "added_value": round(added_value, 2),  # 内訳確認用
         "international_freight": round(international_freight, 2),
         "items": items,
+        "box_data": box_data,
+        "has_box_data": box_data.get("available", False),
     }
 
 
@@ -2273,6 +2283,13 @@ def _rakuten_build_cost_rows(data: "RakutenInvoiceIn", db: Session):
     item_totals = [i.qty * i.unit_price_cny for i in data.items]
     coverage = invoice_calc.calc_coverage(classified, item_totals)
 
+    # 送料は箱の実測重量で配る。金額比だと安くて嵩張るものが送料をほとんど
+    # 負担しない（実測で17倍の差が出た）。箱データが無い便は金額比に落ちる
+    freight_res = invoice_calc.calc_freight_by_weight(
+        [i.goods_id for i in data.items], item_totals, data.box_data, total_freight,
+    )
+    freight_by_index = freight_res["alloc"]
+
     # 税額の按分対象は全明細。資材や相手側商品を外すと、その分の税が宙に浮く
     valid_items = [(idx, total) for idx, total in enumerate(item_totals)]
 
@@ -2285,7 +2302,7 @@ def _rakuten_build_cost_rows(data: "RakutenInvoiceIn", db: Session):
     unknown = 0
     for idx, item in enumerate(data.items):
         item_total = item_totals[idx]
-        freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
+        freight_alloc = freight_by_index.get(idx, 0.0)
 
         ti = tariff_info.get(idx) if use_tariff else None
         tax_alloc_jpy = ti["total_tax_jpy"] if ti else (
@@ -2335,7 +2352,7 @@ def _rakuten_build_cost_rows(data: "RakutenInvoiceIn", db: Session):
         "rows": rows, "material_rows": material_rows, "skipped": unknown,
         "coverage": coverage, "verification": verification, "total_cny": total_cny,
         "total_freight_cny": total_freight, "import_tax_jpy": import_tax_jpy,
-        "use_tariff": use_tariff,
+        "use_tariff": use_tariff, "freight_method": freight_res,
     }
 
 
@@ -2389,6 +2406,10 @@ def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)
         "material_total_jpy": round(sum(m["total_cost_jpy"] for m in materials), 0),
         "coverage": calc["coverage"],
         "verification": calc["verification"],
+        "freight_method": {
+            "reason": calc["freight_method"]["reason"],
+            "fallback": calc["freight_method"]["fallback"],
+        },
         "total_cny": round(total_cny, 2),
         "total_freight_cny": round(total_freight, 2),
         "import_tax_jpy": calc["import_tax_jpy"],

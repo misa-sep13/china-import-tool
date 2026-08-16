@@ -20,6 +20,7 @@ class InvoiceItemIn(BaseModel):
     unit_price_cny: float
     buy_url: str = ""
     permit_col: Optional[int] = None  # 手動で指定した申告欄番号
+    goods_id: str = ""   # M列（商品ID）：箱单シートと突き合わせて送料を重量配賦する
 
 
 class PermitColumnIn(BaseModel):
@@ -56,6 +57,8 @@ class InvoiceIn(BaseModel):
     items: List[InvoiceItemIn]
     permit_columns: List[PermitColumnIn] = []  # 空=従来の一律按分
     force_save: bool = False  # 検算NGでも承知の上で保存する
+    # 箱シートから読んだ箱の計費重量と中身。あれば送料を重量で配る
+    box_data: dict | None = None
 
 
 @router.post("/parse-excel")
@@ -124,6 +127,8 @@ async def parse_excel(file: UploadFile = File(...)):
                 "unit_price_cny": float(row[7]) if row[7] else 0,
                 "total_price_cny": float(row[8]) if row[8] else 0,
                 "buy_url": str(row[11] or ""),
+                # 箱单シートと突き合わせるキー。送料を重量で配るのに使う
+                "goods_id": str(int(row[12])) if row[12] else "",
             })
 
     # 箱規シートから重量・容積を取得
@@ -136,6 +141,9 @@ async def parse_excel(file: UploadFile = File(...)):
                 total_weight += float(row[7] or 0)
                 total_volume += float(row[6] or 0)
 
+    # 箱シート（箱规・箱单）があれば送料を重量で配れる。無ければ従来の金額比
+    box_data = invoice_calc.parse_box_sheets(wb)
+
     return {
         "invoice_no": invoice_no,
         # 楽天版と同じく Added Value は国内送料に合算して按分対象にする
@@ -145,6 +153,8 @@ async def parse_excel(file: UploadFile = File(...)):
         "total_weight": round(total_weight, 2),
         "total_volume": round(total_volume, 4),
         "items": items,
+        "box_data": box_data,
+        "has_box_data": box_data.get("available", False),
     }
 
 
@@ -288,6 +298,13 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
     item_totals = [i.qty * i.unit_price_cny for i in data.items]
     coverage = invoice_calc.calc_coverage(classified, item_totals)
 
+    # 送料は箱の実測重量で配る。金額比だと安くて嵩張るものが送料をほとんど
+    # 負担しない（実測で17倍の差が出た）。箱データが無い便は金額比に落ちる
+    freight_res = invoice_calc.calc_freight_by_weight(
+        [i.goods_id for i in data.items], item_totals, data.box_data, total_freight,
+    )
+    freight_by_index = freight_res["alloc"]
+
     # 税額の按分対象は全明細。資材や相手側商品を外すと、その分の税が宙に浮く
     valid_items = [(idx, total) for idx, total in enumerate(item_totals)]
 
@@ -307,7 +324,7 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
     unknown = 0
     for idx, item in enumerate(data.items):
         item_total = item_totals[idx]
-        freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
+        freight_alloc = freight_by_index.get(idx, 0.0)
 
         ti = tariff_info.get(idx) if use_tariff else None
         if ti:
@@ -370,6 +387,7 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
         "skipped": unknown,
         "coverage": coverage,
         "verification": verification,
+        "freight_method": freight_res,
         "total_cny": total_cny,
         "total_freight_cny": total_freight,
         "import_tax_jpy": import_tax_jpy,
@@ -420,6 +438,10 @@ def calculate_cost(data: InvoiceIn, db: Session = Depends(get_db)):
         "material_total_jpy": round(sum(m["total_cost_jpy"] for m in materials), 0),
         "coverage": calc["coverage"],
         "verification": calc["verification"],
+        "freight_method": {
+            "reason": calc["freight_method"]["reason"],
+            "fallback": calc["freight_method"]["fallback"],
+        },
         "skipped": calc["skipped"],
         "use_tariff": calc["use_tariff"],
         "total_qty": sum(r["item"].qty for r in calc["rows"]),
