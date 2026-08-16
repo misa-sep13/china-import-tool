@@ -59,6 +59,8 @@ class InvoiceIn(BaseModel):
     force_save: bool = False  # 検算NGでも承知の上で保存する
     # 箱シートから読んだ箱の計費重量と中身。あれば送料を重量で配る
     box_data: dict | None = None
+    # 通関料（円）。船便は一律2000円、航空便は無し。許可書には載らない費用
+    customs_fee_jpy: float = 0
 
 
 @router.post("/parse-excel")
@@ -155,6 +157,10 @@ async def parse_excel(file: UploadFile = File(...)):
         "items": items,
         "box_data": box_data,
         "has_box_data": box_data.get("available", False),
+        # 船便のインボイスには海運用の記入要点シートが付く。確実ではないので
+        # 画面の初期値としてだけ使い、ユーザーが確認・変更できるようにする
+        "shipping_method": invoice_calc.guess_shipping_method(wb),
+        "customs_fee_sea_jpy": invoice_calc.CUSTOMS_FEE_SEA_JPY,
     }
 
 
@@ -305,6 +311,10 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
     )
     freight_by_index = freight_res["alloc"]
 
+    # 通関料は書類1件あたりの手続き費用なので、重量ではなく金額比で配る
+    customs_fee = data.customs_fee_jpy or 0
+    customs_fee_by_index = invoice_calc.calc_customs_fee_alloc(item_totals, customs_fee)
+
     # 税額の按分対象は全明細。資材や相手側商品を外すと、その分の税が宙に浮く
     valid_items = [(idx, total) for idx, total in enumerate(item_totals)]
 
@@ -334,7 +344,10 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
 
         kind = kind_by_index.get(idx, invoice_calc.KIND_UNKNOWN)
         product = product_by_index.get(idx)
-        total_cost_jpy = (item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy
+        fee_alloc = customs_fee_by_index.get(idx, 0.0)
+        total_cost_jpy = (
+            (item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy + fee_alloc
+        )
 
         if kind == invoice_calc.KIND_MATERIAL:
             # 梱包資材は売上原価だが、仕入時点ではどの商品に何枚使うか決まらないので
@@ -346,6 +359,7 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
                 "total_price_cny": round(item_total, 2),
                 "freight_alloc_cny": round(freight_alloc, 2),
                 "tax_alloc_jpy": round(tax_alloc_jpy, 1),
+                "customs_fee_alloc_jpy": round(fee_alloc, 1),
                 "total_cost_jpy": round(total_cost_jpy, 1),
             })
             continue
@@ -366,6 +380,7 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
             "total_price_cny": round(item_total, 2),
             "freight_alloc_cny": round(freight_alloc, 2),
             "tax_alloc_jpy": round(tax_alloc_jpy, 1),
+            "customs_fee_alloc_jpy": round(fee_alloc, 1),
             "cost_per_unit_jpy": round(cost_jpy, 1),
             "set_size": set_size,
             "col_no": ti["col_no"] if ti else None,
@@ -379,6 +394,7 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
         total_freight_cny=total_freight,
         import_tax_jpy=import_tax_jpy,
         permit_columns=data.permit_columns,
+        customs_fee_jpy=customs_fee,
     )
 
     return {
@@ -391,6 +407,7 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
         "total_cny": total_cny,
         "total_freight_cny": total_freight,
         "import_tax_jpy": import_tax_jpy,
+        "customs_fee_jpy": customs_fee,
         "use_tariff": use_tariff,
     }
 
@@ -410,6 +427,7 @@ def calculate_cost(data: InvoiceIn, db: Session = Depends(get_db)):
             "total_price_cny": r["total_price_cny"],
             "freight_alloc_cny": r["freight_alloc_cny"],
             "tax_alloc_jpy": r["tax_alloc_jpy"],
+            "customs_fee_alloc_jpy": r["customs_fee_alloc_jpy"],
             "cost_per_unit_jpy": r["cost_per_unit_jpy"],
             "col_no": r["col_no"],
             "tariff_rate": r["tariff_rate"],
@@ -425,6 +443,7 @@ def calculate_cost(data: InvoiceIn, db: Session = Depends(get_db)):
             "total_price_cny": r["total_price_cny"],
             "freight_alloc_cny": r["freight_alloc_cny"],
             "tax_alloc_jpy": r["tax_alloc_jpy"],
+            "customs_fee_alloc_jpy": r["customs_fee_alloc_jpy"],
             "total_cost_jpy": r["total_cost_jpy"],
         }
         for r in calc["material_rows"]
@@ -448,8 +467,10 @@ def calculate_cost(data: InvoiceIn, db: Session = Depends(get_db)):
         "total_cny": round(total_cny, 2),
         "total_freight_cny": round(total_freight, 2),
         "import_tax_jpy": round(calc["import_tax_jpy"], 0),
+        "customs_fee_jpy": calc["customs_fee_jpy"],
         "grand_total_jpy": round(
-            (total_cny + total_freight) * data.exchange_rate + calc["import_tax_jpy"], 0
+            (total_cny + total_freight) * data.exchange_rate
+            + calc["import_tax_jpy"] + calc["customs_fee_jpy"], 0
         ),
     }
 
@@ -483,6 +504,7 @@ def save_invoice(data: InvoiceIn, db: Session = Depends(get_db)):
         local_consumption_tax=data.local_consumption_tax,
         total_tax=data.total_tax,
         import_tax_jpy=calc["import_tax_jpy"],
+        customs_fee_jpy=calc["customs_fee_jpy"],
         bl_number=data.bl_number,
         declaration_no=data.declaration_no,
     )
@@ -510,6 +532,7 @@ def save_invoice(data: InvoiceIn, db: Session = Depends(get_db)):
             cost_per_unit_jpy=r["cost_per_unit_jpy"],
             buy_url=item.buy_url,
             tax_alloc_jpy=r["tax_alloc_jpy"],
+            customs_fee_alloc_jpy=r["customs_fee_alloc_jpy"],
             duty_jpy=r["duty_jpy"] or 0,
             col_no=r["col_no"],
             tariff_rate=r["tariff_rate"] or 0,
@@ -543,6 +566,7 @@ def save_invoice(data: InvoiceIn, db: Session = Depends(get_db)):
             total_price_cny=r["total_price_cny"],
             freight_alloc_cny=r["freight_alloc_cny"],
             tax_alloc_jpy=r["tax_alloc_jpy"],
+            customs_fee_alloc_jpy=r["customs_fee_alloc_jpy"],
             total_cost_jpy=r["total_cost_jpy"],
             exchange_rate=data.exchange_rate,
         ))

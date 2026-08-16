@@ -25,6 +25,7 @@ class MaterialCost(Base):
     total_price_cny = Column(Float, default=0)     # 商品代（元）
     freight_alloc_cny = Column(Float, default=0)   # 按分された送料（元）
     tax_alloc_jpy = Column(Float, default=0)       # 按分された輸入税（円）
-    total_cost_jpy = Column(Float, default=0)      # 資材費合計（円）= (商品代+送料)×為替+税
+    customs_fee_alloc_jpy = Column(Float, default=0)  # 按分された通関料（円）
+    total_cost_jpy = Column(Float, default=0)      # 資材費合計（円）= (商品代+送料)×為替+税+通関料
     exchange_rate = Column(Float, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

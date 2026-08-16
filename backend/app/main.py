@@ -160,6 +160,13 @@ def _migrate():
         # 発送用の梱包資材フラグ（宅配袋等）。商品原価には計上せず資材費として集計する
         ("products","is_material",           "ALTER TABLE products ADD COLUMN is_material BOOLEAN DEFAULT FALSE"),
         ("rakuten_products","is_material",   "ALTER TABLE rakuten_products ADD COLUMN is_material BOOLEAN DEFAULT FALSE"),
+        # 通関料（船便のみ一律2000円）。輸入許可書には載らないので別枠で持つ
+        ("material_costs","customs_fee_alloc_jpy",
+         "ALTER TABLE material_costs ADD COLUMN customs_fee_alloc_jpy FLOAT DEFAULT 0"),
+        ("invoice_items","customs_fee_alloc_jpy",
+         "ALTER TABLE invoice_items ADD COLUMN customs_fee_alloc_jpy FLOAT DEFAULT 0"),
+        ("invoices","customs_fee_jpy",
+         "ALTER TABLE invoices ADD COLUMN customs_fee_jpy FLOAT DEFAULT 0"),
         # 売上管理：広告比率カラム
         ("rakuten_sales_summaries","ad_rate", "ALTER TABLE rakuten_sales_summaries ADD COLUMN ad_rate FLOAT"),
         # 売上管理：原価率（原価÷売上高）

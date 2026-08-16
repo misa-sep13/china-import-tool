@@ -321,6 +321,43 @@ def calc_freight_by_weight(
             "reason": "箱の計費重量で按分（箱内は個数比）", "unmatched_indexes": []}
 
 
+CUSTOMS_FEE_SEA_JPY = 2000   # 船便の通関料（一律）。航空便は無し
+
+
+def guess_shipping_method(wb) -> str:
+    """インボイスのシート構成から配送方法を推測する。
+
+    船便のインボイスには海運用の記入要点シートが付く。ただし確実ではないので
+    あくまで画面の初期値として使い、ユーザーが確認・変更できるようにする。
+    戻り値: "sea" | "air" | ""（不明）
+    """
+    names = " ".join(getattr(wb, "sheetnames", []) or [])
+    if "海运" in names or "海運" in names:
+        return "sea"
+    if "空运" in names or "空運" in names or "航空" in names:
+        return "air"
+    return ""
+
+
+def calc_customs_fee_alloc(
+    item_totals: list[float],
+    customs_fee_jpy: float,
+) -> dict[int, float]:
+    """通関料を明細へ按分する。
+
+    通関料は便に対して一律でかかり、商品ごとの内訳が無い。
+    重量とは無関係な手続き費用なので、金額比で配る。
+    （送料は重量比だが、通関料は書類1件あたりの費用なので性質が違う）
+    """
+    total = sum(item_totals) or 0.0
+    if total <= 0 or customs_fee_jpy <= 0:
+        return {i: 0.0 for i in range(len(item_totals))}
+    return {
+        i: customs_fee_jpy * t / total
+        for i, t in enumerate(item_totals)
+    }
+
+
 def verify_allocation(
     rows: list[dict],
     material_rows: list[dict],
@@ -328,6 +365,7 @@ def verify_allocation(
     total_freight_cny: float,
     import_tax_jpy: float,
     permit_columns: list | None = None,
+    customs_fee_jpy: float = 0,
 ) -> dict:
     """配賦結果を検算する。総額が合っていても配り方が偏っていることはあるので、
     「配り切れたか」だけでなく「どこへ配ったか」も見る。
@@ -368,7 +406,19 @@ def verify_allocation(
         f"（便の税¥{round(import_tax_jpy)} × カバー率{coverage.get('coverage_rate')}%）",
     )
 
-    # ③ 許可書の実額と配賦額の一致（欄ごとの実額を使っている場合のみ）
+    # ③ 通関料の配賦: 配った通関料 ＋ 未登録分 ＝ 便の通関料
+    if customs_fee_jpy > 0:
+        alloc_fee = sum(r.get("customs_fee_alloc_jpy") or 0 for r in all_rows)
+        expected_fee = customs_fee_jpy * covered_ratio
+        add(
+            "通関料の配賦",
+            abs(alloc_fee - expected_fee) <= max(5.0, customs_fee_jpy * 0.01),
+            "error",
+            f"配賦¥{round(alloc_fee)} / 期待¥{round(expected_fee)}"
+            f"（便の通関料¥{round(customs_fee_jpy)} × カバー率{coverage.get('coverage_rate')}%）",
+        )
+
+    # ④ 許可書の実額と配賦額の一致（欄ごとの実額を使っている場合のみ）
     if permit_columns:
         cols = [c if isinstance(c, dict) else c.model_dump() for c in permit_columns]
         permit_total = sum(

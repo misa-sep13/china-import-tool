@@ -143,6 +143,8 @@ function InvoiceTab() {
   const [saved, setSaved]           = useState(null)
   const [products, setProducts]     = useState([])
   const [useTariff, setUseTariff]   = useState(true)
+  // 通関料は船便のみ一律2000円（航空便は無し）。許可書に載らないので手動で選ぶ
+  const [shippingMethod, setShippingMethod] = useState('sea')
 
   function updateItemSku(index, sku) {
     setParsed(p => {
@@ -191,6 +193,8 @@ function InvoiceTab() {
       fd2.append('file', invoiceFile)
       const invRes = await api.post('/invoices/parse-excel', fd2)
       setParsed(invRes.data)
+      // シート構成から推測した配送方法を初期値にする（確実ではないので変更可）
+      if (invRes.data.shipping_method) setShippingMethod(invRes.data.shipping_method)
       try {
         const pRes = await api.get('/products/')
         setProducts(pRes.data || [])
@@ -241,6 +245,10 @@ function InvoiceTab() {
       permit_columns: useTariff ? cols : [],
       // 箱シートがあれば送料を実測重量で配る。無ければサーバ側で金額比に落ちる
       box_data: parsed.box_data || null,
+      // 通関料は船便のみ一律。許可書には載らないので画面の選択から渡す
+      customs_fee_jpy: shippingMethod === 'sea'
+        ? (parsed.customs_fee_sea_jpy ?? 2000)
+        : 0,
     }
   }
 
@@ -398,6 +406,22 @@ function InvoiceTab() {
                 style={{ borderColor: form.import_tax_jpy > 0 ? '#16a34a' : undefined }}
                 onChange={e => setForm(f => ({ ...f, import_tax_jpy: e.target.value }))} />
             </div>
+            {/* 通関料は許可書に載らないので、配送方法から決める */}
+            <div className="form-group">
+              <label>
+                配送方法
+                <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 6 }}>
+                  通関料（船便のみ ¥{(parsed?.customs_fee_sea_jpy ?? 2000).toLocaleString()}）
+                </span>
+              </label>
+              <select
+                value={shippingMethod}
+                onChange={e => { setShippingMethod(e.target.value); setCalculated(null); setSaved(null) }}
+              >
+                <option value="sea">船便（通関料 ¥{(parsed?.customs_fee_sea_jpy ?? 2000).toLocaleString()}）</option>
+                <option value="air">航空便（通関料なし）</option>
+              </select>
+            </div>
           </div>
         </div>
       )}
@@ -512,6 +536,7 @@ function InvoiceTab() {
             仕入合計: {calculated.total_cny?.toLocaleString()}元 ／
             送料合計: {calculated.total_freight_cny?.toLocaleString()}元 ／
             輸入税: ¥{(calculated.import_tax_jpy || 0).toLocaleString()} ／
+            通関料: ¥{(calculated.customs_fee_jpy || 0).toLocaleString()} ／
             総原価: ¥{calculated.grand_total_jpy?.toLocaleString()}
             {calculated.skipped ? ` ／ スキップ: ${calculated.skipped}件` : ''}
           </div>
