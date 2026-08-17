@@ -2238,18 +2238,42 @@ async def rakuten_parse_excel(file: UploadFile = File(...), db: Session = Depend
     # 配送依頼側は色・仕様も使って照合しているため、色違いで同じURLの商品
     # （インボイスのURLだけでは区別できない行）もここで解決できる。
     # キーは (URL, 数量)。同URL同数量の色違いは単価も原価も同じため、残りを順に割り当てる。
+    #
+    # 航空便などで急ぎの分だけ別の配送依頼として提出し、実際の箱には他の便と
+    # 一緒に梱包される場合、その配送依頼の「追跡番号」欄には実際のVIP番号ではなく
+    # 「(相手の配送依頼No)に梱包」のようなメモが入る。そのままだと相手側の
+    # インボイスをパースしたときに照合されず、未発注の行として見えてしまうため、
+    # 主たる配送依頼のNoを含む追跡番号を持つ配送依頼（＝同梱されたもの）も
+    # あわせて拾う。
     from app.models.shipment_order import ShipmentOrder, ShipmentOrderItem
     ship_pool: dict = {}
     if parsed["invoice_no"]:
+        primary_orders = (
+            db.query(ShipmentOrder)
+            .filter(ShipmentOrder.tracking_no == parsed["invoice_no"])
+            .all()
+        )
+        order_ids = [o.id for o in primary_orders]
+        for o in primary_orders:
+            if o.order_no:
+                combined = (
+                    db.query(ShipmentOrder)
+                    .filter(
+                        ShipmentOrder.tracking_no.contains(o.order_no),
+                        ShipmentOrder.tracking_no != parsed["invoice_no"],
+                    )
+                    .all()
+                )
+                order_ids.extend(c.id for c in combined)
+
         ship_rows = (
             db.query(ShipmentOrderItem)
-            .join(ShipmentOrder, ShipmentOrderItem.shipment_order_id == ShipmentOrder.id)
             .filter(
-                ShipmentOrder.tracking_no == parsed["invoice_no"],
+                ShipmentOrderItem.shipment_order_id.in_(order_ids),
                 ShipmentOrderItem.product_id.isnot(None),
             )
             .all()
-        )
+        ) if order_ids else []
         for si in ship_rows:
             key = (_url_key(si.buy_url or ""), int(si.qty or 0))
             ship_pool.setdefault(key, [])
