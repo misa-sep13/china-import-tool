@@ -267,8 +267,13 @@ def calc_freight_by_weight(
     if not box_data or not box_data.get("available"):
         return by_money("箱データが無いため金額比で按分")
 
-    boxes = box_data["boxes"]
-    contents = box_data["contents"]
+    # box_dataはparse-excel時にサーバーで作った箱番号(int)キーの辞書だが、
+    # フロントを経由してcalculate/saveへJSONで渡し直されると、JSONのオブジェクトキーは
+    # 常に文字列になるため箱番号がintのまま残っているcontents側のc["box"]と型が
+    # 一致しなくなり、box_freight.get(c["box"])が常にヒットせず送料が0になる
+    # （検算NGの原因だった）。両側を文字列キーに揃えて突き合わせる。
+    boxes = {str(b): info for b, info in box_data["boxes"].items()}
+    contents = [{**c, "box": str(c["box"])} for c in box_data["contents"]]
     total_bw = box_data["total_billing_weight"]
     if total_bw <= 0:
         return by_money("計費重量が取れないため金額比で按分")
