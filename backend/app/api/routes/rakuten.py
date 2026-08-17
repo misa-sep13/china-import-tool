@@ -164,6 +164,12 @@ async def retry_rms_push_failures(db: Session = Depends(get_db)):
             r.resolved = True
             r.resolved_at = datetime.now(timezone.utc)
             continue
+        if p.is_material:
+            # 発送資材は楽天に出品していないので再送しようがない（送るだけ無駄に失敗する）
+            stale.append(r.sku)
+            r.resolved = True
+            r.resolved_at = datetime.now(timezone.utc)
+            continue
         manage_number = p.rakuten_item_url or (p.sku or "").split("_")[0]
         rms_items.append({
             "manage_number": manage_number,
@@ -313,6 +319,9 @@ def _build_rms_stock_items(all_products: list[RakutenProduct], sku_stock: dict, 
     for p in all_products:
         # RMSにページが無い内部SKU（y91_case等）はpush対象外
         if p.is_component and not p.rakuten_item_url:
+            continue
+        # 発送資材は楽天に出品していないのでRMSへ送る必要が無い（manage_numberも無い）
+        if p.is_material:
             continue
         sku = (p.sku or "").strip()
         if not sku or not re.match(r'^[a-zA-Z0-9_\-]+$', sku):
