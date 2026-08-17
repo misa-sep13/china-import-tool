@@ -12,6 +12,12 @@
   全員ログアウトされる簡易フォールバックを使う）。
 - AUTH_SERVICE_TOKEN はGitHub Actionsの自動実行（売上同期・SEOチェック・
   月末在庫確定）用。ログイン画面からは使わない。
+
+トークンには発行時点のパスワードの指紋(pwfp)を埋め込み、検証のたびに
+「今の」パスワードから計算した指紋と突き合わせる。これにより
+AUTH_CONTRACTOR_PASSWORD を変更した瞬間、有効期限内でも発行済みの
+トークンが（ブックマークしてある分も含めて）すべて無効になる
+＝契約終了時に確実に遮断できる。
 """
 import base64
 import hashlib
@@ -23,6 +29,10 @@ from typing import Optional
 
 _FALLBACK_SECRET = "china-import-tool-dev-secret-not-for-production"
 
+# オーナーは毎回パスワードを打ちたくないという要望のため長め（実質「パスワードを
+# 変えない限りずっと有効」）。本当の失効手段はTTLではなくパスワード変更＝pwfp不一致。
+_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 365  # 365日
+
 
 def _secret() -> str:
     return os.environ.get("AUTH_TOKEN_SECRET") or _FALLBACK_SECRET
@@ -32,11 +42,17 @@ def _sign(payload_b64: str) -> str:
     return hmac.new(_secret().encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
 
 
-_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30  # 30日
+def _password_fingerprint(role: str) -> str:
+    pw = os.environ.get(f"AUTH_{role.upper()}_PASSWORD") or ""
+    return hashlib.sha256(pw.encode()).hexdigest()[:16]
 
 
 def issue_token(role: str) -> str:
-    payload = json.dumps({"role": role, "exp": int(time.time()) + _TOKEN_TTL_SECONDS})
+    payload = json.dumps({
+        "role": role,
+        "exp": int(time.time()) + _TOKEN_TTL_SECONDS,
+        "pwfp": _password_fingerprint(role),
+    })
     payload_b64 = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
     return f"{payload_b64}.{_sign(payload_b64)}"
 
@@ -54,6 +70,9 @@ def verify_token(token: str) -> Optional[dict]:
         return None
     if payload.get("exp", 0) < time.time():
         return None
+    role = payload.get("role", "")
+    if payload.get("pwfp") != _password_fingerprint(role):
+        return None  # パスワードが変わった＝このトークンはもう無効
     return payload
 
 

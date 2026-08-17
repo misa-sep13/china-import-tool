@@ -39,6 +39,28 @@ function App() {
   const [role, setRole] = useState(() => localStorage.getItem('auth_role'))
   const [historyOpen, setHistoryOpen] = useState(false)
 
+  // ブックマークされたマジックリンク（?auth=トークン）を検出したら、
+  // ログイン画面を出さずにそのままトークンを保存してURLから消す。
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('auth')
+    if (!token) return
+    let tokenRole = null
+    try {
+      const payload = token.split('.')[0]
+      const padded = payload + '='.repeat((4 - (payload.length % 4)) % 4)
+      tokenRole = JSON.parse(atob(padded.replace(/-/g, '+').replace(/_/g, '/'))).role
+    } catch {
+      // デコードに失敗してもトークン自体はサーバー側で検証されるので保存だけしておく
+    }
+    localStorage.setItem('auth_token', token)
+    if (tokenRole) localStorage.setItem('auth_role', tokenRole)
+    setRole(tokenRole || localStorage.getItem('auth_role'))
+    params.delete('auth')
+    const newSearch = params.toString()
+    window.history.replaceState({}, '', window.location.pathname + (newSearch ? `?${newSearch}` : ''))
+  }, [])
+
   useEffect(() => {
     api.get('/auth/status')
       .then(r => setAuthEnabled(!!r.data.auth_enabled))
