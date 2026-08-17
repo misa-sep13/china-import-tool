@@ -14,6 +14,7 @@ jobs:
         run: |
           curl -X POST "${{ secrets.BACKEND_URL }}/api/products/refresh-fees" \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.AUTH_SERVICE_TOKEN }}" \
             --max-time 300 \
             --retry 2 \
             -f
@@ -22,6 +23,7 @@ jobs:
         run: |
           curl -X POST "${{ secrets.BACKEND_URL }}/api/price-adjustments/suggest" \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.AUTH_SERVICE_TOKEN }}" \
             --max-time 300 \
             --retry 2 \
             -f || true

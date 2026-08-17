@@ -19,4 +19,5 @@ jobs:
       - name: 楽天売上を同期（重い受注取得はこのランナーで実行）
         env:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          AUTH_SERVICE_TOKEN: ${{ secrets.AUTH_SERVICE_TOKEN }}
         run: python scripts/sync_rakuten_sales.py

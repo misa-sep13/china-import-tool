@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -11,6 +11,7 @@ from pydantic import BaseModel
 import asyncio
 from app.core.database import get_db, SessionLocal
 from app.services.rakuten_rms import calc_set_avail, build_component_share_counts
+from app.services.activity_log import log_activity
 
 # 日本時間(JST)。RenderはUTCで動くため、表示用の時刻(sales_updated_at, last_sync)は
 # JSTの壁時計時刻(タイムゾーンなし)で保存し、画面や報告で日本時間として正しく見えるようにする。
@@ -357,8 +358,17 @@ def _get_or_create_settings(db: Session) -> RakutenSettings:
     return row
 
 @router.get("/settings", response_model=RakutenSettingsSchema)
-def get_settings(db: Session = Depends(get_db)):
-    return _get_or_create_settings(db)
+def get_settings(request: Request, db: Session = Depends(get_db)):
+    row = _get_or_create_settings(db)
+    # 手数料率・為替設定など他画面が計算に使う値は外注さんにも見せるが、
+    # RMSのAPIキーだけは伏せる（設定ページ自体は外注さんには非表示だが、
+    # 念のためAPIレスポンス側でも漏れないようにしておく）
+    if getattr(request.state, "actor_role", None) == "contractor":
+        out = RakutenSettingsSchema.model_validate(row).model_dump()
+        out["rms_service_secret"] = None
+        out["rms_license_key"] = None
+        return out
+    return row
 
 @router.put("/settings", response_model=RakutenSettingsSchema)
 def update_settings(data: RakutenSettingsSchema, db: Session = Depends(get_db)):
@@ -716,7 +726,7 @@ def list_stock(db: Session = Depends(get_db)):
     return result
 
 @router.post("/products")
-def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):
+def create_product(data: RakutenProductIn, request: Request, db: Session = Depends(get_db)):
     data.set_components = _clean_set_components(data.set_components)
     existing = db.query(RakutenProduct).filter(RakutenProduct.sku == data.sku).first()
     if existing:
@@ -726,17 +736,20 @@ def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):
         for k, v in data.model_dump().items():
             setattr(existing, k, v)
         existing.is_active = True
+        log_activity(db, request, "create", "rakuten_product", existing.id, f"商品マスタ登録（復活）: {existing.sku} {existing.name or ''}", sku=existing.sku)
         db.commit()
         db.refresh(existing)
         return RakutenProductOut.model_validate(existing).model_dump()
     p = RakutenProduct(**data.model_dump())
     db.add(p)
+    db.flush()
+    log_activity(db, request, "create", "rakuten_product", p.id, f"商品マスタ登録: {p.sku} {p.name or ''}", sku=p.sku)
     db.commit()
     db.refresh(p)
     return RakutenProductOut.model_validate(p).model_dump()
 
 @router.put("/products/{product_id}")
-async def update_product(product_id: int, data: RakutenProductIn, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def update_product(product_id: int, data: RakutenProductIn, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     if "set_components" in data.model_fields_set:
         data.set_components = _clean_set_components(data.set_components)
     p = db.query(RakutenProduct).filter(RakutenProduct.id == product_id).first()
@@ -751,6 +764,8 @@ async def update_product(product_id: int, data: RakutenProductIn, background_tas
     old_stock = p.stock
     for k, v in data.model_dump(exclude_unset=True).items():
         setattr(p, k, v)
+    changed = ", ".join(sorted(data.model_fields_set - {"sku"}))
+    log_activity(db, request, "update", "rakuten_product", p.id, f"商品マスタ更新: {p.sku}（{changed}）", sku=p.sku)
     db.commit()
     db.refresh(p)
 
@@ -822,7 +837,7 @@ async def update_product(product_id: int, data: RakutenProductIn, background_tas
     return RakutenProductOut.model_validate(p).model_dump()
 
 @router.post("/products/bulk-update-stock")
-async def bulk_update_stock(body: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def bulk_update_stock(body: dict, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """複数商品の在庫をまとめて更新してRMSに一括反映
     body: {"updates": [{"id": 1, "stock": 10, "inbound": 0, "standard_stock": 5}, ...]}
     RMSへの在庫反映はバックグラウンドで実行し、保存レスポンスは即座に返す。
@@ -838,14 +853,18 @@ async def bulk_update_stock(body: dict, background_tasks: BackgroundTasks, db: S
 
     # Step1: DB更新（全件まとめて）
     updated_skus = set()
+    stock_changes = []  # (sku, before, after) ログ用
     for u in updates:
         p = id_to_product.get(u.get("id"))
         if not p:
             continue
         if "stock" in u:
+            before = p.stock or 0
             p.stock = int(u["stock"])
             sku_stock[p.sku] = p.stock
             updated_skus.add(p.sku)
+            if before != p.stock:
+                stock_changes.append((p.sku, before, p.stock))
         if "inbound" in u:
             p.inbound = int(u["inbound"])
         if "standard_stock" in u:
@@ -877,6 +896,9 @@ async def bulk_update_stock(body: dict, background_tasks: BackgroundTasks, db: S
         if set_qty is not None:
             p.stock = set_qty
             sku_stock[p.sku] = set_qty
+
+    for sku, before, after in stock_changes:
+        log_activity(db, request, "stock_change", "rakuten_product", None, f"実在庫を一括変更: {sku} {before}→{after}", sku=sku)
 
     db.commit()
 
@@ -1009,21 +1031,24 @@ def bulk_set_components(body: dict, db: Session = Depends(get_db)):
     return {"updated": ok}
 
 @router.delete("/products/{product_id}")
-def delete_product(product_id: int, db: Session = Depends(get_db)):
+def delete_product(product_id: int, request: Request, db: Session = Depends(get_db)):
     p = db.query(RakutenProduct).filter(RakutenProduct.id == product_id).first()
     if not p:
         raise HTTPException(404)
     p.is_active = False
+    log_activity(db, request, "delete", "rakuten_product", p.id, f"商品マスタ削除: {p.sku} {p.name or ''}", sku=p.sku)
     db.commit()
     return {"ok": True}
 
 @router.patch("/products/{product_id}/stock")
-def update_stock(product_id: int, body: dict, db: Session = Depends(get_db)):
+def update_stock(product_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
     p = db.query(RakutenProduct).filter(RakutenProduct.id == product_id).first()
     if not p:
         raise HTTPException(404)
     if "stock" in body:
+        before = p.stock
         p.stock = body["stock"]
+        log_activity(db, request, "stock_change", "rakuten_product", p.id, f"実在庫を手動変更: {p.sku} {before}→{p.stock}", sku=p.sku)
     if "inbound" in body:
         p.inbound = body["inbound"]
     if "sales_30_recent" in body:
@@ -1462,11 +1487,12 @@ def mark_delivered(order_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 @router.delete("/orders/history/{order_id}")
-def delete_order(order_id: int, db: Session = Depends(get_db)):
+def delete_order(order_id: int, request: Request, db: Session = Depends(get_db)):
     o = db.query(RakutenOrderHistory).filter(RakutenOrderHistory.id == order_id).first()
     if not o:
         raise HTTPException(404)
     o.is_deleted = True
+    log_activity(db, request, "delete", "rakuten_order", o.id, f"発注削除: {o.sku} 数量{o.qty}", sku=o.sku)
     db.commit()
     return {"ok": True}
 

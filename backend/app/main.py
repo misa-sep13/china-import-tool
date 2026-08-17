@@ -11,6 +11,8 @@ from app.api.routes import ads
 from app.api.routes import review as review_routes
 from app.api.routes import keyword_analysis as keyword_analysis_routes
 from app.api.routes import seo as seo_routes
+from app.api.routes import auth as auth_routes
+from app.api.routes import activity_log as activity_log_routes
 from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
 from app.models import price_log as price_log_models
@@ -32,6 +34,7 @@ from app.models import rms_push_failure as rms_push_failure_models
 from app.models import inventory_snapshot as inventory_snapshot_models
 from app.models import material_cost as material_cost_models
 from app.models import cost_history as cost_history_models
+from app.models import activity_log as activity_log_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -1169,6 +1172,69 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ============================================================
+# 簡易ログイン（オーナー／外注さん1名）
+# ============================================================
+# AUTH_OWNER_PASSWORD が未設定の間は何もしない（今までどおり無認証で動く）。
+# 設定して初めて有効になるので、コードのデプロイだけでは誰もロックアウトされない。
+from starlette.requests import Request as _StarletteRequest
+from starlette.responses import JSONResponse as _JSONResponse
+from app.core.auth import auth_enabled, verify_token, check_service_token
+
+# ログイン不要で通す経路。
+# ・/api/auth/* はログイン自体に使うので当然除外
+# ・就労支援の公開ページ（work-public）が使う一覧取得は、施設の作業者が
+#   ログインなしで見るためのものなので除外
+_AUTH_EXEMPT_PREFIXES = ("/api/auth/", "/docs", "/openapi.json", "/redoc")
+_AUTH_PUBLIC_GET_PATHS = {"/api/welfare/work-instructions"}
+# 外注さんには見せない（APIキー等が見える設定画面）
+_AUTH_OWNER_ONLY_PREFIXES = ("/api/settings", "/api/rakuten/settings")
+
+
+def _cors_headers_for(request: _StarletteRequest) -> dict:
+    origin = request.headers.get("origin")
+    if origin and origin in ALLOWED_ORIGINS:
+        return {"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Credentials": "true"}
+    return {}
+
+
+@app.middleware("http")
+async def auth_middleware(request: _StarletteRequest, call_next):
+    if request.method == "OPTIONS" or not auth_enabled():
+        return await call_next(request)
+
+    path = request.url.path
+    if not path.startswith("/api/") or path.startswith(_AUTH_EXEMPT_PREFIXES):
+        return await call_next(request)
+    if request.method == "GET" and path in _AUTH_PUBLIC_GET_PATHS:
+        return await call_next(request)
+
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header[7:] if auth_header.lower().startswith("bearer ") else ""
+
+    role = None
+    if token and check_service_token(token):
+        role = "service"
+    elif token:
+        payload = verify_token(token)
+        if payload:
+            role = payload.get("role")
+
+    if not role:
+        return _JSONResponse(status_code=401, content={"detail": "ログインが必要です"}, headers=_cors_headers_for(request))
+    # 設定の「変更」は外注さんにはさせない。「閲覧」は手数料率など他画面の計算に
+    # 使う値もあるため一律には止めず、APIキーなど本当に機密な項目だけ
+    # ルート側（get_rakuten_settings）でマスクする。
+    if role == "contractor" and request.method != "GET" and path.startswith(_AUTH_OWNER_ONLY_PREFIXES):
+        return _JSONResponse(status_code=403, content={"detail": "この機能は利用できません"}, headers=_cors_headers_for(request))
+
+    request.state.actor_role = role
+    return await call_next(request)
+
+
+app.include_router(auth_routes.router, prefix="/api")
+app.include_router(activity_log_routes.router, prefix="/api")
 app.include_router(products.router, prefix="/api")
 app.include_router(orders.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")

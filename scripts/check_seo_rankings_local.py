@@ -23,6 +23,10 @@ except Exception:
 
 BACKEND = os.environ.get("BACKEND_URL", "https://china-import-tool.onrender.com")
 SHOP_ID = "411150"
+# ログイン導入後、APIは認証必須になる（未設定の間は無視される）。
+# タスクスケジューラの環境変数にRenderと同じAUTH_SERVICE_TOKENを設定しておくこと。
+_SERVICE_TOKEN = os.environ.get("AUTH_SERVICE_TOKEN") or ""
+AUTH_HEADERS = {"Authorization": f"Bearer {_SERVICE_TOKEN}"} if _SERVICE_TOKEN else {}
 SEARCH_URL = "https://search.rakuten.co.jp/search/mall/{keyword}/"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -103,7 +107,7 @@ def scrape_ranking(client: httpx.Client, keyword: str) -> dict:
 
 
 def main():
-    with httpx.Client(timeout=30) as api:
+    with httpx.Client(timeout=30, headers=AUTH_HEADERS) as api:
         res = api.get(f"{BACKEND}/api/seo/keywords?active_only=true")
         res.raise_for_status()
         keywords = res.json().get("keywords", [])
@@ -124,7 +128,7 @@ def main():
         if not results:
             return
         try:
-            with httpx.Client(timeout=120) as api:
+            with httpx.Client(timeout=120, headers=AUTH_HEADERS) as api:
                 res = api.post(
                     f"{BACKEND}/api/seo/rankings/bulk",
                     json={"checked_at": checked_at, "results": results},

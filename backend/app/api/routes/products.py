@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from datetime import datetime, timezone
 from app.core.database import get_db
 from app.models.product import Product
+from app.services.activity_log import log_activity
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -136,7 +137,7 @@ def import_from_fba(db: Session = Depends(get_db)):
     return {"added": added, "skipped": skipped, "fixed": fixed}
 
 @router.post("/", response_model=ProductOut)
-def create_product(data: ProductCreate, db: Session = Depends(get_db)):
+def create_product(data: ProductCreate, request: Request, db: Session = Depends(get_db)):
     existing = db.query(Product).filter(Product.sku == data.sku).first()
     if existing:
         if existing.is_active:
@@ -145,6 +146,8 @@ def create_product(data: ProductCreate, db: Session = Depends(get_db)):
     max_no = db.query(Product).count()
     p = Product(**data.model_dump(), no=max_no + 1)
     db.add(p)
+    db.flush()
+    log_activity(db, request, "create", "amazon_product", p.id, f"商品マスタ登録: {p.sku} {p.name or ''}", sku=p.sku)
     try:
         db.commit()
     except IntegrityError:
@@ -163,7 +166,7 @@ def restore_product(data: ProductCreate, db: Session = Depends(get_db)):
     return _restore_deleted_product(existing, data, db)
 
 @router.put("/{product_id}", response_model=ProductOut)
-def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(get_db)):
+def update_product(product_id: int, data: ProductUpdate, request: Request, db: Session = Depends(get_db)):
     p = db.query(Product).filter(Product.id == product_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="商品が見つかりません")
@@ -176,6 +179,7 @@ def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(g
             _retire_deleted_sku(existing)
     for k, v in updates.items():
         setattr(p, k, v)
+    log_activity(db, request, "update", "amazon_product", p.id, f"商品マスタ更新: {p.sku}（{', '.join(sorted(updates.keys()))}）", sku=p.sku)
     try:
         db.commit()
     except IntegrityError:
@@ -251,11 +255,12 @@ def refresh_fees(db: Session = Depends(get_db)):
 
 
 @router.delete("/{product_id}")
-def delete_product(product_id: int, db: Session = Depends(get_db)):
+def delete_product(product_id: int, request: Request, db: Session = Depends(get_db)):
     p = db.query(Product).filter(Product.id == product_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="商品が見つかりません")
     p.is_active = False
+    log_activity(db, request, "delete", "amazon_product", p.id, f"商品マスタ削除: {p.sku} {p.name or ''}", sku=p.sku)
     db.commit()
     return {"ok": True}
 

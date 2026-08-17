@@ -26,9 +26,12 @@ def main() -> int:
     if not backend:
         print("ERROR: BACKEND_URL が未設定です")
         return 1
+    # ログイン導入後、APIは認証必須になる（未設定の間は無視される）。
+    service_token = os.environ.get("AUTH_SERVICE_TOKEN") or ""
+    auth_headers = {"Authorization": f"Bearer {service_token}"} if service_token else {}
 
     # 1) RMSキーをRenderの設定APIから取得
-    with httpx.Client(timeout=60) as c:
+    with httpx.Client(timeout=60, headers=auth_headers) as c:
         res = c.get(f"{backend}/api/rakuten/settings")
         res.raise_for_status()
         settings = res.json()
@@ -47,7 +50,7 @@ def main() -> int:
     )
     print(f"取得SKU数: {len(sku_sales)}")
 
-    with httpx.Client(timeout=180) as c:
+    with httpx.Client(timeout=180, headers=auth_headers) as c:
         # 3) 集計結果をRenderに送ってDB更新（従来のSKU別集計）
         res = c.post(f"{backend}/api/rakuten/rms/sales/apply", json={"sales": sku_sales})
         res.raise_for_status()

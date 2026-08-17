@@ -18,6 +18,7 @@ jobs:
           # 同じ在庫・売上キャッシュを共有するため、preview を温めれば両方カバーできる。
           curl -X POST "${{ secrets.BACKEND_URL }}/api/orders/preview/start?force=true" \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.AUTH_SERVICE_TOKEN }}" \
             --max-time 60 \
             --retry 2 \
             -f
@@ -33,6 +34,7 @@ jobs:
           # forceなし＝期限切れの分だけ取得するので、温まっていれば何もしない。
           curl -X POST "${{ secrets.BACKEND_URL }}/api/analytics/start?days=30" \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.AUTH_SERVICE_TOKEN }}" \
             --max-time 60 \
             --retry 2 \
             -f

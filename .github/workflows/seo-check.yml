@@ -22,4 +22,5 @@ jobs:
       - name: SEO順位チェックをトリガー（実処理はRenderサーバー側/楽天ウェブサービスAPI経由）
         env:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          AUTH_SERVICE_TOKEN: ${{ secrets.AUTH_SERVICE_TOKEN }}
         run: python scripts/check_seo_rankings.py
