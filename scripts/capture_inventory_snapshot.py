@@ -18,6 +18,10 @@ BACKEND_URL = (os.environ.get("BACKEND_URL") or "").rstrip("/")
 PERIOD = (os.environ.get("PERIOD") or "").strip()
 PLATFORMS = [p.strip() for p in (os.environ.get("PLATFORMS") or "rakuten,amazon").split(",") if p.strip()]
 FORCE = (os.environ.get("FORCE") or "").lower() in ("1", "true", "yes")
+# ログイン導入後、APIは認証必須になる（未設定の間は無視される）。
+# GitHub Actions用のサービストークンをAUTH_SERVICE_TOKENで渡す。
+_SERVICE_TOKEN = os.environ.get("AUTH_SERVICE_TOKEN") or ""
+AUTH_HEADERS = {"Authorization": f"Bearer {_SERVICE_TOKEN}"} if _SERVICE_TOKEN else {}
 
 if not BACKEND_URL:
     print("BACKEND_URL が設定されていません", file=sys.stderr)
@@ -38,7 +42,7 @@ for platform in PLATFORMS:
     url = f"{BACKEND_URL}/inventory-snapshots/capture"
     try:
         # Amazonは在庫をSP-APIから取得するため時間がかかる
-        res = httpx.post(url, json={"period": period, "platform": platform}, timeout=600)
+        res = httpx.post(url, json={"period": period, "platform": platform}, headers=AUTH_HEADERS, timeout=600)
     except Exception as e:
         print(f"  {platform}: 通信エラー {e}", file=sys.stderr)
         failed.append(platform)

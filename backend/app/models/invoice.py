@@ -20,6 +20,7 @@ class Invoice(Base):
     local_consumption_tax = Column(Integer, default=0) # 地方消費税
     total_tax = Column(Integer, default=0)             # 納税額合計
     import_tax_jpy = Column(Float, default=0)          # 輸入税合計（原価按分に使う）
+    customs_fee_jpy = Column(Float, default=0)         # 通関料（船便のみ一律。許可書に載らない）
     bl_number = Column(String)                         # B/L番号
     declaration_no = Column(String)                    # 申告番号
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -42,6 +43,7 @@ class InvoiceItem(Base):
     buy_url = Column(String)                       # 1688リンク
     # 申告欄ごとの税率で計算した内訳
     tax_alloc_jpy = Column(Float, default=0)       # 按分された輸入税（円）
+    customs_fee_alloc_jpy = Column(Float, default=0)  # 按分された通関料（円）
     duty_jpy = Column(Float, default=0)            # 関税（円）
     col_no = Column(Integer)                       # 対応する申告欄番号
     tariff_rate = Column(Float, default=0)         # 適用した関税率（%）

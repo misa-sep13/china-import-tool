@@ -186,6 +186,7 @@ class SalesAgg:
 
     def as_dict(self, level: str, period: str) -> dict:
         profit_rate = (self.profit / self.sales * 100) if self.sales else None
+        cost_rate = (self.product_cost / self.sales * 100) if self.sales else None
         rpp_rate = (self.rpp_cost / self.sales * 100) if self.sales else None
         ad_total = self.rpp_cost + self.coupon_ad_cost
         ad_rate = (ad_total / self.sales * 100) if self.sales else None
@@ -214,6 +215,7 @@ class SalesAgg:
             "platform_fee_rate": round(platform_fee_rate, 2) if platform_fee_rate is not None else None,
             "shipping_cost": round(self.shipping_cost, 2),
             "product_cost": round(self.product_cost, 2),
+            "cost_rate": round(cost_rate, 2) if cost_rate is not None else None,
             "profit": round(self.profit, 2),
             "profit_rate": round(profit_rate, 2) if profit_rate is not None else None,
             "rpp_rate": round(rpp_rate, 2) if rpp_rate is not None else None,

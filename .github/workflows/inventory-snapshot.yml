@@ -34,6 +34,7 @@ jobs:
       - name: 月末在庫を確定
         env:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          AUTH_SERVICE_TOKEN: ${{ secrets.AUTH_SERVICE_TOKEN }}
           PERIOD: ${{ github.event.inputs.period }}
           PLATFORMS: ${{ github.event.inputs.platforms || 'rakuten,amazon' }}
           FORCE: ${{ github.event.inputs.force }}

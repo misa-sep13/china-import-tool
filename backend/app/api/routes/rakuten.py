@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -11,6 +11,7 @@ from pydantic import BaseModel
 import asyncio
 from app.core.database import get_db, SessionLocal
 from app.services.rakuten_rms import calc_set_avail, build_component_share_counts
+from app.services.activity_log import log_activity
 
 # 日本時間(JST)。RenderはUTCで動くため、表示用の時刻(sales_updated_at, last_sync)は
 # JSTの壁時計時刻(タイムゾーンなし)で保存し、画面や報告で日本時間として正しく見えるようにする。
@@ -159,6 +160,12 @@ async def retry_rms_push_failures(db: Session = Depends(get_db)):
         p = by_sku.get(r.sku)
         if not p:
             # 商品が消えている失敗は再送しようがないので解決済みにする
+            stale.append(r.sku)
+            r.resolved = True
+            r.resolved_at = datetime.now(timezone.utc)
+            continue
+        if p.is_material:
+            # 発送資材は楽天に出品していないので再送しようがない（送るだけ無駄に失敗する）
             stale.append(r.sku)
             r.resolved = True
             r.resolved_at = datetime.now(timezone.utc)
@@ -313,6 +320,9 @@ def _build_rms_stock_items(all_products: list[RakutenProduct], sku_stock: dict, 
         # RMSにページが無い内部SKU（y91_case等）はpush対象外
         if p.is_component and not p.rakuten_item_url:
             continue
+        # 発送資材は楽天に出品していないのでRMSへ送る必要が無い（manage_numberも無い）
+        if p.is_material:
+            continue
         sku = (p.sku or "").strip()
         if not sku or not re.match(r'^[a-zA-Z0-9_\-]+$', sku):
             continue
@@ -357,8 +367,17 @@ def _get_or_create_settings(db: Session) -> RakutenSettings:
     return row
 
 @router.get("/settings", response_model=RakutenSettingsSchema)
-def get_settings(db: Session = Depends(get_db)):
-    return _get_or_create_settings(db)
+def get_settings(request: Request, db: Session = Depends(get_db)):
+    row = _get_or_create_settings(db)
+    # 手数料率・為替設定など他画面が計算に使う値は外注さんにも見せるが、
+    # RMSのAPIキーだけは伏せる（設定ページ自体は外注さんには非表示だが、
+    # 念のためAPIレスポンス側でも漏れないようにしておく）
+    if getattr(request.state, "actor_role", None) == "contractor":
+        out = RakutenSettingsSchema.model_validate(row).model_dump()
+        out["rms_service_secret"] = None
+        out["rms_license_key"] = None
+        return out
+    return row
 
 @router.put("/settings", response_model=RakutenSettingsSchema)
 def update_settings(data: RakutenSettingsSchema, db: Session = Depends(get_db)):
@@ -424,6 +443,7 @@ def _sales_summary_out(row: RakutenSalesSummary) -> dict:
         "platform_fee_rate": row.platform_fee_rate,
         "shipping_cost": row.shipping_cost or 0,
         "product_cost": row.product_cost or 0,
+        "cost_rate": row.cost_rate,
         "profit": row.profit or 0,
         "profit_rate": row.profit_rate,
         "rpp_rate": row.rpp_rate,
@@ -479,8 +499,23 @@ def get_sales_summary(period: str, level: str = "parent", db: Session = Depends(
         "units": round(sum((r.units or 0) for r in rows), 2),
         "sales": round(sum((r.sales or 0) for r in rows), 2),
         "profit": round(sum((r.profit or 0) for r in rows), 2),
+        "product_cost": round(sum((r.product_cost or 0) for r in rows), 2),
     }
     totals["profit_rate"] = round(totals["profit"] / totals["sales"] * 100, 2) if totals["sales"] else None
+
+    # 梱包資材は売上原価だが、仕入時点ではどの商品に何枚使うか決まらないので
+    # 商品ごとの原価には配れない。全体の原価率にだけ加算する。
+    from app.models.material_cost import MaterialCost
+    material_cost = (
+        db.query(func.coalesce(func.sum(MaterialCost.total_cost_jpy), 0))
+        .filter(MaterialCost.invoice_date.like(f"{period}%"))
+        .scalar()
+    ) or 0
+    totals["material_cost"] = round(material_cost, 2)
+    total_cost = totals["product_cost"] + material_cost
+    totals["total_cost"] = round(total_cost, 2)
+    totals["cost_rate"] = round(total_cost / totals["sales"] * 100, 2) if totals["sales"] else None
+
     return {
         "import": _sales_import_out(info) if info else None,
         "totals": totals,
@@ -631,6 +666,7 @@ class RakutenProductIn(BaseModel):
     set_components:   Optional[str] = None  # JSON文字列（在庫連動用）
     purchase_components: Optional[str] = None  # JSON文字列（発注用付属品・在庫連動しない）
     is_component:     bool = False          # 単品（セット構成用内部管理）フラグ
+    is_material:      bool = False          # 発送用の梱包資材（商品原価に載せず資材費に計上）
     is_active:        bool = True
 
 class RakutenProductOut(RakutenProductIn):
@@ -647,12 +683,17 @@ def list_products(db: Session = Depends(get_db)):
 
 @router.get("/stock")
 def list_stock(db: Session = Depends(get_db)):
-    """在庫・損益一覧（バリエーション商品のみ、is_component=Falseを対象）"""
+    """在庫・損益一覧（バリエーション商品のみ、is_component=Falseを対象）。
+    発送資材(is_material)は販売商品ではないので除外する。"""
     settings = _get_or_create_settings(db)
     commission_rate = settings.commission_rate or 0.09
     products = (
         db.query(RakutenProduct)
-        .filter(RakutenProduct.is_active == True, RakutenProduct.is_component == False)
+        .filter(
+            RakutenProduct.is_active == True,
+            RakutenProduct.is_component == False,
+            RakutenProduct.is_material == False,
+        )
         .order_by(RakutenProduct.sku.asc())
         .all()
     )
@@ -694,7 +735,7 @@ def list_stock(db: Session = Depends(get_db)):
     return result
 
 @router.post("/products")
-def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):
+def create_product(data: RakutenProductIn, request: Request, db: Session = Depends(get_db)):
     data.set_components = _clean_set_components(data.set_components)
     existing = db.query(RakutenProduct).filter(RakutenProduct.sku == data.sku).first()
     if existing:
@@ -704,17 +745,20 @@ def create_product(data: RakutenProductIn, db: Session = Depends(get_db)):
         for k, v in data.model_dump().items():
             setattr(existing, k, v)
         existing.is_active = True
+        log_activity(db, request, "create", "rakuten_product", existing.id, f"商品マスタ登録（復活）: {existing.sku} {existing.name or ''}", sku=existing.sku)
         db.commit()
         db.refresh(existing)
         return RakutenProductOut.model_validate(existing).model_dump()
     p = RakutenProduct(**data.model_dump())
     db.add(p)
+    db.flush()
+    log_activity(db, request, "create", "rakuten_product", p.id, f"商品マスタ登録: {p.sku} {p.name or ''}", sku=p.sku)
     db.commit()
     db.refresh(p)
     return RakutenProductOut.model_validate(p).model_dump()
 
 @router.put("/products/{product_id}")
-async def update_product(product_id: int, data: RakutenProductIn, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def update_product(product_id: int, data: RakutenProductIn, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     if "set_components" in data.model_fields_set:
         data.set_components = _clean_set_components(data.set_components)
     p = db.query(RakutenProduct).filter(RakutenProduct.id == product_id).first()
@@ -729,6 +773,8 @@ async def update_product(product_id: int, data: RakutenProductIn, background_tas
     old_stock = p.stock
     for k, v in data.model_dump(exclude_unset=True).items():
         setattr(p, k, v)
+    changed = ", ".join(sorted(data.model_fields_set - {"sku"}))
+    log_activity(db, request, "update", "rakuten_product", p.id, f"商品マスタ更新: {p.sku}（{changed}）", sku=p.sku)
     db.commit()
     db.refresh(p)
 
@@ -800,7 +846,7 @@ async def update_product(product_id: int, data: RakutenProductIn, background_tas
     return RakutenProductOut.model_validate(p).model_dump()
 
 @router.post("/products/bulk-update-stock")
-async def bulk_update_stock(body: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def bulk_update_stock(body: dict, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """複数商品の在庫をまとめて更新してRMSに一括反映
     body: {"updates": [{"id": 1, "stock": 10, "inbound": 0, "standard_stock": 5}, ...]}
     RMSへの在庫反映はバックグラウンドで実行し、保存レスポンスは即座に返す。
@@ -816,14 +862,18 @@ async def bulk_update_stock(body: dict, background_tasks: BackgroundTasks, db: S
 
     # Step1: DB更新（全件まとめて）
     updated_skus = set()
+    stock_changes = []  # (sku, before, after) ログ用
     for u in updates:
         p = id_to_product.get(u.get("id"))
         if not p:
             continue
         if "stock" in u:
+            before = p.stock or 0
             p.stock = int(u["stock"])
             sku_stock[p.sku] = p.stock
             updated_skus.add(p.sku)
+            if before != p.stock:
+                stock_changes.append((p.sku, before, p.stock))
         if "inbound" in u:
             p.inbound = int(u["inbound"])
         if "standard_stock" in u:
@@ -855,6 +905,9 @@ async def bulk_update_stock(body: dict, background_tasks: BackgroundTasks, db: S
         if set_qty is not None:
             p.stock = set_qty
             sku_stock[p.sku] = set_qty
+
+    for sku, before, after in stock_changes:
+        log_activity(db, request, "stock_change", "rakuten_product", None, f"実在庫を一括変更: {sku} {before}→{after}", sku=sku)
 
     db.commit()
 
@@ -987,21 +1040,24 @@ def bulk_set_components(body: dict, db: Session = Depends(get_db)):
     return {"updated": ok}
 
 @router.delete("/products/{product_id}")
-def delete_product(product_id: int, db: Session = Depends(get_db)):
+def delete_product(product_id: int, request: Request, db: Session = Depends(get_db)):
     p = db.query(RakutenProduct).filter(RakutenProduct.id == product_id).first()
     if not p:
         raise HTTPException(404)
     p.is_active = False
+    log_activity(db, request, "delete", "rakuten_product", p.id, f"商品マスタ削除: {p.sku} {p.name or ''}", sku=p.sku)
     db.commit()
     return {"ok": True}
 
 @router.patch("/products/{product_id}/stock")
-def update_stock(product_id: int, body: dict, db: Session = Depends(get_db)):
+def update_stock(product_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
     p = db.query(RakutenProduct).filter(RakutenProduct.id == product_id).first()
     if not p:
         raise HTTPException(404)
     if "stock" in body:
+        before = p.stock
         p.stock = body["stock"]
+        log_activity(db, request, "stock_change", "rakuten_product", p.id, f"実在庫を手動変更: {p.sku} {before}→{p.stock}", sku=p.sku)
     if "inbound" in body:
         p.inbound = body["inbound"]
     if "sales_30_recent" in body:
@@ -1171,6 +1227,7 @@ def get_recommendations(db: Session = Depends(get_db)):
         and p.sku not in parent_comp_skus
         and p.sku not in parent_orders
         and not (not p.is_component and p.set_components)  # セット販売商品（parent_ordersに入らなかったもの）は除外
+        and not getattr(p, "is_material", False)  # 発送資材は販売商品ではないので発注推奨に出さない
     ]
 
     # 通常単品 + 親発注品を合わせて計算
@@ -1276,8 +1333,14 @@ def get_all_products_order(db: Session = Depends(get_db)):
             unit_sales[unit_sku]["prev"]   += (p.sales_30_prev   or 0) * qty
 
     # is_component=False・buy_urlあり（内部SKUのみ除外、セット組・本体はすべて表示）
+    # 発送資材(is_material)は販売商品ではないので在庫一覧にも出さない
     targets = sorted(
-        [p for p in all_products if not p.is_component and (p.buy_url or "").strip()],
+        [
+            p for p in all_products
+            if not p.is_component
+            and not getattr(p, "is_material", False)
+            and (p.buy_url or "").strip()
+        ],
         key=lambda p: p.sku or ""
     )
     items = []
@@ -1433,11 +1496,12 @@ def mark_delivered(order_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 @router.delete("/orders/history/{order_id}")
-def delete_order(order_id: int, db: Session = Depends(get_db)):
+def delete_order(order_id: int, request: Request, db: Session = Depends(get_db)):
     o = db.query(RakutenOrderHistory).filter(RakutenOrderHistory.id == order_id).first()
     if not o:
         raise HTTPException(404)
     o.is_deleted = True
+    log_activity(db, request, "delete", "rakuten_order", o.id, f"発注削除: {o.sku} 数量{o.qty}", sku=o.sku)
     db.commit()
     return {"ok": True}
 
@@ -1459,6 +1523,7 @@ def migrate_legacy_inbound(body: Optional[dict] = None, db: Session = Depends(ge
     products = db.query(RakutenProduct).filter(
         RakutenProduct.is_active == True,
         RakutenProduct.is_component == False,
+        RakutenProduct.is_material == False,  # 発送資材は発注対象に含めない
     ).order_by(RakutenProduct.sku.asc()).all()
 
     rows = []
@@ -1627,6 +1692,7 @@ CSV_COLUMNS = [
     "set_size", "rakuten_item_url", "rakuten_sku_id", "supplier", "standard_stock",
     "stock", "inbound", "sales_30_recent", "sales_30_prev",
     "customer_memo", "notes", "memo", "set_components", "purchase_components", "is_component",
+    "is_material",
 ]
 
 CSV_COLUMN_LABELS = {
@@ -1652,6 +1718,7 @@ CSV_COLUMN_LABELS = {
     "set_components":   "セット構成JSON(在庫連動用)",
     "purchase_components": "発注用付属品JSON(在庫連動しない)",
     "is_component":     "単品フラグ(TRUE/FALSE)",
+    "is_material":      "発送資材フラグ(TRUE/FALSE)",
 }
 
 @router.get("/products/csv/template")
@@ -1703,6 +1770,7 @@ def export_products_csv(db: Session = Depends(get_db)):
             p.set_components or "",
             getattr(p, 'purchase_components', '') or "",
             "TRUE" if p.is_component else "FALSE",
+            "TRUE" if getattr(p, "is_material", False) else "FALSE",
         ])
     output.seek(0)
     content = "﻿" + output.getvalue()
@@ -1790,6 +1858,10 @@ def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_
             "purchase_components": normalized.get("purchase_components") or None,
             "is_component":     is_component,
         }
+        # is_material列が無い古いCSVで既存の資材フラグを消さないよう、
+        # 列が存在するときだけ更新対象に含める
+        if "is_material" in normalized:
+            data["is_material"] = normalized.get("is_material", "").upper() in ("TRUE", "1", "YES", "はい")
 
         existing = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
         if existing:
@@ -1822,6 +1894,7 @@ class RakutenInvoiceItemIn(BaseModel):
     buy_url: str = ""
     asin_memo: str = ""  # J列（ASIN/商品番号）：商品内訳メモ
     permit_col: int | None = None  # 手動で指定した申告欄番号（1始まり）
+    goods_id: str = ""   # M列（商品ID）：箱单シートと突き合わせて送料を重量配賦する
 
 class PermitColumnIn(BaseModel):
     col_no: int
@@ -1831,6 +1904,9 @@ class PermitColumnIn(BaseModel):
     tariff_rate: float = 0.0
     tariff_rate_str: str = ""
     duty_jpy: int = 0
+    # 欄ごとの内国消費税の実額。税率から再計算せずこの額を按分する
+    consumption_tax_jpy: int = 0
+    local_tax_jpy: int = 0
     bpr_coeff: float = 0.0
 
 class RakutenInvoiceIn(BaseModel):
@@ -1842,6 +1918,11 @@ class RakutenInvoiceIn(BaseModel):
     import_tax_jpy: float = 0  # 輸入税合計（円）：関税＋消費税＋地方消費税
     items: List[RakutenInvoiceItemIn]
     permit_columns: List[PermitColumnIn] = []  # 許可書の申告欄情報（空=従来の一律按分）
+    force_save: bool = False  # 検算NGでも承知の上で保存する
+    # 箱シートから読んだ箱の計費重量と中身。あれば送料を重量で配る
+    box_data: dict | None = None
+    # 通関料（円）。船便は一律2000円、航空便は無し。許可書には載らない費用
+    customs_fee_jpy: float = 0
 
 
 def _num(value, default=0.0):
@@ -1966,6 +2047,8 @@ def _parse_rakuten_invoice_workbook(wb):
             "total_price_cny": total_price or round(qty * unit_price, 2),
             "buy_url": buy_url,
             "asin_memo": invoice_code,
+            # 箱单シートと突き合わせるキー。送料を重量で配るのに使う
+            "goods_id": _code(_row_value(row, 12)),
         })
 
     if not items:
@@ -1981,11 +2064,23 @@ def _parse_rakuten_invoice_workbook(wb):
         elif "International" in joined and ("Freight" in joined or "运费" in joined or "送料" in joined):
             international_freight += _invoice_fee_amount(row)
 
+    # 箱シート（箱规・箱单）があれば送料を重量で配れる。無ければ従来の金額比
+    box_data = invoice_calc.parse_box_sheets(wb)
+
     return {
         "invoice_no": invoice_no,
+        # Added Value(増値費用=検品・ラベル貼付などの加工費)は便全体で1行にまとまっており
+        # 商品ごとの内訳が無いため、国内送料と同じく金額比で按分する
         "domestic_freight": round(domestic_freight + added_value, 2),
+        "added_value": round(added_value, 2),  # 内訳確認用
         "international_freight": round(international_freight, 2),
         "items": items,
+        "box_data": box_data,
+        "has_box_data": box_data.get("available", False),
+        # 船便のインボイスには海運用の記入要点シートが付く。確実ではないので
+        # 画面の初期値としてだけ使い、ユーザーが確認・変更できるようにする
+        "shipping_method": invoice_calc.guess_shipping_method(wb),
+        "customs_fee_sea_jpy": invoice_calc.CUSTOMS_FEE_SEA_JPY,
     }
 
 
@@ -2143,18 +2238,42 @@ async def rakuten_parse_excel(file: UploadFile = File(...), db: Session = Depend
     # 配送依頼側は色・仕様も使って照合しているため、色違いで同じURLの商品
     # （インボイスのURLだけでは区別できない行）もここで解決できる。
     # キーは (URL, 数量)。同URL同数量の色違いは単価も原価も同じため、残りを順に割り当てる。
+    #
+    # 航空便などで急ぎの分だけ別の配送依頼として提出し、実際の箱には他の便と
+    # 一緒に梱包される場合、その配送依頼の「追跡番号」欄には実際のVIP番号ではなく
+    # 「(相手の配送依頼No)に梱包」のようなメモが入る。そのままだと相手側の
+    # インボイスをパースしたときに照合されず、未発注の行として見えてしまうため、
+    # 主たる配送依頼のNoを含む追跡番号を持つ配送依頼（＝同梱されたもの）も
+    # あわせて拾う。
     from app.models.shipment_order import ShipmentOrder, ShipmentOrderItem
     ship_pool: dict = {}
     if parsed["invoice_no"]:
+        primary_orders = (
+            db.query(ShipmentOrder)
+            .filter(ShipmentOrder.tracking_no == parsed["invoice_no"])
+            .all()
+        )
+        order_ids = [o.id for o in primary_orders]
+        for o in primary_orders:
+            if o.order_no:
+                combined = (
+                    db.query(ShipmentOrder)
+                    .filter(
+                        ShipmentOrder.tracking_no.contains(o.order_no),
+                        ShipmentOrder.tracking_no != parsed["invoice_no"],
+                    )
+                    .all()
+                )
+                order_ids.extend(c.id for c in combined)
+
         ship_rows = (
             db.query(ShipmentOrderItem)
-            .join(ShipmentOrder, ShipmentOrderItem.shipment_order_id == ShipmentOrder.id)
             .filter(
-                ShipmentOrder.tracking_no == parsed["invoice_no"],
+                ShipmentOrderItem.shipment_order_id.in_(order_ids),
                 ShipmentOrderItem.product_id.isnot(None),
             )
             .all()
-        )
+        ) if order_ids else []
         for si in ship_rows:
             key = (_url_key(si.buy_url or ""), int(si.qty or 0))
             ship_pool.setdefault(key, [])
@@ -2210,60 +2329,130 @@ def _calc_tariff_tax(
     )
 
 
-@router.post("/invoices/calculate")
-def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
+def _rakuten_build_cost_rows(data: "RakutenInvoiceIn", db: Session):
+    """明細ごとの原価を計算する。calculate と save で同じ結果になるよう共通化する。
+
+    1便に楽天商品・Amazon商品・発送資材が混載されるため、両方のマスタを照合して
+    便の実額（送料・税）を全明細へ配り切る。楽天マスタだけを見ていた頃は、
+    Amazon商品の明細が按分の分母には残るのに原価には反映されず、その分が消えていた。
+    """
     total_cny = sum(i.qty * i.unit_price_cny for i in data.items)
     total_freight = data.domestic_freight + data.international_freight
     import_tax_jpy = data.import_tax_jpy or 0
     use_tariff = bool(data.permit_columns)
 
-    # 税率別計算用: 有効な商品のインデックスと金額を収集
-    valid_items: list[tuple[int, float]] = []
-    for idx, item in enumerate(data.items):
-        if not (item.sku or "").strip():
-            continue
-        valid_items.append((idx, item.qty * item.unit_price_cny))
+    classified = invoice_calc.classify_invoice_lines(db, data.items, url_key_fn=_url_key)
+    kind_by_index = {c["index"]: c["kind"] for c in classified}
+    product_by_index = {c["index"]: c["product"] for c in classified}
+
+    item_totals = [i.qty * i.unit_price_cny for i in data.items]
+    coverage = invoice_calc.calc_coverage(classified, item_totals)
+
+    # 送料は箱の実測重量で配る。金額比だと安くて嵩張るものが送料をほとんど
+    # 負担しない（実測で17倍の差が出た）。箱データが無い便は金額比に落ちる
+    freight_res = invoice_calc.calc_freight_by_weight(
+        [i.goods_id for i in data.items], item_totals, data.box_data, total_freight,
+    )
+    freight_by_index = freight_res["alloc"]
+
+    # 通関料は書類1件あたりの手続き費用なので、重量ではなく金額比で配る
+    customs_fee = data.customs_fee_jpy or 0
+    customs_fee_by_index = invoice_calc.calc_customs_fee_alloc(item_totals, customs_fee)
+
+    # 税額の按分対象は全明細。資材や相手側商品を外すと、その分の税が宙に浮く
+    valid_items = [(idx, total) for idx, total in enumerate(item_totals)]
 
     tariff_info = {}
     if use_tariff and valid_items:
         tariff_info = _calc_tariff_tax(valid_items, data, data.permit_columns)
 
-    result = []
-    skipped = 0
+    rows = []
+    material_rows = []
+    unknown = 0
     for idx, item in enumerate(data.items):
-        if not (item.sku or "").strip():
-            skipped += 1
+        item_total = item_totals[idx]
+        freight_alloc = freight_by_index.get(idx, 0.0)
+
+        ti = tariff_info.get(idx) if use_tariff else None
+        tax_alloc_jpy = ti["total_tax_jpy"] if ti else (
+            (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
+        )
+
+        kind = kind_by_index.get(idx, invoice_calc.KIND_UNKNOWN)
+        product = product_by_index.get(idx)
+        fee_alloc = customs_fee_by_index.get(idx, 0.0)
+        total_cost_jpy = (
+            (item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy + fee_alloc
+        )
+
+        if kind == invoice_calc.KIND_MATERIAL:
+            material_rows.append({
+                "index": idx, "item": item, "product": product,
+                "total_price_cny": round(item_total, 2),
+                "freight_alloc_cny": round(freight_alloc, 2),
+                "tax_alloc_jpy": round(tax_alloc_jpy, 1),
+                "customs_fee_alloc_jpy": round(fee_alloc, 1),
+                "total_cost_jpy": round(total_cost_jpy, 1),
+            })
             continue
-        item_total = item.qty * item.unit_price_cny
-        freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
-        product = _find_invoice_product(db, item)
-        if not product:
-            skipped += 1
+
+        if kind == invoice_calc.KIND_UNKNOWN:
+            unknown += 1
             continue
-        set_size = product.set_size or 1
+
+        set_size = (product.set_size or 1) if product else 1
         sell_units = item.qty / set_size if item.qty > 0 else 0
+        cost_jpy = (total_cost_jpy / sell_units) if sell_units > 0 else 0
 
-        if use_tariff and idx in tariff_info:
-            ti = tariff_info[idx]
-            tax_alloc_jpy = ti["total_tax_jpy"]
-        else:
-            ti = None
-            tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
-
-        cost_jpy = (((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / sell_units) if sell_units > 0 else 0
-        customer_memo = product.customer_memo
-        result_item = item.model_dump()
-        result_item["sku"] = product.sku
-        if product.name:
-            result_item["name_jp"] = product.name
-        row = {
-            **result_item,
+        rows.append({
+            "index": idx, "item": item, "product": product, "kind": kind,
             "total_price_cny": round(item_total, 2),
             "freight_alloc_cny": round(freight_alloc, 2),
             "tax_alloc_jpy": round(tax_alloc_jpy, 0),
+            "customs_fee_alloc_jpy": round(fee_alloc, 1),
             "cost_jpy": round(cost_jpy, 1),
-            "customer_memo": customer_memo,
-            "matched_sku": product.sku,
+            "set_size": set_size,
+            "tariff": ti,
+        })
+
+    verification = invoice_calc.verify_allocation(
+        rows, material_rows, coverage,
+        total_freight_cny=total_freight,
+        import_tax_jpy=import_tax_jpy,
+        permit_columns=data.permit_columns,
+        customs_fee_jpy=customs_fee,
+    )
+
+    return {
+        "rows": rows, "material_rows": material_rows, "skipped": unknown,
+        "coverage": coverage, "verification": verification, "total_cny": total_cny,
+        "total_freight_cny": total_freight, "import_tax_jpy": import_tax_jpy,
+        "use_tariff": use_tariff, "freight_method": freight_res,
+        "customs_fee_jpy": customs_fee,
+    }
+
+
+@router.post("/invoices/calculate")
+def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
+    calc = _rakuten_build_cost_rows(data, db)
+
+    result = []
+    for r in calc["rows"]:
+        item, product, ti = r["item"], r["product"], r["tariff"]
+        result_item = item.model_dump()
+        result_item["sku"] = product.sku if product else item.sku
+        if product and product.name:
+            result_item["name_jp"] = product.name
+        row = {
+            **result_item,
+            "total_price_cny": r["total_price_cny"],
+            "freight_alloc_cny": r["freight_alloc_cny"],
+            "tax_alloc_jpy": r["tax_alloc_jpy"],
+            "customs_fee_alloc_jpy": r["customs_fee_alloc_jpy"],
+            "cost_jpy": r["cost_jpy"],
+            "customer_memo": getattr(product, "customer_memo", None) if product else None,
+            "matched_sku": product.sku if product else "",
+            "kind": r["kind"],
         }
         if ti:
             row["tariff_rate"] = ti["tariff_rate"]
@@ -2273,60 +2462,114 @@ def rakuten_calculate_cost(data: RakutenInvoiceIn, db: Session = Depends(get_db)
             row["hs_code"] = ti["hs_code"]
         result.append(row)
 
+    materials = [
+        {
+            "sku": r["item"].sku,
+            "name": (r["product"].name if r["product"] else "") or r["item"].name_jp,
+            "qty": r["item"].qty,
+            "total_price_cny": r["total_price_cny"],
+            "freight_alloc_cny": r["freight_alloc_cny"],
+            "tax_alloc_jpy": r["tax_alloc_jpy"],
+            "customs_fee_alloc_jpy": r["customs_fee_alloc_jpy"],
+            "total_cost_jpy": r["total_cost_jpy"],
+        }
+        for r in calc["material_rows"]
+    ]
+
+    total_cny = calc["total_cny"]
+    total_freight = calc["total_freight_cny"]
     return {
         "items": result,
+        "materials": materials,
+        "material_total_jpy": round(sum(m["total_cost_jpy"] for m in materials), 0),
+        "coverage": calc["coverage"],
+        "verification": calc["verification"],
+        "freight_method": {
+            "reason": calc["freight_method"]["reason"],
+            "fallback": calc["freight_method"]["fallback"],
+        },
         "total_cny": round(total_cny, 2),
         "total_freight_cny": round(total_freight, 2),
-        "import_tax_jpy": import_tax_jpy,
-        "grand_total_jpy": round((total_cny + total_freight) * data.exchange_rate + import_tax_jpy, 0),
-        "skipped": skipped,
-        "use_tariff": use_tariff,
+        "import_tax_jpy": calc["import_tax_jpy"],
+        "customs_fee_jpy": calc["customs_fee_jpy"],
+        "grand_total_jpy": round(
+            (total_cny + total_freight) * data.exchange_rate
+            + calc["import_tax_jpy"] + calc["customs_fee_jpy"], 0
+        ),
+        "skipped": calc["skipped"],
+        "use_tariff": calc["use_tariff"],
     }
 
 @router.post("/invoices/save")
 def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
-    total_cny = sum(i.qty * i.unit_price_cny for i in data.items)
-    total_freight = data.domestic_freight + data.international_freight
+    calc = _rakuten_build_cost_rows(data, db)
+
+    # 検算NGのまま保存すると、誤った原価が最新版として値付け・発注判断に使われる。
+    # 保存を止めて、何が合わないかを画面に返す（force_save で承知の上の強行は可能）
+    v = calc["verification"]
+    if not v["ok"] and not data.force_save:
+        ng = [c for c in v["checks"] if not c["ok"] and c["level"] == "error"]
+        raise HTTPException(400, {
+            "message": "検算に失敗したため保存しませんでした",
+            "failed": ng,
+            "verification": v,
+        })
+
     updated = 0
-    skipped = 0
-    updated_skus: dict[str, float] = {}  # sku -> cost_jpy
-    use_tariff = bool(data.permit_columns)
+    updated_amazon = 0
+    skipped = calc["skipped"]
+    updated_skus: dict[str, float] = {}  # sku -> cost_jpy（セット商品の再計算に使う）
 
-    import_tax_jpy = data.import_tax_jpy or 0
-
-    valid_items: list[tuple[int, float]] = []
-    for idx, item in enumerate(data.items):
-        if not (item.sku or "").strip():
-            continue
-        valid_items.append((idx, item.qty * item.unit_price_cny))
-
-    tariff_info = {}
-    if use_tariff and valid_items:
-        tariff_info = _calc_tariff_tax(valid_items, data, data.permit_columns)
-
-    for idx, item in enumerate(data.items):
-        if not (item.sku or "").strip():
+    for r in calc["rows"]:
+        item, product = r["item"], r["product"]
+        if not product:
             skipped += 1
             continue
-        item_total = item.qty * item.unit_price_cny
-        freight_alloc = (item_total / total_cny * total_freight) if total_cny > 0 else 0
-
-        if use_tariff and idx in tariff_info:
-            tax_alloc_jpy = tariff_info[idx]["total_tax_jpy"]
-        else:
-            tax_alloc_jpy = (item_total / total_cny * import_tax_jpy) if total_cny > 0 else 0
-
-        product = _find_invoice_product(db, item)
-        if product:
-            set_size = product.set_size or 1
-            sell_units = item.qty / set_size if item.qty > 0 else 0
-            cost_jpy = round((((item_total + freight_alloc) * data.exchange_rate + tax_alloc_jpy) / sell_units), 1) if sell_units > 0 else 0
-            product.cost_jpy = cost_jpy
-            product.price = item.unit_price_cny if item.unit_price_cny else product.price
+        cost_jpy = r["cost_jpy"]
+        product.cost_jpy = cost_jpy
+        product.price = item.unit_price_cny if item.unit_price_cny else product.price
+        if r["kind"] == invoice_calc.KIND_RAKUTEN:
             updated_skus[product.sku] = cost_jpy
             updated += 1
         else:
-            skipped += 1
+            # 同じ便に混載されたAmazon商品。Amazonマスタ側の原価も更新する
+            updated_amazon += 1
+
+    # 便ごとの原価実績を残す。商品マスタのcost_jpyは最後の便で上書きされるため、
+    # ここに積んでおかないと後から加重平均に切り替えられない。
+    # 混載便なので、楽天商品は rakuten・Amazon商品は amazon として分けて記録する
+    fm = "money" if calc["freight_method"]["fallback"] else "weight"
+    for src, kind in (("rakuten", invoice_calc.KIND_RAKUTEN),
+                      ("amazon", invoice_calc.KIND_AMAZON)):
+        invoice_calc.record_cost_history(
+            db, [r for r in calc["rows"] if r["kind"] == kind],
+            source=src,
+            invoice_no=data.invoice_no,
+            invoice_date=data.invoice_date,
+            exchange_rate=data.exchange_rate,
+            coverage=calc["coverage"],
+            freight_method=fm,
+        )
+
+    # 発送資材は商品原価に載せず、資材費として月次集計用に記録する
+    from app.models.material_cost import MaterialCost
+    for r in calc["material_rows"]:
+        item, product = r["item"], r["product"]
+        db.add(MaterialCost(
+            invoice_no=data.invoice_no,
+            invoice_date=data.invoice_date,
+            source="rakuten",
+            sku=item.sku,
+            name=(product.name if product else "") or item.name_jp,
+            qty=item.qty,
+            unit_price_cny=item.unit_price_cny,
+            total_price_cny=r["total_price_cny"],
+            freight_alloc_cny=r["freight_alloc_cny"],
+            tax_alloc_jpy=r["tax_alloc_jpy"],
+            customs_fee_alloc_jpy=r["customs_fee_alloc_jpy"],
+            total_cost_jpy=r["total_cost_jpy"],
+            exchange_rate=data.exchange_rate,
+        ))
 
     # set_componentsを持つセット商品の原価を自動再計算
     set_products = db.query(RakutenProduct).filter(
@@ -2362,7 +2605,13 @@ def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
             updated += 1
 
     db.commit()
-    return {"updated": updated, "skipped": skipped}
+    return {
+        "updated": updated,
+        "updated_amazon": updated_amazon,
+        "material_count": len(calc["material_rows"]),
+        "coverage": calc["coverage"],
+        "skipped": skipped,
+    }
 
 
 # ============================================================

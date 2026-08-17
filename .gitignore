@@ -35,3 +35,6 @@ backend/china_import.db
 .claude/
 
 .gh-dep*/
+
+# 実行ログ（ローカルのみ。コミットしない）
+logs/

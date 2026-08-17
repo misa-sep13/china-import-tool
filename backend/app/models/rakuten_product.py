@@ -41,5 +41,10 @@ class RakutenProduct(Base):
     # 発注用付属品（在庫連動しない）: JSON文字列 "[{\"sku\":\"ITEM-002\",\"qty\":1,\"memo\":\"付属フィルム\"}]"
     purchase_components = Column(Text)
     is_component = Column(Boolean, default=False)  # 単品（セット構成用内部管理）フラグ
+    # 発送用の梱包資材（宅配袋・ダンボール等）。is_componentとは別物で、
+    # is_component=商品に付属して一緒に売るもの（売上原価）、
+    # is_material=商品を届けるために使うもの（販売費）。
+    # 仕入時に送料・税の按分は受けるが、商品原価(cost_jpy)には計上しない。
+    is_material  = Column(Boolean, default=False)
     is_active    = Column(Boolean, default=True)
     created_at   = Column(DateTime, server_default=func.now())

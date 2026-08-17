@@ -6,6 +6,7 @@ export default function SeoPage() {
   const [dates, setDates] = useState([])
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [checking, setChecking] = useState(false)
   const [checkResult, setCheckResult] = useState(null)
   const [days, setDays] = useState(14)
@@ -17,12 +18,21 @@ export default function SeoPage() {
 
   const fetchMatrix = useCallback(async () => {
     setLoading(true)
+    setError('')
     try {
       const res = await fetch(`${API}/seo/rankings/matrix?days=${days}`)
+      if (!res.ok) {
+        // 握り潰すと「順位が0件」と見分けがつかず、APIが落ちていても
+        // ただの空ページに見えてしまう（実際それで気づけなかった）
+        throw new Error(`取得に失敗しました (HTTP ${res.status})`)
+      }
       const data = await res.json()
       setDates(data.dates || [])
       setRows(data.rows || [])
-    } catch { /* ignore */ }
+    } catch (e) {
+      setError(e.message || '順位データを取得できませんでした')
+      setDates([]); setRows([])
+    }
     setLoading(false)
   }, [days])
 
@@ -142,6 +152,20 @@ export default function SeoPage() {
 
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>読み込み中...</div>
+      ) : error ? (
+        /* 「キーワード0件」と紛らわしくならないよう、取得失敗は分けて出す */
+        <div style={{
+          padding: 24, borderRadius: 8, textAlign: 'center',
+          background: '#fef2f2', border: '1px solid #fca5a5', color: '#991b1b',
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>⚠ {error}</div>
+          <div style={{ fontSize: 12 }}>
+            データが無いのではなく、サーバーから取得できていません。
+          </div>
+          <button className="btn" style={{ marginTop: 10 }} onClick={fetchMatrix}>
+            再読み込み
+          </button>
+        </div>
       ) : rows.length === 0 ? (
         <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>
           キーワードを登録してください

@@ -3,12 +3,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import Base, engine
 from app.api.routes import products, orders, settings, fba, invoices, price_adjustments, analytics, shipment_orders, fba_plan
 from app.api.routes import inventory_snapshots
+from app.api.routes import material_costs
+from app.api.routes import cost_histories
 from app.api.routes import welfare
 from app.api.routes import rakuten
 from app.api.routes import ads
 from app.api.routes import review as review_routes
 from app.api.routes import keyword_analysis as keyword_analysis_routes
 from app.api.routes import seo as seo_routes
+from app.api.routes import auth as auth_routes
+from app.api.routes import activity_log as activity_log_routes
 from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
 from app.models import price_log as price_log_models
@@ -28,6 +32,9 @@ from app.models import seo as seo_models
 from app.models import rakuten_daily_sales as rakuten_daily_sales_models
 from app.models import rms_push_failure as rms_push_failure_models
 from app.models import inventory_snapshot as inventory_snapshot_models
+from app.models import material_cost as material_cost_models
+from app.models import cost_history as cost_history_models
+from app.models import activity_log as activity_log_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -155,8 +162,20 @@ def _migrate():
         # Amazon商品マスタ：発注用付属品（楽天のpurchase_componentsと同じ役割）
         ("products","purchase_components",   "ALTER TABLE products ADD COLUMN purchase_components TEXT"),
         ("products","is_component",          "ALTER TABLE products ADD COLUMN is_component BOOLEAN DEFAULT FALSE"),
+        # 発送用の梱包資材フラグ（宅配袋等）。商品原価には計上せず資材費として集計する
+        ("products","is_material",           "ALTER TABLE products ADD COLUMN is_material BOOLEAN DEFAULT FALSE"),
+        ("rakuten_products","is_material",   "ALTER TABLE rakuten_products ADD COLUMN is_material BOOLEAN DEFAULT FALSE"),
+        # 通関料（船便のみ一律2000円）。輸入許可書には載らないので別枠で持つ
+        ("material_costs","customs_fee_alloc_jpy",
+         "ALTER TABLE material_costs ADD COLUMN customs_fee_alloc_jpy FLOAT DEFAULT 0"),
+        ("invoice_items","customs_fee_alloc_jpy",
+         "ALTER TABLE invoice_items ADD COLUMN customs_fee_alloc_jpy FLOAT DEFAULT 0"),
+        ("invoices","customs_fee_jpy",
+         "ALTER TABLE invoices ADD COLUMN customs_fee_jpy FLOAT DEFAULT 0"),
         # 売上管理：広告比率カラム
         ("rakuten_sales_summaries","ad_rate", "ALTER TABLE rakuten_sales_summaries ADD COLUMN ad_rate FLOAT"),
+        # 売上管理：原価率（原価÷売上高）
+        ("rakuten_sales_summaries","cost_rate", "ALTER TABLE rakuten_sales_summaries ADD COLUMN cost_rate FLOAT"),
         # レビューキャンペーン：判定キーワード
         ("review_campaigns","keywords", "ALTER TABLE review_campaigns ADD COLUMN keywords TEXT"),
         # キーワード分析：商品管理番号
@@ -1159,6 +1178,69 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ============================================================
+# 簡易ログイン（オーナー／外注さん1名）
+# ============================================================
+# AUTH_OWNER_PASSWORD が未設定の間は何もしない（今までどおり無認証で動く）。
+# 設定して初めて有効になるので、コードのデプロイだけでは誰もロックアウトされない。
+from starlette.requests import Request as _StarletteRequest
+from starlette.responses import JSONResponse as _JSONResponse
+from app.core.auth import auth_enabled, verify_token, check_service_token
+
+# ログイン不要で通す経路。
+# ・/api/auth/* はログイン自体に使うので当然除外
+# ・就労支援の公開ページ（work-public）が使う一覧取得は、施設の作業者が
+#   ログインなしで見るためのものなので除外
+_AUTH_EXEMPT_PREFIXES = ("/api/auth/", "/docs", "/openapi.json", "/redoc")
+_AUTH_PUBLIC_GET_PATHS = {"/api/welfare/work-instructions"}
+# 外注さんには見せない（APIキー等が見える設定画面）
+_AUTH_OWNER_ONLY_PREFIXES = ("/api/settings", "/api/rakuten/settings")
+
+
+def _cors_headers_for(request: _StarletteRequest) -> dict:
+    origin = request.headers.get("origin")
+    if origin and origin in ALLOWED_ORIGINS:
+        return {"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Credentials": "true"}
+    return {}
+
+
+@app.middleware("http")
+async def auth_middleware(request: _StarletteRequest, call_next):
+    if request.method == "OPTIONS" or not auth_enabled():
+        return await call_next(request)
+
+    path = request.url.path
+    if not path.startswith("/api/") or path.startswith(_AUTH_EXEMPT_PREFIXES):
+        return await call_next(request)
+    if request.method == "GET" and path in _AUTH_PUBLIC_GET_PATHS:
+        return await call_next(request)
+
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header[7:] if auth_header.lower().startswith("bearer ") else ""
+
+    role = None
+    if token and check_service_token(token):
+        role = "service"
+    elif token:
+        payload = verify_token(token)
+        if payload:
+            role = payload.get("role")
+
+    if not role:
+        return _JSONResponse(status_code=401, content={"detail": "ログインが必要です"}, headers=_cors_headers_for(request))
+    # 設定の「変更」は外注さんにはさせない。「閲覧」は手数料率など他画面の計算に
+    # 使う値もあるため一律には止めず、APIキーなど本当に機密な項目だけ
+    # ルート側（get_rakuten_settings）でマスクする。
+    if role == "contractor" and request.method != "GET" and path.startswith(_AUTH_OWNER_ONLY_PREFIXES):
+        return _JSONResponse(status_code=403, content={"detail": "この機能は利用できません"}, headers=_cors_headers_for(request))
+
+    request.state.actor_role = role
+    return await call_next(request)
+
+
+app.include_router(auth_routes.router, prefix="/api")
+app.include_router(activity_log_routes.router, prefix="/api")
 app.include_router(products.router, prefix="/api")
 app.include_router(orders.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
@@ -1175,6 +1257,8 @@ app.include_router(keyword_analysis_routes.router, prefix="/api")
 app.include_router(seo_routes.router, prefix="/api")
 app.include_router(fba_plan.router, prefix="/api")
 app.include_router(inventory_snapshots.router, prefix="/api")
+app.include_router(material_costs.router, prefix="/api")
+app.include_router(cost_histories.router, prefix="/api")
 
 @app.get("/")
 def root():

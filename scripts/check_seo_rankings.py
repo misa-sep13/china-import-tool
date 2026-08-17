@@ -11,10 +11,13 @@ import time
 BACKEND = os.environ.get("BACKEND_URL", "https://china-import-tool.onrender.com")
 POLL_INTERVAL_SEC = 15
 MAX_WAIT_SEC = 3000
+# ログイン導入後、APIは認証必須になる（未設定の間は無視される）。
+_SERVICE_TOKEN = os.environ.get("AUTH_SERVICE_TOKEN") or ""
+AUTH_HEADERS = {"Authorization": f"Bearer {_SERVICE_TOKEN}"} if _SERVICE_TOKEN else {}
 
 
 def main():
-    with httpx.Client(timeout=30) as client:
+    with httpx.Client(timeout=30, headers=AUTH_HEADERS) as client:
         print("SEO順位チェックジョブを開始します（Renderサーバー側で実行）...")
         res = client.post(f"{BACKEND}/api/seo/check")
         res.raise_for_status()

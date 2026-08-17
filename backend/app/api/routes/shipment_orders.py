@@ -524,7 +524,8 @@ async def _apply_receive(db: Session, order: ShipmentOrder, items, mark_received
     consumed_skus = set()  # 消化が発生したSKU（発注済2→1の繰り上げ判定用）
     updated_skus = set()   # 在庫を加算したSKU（セット再計算・RMS反映用）
     reflection_rows = []
-    processed_product_ids = set()
+    # product_id -> その商品で既に反映した(色, サイズ)の組み合わせ
+    processed_variants: dict[int, set[tuple[str, str]]] = {}
 
     def _skip(item, reason: str, sku: str = ""):
         skipped_rows.append({
@@ -562,14 +563,18 @@ async def _apply_receive(db: Session, order: ShipmentOrder, items, mark_received
             "standard_stock": product.standard_stock or 0,
         }
 
-        # 同一商品の重複行はスキップ（色違い等で同じSKUに複数行照合される場合）。
-        # 紐づけ間違いでも起きるため、黙って捨てずに画面へ出す（在庫が入らず気付けなくなる）。
-        if item.product_id in processed_product_ids:
+        # 同一商品・同一色/サイズの複数行は合算する（航空便・船便を別々に発注して
+        # 結局同じ便で届いた場合など、正当に同じ商品が複数行に分かれるケースがある）。
+        # 色/サイズが違うのに同じ商品IDに解決された場合は紐づけ間違いの疑いが強いため、
+        # 黙って捨てずに画面へ出して確認を促す（在庫が入らず気付けなくなるのを防ぐ）。
+        variant_key = ((item.color or "").strip(), (item.size or "").strip())
+        seen_variants = processed_variants.setdefault(item.product_id, set())
+        if seen_variants and variant_key not in seen_variants:
             duplicate_skipped += 1
-            _skip(item, f"同じ商品（{product.sku}）に複数行が紐づいているため未反映。紐づけ先を確認してください",
+            _skip(item, f"同じ商品（{product.sku}）に色/サイズが異なる複数行が紐づいているため未反映。紐づけ先を確認してください",
                   product.sku or "")
             continue
-        processed_product_ids.add(item.product_id)
+        seen_variants.add(variant_key)
 
         # 在庫加算
         product.stock = (product.stock or 0) + received_qty

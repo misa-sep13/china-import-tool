@@ -1,10 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
-import axios from 'axios'
 import { normalizeSearch } from '../searchUtil'
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
 
 /* ===================== 配送依頼タブ ===================== */
 function ShipmentTab() {
@@ -30,7 +27,7 @@ function ShipmentTab() {
 
   async function loadPastOrders() {
     try {
-      const res = await axios.get(`${API}/shipment-orders/`)
+      const res = await api.get('/shipment-orders/')
       setPastOrders((res.data || []).filter(o => o.status === 'received' && (o.unreflected_count || 0) > 0))
     } catch { /* 一覧が取れなくても取込自体は継続できる */ }
   }
@@ -40,7 +37,7 @@ function ShipmentTab() {
     setOpenPastId(order.id)
     setReimportResult(null)
     try {
-      const res = await axios.get(`${API}/shipment-orders/${order.id}/items`)
+      const res = await api.get(`/shipment-orders/${order.id}/items`)
       setPastItems(res.data || [])
     } catch (e) {
       alert('明細の取得に失敗しました: ' + (e.response?.data?.detail || e.message))
@@ -49,7 +46,7 @@ function ShipmentTab() {
 
   async function relinkPastItem(orderId, itemId, productId) {
     try {
-      const r = await axios.patch(`${API}/shipment-orders/${orderId}/items/${itemId}/match`, { product_id: parseInt(productId) })
+      const r = await api.patch(`/shipment-orders/${orderId}/items/${itemId}/match`, { product_id: parseInt(productId) })
       const rev = r.data?.reverted
       if (rev) {
         alert(
@@ -58,7 +55,7 @@ function ShipmentTab() {
           + '「未反映の行を取り込む」を押すと新しい紐づけ先へ加算されます。'
         )
       }
-      const res = await axios.get(`${API}/shipment-orders/${orderId}/items`)
+      const res = await api.get(`/shipment-orders/${orderId}/items`)
       setPastItems(res.data || [])
       await loadPastOrders()
       qc.invalidateQueries(['rakuten-stock'])
@@ -69,8 +66,8 @@ function ShipmentTab() {
 
   async function excludePastItem(orderId, itemId, excluded) {
     try {
-      await axios.patch(`${API}/shipment-orders/${orderId}/items/${itemId}/exclude`, { excluded })
-      const res = await axios.get(`${API}/shipment-orders/${orderId}/items`)
+      await api.patch(`/shipment-orders/${orderId}/items/${itemId}/exclude`, { excluded })
+      const res = await api.get(`/shipment-orders/${orderId}/items`)
       setPastItems(res.data || [])
       await loadPastOrders()
     } catch (e) {
@@ -89,9 +86,9 @@ function ShipmentTab() {
     setReimporting(true)
     setReimportResult(null)
     try {
-      const res = await axios.post(`${API}/shipment-orders/${orderId}/receive-remaining`)
+      const res = await api.post(`/shipment-orders/${orderId}/receive-remaining`)
       setReimportResult(res.data)
-      const r = await axios.get(`${API}/shipment-orders/${orderId}/items`)
+      const r = await api.get(`/shipment-orders/${orderId}/items`)
       setPastItems(r.data || [])
       await loadPastOrders()
       qc.invalidateQueries(['rakuten-stock'])
@@ -119,7 +116,7 @@ function ShipmentTab() {
   }
 
   useEffect(() => {
-    axios.get(`${API}/rakuten/products/`).then(r => setAllProducts(r.data)).catch(() => {})
+    api.get('/rakuten/products/').then(r => setAllProducts(r.data)).catch(() => {})
     loadPastOrders()
   }, [])
 
@@ -131,9 +128,9 @@ function ShipmentTab() {
     const fd = new FormData()
     fd.append('file', file)
     try {
-      const res = await axios.post(`${API}/shipment-orders/parse-excel`, fd)
+      const res = await api.post('/shipment-orders/parse-excel', fd)
       setParsed(res.data)
-      const matchRes = await axios.post(`${API}/shipment-orders/match`, res.data.items)
+      const matchRes = await api.post('/shipment-orders/match', res.data.items)
       setMatched(matchRes.data.matched)
       setUnmatched(matchRes.data.unmatched)
     } catch (e) {
@@ -176,7 +173,7 @@ function ShipmentTab() {
         selling_price: regForm.selling_price ? parseFloat(regForm.selling_price) : null,
         supplier: 'タオタロウ',
       }
-      const res = await axios.post(`${API}/rakuten/products`, payload)
+      const res = await api.post('/rakuten/products', payload)
       const prod = res.data
       setAllProducts(prev => [...prev, prod])
       setUnmatched(prev => prev.map((it, idx) =>
@@ -194,7 +191,7 @@ function ShipmentTab() {
     if (!parsed) return
     setSaving(true)
     try {
-      const saveRes = await axios.post(`${API}/shipment-orders/save`, {
+      const saveRes = await api.post('/shipment-orders/save', {
         shipped_date: parsed.shipped_date,
         tracking_no: parsed.tracking_no,
         order_no: parsed.order_no,
@@ -204,7 +201,7 @@ function ShipmentTab() {
         matched,
         unmatched,
       })
-      const receiveRes = await axios.post(`${API}/shipment-orders/${saveRes.data.shipment_order_id}/receive`)
+      const receiveRes = await api.post(`/shipment-orders/${saveRes.data.shipment_order_id}/receive`)
       setReceiveResult(receiveRes.data)
       setDone(true)
       qc.invalidateQueries(['rakuten-all-products-order'])

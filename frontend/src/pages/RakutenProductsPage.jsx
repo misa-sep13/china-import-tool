@@ -10,7 +10,7 @@ const EMPTY = {
   sales_30_recent: 0, sales_30_prev: 0,
   cost_jpy: null, selling_price: null, shipping_fee: 180,
   customer_memo: '', notes: '', memo: '',
-  set_components: '', purchase_components: '', is_component: false, is_active: true,
+  set_components: '', purchase_components: '', is_component: false, is_material: false, is_active: true,
 }
 
 const BASE_URL = api.defaults.baseURL || ''
@@ -539,6 +539,20 @@ export default function RakutenProductsPage() {
                   />
                   <span>🔩 単品フラグ（セット構成用の内部管理商品 — 一覧では非表示）</span>
                 </label>
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!form.is_material}
+                    onChange={e => setForm(p => ({ ...p, is_material: e.target.checked }))}
+                    style={{ width: 'auto', accentColor: '#3b82f6' }}
+                  />
+                  <span>📦 発送資材（宅配袋・ダンボール等 — 商品原価に含めず資材費として集計）</span>
+                </label>
+                <div style={{ fontSize: 11, color: '#64748b', marginLeft: 26, marginTop: 2 }}>
+                  仕入時に送料・税の按分は受けますが、商品原価にはなりません。発注・在庫一覧にも表示されません。
+                </div>
               </div>
             </div>
 
