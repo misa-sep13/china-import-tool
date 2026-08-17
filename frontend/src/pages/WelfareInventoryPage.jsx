@@ -242,6 +242,9 @@ export default function WelfareInventoryPage() {
       qc.invalidateQueries(['welfare-inventory'])
       qc.invalidateQueries(['welfare-movements'])
       qc.invalidateQueries(['welfare-work-instructions'])
+      // 取り込み直後は常に最新日のタブを開く（前回選んでいた古いタブが
+      // まだ存在すると、そのまま居座ってしまうため明示的にリセットする）
+      setActiveWorkDate('')
     },
   })
 
