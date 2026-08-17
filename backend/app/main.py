@@ -489,6 +489,9 @@ async def _sync_rakuten_stock():
                     c_qty = (c.get("qty") or 1) * qty
                     cp = sku_to_product.get(c_sku)
                     if cp and cp.stock is not None:
+                        if cp.stock == 0:
+                            cancel_skipped[c_sku] = cancel_skipped.get(c_sku, 0) + c_qty
+                            continue
                         cp.stock = cp.stock + c_qty
                         sku_stock[c_sku] = cp.stock
                         updated_skus.add(c_sku)
@@ -729,6 +732,9 @@ async def _check_delayed_cancellations():
                             c_qty = (c.get("qty") or 1) * qty
                             cp = sku_to_product.get(c_sku)
                             if cp and cp.stock is not None:
+                                if cp.stock == 0:
+                                    cancel_skipped[c_sku] = cancel_skipped.get(c_sku, 0) + c_qty
+                                    continue
                                 cp.stock = cp.stock + c_qty
                                 sku_stock[c_sku] = cp.stock
                                 updated_skus.add(c_sku)
