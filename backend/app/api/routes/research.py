@@ -151,6 +151,8 @@ def list_candidates(
     sort: str = "review_count",
     order: str = "desc",
     min_review: Optional[int] = None,
+    max_review: Optional[int] = None,
+    min_price: Optional[int] = None,
     max_price: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
@@ -162,6 +164,10 @@ def list_candidates(
         q = q.filter(or_(ResearchCandidate.item_name.ilike(like), ResearchCandidate.shop_name.ilike(like)))
     if min_review is not None:
         q = q.filter(ResearchCandidate.review_count >= min_review)
+    if max_review is not None:
+        q = q.filter(ResearchCandidate.review_count <= max_review)
+    if min_price is not None:
+        q = q.filter(ResearchCandidate.item_price >= min_price)
     if max_price is not None:
         q = q.filter(ResearchCandidate.item_price <= max_price)
 

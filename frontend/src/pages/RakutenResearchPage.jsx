@@ -32,6 +32,8 @@ function CandidatesTab() {
   const [targetId, setTargetId] = useState('')
   const [keyword, setKeyword] = useState('')
   const [minReview, setMinReview] = useState('')
+  const [maxReview, setMaxReview] = useState('')
+  const [minPrice, setMinPrice] = useState('')
   const [maxPrice, setMaxPrice] = useState('')
   const [sort, setSort] = useState('review_count')
   const [candidates, setCandidates] = useState([])
@@ -53,6 +55,8 @@ function CandidatesTab() {
       if (targetId) params.target_id = targetId
       if (keyword) params.keyword = keyword
       if (minReview) params.min_review = minReview
+      if (maxReview) params.max_review = maxReview
+      if (minPrice) params.min_price = minPrice
       if (maxPrice) params.max_price = maxPrice
       const res = await api.get('/research/candidates', { params })
       setCandidates(res.data.candidates || [])
@@ -60,7 +64,7 @@ function CandidatesTab() {
       setError('候補の取得に失敗しました')
     }
     setLoading(false)
-  }, [targetId, keyword, minReview, maxPrice, sort])
+  }, [targetId, keyword, minReview, maxReview, minPrice, maxPrice, sort])
 
   useEffect(() => { fetchTargets() }, [fetchTargets])
   useEffect(() => { fetchCandidates() }, [fetchCandidates])
@@ -103,20 +107,42 @@ function CandidatesTab() {
           onChange={e => setKeyword(e.target.value)}
           style={{ ...inputStyle, width: 220 }}
         />
-        <input
-          placeholder="レビュー数 以上"
-          type="number"
-          value={minReview}
-          onChange={e => setMinReview(e.target.value)}
-          style={{ ...inputStyle, width: 130 }}
-        />
-        <input
-          placeholder="価格 以下"
-          type="number"
-          value={maxPrice}
-          onChange={e => setMaxPrice(e.target.value)}
-          style={{ ...inputStyle, width: 130 }}
-        />
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: '#6b7280' }}>レビュー数</span>
+          <input
+            placeholder="以上"
+            type="number"
+            value={minReview}
+            onChange={e => setMinReview(e.target.value)}
+            style={{ ...inputStyle, width: 90 }}
+          />
+          <span style={{ fontSize: 12, color: '#6b7280' }}>〜</span>
+          <input
+            placeholder="以下"
+            type="number"
+            value={maxReview}
+            onChange={e => setMaxReview(e.target.value)}
+            style={{ ...inputStyle, width: 90 }}
+          />
+        </div>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: '#6b7280' }}>価格</span>
+          <input
+            placeholder="以上"
+            type="number"
+            value={minPrice}
+            onChange={e => setMinPrice(e.target.value)}
+            style={{ ...inputStyle, width: 90 }}
+          />
+          <span style={{ fontSize: 12, color: '#6b7280' }}>〜</span>
+          <input
+            placeholder="以下"
+            type="number"
+            value={maxPrice}
+            onChange={e => setMaxPrice(e.target.value)}
+            style={{ ...inputStyle, width: 90 }}
+          />
+        </div>
         <select value={sort} onChange={e => setSort(e.target.value)} style={selectStyle}>
           <option value="review_count">レビュー数順</option>
           <option value="price">価格順</option>
