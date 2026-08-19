@@ -13,6 +13,7 @@ from app.api.routes import keyword_analysis as keyword_analysis_routes
 from app.api.routes import seo as seo_routes
 from app.api.routes import auth as auth_routes
 from app.api.routes import activity_log as activity_log_routes
+from app.api.routes import research as research_routes
 from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
 from app.models import price_log as price_log_models
@@ -35,6 +36,7 @@ from app.models import inventory_snapshot as inventory_snapshot_models
 from app.models import material_cost as material_cost_models
 from app.models import cost_history as cost_history_models
 from app.models import activity_log as activity_log_models
+from app.models import research as research_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -1259,6 +1261,7 @@ app.include_router(fba_plan.router, prefix="/api")
 app.include_router(inventory_snapshots.router, prefix="/api")
 app.include_router(material_costs.router, prefix="/api")
 app.include_router(cost_histories.router, prefix="/api")
+app.include_router(research_routes.router, prefix="/api")
 
 @app.get("/")
 def root():

@@ -17,6 +17,7 @@ import RakutenSalesPage from './pages/RakutenSalesPage'
 import RakutenReviewPage from './pages/RakutenReviewPage'
 import KeywordAnalysisPage from './pages/KeywordAnalysisPage'
 import SeoPage from './pages/SeoPage'
+import RakutenResearchPage from './pages/RakutenResearchPage'
 import RakutenDailySalesPage from './pages/RakutenDailySalesPage'
 import AdsPage from './pages/AdsPage'
 import InventoryReflectionLogsPage from './pages/InventoryReflectionLogsPage'
@@ -176,6 +177,9 @@ function App() {
         <NavLink to="/rakuten/seo" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📊 SEO順位
         </NavLink>
+        <NavLink to="/rakuten/research" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          🔎 商品リサーチ
+        </NavLink>
         <div style={{ borderTop: '1px solid #2d3748', margin: '16px 0 8px', paddingTop: 8, fontSize: 11, color: '#475569', fontWeight: 700, letterSpacing: 1, paddingLeft: 16 }}>
           就労支援
         </div>
@@ -220,6 +224,7 @@ function App() {
           <Route path="/rakuten/review" element={<RakutenReviewPage />} />
           <Route path="/rakuten/keyword-analysis" element={<KeywordAnalysisPage />} />
           <Route path="/rakuten/seo" element={<SeoPage />} />
+          <Route path="/rakuten/research" element={<RakutenResearchPage />} />
           <Route path="/welfare/inventory" element={<WelfareInventoryPage />} />
           <Route path="/welfare/work-public" element={<WelfareWorkPublicPage />} />
         </Routes>
