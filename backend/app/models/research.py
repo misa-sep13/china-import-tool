@@ -4,21 +4,23 @@ from app.core.database import Base
 
 
 class ResearchTarget(Base):
-    """リサーチ対象として登録したジャンルID・検索キーワード。
+    """リサーチ対象として登録したジャンルID・検索キーワード・ショップ。
     ローカルバッチがこれを読んで週次で楽天APIを叩く。"""
     __tablename__ = "research_targets"
 
     id          = Column(Integer, primary_key=True)
-    type        = Column(String, nullable=False)   # "keyword" | "genre"
-    value       = Column(String, nullable=False)    # キーワード文字列 or ジャンルID
+    type        = Column(String, nullable=False)   # "keyword" | "genre" | "shop"
+    value       = Column(String, nullable=False)    # キーワード文字列 / ジャンルID / shopCode
     label       = Column(String)                    # 画面表示用の名前（未指定ならvalueを表示）
     is_active   = Column(Boolean, default=True)
     created_at  = Column(DateTime, server_default=func.now())
 
 
 class ResearchCandidate(Base):
-    """バッチが直近に取得した候補商品。対象ごとに毎回洗い替えする
-    （履歴は持たず「今の最新候補」のみを保持するシンプルな設計）。"""
+    """バッチが直近に取得した候補商品。対象ごとに毎回洗い替えするが、
+    洗い替える前のレビュー数を prev_* に引き継ぐ。
+    楽天で検索すれば分かる情報（価格・レビュー数）だけでは意味がなく、
+    「前回から何件レビューが増えたか」＝伸びが判断材料になるため。"""
     __tablename__ = "research_candidates"
 
     id                = Column(Integer, primary_key=True)
@@ -34,6 +36,9 @@ class ResearchCandidate(Base):
     image_url         = Column(String)
     rank              = Column(Integer, nullable=True)  # ランキングAPI由来のときだけ入る
     fetched_at        = Column(DateTime)
+    # 前回バッチ時点の値。差分（レビュー増加数）を出すために引き継ぐ
+    prev_review_count = Column(Integer, nullable=True)
+    prev_fetched_at   = Column(DateTime, nullable=True)
 
 
 class ResearchWatchlistItem(Base):

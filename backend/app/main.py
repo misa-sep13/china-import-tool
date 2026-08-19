@@ -187,6 +187,11 @@ def _migrate():
         # 在庫切れフラグ
         ("rakuten_daily_sales","is_stockout", "ALTER TABLE rakuten_daily_sales ADD COLUMN is_stockout BOOLEAN DEFAULT FALSE"),
         ("order_settings","order_qty_cap", "ALTER TABLE order_settings ADD COLUMN order_qty_cap INTEGER DEFAULT 3"),
+        # リサーチ候補：前回バッチ時点のレビュー数（伸びを出すために引き継ぐ）
+        ("research_candidates","prev_review_count",
+         "ALTER TABLE research_candidates ADD COLUMN prev_review_count INTEGER"),
+        ("research_candidates","prev_fetched_at",
+         "ALTER TABLE research_candidates ADD COLUMN prev_fetched_at TIMESTAMP"),
         # FBA納品プラン用リードタイム詳細
         ("order_settings","lt_order_to_warehouse", "ALTER TABLE order_settings ADD COLUMN lt_order_to_warehouse INTEGER DEFAULT 7"),
         ("order_settings","lt_shipping_request", "ALTER TABLE order_settings ADD COLUMN lt_shipping_request INTEGER DEFAULT 7"),

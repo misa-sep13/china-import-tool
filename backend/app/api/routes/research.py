@@ -75,8 +75,8 @@ def list_targets(active_only: bool = False, db: Session = Depends(get_db)):
 
 @router.post("/targets")
 def create_target(data: TargetIn, db: Session = Depends(get_db)):
-    if data.type not in ("keyword", "genre"):
-        raise HTTPException(400, "typeはkeywordかgenreを指定してください")
+    if data.type not in ("keyword", "genre", "shop"):
+        raise HTTPException(400, "typeはkeyword / genre / shop のいずれかを指定してください")
     t = ResearchTarget(type=data.type, value=data.value, label=data.label)
     db.add(t)
     db.commit()
@@ -121,11 +121,21 @@ def bulk_import_candidates(data: CandidateBulkIn, db: Session = Depends(get_db))
 
     fetched_at = datetime.fromisoformat(data.fetched_at)
 
+    # 洗い替える前に前回の値を控える。これが「前回から何件レビューが増えたか」の
+    # 基準になる（楽天で検索すれば分かる情報だけでは判断材料にならないため）
+    previous = {
+        c.item_code: (c.review_count, c.fetched_at)
+        for c in db.query(ResearchCandidate).filter(
+            ResearchCandidate.research_target_id == data.research_target_id
+        ).all()
+    }
+
     db.query(ResearchCandidate).filter(
         ResearchCandidate.research_target_id == data.research_target_id
     ).delete()
 
     for item in data.items:
+        prev = previous.get(item.item_code)
         db.add(ResearchCandidate(
             research_target_id=data.research_target_id,
             item_code=item.item_code,
@@ -139,6 +149,8 @@ def bulk_import_candidates(data: CandidateBulkIn, db: Session = Depends(get_db))
             image_url=item.image_url,
             rank=item.rank,
             fetched_at=fetched_at,
+            prev_review_count=prev[0] if prev else None,
+            prev_fetched_at=prev[1] if prev else None,
         ))
     db.commit()
     return {"imported": len(data.items), "research_target_id": data.research_target_id}
@@ -171,15 +183,21 @@ def list_candidates(
     if max_price is not None:
         q = q.filter(ResearchCandidate.item_price <= max_price)
 
-    sort_col = {
-        "review_count": ResearchCandidate.review_count,
-        "price": ResearchCandidate.item_price,
-        "review_average": ResearchCandidate.review_average,
-        "rank": ResearchCandidate.rank,
-    }.get(sort, ResearchCandidate.review_count)
-    q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
-
-    rows = q.limit(500).all()
+    if sort == "review_delta":
+        # レビュー増加数はDB上に列が無い（毎回引き算する）ので、
+        # SQLでソートせずPython側で並べ替える
+        rows = q.limit(500).all()
+        rows.sort(key=lambda c: _review_delta(c) if _review_delta(c) is not None else -1,
+                  reverse=(order == "desc"))
+    else:
+        sort_col = {
+            "review_count": ResearchCandidate.review_count,
+            "price": ResearchCandidate.item_price,
+            "review_average": ResearchCandidate.review_average,
+            "rank": ResearchCandidate.rank,
+        }.get(sort, ResearchCandidate.review_count)
+        q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
+        rows = q.limit(500).all()
 
     picked_codes = {
         r[0] for r in db.query(ResearchWatchlistItem.item_code).all()
@@ -279,6 +297,13 @@ def _target_dict(t: ResearchTarget) -> dict:
     }
 
 
+def _review_delta(c: ResearchCandidate):
+    """前回バッチからのレビュー増加数。前回のデータが無ければNone（初回取得）。"""
+    if c.prev_review_count is None:
+        return None
+    return (c.review_count or 0) - c.prev_review_count
+
+
 def _candidate_dict(c: ResearchCandidate, picked: bool = False) -> dict:
     return {
         "id": c.id,
@@ -294,6 +319,8 @@ def _candidate_dict(c: ResearchCandidate, picked: bool = False) -> dict:
         "image_url": c.image_url,
         "rank": c.rank,
         "fetched_at": c.fetched_at.isoformat() if c.fetched_at else None,
+        "review_delta": _review_delta(c),
+        "prev_fetched_at": c.prev_fetched_at.isoformat() if c.prev_fetched_at else None,
         "picked": picked,
     }
 

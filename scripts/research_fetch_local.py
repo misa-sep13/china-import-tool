@@ -56,6 +56,9 @@ AUTH_HEADERS = {"Authorization": f"Bearer {_SERVICE_TOKEN}"} if _SERVICE_TOKEN e
 SEARCH_URL = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701"
 RANKING_URL = "https://openapi.rakuten.co.jp/ichibaranking/api/IchibaItem/Ranking/20220601"
 HITS_PER_PAGE = 30
+# ショップは1商品ずつ見たいわけではなく「レビューが多い順に主力商品を押さえたい」
+# ので、レビュー数の多い順に数ページ分だけ取る
+SHOP_MAX_PAGES = 4
 # 楽天APIはおおむね1秒1リクエストまで。それより速く叩くと弾かれることがある
 REQUEST_INTERVAL_SEC = 1.1
 
@@ -77,21 +80,54 @@ def fetch_keyword_candidates(keyword: str) -> list[dict]:
     resp.raise_for_status()
     data = resp.json()
 
+    # 検索結果の並び順は「ランキング順位」ではないので rank は持たせない。
+    # ジャンル別ランキング由来の順位と混ざると、意味の違う数字が
+    # 同じ「〇位」として並んでしまう
+    return [_item_dict(w.get("Item", w)) for w in data.get("Items", [])]
+
+
+def _item_dict(item: dict, rank=None) -> dict:
+    return {
+        "item_code": item.get("itemCode", ""),
+        "item_name": item.get("itemName", ""),
+        "item_price": item.get("itemPrice"),
+        "review_count": item.get("reviewCount", 0),
+        "review_average": item.get("reviewAverage", 0),
+        "shop_code": item.get("shopCode", ""),
+        "shop_name": item.get("shopName", ""),
+        "item_url": item.get("itemUrl", ""),
+        "image_url": _image_url(item),
+        "rank": rank,
+    }
+
+
+def fetch_shop_candidates(shop_code: str) -> list[dict]:
+    """登録したショップの商品を、レビューが多い順に取得する。
+    shopCodeは楽天の店舗URLに使われる識別子（例: ponopono）。
+    店舗の表示名を渡すと "shopCode is not valid" で弾かれる。"""
     candidates = []
-    for i, wrapped in enumerate(data.get("Items", [])):
-        item = wrapped.get("Item", wrapped)
-        candidates.append({
-            "item_code": item.get("itemCode", ""),
-            "item_name": item.get("itemName", ""),
-            "item_price": item.get("itemPrice"),
-            "review_count": item.get("reviewCount", 0),
-            "review_average": item.get("reviewAverage", 0),
-            "shop_code": item.get("shopCode", ""),
-            "shop_name": item.get("shopName", ""),
-            "item_url": item.get("itemUrl", ""),
-            "image_url": _image_url(item),
-            "rank": i + 1,
-        })
+    for page in range(1, SHOP_MAX_PAGES + 1):
+        params = {
+            **_auth_params(),
+            "shopCode": shop_code,
+            "sort": "-reviewCount",
+            "hits": HITS_PER_PAGE,
+            "page": page,
+        }
+        resp = httpx.get(SEARCH_URL, params=params, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+
+        items = data.get("Items", [])
+        if not items:
+            break
+        for wrapped in items:
+            # ショップ内の並び順は「順位」ではないので rank は持たせない
+            candidates.append(_item_dict(wrapped.get("Item", wrapped)))
+        if len(items) < HITS_PER_PAGE:
+            break
+        time.sleep(REQUEST_INTERVAL_SEC)
+
     return candidates
 
 
@@ -104,16 +140,9 @@ def fetch_genre_candidates(genre_id: str) -> list[dict]:
     candidates = []
     for wrapped in data.get("Items", []):
         item = wrapped.get("Item", wrapped)
+        # ジャンル別ランキングのみ、楽天が返す実際の順位を持たせる
         candidates.append({
-            "item_code": item.get("itemCode", ""),
-            "item_name": item.get("itemName", ""),
-            "item_price": item.get("itemPrice"),
-            "review_count": item.get("reviewCount", 0),
-            "review_average": item.get("reviewAverage", 0),
-            "shop_code": item.get("shopCode", ""),
-            "shop_name": item.get("shopName", ""),
-            "item_url": item.get("itemUrl", ""),
-            "image_url": _image_url(item),
+            **_item_dict(item),
             "rank": item.get("rank"),
         })
     return candidates
@@ -148,6 +177,8 @@ def main():
             try:
                 if t["type"] == "genre":
                     items = fetch_genre_candidates(t["value"])
+                elif t["type"] == "shop":
+                    items = fetch_shop_candidates(t["value"])
                 else:
                     items = fetch_keyword_candidates(t["value"])
 

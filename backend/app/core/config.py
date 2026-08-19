@@ -31,5 +31,9 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        # .env はバックエンドだけでなくローカルのバッチスクリプトとも共用しており、
+        # ここに定義していないキー（AUTH_SERVICE_TOKEN等）が入ることがある。
+        # 既定のforbidだと起動自体が落ちるので、知らないキーは無視する
+        extra = "ignore"
 
 settings = Settings()
