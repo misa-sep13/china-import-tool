@@ -50,6 +50,7 @@ function CandidatesTab() {
   const [pickingCode, setPickingCode] = useState('')
   const [savingShop, setSavingShop] = useState('')
   const [justSavedShop, setJustSavedShop] = useState('')
+  const [truncated, setTruncated] = useState(false)
 
   // 登録済みのセラーはボタンを「登録済み」にするので、shopCodeを引けるようにしておく
   const savedShopCodes = new Set(targets.filter(t => t.type === 'shop').map(t => t.value))
@@ -72,6 +73,7 @@ function CandidatesTab() {
       if (maxPrice) params.max_price = maxPrice
       const res = await api.get('/research/candidates', { params })
       setCandidates(res.data.candidates || [])
+      setTruncated(!!res.data.truncated)
     } catch (e) {
       setError('候補の取得に失敗しました')
     }
@@ -205,7 +207,14 @@ function CandidatesTab() {
           候補がありません。対象を登録してローカルバッチを実行してください。
         </div>
       ) : (
-        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>{candidates.length}件</div>
+        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
+          <span>{candidates.length}件</span>
+          {truncated && (
+            <span style={{ marginLeft: 8, color: '#b45309' }}>
+              表示上限に達しています。絞り込みを使うと目的の商品を探しやすくなります
+            </span>
+          )}
+        </div>
       )}
 
       <div style={grid}>
@@ -304,8 +313,10 @@ function TargetManageModal({ targets, onClose, onChanged }) {
           )}
           {type === 'genre' && (
             <>
-              <b>ジャンルID</b>：そのジャンルのリアルタイムランキング上位30件を取得します。
-              こちらは楽天が出している実際の順位が表示されます。
+              <b>ジャンルID</b>：ランキング上位30件に加えて、そのジャンルの商品を
+              レビューの多い順に約300件まとめて取得します（1ページ目だけではありません）。<br />
+              ランキングに入っている商品には「ランキング〇位」が付きます。
+              件数が多いので、レビュー数や価格の絞り込みと併せて使ってください。
             </>
           )}
         </div>

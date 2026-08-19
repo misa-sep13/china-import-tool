@@ -197,10 +197,13 @@ def list_candidates(
     if max_price is not None:
         q = q.filter(ResearchCandidate.item_price <= max_price)
 
+    # ジャンルは1対象で300件超になるため、複数対象を横断すると500件では足りない
+    LIMIT = 1500
+
     if sort == "review_delta":
         # レビュー増加数はDB上に列が無い（毎回引き算する）ので、
         # SQLでソートせずPython側で並べ替える
-        rows = q.limit(500).all()
+        rows = q.limit(LIMIT).all()
         rows.sort(key=lambda c: _review_delta(c) if _review_delta(c) is not None else -1,
                   reverse=(order == "desc"))
     else:
@@ -211,7 +214,7 @@ def list_candidates(
             "rank": ResearchCandidate.rank,
         }.get(sort, ResearchCandidate.review_count)
         q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
-        rows = q.limit(500).all()
+        rows = q.limit(LIMIT).all()
 
     picked_codes = {
         r[0] for r in db.query(ResearchWatchlistItem.item_code).all()
@@ -219,6 +222,9 @@ def list_candidates(
 
     return {
         "candidates": [_candidate_dict(r, picked=r.item_code in picked_codes) for r in rows],
+        # 上限で切れたまま黙って表示すると「全部見た」と誤解するので伝える
+        "truncated": len(rows) >= LIMIT,
+        "limit": LIMIT,
     }
 
 

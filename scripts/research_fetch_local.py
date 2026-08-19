@@ -59,6 +59,11 @@ HITS_PER_PAGE = 30
 # ショップは1商品ずつ見たいわけではなく「レビューが多い順に主力商品を押さえたい」
 # ので、レビュー数の多い順に数ページ分だけ取る
 SHOP_MAX_PAGES = 4
+# ジャンルは対象商品が桁違いに多いので、ランキング30件だけでは狭すぎる。
+# レビュー数の多い順に深いページまで拾って幅を出す（10ページ＝約300件）。
+# 標準の並び順だと深いページはレビュー0件の中古品等が混ざって使い物にならないため、
+# レビュー数順で取る。伸びは前回比（review_delta）で見る
+GENRE_MAX_PAGES = 10
 # 楽天APIはおおむね1秒1リクエストまで。それより速く叩くと弾かれることがある
 REQUEST_INTERVAL_SEC = 1.1
 
@@ -132,19 +137,52 @@ def fetch_shop_candidates(shop_code: str) -> list[dict]:
 
 
 def fetch_genre_candidates(genre_id: str) -> list[dict]:
+    """ジャンルの商品を、ランキング上位＋レビューの多い順の一覧で取得する。
+
+    ランキングAPIは上位30件しか返さずジャンルを見るには狭いので、
+    検索API（genreId指定）で深いページまで拾って一覧の幅を出す。
+    ランキングに入っている商品だけ順位を持たせ、一覧側は順位なしにする。
+    """
+    candidates = []
+    seen = set()
+
+    # 1) ジャンル別ランキング（楽天が出している実際の順位つき）
     params = {**_auth_params(), "genreId": genre_id, "period": "realtime", "page": 1}
     resp = httpx.get(RANKING_URL, params=params, timeout=20)
     resp.raise_for_status()
-    data = resp.json()
-
-    candidates = []
-    for wrapped in data.get("Items", []):
+    for wrapped in resp.json().get("Items", []):
         item = wrapped.get("Item", wrapped)
-        # ジャンル別ランキングのみ、楽天が返す実際の順位を持たせる
-        candidates.append({
-            **_item_dict(item),
-            "rank": item.get("rank"),
-        })
+        code = item.get("itemCode", "")
+        if code in seen:
+            continue
+        seen.add(code)
+        candidates.append({**_item_dict(item), "rank": item.get("rank")})
+
+    # 2) ジャンル内の商品一覧（レビューの多い順に深いページまで）
+    for page in range(1, GENRE_MAX_PAGES + 1):
+        time.sleep(REQUEST_INTERVAL_SEC)
+        params = {
+            **_auth_params(),
+            "genreId": genre_id,
+            "sort": "-reviewCount",
+            "hits": HITS_PER_PAGE,
+            "page": page,
+        }
+        resp = httpx.get(SEARCH_URL, params=params, timeout=20)
+        resp.raise_for_status()
+        items = resp.json().get("Items", [])
+        if not items:
+            break
+        for wrapped in items:
+            item = wrapped.get("Item", wrapped)
+            code = item.get("itemCode", "")
+            if code in seen:
+                continue
+            seen.add(code)
+            candidates.append(_item_dict(item))
+        if len(items) < HITS_PER_PAGE:
+            break
+
     return candidates
 
 
