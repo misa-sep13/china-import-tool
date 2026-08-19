@@ -41,6 +41,22 @@ class ResearchCandidate(Base):
     prev_fetched_at   = Column(DateTime, nullable=True)
 
 
+class RakutenGenre(Base):
+    """楽天のジャンル階層。ジャンルIDを手で調べるのは現実的でないため、
+    画面から選べるようにローカルバッチで取り込んで保持する
+    （RenderからはIP制限で楽天APIを呼べないので、DBに持っておく必要がある）。"""
+    __tablename__ = "rakuten_genres"
+
+    genre_id    = Column(Integer, primary_key=True)
+    name        = Column(String, index=True)
+    level       = Column(Integer, index=True)
+    parent_id   = Column(Integer, index=True, nullable=True)
+    # 「レディースファッション > トップス > Tシャツ」のような表示用の道筋。
+    # 階層を辿らずに検索結果へ文脈を出せるようにするため持たせる
+    path        = Column(String)
+    updated_at  = Column(DateTime, server_default=func.now())
+
+
 class ResearchWatchlistItem(Base):
     """ピックアップして保存した商品。取得時点のスナップショットを保持し、
     月間売上は楽天APIでは取れないため手動入力する。"""

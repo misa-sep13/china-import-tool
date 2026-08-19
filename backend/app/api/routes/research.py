@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 from app.core.database import get_db
-from app.models.research import ResearchTarget, ResearchCandidate, ResearchWatchlistItem
+from app.models.research import ResearchTarget, ResearchCandidate, ResearchWatchlistItem, RakutenGenre
 
 router = APIRouter(prefix="/research", tags=["リサーチツール"])
 
@@ -225,6 +225,68 @@ def list_candidates(
         # 上限で切れたまま黙って表示すると「全部見た」と誤解するので伝える
         "truncated": len(rows) >= LIMIT,
         "limit": LIMIT,
+    }
+
+
+# ---------- ジャンル一覧（画面からジャンルIDを選ぶため） ----------
+
+class GenreItem(BaseModel):
+    genre_id: int
+    name: str
+    level: int
+    parent_id: Optional[int] = None
+    path: Optional[str] = None
+
+
+class GenreBulkIn(BaseModel):
+    genres: list[GenreItem]
+
+
+@router.post("/genres/bulk")
+def bulk_import_genres(data: GenreBulkIn, db: Session = Depends(get_db)):
+    """ローカルバッチ用。ジャンル階層を丸ごと入れ替える。"""
+    db.query(RakutenGenre).delete()
+    for g in data.genres:
+        db.add(RakutenGenre(
+            genre_id=g.genre_id,
+            name=g.name,
+            level=g.level,
+            parent_id=g.parent_id,
+            path=g.path,
+        ))
+    db.commit()
+    return {"imported": len(data.genres)}
+
+
+@router.get("/genres")
+def list_genres(
+    parent_id: Optional[int] = None,
+    keyword: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """keyword指定なら名前で横断検索、なければparent_id直下の子を返す
+    （未指定なら最上位）。画面での絞り込みと階層辿りの両方に使う。"""
+    q = db.query(RakutenGenre)
+    if keyword:
+        q = q.filter(RakutenGenre.name.ilike(f"%{keyword}%"))
+        rows = q.order_by(RakutenGenre.level, RakutenGenre.name).limit(200).all()
+    else:
+        q = q.filter(RakutenGenre.parent_id == parent_id) if parent_id \
+            else q.filter(RakutenGenre.level == 1)
+        rows = q.order_by(RakutenGenre.name).all()
+
+    return {
+        "genres": [
+            {
+                "genre_id": g.genre_id,
+                "name": g.name,
+                "level": g.level,
+                "parent_id": g.parent_id,
+                "path": g.path,
+            }
+            for g in rows
+        ],
+        "total": db.query(RakutenGenre).count(),
     }
 
 

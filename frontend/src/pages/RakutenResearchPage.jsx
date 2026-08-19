@@ -249,12 +249,22 @@ function TargetManageModal({ targets, onClose, onChanged }) {
   const [type, setType] = useState('shop')
   const [value, setValue] = useState('')
   const [label, setLabel] = useState('')
+  const [showGenrePicker, setShowGenrePicker] = useState(false)
+  const [genreLabel, setGenreLabel] = useState('')
 
   const handleAdd = async () => {
     if (!value.trim()) return
     await api.post('/research/targets', { type, value: value.trim(), label: label.trim() || null })
-    setValue(''); setLabel('')
+    setValue(''); setLabel(''); setGenreLabel('')
     onChanged()
+  }
+
+  const handlePickGenre = (g) => {
+    setValue(String(g.genre_id))
+    setGenreLabel(g.path || g.name)
+    // 表示名が空なら、選んだジャンル名をそのまま使う（IDだけ並ぶと分からないため）
+    if (!label.trim()) setLabel(g.name)
+    setShowGenrePicker(false)
   }
 
   const handleToggle = async (t) => {
@@ -285,10 +295,19 @@ function TargetManageModal({ targets, onClose, onChanged }) {
               <option value="genre">ジャンルID</option>
             </select>
           </label>
-          <label style={labelStyle}>
-            {TYPE_INPUT_LABEL[type]}
-            <input value={value} onChange={e => setValue(e.target.value)} style={inputStyle} />
-          </label>
+          {type === 'genre' ? (
+            <label style={labelStyle}>
+              ジャンル
+              <button onClick={() => setShowGenrePicker(true)} style={{ ...btnSecondary, textAlign: 'left', minWidth: 260 }}>
+                {genreLabel || 'ジャンルを選ぶ…'}
+              </button>
+            </label>
+          ) : (
+            <label style={labelStyle}>
+              {TYPE_INPUT_LABEL[type]}
+              <input value={value} onChange={e => setValue(e.target.value)} style={inputStyle} />
+            </label>
+          )}
           <label style={labelStyle}>
             表示名（任意）
             <input value={label} onChange={e => setLabel(e.target.value)} style={inputStyle} />
@@ -313,7 +332,9 @@ function TargetManageModal({ targets, onClose, onChanged }) {
           )}
           {type === 'genre' && (
             <>
-              <b>ジャンルID</b>：ランキング上位30件に加えて、そのジャンルの商品を
+              <b>ジャンル</b>：「ジャンルを選ぶ」から名前で検索するか、階層を辿って選べます
+              （ジャンルIDを自分で調べる必要はありません）。<br />
+              ランキング上位30件に加えて、そのジャンルの商品を
               レビューの多い順に約300件まとめて取得します（1ページ目だけではありません）。<br />
               ランキングに入っている商品には「ランキング〇位」が付きます。
               件数が多いので、レビュー数や価格の絞り込みと併せて使ってください。
@@ -352,6 +373,108 @@ function TargetManageModal({ targets, onClose, onChanged }) {
         </table>
         {targets.length === 0 && (
           <div style={{ padding: 20, textAlign: 'center', color: '#9ca3af' }}>対象がまだありません</div>
+        )}
+      </div>
+
+      {showGenrePicker && (
+        <GenrePicker onSelect={handlePickGenre} onClose={() => setShowGenrePicker(false)} />
+      )}
+    </div>
+  )
+}
+
+// ジャンルIDを手で調べるのは現実的でないので、名前で探すか階層を辿って選ばせる
+function GenrePicker({ onSelect, onClose }) {
+  const [genres, setGenres] = useState([])
+  const [keyword, setKeyword] = useState('')
+  const [trail, setTrail] = useState([])   // 辿ってきた親ジャンル
+  const [loading, setLoading] = useState(true)
+  const [total, setTotal] = useState(0)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const params = {}
+    if (keyword.trim()) {
+      params.keyword = keyword.trim()
+    } else if (trail.length) {
+      params.parent_id = trail[trail.length - 1].genre_id
+    }
+    const res = await api.get('/research/genres', { params })
+    setGenres(res.data.genres || [])
+    setTotal(res.data.total || 0)
+    setLoading(false)
+  }, [keyword, trail])
+
+  useEffect(() => { load() }, [load])
+
+  const searching = !!keyword.trim()
+
+  return (
+    <div style={{ ...overlay, zIndex: 200 }} onClick={onClose}>
+      <div style={modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>ジャンルを選ぶ</h3>
+          <button onClick={onClose} style={btnSecondary}>閉じる</button>
+        </div>
+
+        {total === 0 ? (
+          <div style={{ ...card, background: '#fffbeb', border: '1px solid #fcd34d', fontSize: 13, lineHeight: 1.7 }}>
+            ジャンル一覧がまだ取り込まれていません。<br />
+            ローカルPCで <code style={codeStyle}>python scripts/sync_rakuten_genres.py</code> を
+            一度実行すると、ここから選べるようになります。
+          </div>
+        ) : (
+          <>
+            <input
+              placeholder="ジャンル名で検索（例: ベビー、ペット、キッチン）"
+              value={keyword}
+              onChange={e => setKeyword(e.target.value)}
+              style={{ ...inputStyle, marginBottom: 10 }}
+            />
+
+            {/* 検索中は階層を辿る意味がないのでパンくずは出さない */}
+            {!searching && (
+              <div style={{ fontSize: 12, marginBottom: 8, display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                <button onClick={() => setTrail([])} style={btnSmall}>すべて</button>
+                {trail.map((g, i) => (
+                  <span key={g.genre_id} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                    <span style={{ color: '#9ca3af' }}>›</span>
+                    <button onClick={() => setTrail(trail.slice(0, i + 1))} style={btnSmall}>{g.name}</button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {loading ? (
+              <div style={{ padding: 20, textAlign: 'center', color: '#9ca3af' }}>読み込み中...</div>
+            ) : genres.length === 0 ? (
+              <div style={{ padding: 20, textAlign: 'center', color: '#9ca3af' }}>
+                {searching ? '該当するジャンルがありません' : 'これ以上の下位ジャンルはありません'}
+              </div>
+            ) : (
+              <div style={{ maxHeight: 380, overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                {genres.map(g => (
+                  <div key={g.genre_id} style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '6px 10px', borderBottom: '1px solid #f3f4f6',
+                  }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13 }}>{g.name}</div>
+                      {/* どの階層のジャンルか分からないと選べないので道筋を出す */}
+                      {searching && g.path && (
+                        <div style={{ fontSize: 11, color: '#9ca3af' }}>{g.path}</div>
+                      )}
+                    </div>
+                    <span style={{ fontSize: 11, color: '#9ca3af' }}>ID {g.genre_id}</span>
+                    {!searching && (
+                      <button onClick={() => setTrail([...trail, g])} style={btnSmall}>下位へ</button>
+                    )}
+                    <button onClick={() => onSelect(g)} style={btnPrimary}>選択</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
