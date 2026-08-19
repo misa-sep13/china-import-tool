@@ -77,6 +77,20 @@ def list_targets(active_only: bool = False, db: Session = Depends(get_db)):
 def create_target(data: TargetIn, db: Session = Depends(get_db)):
     if data.type not in ("keyword", "genre", "shop"):
         raise HTTPException(400, "typeはkeyword / genre / shop のいずれかを指定してください")
+
+    # 商品カードからワンクリックで登録できるようにしたので、同じセラーを
+    # 何度も押せてしまう。同じ種類・同じ値なら既存のものを返して二重登録を防ぐ
+    existing = db.query(ResearchTarget).filter(
+        ResearchTarget.type == data.type,
+        ResearchTarget.value == data.value,
+    ).first()
+    if existing:
+        if not existing.is_active:
+            existing.is_active = True
+            db.commit()
+            db.refresh(existing)
+        return _target_dict(existing)
+
     t = ResearchTarget(type=data.type, value=data.value, label=data.label)
     db.add(t)
     db.commit()

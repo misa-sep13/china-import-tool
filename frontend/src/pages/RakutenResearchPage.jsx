@@ -48,6 +48,11 @@ function CandidatesTab() {
   const [error, setError] = useState('')
   const [showTargetManage, setShowTargetManage] = useState(false)
   const [pickingCode, setPickingCode] = useState('')
+  const [savingShop, setSavingShop] = useState('')
+  const [justSavedShop, setJustSavedShop] = useState('')
+
+  // 登録済みのセラーはボタンを「登録済み」にするので、shopCodeを引けるようにしておく
+  const savedShopCodes = new Set(targets.filter(t => t.type === 'shop').map(t => t.value))
 
   const fetchTargets = useCallback(async () => {
     const res = await api.get('/research/targets')
@@ -95,6 +100,23 @@ function CandidatesTab() {
       alert('ピックアップに失敗しました')
     }
     setPickingCode('')
+  }
+
+  const handleSaveSeller = async (c) => {
+    if (!c.shop_code) return
+    setSavingShop(c.shop_code)
+    try {
+      await api.post('/research/targets', {
+        type: 'shop',
+        value: c.shop_code,
+        label: c.shop_name || c.shop_code,
+      })
+      await fetchTargets()
+      setJustSavedShop(c.shop_name || c.shop_code)
+    } catch (e) {
+      alert('セラーの登録に失敗しました')
+    }
+    setSavingShop('')
   }
 
   return (
@@ -161,6 +183,19 @@ function CandidatesTab() {
         <button onClick={() => setShowTargetManage(true)} style={btnSecondary}>対象管理</button>
       </div>
 
+      {/* 登録しても商品が並ぶのは次のバッチ実行後。何も起きないように見えるので明示する */}
+      {justSavedShop && (
+        <div style={{
+          ...card, marginBottom: 16, background: '#f0fdf4', border: '1px solid #86efac',
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <span style={{ fontSize: 13, flex: 1 }}>
+            セラー「{justSavedShop}」を登録しました。このセラーの商品は、次回のバッチ実行後に一覧へ表示されます。
+          </span>
+          <button onClick={() => setJustSavedShop('')} style={btnSmall}>閉じる</button>
+        </div>
+      )}
+
       {loading ? (
         <div style={emptyBox}>読み込み中...</div>
       ) : error ? (
@@ -183,6 +218,9 @@ function CandidatesTab() {
             actionLabel={c.picked ? '✓ ピックアップ済み' : 'ピックアップ'}
             actionDisabled={c.picked || pickingCode === c.item_code}
             onAction={() => handlePick(c)}
+            sellerSaved={savedShopCodes.has(c.shop_code)}
+            sellerSaving={savingShop === c.shop_code}
+            onSaveSeller={() => handleSaveSeller(c)}
           />
         ))}
       </div>
@@ -390,7 +428,7 @@ function WatchlistTab() {
 // 共通カード部品
 // ============================================================
 
-function ProductCard({ item, actionLabel, actionDisabled, onAction }) {
+function ProductCard({ item, actionLabel, actionDisabled, onAction, sellerSaved, sellerSaving, onSaveSeller }) {
   return (
     <div style={productCard}>
       <a href={item.item_url} target="_blank" rel="noreferrer">
@@ -401,7 +439,22 @@ function ProductCard({ item, actionLabel, actionDisabled, onAction }) {
         )}
       </a>
       <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-        <div style={shopBadge}>{item.shop_name}</div>
+        {/* 気になる商品を見つけたら、その場でセラーごと追いかけられるようにする */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ ...shopBadge, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {item.shop_name}
+          </span>
+          {item.shop_code && (
+            <button
+              onClick={onSaveSeller}
+              disabled={sellerSaved || sellerSaving}
+              title={sellerSaved ? 'このセラーは登録済みです' : 'このセラーを登録して商品を追跡する'}
+              style={sellerSaved ? sellerBtnSaved : sellerBtn}
+            >
+              {sellerSaved ? '✓ セラー' : sellerSaving ? '登録中' : '+ セラー'}
+            </button>
+          )}
+        </div>
         <a href={item.item_url} target="_blank" rel="noreferrer" style={cardTitle} title={item.item_name}>
           {item.item_name}
         </a>
@@ -520,6 +573,13 @@ const overlay = { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backg
 const modal = { background: '#fff', borderRadius: 12, padding: 24, maxWidth: 800, width: '90%', maxHeight: '80vh', overflow: 'auto' }
 const emptyBox = { padding: 40, textAlign: 'center', color: '#9ca3af', borderRadius: 8 }
 const codeStyle = { background: '#f1f5f9', padding: '1px 5px', borderRadius: 3, fontFamily: 'monospace', margin: '0 2px' }
+const sellerBtn = {
+  background: '#fff', color: '#2563eb', border: '1px solid #93c5fd', borderRadius: 4,
+  padding: '1px 6px', cursor: 'pointer', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
+}
+const sellerBtnSaved = {
+  ...sellerBtn, background: '#eff6ff', color: '#60a5fa', borderColor: '#dbeafe', cursor: 'default',
+}
 const grid = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }
 const productCard = { display: 'flex', flexDirection: 'column', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#fff' }
 const cardImage = { width: '100%', height: 160, objectFit: 'contain', background: '#fafafa', display: 'block' }
