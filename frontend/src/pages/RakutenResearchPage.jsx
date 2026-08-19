@@ -51,6 +51,8 @@ function CandidatesTab() {
   const [savingShop, setSavingShop] = useState('')
   const [justSavedShop, setJustSavedShop] = useState('')
   const [truncated, setTruncated] = useState(false)
+  const [showGenrePicker, setShowGenrePicker] = useState(false)
+  const [pendingGenre, setPendingGenre] = useState('')
 
   // 登録済みのセラーはボタンを「登録済み」にするので、shopCodeを引けるようにしておく
   const savedShopCodes = new Set(targets.filter(t => t.type === 'shop').map(t => t.value))
@@ -102,6 +104,31 @@ function CandidatesTab() {
       alert('ピックアップに失敗しました')
     }
     setPickingCode('')
+  }
+
+  // ジャンルを選んだら、そのジャンルの商品がすぐ並ぶようにする。
+  // 未取得のジャンルはサーバーから楽天を呼べない（IP制限）ので、対象に追加して
+  // 次回バッチに拾わせる。何も起きないように見えないよう、その旨を伝える
+  const handleSelectGenre = async (g) => {
+    setShowGenrePicker(false)
+    const existing = targets.find(t => t.type === 'genre' && String(t.value) === String(g.genre_id))
+    if (existing) {
+      setTargetId(String(existing.id))
+      setPendingGenre('')
+      return
+    }
+    try {
+      const res = await api.post('/research/targets', {
+        type: 'genre',
+        value: String(g.genre_id),
+        label: g.name,
+      })
+      await fetchTargets()
+      setTargetId(String(res.data.id))
+      setPendingGenre(g.name)
+    } catch (e) {
+      alert('ジャンルの登録に失敗しました')
+    }
   }
 
   const handleSaveSeller = async (c) => {
@@ -182,8 +209,24 @@ function CandidatesTab() {
           <option value="rank">ジャンル別ランキング順</option>
         </select>
         <div style={{ flex: 1 }} />
+        {/* ジャンルを選んだらそのジャンルの商品がすぐ並ぶようにする。
+            対象管理を開かずに、ここから直接ジャンルを切り替えられる */}
+        <button onClick={() => setShowGenrePicker(true)} style={btnPrimary}>ジャンルで見る</button>
         <button onClick={() => setShowTargetManage(true)} style={btnSecondary}>対象管理</button>
       </div>
+
+      {pendingGenre && (
+        <div style={{
+          ...card, marginBottom: 16, background: '#eff6ff', border: '1px solid #93c5fd',
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <span style={{ fontSize: 13, flex: 1 }}>
+            ジャンル「{pendingGenre}」を対象に追加しました。まだ取得していないジャンルなので、
+            次回のバッチ実行後に商品が並びます。
+          </span>
+          <button onClick={() => setPendingGenre('')} style={btnSmall}>閉じる</button>
+        </div>
+      )}
 
       {/* 登録しても商品が並ぶのは次のバッチ実行後。何も起きないように見えるので明示する */}
       {justSavedShop && (
@@ -240,6 +283,10 @@ function CandidatesTab() {
           onClose={() => setShowTargetManage(false)}
           onChanged={fetchTargets}
         />
+      )}
+
+      {showGenrePicker && (
+        <GenrePicker onSelect={handleSelectGenre} onClose={() => setShowGenrePicker(false)} />
       )}
     </div>
   )

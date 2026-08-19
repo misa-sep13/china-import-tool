@@ -70,7 +70,24 @@ def list_targets(active_only: bool = False, db: Session = Depends(get_db)):
     if active_only:
         q = q.filter(ResearchTarget.is_active == True)
     rows = q.order_by(ResearchTarget.id).all()
-    return {"targets": [_target_dict(r) for r in rows]}
+
+    # ジャンルIDを直接入力して登録した対象は表示名がIDのままになっている。
+    # 一覧を返すときにジャンル名へ直す（既存の登録も対象にするため読み取り時に解決する）
+    genre_ids = [int(r.value) for r in rows if r.type == "genre" and str(r.value).isdigit()]
+    names = {}
+    if genre_ids:
+        names = {
+            g.genre_id: g.name
+            for g in db.query(RakutenGenre).filter(RakutenGenre.genre_id.in_(genre_ids)).all()
+        }
+
+    out = []
+    for r in rows:
+        d = _target_dict(r)
+        if r.type == "genre" and str(r.value).isdigit() and (not r.label or r.label == r.value):
+            d["label"] = names.get(int(r.value), d["label"])
+        out.append(d)
+    return {"targets": out}
 
 
 @router.post("/targets")
@@ -91,7 +108,18 @@ def create_target(data: TargetIn, db: Session = Depends(get_db)):
             db.refresh(existing)
         return _target_dict(existing)
 
-    t = ResearchTarget(type=data.type, value=data.value, label=data.label)
+    # ジャンルIDを直接入力された場合、表示名がIDのままだと後から何のジャンルか
+    # 分からなくなる。取り込んだジャンル一覧から名前を補う
+    label = data.label
+    if data.type == "genre" and (not label or label == data.value):
+        try:
+            g = db.query(RakutenGenre).filter(RakutenGenre.genre_id == int(data.value)).first()
+            if g:
+                label = g.name
+        except (ValueError, TypeError):
+            pass
+
+    t = ResearchTarget(type=data.type, value=data.value, label=label)
     db.add(t)
     db.commit()
     db.refresh(t)
