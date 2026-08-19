@@ -49,8 +49,8 @@ _env_file = _load_env_file()
 APP_ID = os.environ.get("RAKUTEN_APP_ID") or _env_file.get("RAKUTEN_APP_ID", "")
 ACCESS_KEY = os.environ.get("RAKUTEN_ACCESS_KEY") or _env_file.get("RAKUTEN_ACCESS_KEY", "")
 
-BACKEND = os.environ.get("BACKEND_URL", "https://china-import-tool.onrender.com")
-_SERVICE_TOKEN = os.environ.get("AUTH_SERVICE_TOKEN") or ""
+BACKEND = os.environ.get("BACKEND_URL") or _env_file.get("BACKEND_URL") or "https://china-import-tool.onrender.com"
+_SERVICE_TOKEN = os.environ.get("AUTH_SERVICE_TOKEN") or _env_file.get("AUTH_SERVICE_TOKEN") or ""
 AUTH_HEADERS = {"Authorization": f"Bearer {_SERVICE_TOKEN}"} if _SERVICE_TOKEN else {}
 
 SEARCH_URL = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701"
@@ -126,6 +126,11 @@ def main():
 
     with httpx.Client(timeout=30, headers=AUTH_HEADERS) as api:
         res = api.get(f"{BACKEND}/api/research/targets?active_only=true")
+        if res.status_code == 401:
+            print(f"401 Unauthorized: {BACKEND} へのアクセスにログインが必要です。")
+            print(f"AUTH_SERVICE_TOKEN が {os.path.abspath(_ENV_PATH)} に設定されているか確認してください"
+                  "（Renderの環境変数と同じ値。既存のSEOチェック等と共通）。")
+            sys.exit(1)
         res.raise_for_status()
         targets = res.json().get("targets", [])
 
