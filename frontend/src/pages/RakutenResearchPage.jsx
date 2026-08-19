@@ -175,8 +175,10 @@ function CandidatesTab() {
 
       <div style={grid}>
         {candidates.map(c => (
+          /* 同じ商品がセラーとキーワードの両方に出ることがある。item_codeだけだと
+             キーが重複してReactの再描画が壊れるので、対象IDと組み合わせる */
           <ProductCard
-            key={c.item_code}
+            key={`${c.research_target_id}-${c.item_code}`}
             item={c}
             actionLabel={c.picked ? '✓ ピックアップ済み' : 'ピックアップ'}
             actionDisabled={c.picked || pickingCode === c.item_code}
@@ -404,8 +406,10 @@ function ProductCard({ item, actionLabel, actionDisabled, onAction }) {
           {item.item_name}
         </a>
         <div style={{ fontWeight: 700, fontSize: 16 }}>¥{(item.item_price ?? 0).toLocaleString()}</div>
+        {/* 素のテキストと条件付き要素を兄弟にすると、ブラウザ翻訳がテキストノードを
+            差し替えたときにReactの再描画と食い違う。テキストは必ず要素で包む */}
         <div style={{ fontSize: 12, color: '#6b7280' }}>
-          ★{(item.review_average ?? 0).toFixed(2)}（{(item.review_count ?? 0).toLocaleString()}件）
+          <span>★{(item.review_average ?? 0).toFixed(2)}（{(item.review_count ?? 0).toLocaleString()}件）</span>
           {/* 順位はジャンル別ランキング由来のときだけ。キーワード検索の並び順は順位ではない */}
           {item.rank ? <span style={{ marginLeft: 8 }}>ランキング{item.rank}位</span> : null}
         </div>

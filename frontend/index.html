@@ -1,9 +1,14 @@
 <!doctype html>
-<html lang="en">
+<html lang="ja" translate="no">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 中身は日本語なのに lang="en" だったため、ブラウザが「英語のページ」と判断して
+         自動翻訳をかけていた。翻訳はテキストノードを差し替えるので、Reactが管理している
+         DOMと食い違い、再描画時に removeChild が失敗して画面が真っ白になっていた。
+         lang を ja に直したうえで、翻訳自体も明示的に止める。 -->
+    <meta name="google" content="notranslate" />
     <title>中国輸入管理</title>
     <!-- build: 2026-07-06.2 -->
 
