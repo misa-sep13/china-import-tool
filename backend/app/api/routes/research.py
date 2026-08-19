@@ -228,11 +228,13 @@ def list_candidates(
     # ジャンルは1対象で300件超になるため、複数対象を横断すると500件では足りない
     LIMIT = 1500
 
-    if sort == "review_delta":
-        # レビュー増加数はDB上に列が無い（毎回引き算する）ので、
+    if sort in ("review_delta", "review_delta_rate"):
+        # 増加数・増加率はDB上に列が無い（毎回引き算する）ので、
         # SQLでソートせずPython側で並べ替える
+        calc = _review_delta_rate if sort == "review_delta_rate" else _review_delta
         rows = q.limit(LIMIT).all()
-        rows.sort(key=lambda c: _review_delta(c) if _review_delta(c) is not None else -1,
+        # 未計測（初回取得や母数不足）は数字がある商品より後ろに置く
+        rows.sort(key=lambda c: (calc(c) is not None, calc(c) if calc(c) is not None else 0),
                   reverse=(order == "desc"))
     else:
         sort_col = {
@@ -414,6 +416,21 @@ def _review_delta(c: ResearchCandidate):
     return (c.review_count or 0) - c.prev_review_count
 
 
+# 母数が小さいと伸び率が跳ねる（1件→3件で+200%）。ノイズになるので、
+# ある程度レビューが付いている商品だけ伸び率を出す
+MIN_BASE_FOR_RATE = 5
+
+
+def _review_delta_rate(c: ResearchCandidate):
+    """前回バッチからのレビュー増加率。増加数だけだと大手の定番商品が
+    常に上位に来てしまい、伸びている新商品が埋もれるため併せて出す。"""
+    prev = c.prev_review_count
+    if prev is None or prev < MIN_BASE_FOR_RATE:
+        return None
+    delta = (c.review_count or 0) - prev
+    return round(delta / prev * 100, 1)
+
+
 def _candidate_dict(c: ResearchCandidate, picked: bool = False) -> dict:
     return {
         "id": c.id,
@@ -430,6 +447,8 @@ def _candidate_dict(c: ResearchCandidate, picked: bool = False) -> dict:
         "rank": c.rank,
         "fetched_at": c.fetched_at.isoformat() if c.fetched_at else None,
         "review_delta": _review_delta(c),
+        "review_delta_rate": _review_delta_rate(c),
+        "prev_review_count": c.prev_review_count,
         "prev_fetched_at": c.prev_fetched_at.isoformat() if c.prev_fetched_at else None,
         "picked": picked,
     }

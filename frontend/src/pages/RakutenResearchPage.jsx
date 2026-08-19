@@ -42,7 +42,7 @@ function CandidatesTab() {
   const [maxReview, setMaxReview] = useState('')
   const [minPrice, setMinPrice] = useState('')
   const [maxPrice, setMaxPrice] = useState('')
-  const [sort, setSort] = useState('review_delta')
+  const [sort, setSort] = useState('review_delta_rate')
   const [candidates, setCandidates] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -202,7 +202,8 @@ function CandidatesTab() {
           />
         </div>
         <select value={sort} onChange={e => setSort(e.target.value)} style={selectStyle}>
-          <option value="review_delta">レビュー増加数順（伸び）</option>
+          <option value="review_delta_rate">伸び率順（レビュー増加率）</option>
+          <option value="review_delta">レビュー増加数順</option>
           <option value="review_count">レビュー数順</option>
           <option value="price">価格順</option>
           <option value="review_average">評価順</option>
@@ -647,7 +648,7 @@ function ProductCard({ item, actionLabel, actionDisabled, onAction, sellerSaved,
           {/* 順位はジャンル別ランキング由来のときだけ。キーワード検索の並び順は順位ではない */}
           {item.rank ? <span style={{ marginLeft: 8 }}>ランキング{item.rank}位</span> : null}
         </div>
-        <ReviewDeltaBadge delta={item.review_delta} since={item.prev_fetched_at} />
+        <ReviewDeltaBadge delta={item.review_delta} rate={item.review_delta_rate} since={item.prev_fetched_at} />
         <button onClick={onAction} disabled={actionDisabled} style={{ ...btnPrimary, marginTop: 'auto', opacity: actionDisabled ? 0.6 : 1 }}>
           {actionLabel}
         </button>
@@ -658,7 +659,8 @@ function ProductCard({ item, actionLabel, actionDisabled, onAction, sellerSaved,
 
 // 楽天で検索すれば分かる情報（価格・レビュー数）ではなく、
 // 前回バッチからの伸びを見せる。これがこのツールを使う理由になる部分。
-function ReviewDeltaBadge({ delta, since }) {
+// 増加数だけだと大手の定番商品が上位を占めるので、伸び率も併記する。
+function ReviewDeltaBadge({ delta, rate, since }) {
   if (delta == null) {
     return (
       <div style={{ fontSize: 11, color: '#9ca3af' }}>
@@ -675,7 +677,8 @@ function ReviewDeltaBadge({ delta, since }) {
       fontSize: 12, fontWeight: 700, color: '#15803d',
       background: '#dcfce7', borderRadius: 4, padding: '2px 6px', alignSelf: 'flex-start',
     }}>
-      {sinceLabel} レビュー +{delta.toLocaleString()}
+      {sinceLabel} +{delta.toLocaleString()}件
+      {rate != null && <span> （+{rate}%）</span>}
     </div>
   )
 }
