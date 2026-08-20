@@ -1,7 +1,7 @@
 // Nintのページ自身が取得したデータを、その場で横から見るためのスクリプト。
 //
 // ここから新しいリクエストは一切出さない。ページが表示のために既に受け取った
-// 応答を覗くだけなので、Nint側のアクセス数は利用者が普通に閲覧するのと変わらない。
+// 応答を覗くだけなので、Nint側のアクセス数は普通に閲覧するのと変わらない。
 // （規約でクローリング・スクレイピングが禁じられているため、こちらから
 //   ページを次々に取りに行く作りにはしていない）
 (function () {
@@ -9,7 +9,7 @@
     try {
       window.postMessage({ __nintCapture: true, url, body }, "*");
     } catch (e) {
-      // 循環参照などで送れない場合は諦める（表示側には影響させない）
+      // 送れない場合は諦める。ページの表示には影響させない
     }
   };
 
@@ -25,8 +25,7 @@
       const res = await origFetch.apply(this, args);
       try {
         const url = (args[0] && args[0].url) || String(args[0] || "");
-        const clone = res.clone();
-        clone.text().then((t) => {
+        res.clone().text().then((t) => {
           if (looksInteresting(t)) post(url, t);
         }).catch(() => {});
       } catch (e) {}
@@ -44,9 +43,10 @@
   XMLHttpRequest.prototype.send = function (...args) {
     this.addEventListener("load", () => {
       try {
-        const t = this.responseType === "" || this.responseType === "text"
-          ? this.responseText
-          : null;
+        const t =
+          this.responseType === "" || this.responseType === "text"
+            ? this.responseText
+            : null;
         if (looksInteresting(t)) post(this.__nintUrl || "", t);
       } catch (e) {}
     });

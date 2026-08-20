@@ -1,8 +1,11 @@
 // Nintの画面で、ページが受け取ったデータから「商品」と「月別の売上・販売個数」を
-// 取り出してリサーチツールへ送る。
+// 取り出して楽天リサーチツールへ送る。
 //
-// 一覧画面を開けば、その画面に載っている商品がまとめて入る（1商品ずつにはならない）。
-// Nintへのアクセスはこちらからは一切増やさない。
+// 楽天の検索ページには一切手を出さない（そちらは既存の拡張機能の担当なので、
+// 触るとボタンが二重に出てしまう）。この拡張機能はNintの画面だけを見る。
+//
+// Nintへのアクセスはこちらからは一切増やさない。表示中のページが既に
+// 受け取った内容を読むだけ。
 (function () {
   const DEFAULT_BACKEND = "https://china-import-tool.onrender.com";
 
@@ -12,13 +15,14 @@
   (document.head || document.documentElement).appendChild(s);
   s.onload = () => s.remove();
 
-  const captured = [];      // 取り出せた商品
-  const seenUrls = [];      // 診断用：どこから来たデータか
+  const captured = [];   // 取り出せた商品
+  const seenUrls = [];   // 診断用：どの経路のデータが来たか
   let panel = null;
 
   // ---- データの取り出し ----
 
-  // "1#:@luckyhill#:@nz-48ss" や商品URLから "ショップ名/商品コード" を作る
+  // "1#:@luckyhill#:@nz-48ss" や商品URLから "ショップ名/商品コード" を作る。
+  // これがリサーチツール側の商品と突き合わせるキーになる
   const urlKeyFrom = (text) => {
     if (typeof text !== "string") return null;
     let m = text.match(/item\.rakuten\.co\.jp\/([^/?#"]+)\/([^/?#"]+)/);
@@ -39,8 +43,7 @@
 
   // "202604" / "2026-04" / "2026/04" を 202604 に揃える
   const normalizeYm = (k) => {
-    const s = String(k);
-    let m = s.match(/(20\d{2})[-/]?(0[1-9]|1[0-2])/);
+    const m = String(k).match(/(20\d{2})[-/]?(0[1-9]|1[0-2])/);
     return m ? `${m[1]}${m[2]}` : null;
   };
 
@@ -63,7 +66,8 @@
     }));
   };
 
-  // JSONを再帰的に見て、商品らしいオブジェクトを集める
+  // 応答JSONを再帰的に見て、商品らしいオブジェクトを集める。
+  // Nintの画面構造に依存しないよう、決め打ちのセレクタは使わない
   const scan = (node, depth = 0) => {
     if (!node || depth > 8) return;
     if (Array.isArray(node)) {
@@ -79,8 +83,8 @@
       if (months.length) {
         captured.push({
           url_key: key,
-          item_name: node.itemName || node.item_name || node.name || node.商品名 || "",
-          shop_name: node.shopName || node.shop_name || node.ショップ名 || "",
+          item_name: node.itemName || node.item_name || node.name || node["商品名"] || "",
+          shop_name: node.shopName || node.shop_name || node["ショップ名"] || "",
           item_url: (flat.match(/https?:\/\/item\.rakuten\.co\.jp\/[^"'\s]+/) || [null])[0],
           image_url: (flat.match(/https?:\/\/[^"'\s]*r10s\.jp[^"'\s]*/) || [null])[0],
           months,
@@ -95,13 +99,11 @@
     if (!d || !d.__nintCapture) return;
     seenUrls.push(String(d.url).slice(0, 200));
     try {
-      const before = captured.length;
       scan(JSON.parse(d.body));
-      if (captured.length !== before) render();
-      else render();
     } catch (e) {
-      render();
+      // JSONでない応答は無視する
     }
+    render();
   });
 
   // ---- 画面 ----
@@ -116,11 +118,11 @@
     const items = dedup();
     if (!items.length) return;
     const cfg = await chrome.storage.local.get(["backend", "token"]);
-    const backend = cfg.backend || DEFAULT_BACKEND;
     if (!cfg.token) {
       alert("先にトークンを設定してください（パネルの「設定」から）");
       return;
     }
+    const backend = cfg.backend || DEFAULT_BACKEND;
     try {
       const res = await fetch(`${backend}/api/research/nint/capture`, {
         method: "POST",
@@ -131,7 +133,7 @@
         body: JSON.stringify({ items }),
       });
       const json = await res.json();
-      alert(res.ok ? `${json.saved}件をツールに保存しました` : `失敗: ${JSON.stringify(json)}`);
+      alert(res.ok ? `${json.saved}件を保存しました` : `失敗: ${JSON.stringify(json)}`);
     } catch (e) {
       alert(`送信に失敗しました: ${e}`);
     }
@@ -139,7 +141,7 @@
 
   async function configure() {
     const cfg = await chrome.storage.local.get(["backend", "token"]);
-    const backend = prompt("ツールのURL", cfg.backend || DEFAULT_BACKEND);
+    const backend = prompt("リサーチツールのURL", cfg.backend || DEFAULT_BACKEND);
     if (backend === null) return;
     const token = prompt("サービストークン（AUTH_SERVICE_TOKEN）", cfg.token || "");
     if (token === null) return;
@@ -147,11 +149,15 @@
     alert("保存しました");
   }
 
-  // 取り出せなかったときに、どんなデータが来ていたかを共有するための診断用
+  // 読み取れなかったときに、どんな経路でデータが来ていたかを共有するための診断用
   function copyDiagnostics() {
-    const text = JSON.stringify({ url: location.href, endpoints: seenUrls.slice(0, 30) }, null, 2);
+    const text = JSON.stringify(
+      { url: location.href, endpoints: seenUrls.slice(0, 30) },
+      null,
+      2
+    );
     navigator.clipboard.writeText(text).then(
-      () => alert("診断情報をコピーしました。これを開発側に渡してください。"),
+      () => alert("診断情報をコピーしました。開発側に渡してください。"),
       () => alert(text.slice(0, 1500))
     );
   }
@@ -194,10 +200,9 @@
     panel.appendChild(row);
   }
 
-  const boot = () => render();
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot);
+    document.addEventListener("DOMContentLoaded", render);
   } else {
-    boot();
+    render();
   }
 })();

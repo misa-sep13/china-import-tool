@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "楽天リサーチツール用Nint",
+  "version": "1.0",
+  "description": "開いているNintの商品画面から売上データを読み取り、楽天リサーチツールへ保存する",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://ec.nint.jp/*",
+    "https://china-import-tool.onrender.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://ec.nint.jp/*"],
+      "js": ["nint.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["inject.js"],
+      "matches": ["https://ec.nint.jp/*"]
+    }
+  ]
+}
