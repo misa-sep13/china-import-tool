@@ -36,9 +36,34 @@ class ResearchCandidate(Base):
     image_url         = Column(String)
     rank              = Column(Integer, nullable=True)  # ランキングAPI由来のときだけ入る
     fetched_at        = Column(DateTime)
+    # 商品URLから作る "ショップ名/商品コード"。Nintのデータと突き合わせるためのキー
+    url_key           = Column(String, index=True, nullable=True)
     # 前回バッチ時点の値。差分（レビュー増加数）を出すために引き継ぐ
     prev_review_count = Column(Integer, nullable=True)
     prev_fetched_at   = Column(DateTime, nullable=True)
+
+
+class NintSales(Base):
+    """NintのCSVから取り込んだ月別の売上・販売個数。
+
+    楽天APIは販売数を一切返さないため、売上はNintの書き出し機能で得た値を使う
+    （Nintは規約でスクレイピングを禁じているので、画面からのDL＝提供機能を使う）。
+    月別に持つのは、直近何ヶ月かの伸びを後から自由に計算できるようにするため。
+    """
+    __tablename__ = "nint_sales"
+
+    id           = Column(Integer, primary_key=True)
+    # "luckyhill/nz-48ss" の形。楽天APIのitemCodeとは体系が違うので、
+    # 商品URLから作ったこのキーで候補・ウォッチリストと突き合わせる
+    url_key      = Column(String, index=True)
+    ym           = Column(String, index=True)   # "202604"
+    sales_amount = Column(Integer)              # 売上指数（円）
+    units        = Column(Integer)              # 販売個数
+    item_name    = Column(String)
+    shop_name    = Column(String)
+    item_url     = Column(String)
+    image_url    = Column(String)
+    updated_at   = Column(DateTime, server_default=func.now())
 
 
 class RakutenGenre(Base):
@@ -72,7 +97,8 @@ class ResearchWatchlistItem(Base):
     shop_name      = Column(String)
     item_url       = Column(String)
     image_url      = Column(String)
-    monthly_sales  = Column(Integer, nullable=True)  # 手動入力（自分で見た月間売上）
+    url_key        = Column(String, index=True, nullable=True)  # Nintデータとの照合用
+    monthly_sales  = Column(Integer, nullable=True)  # 手動入力（Nint取り込み分とは別に残す）
     folder         = Column(String, nullable=True)   # 整理用のフォルダ名
     memo           = Column(Text, nullable=True)
     picked_at      = Column(DateTime, server_default=func.now())

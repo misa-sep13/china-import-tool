@@ -207,12 +207,15 @@ function CandidatesTab() {
           <option value="review_count">レビュー数順</option>
           <option value="price">価格順</option>
           <option value="review_average">評価順</option>
+          <option value="nint_units">月間販売個数順（Nint）</option>
+          <option value="nint_growth">販売個数の伸び率順（Nint）</option>
           <option value="rank">ジャンル別ランキング順</option>
         </select>
         <div style={{ flex: 1 }} />
         {/* ジャンルを選んだらそのジャンルの商品がすぐ並ぶようにする。
             対象管理を開かずに、ここから直接ジャンルを切り替えられる */}
         <button onClick={() => setShowGenrePicker(true)} style={btnPrimary}>ジャンルで見る</button>
+        <NintImportButton onImported={fetchCandidates} />
         <button onClick={() => setShowTargetManage(true)} style={btnSecondary}>対象管理</button>
       </div>
 
@@ -649,6 +652,7 @@ function ProductCard({ item, actionLabel, actionDisabled, onAction, sellerSaved,
           {item.rank ? <span style={{ marginLeft: 8 }}>ランキング{item.rank}位</span> : null}
         </div>
         <ReviewDeltaBadge delta={item.review_delta} rate={item.review_delta_rate} since={item.prev_fetched_at} />
+        <NintBadge nint={item.nint} />
         <button onClick={onAction} disabled={actionDisabled} style={{ ...btnPrimary, marginTop: 'auto', opacity: actionDisabled ? 0.6 : 1 }}>
           {actionLabel}
         </button>
@@ -683,6 +687,74 @@ function ReviewDeltaBadge({ delta, rate, since }) {
   )
 }
 
+// NintのCSV書き出しを取り込む。楽天APIは販売数を返さないので売上はここから入れる。
+// Nintは規約でスクレイピングを禁じているため、画面のDL機能で出したCSVを読み込む形にしている。
+function NintImportButton({ onImported }) {
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState(null)
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''   // 同じファイルを続けて選べるようにする
+    if (!file) return
+    setBusy(true)
+    setResult(null)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await api.post('/research/nint/import', form)
+      setResult(res.data)
+      onImported?.()
+    } catch (err) {
+      setResult({ error: err.response?.data?.detail || '取り込みに失敗しました' })
+    }
+    setBusy(false)
+  }
+
+  return (
+    <>
+      <label style={{ ...btnSecondary, display: 'inline-block' }}>
+        {busy ? '取り込み中...' : 'Nint CSV取り込み'}
+        <input type="file" accept=".csv" onChange={handleFile} style={{ display: 'none' }} disabled={busy} />
+      </label>
+      {result && (
+        <span style={{ fontSize: 12, color: result.error ? '#dc2626' : '#15803d' }}>
+          {result.error
+            ? result.error
+            : `${result.imported_items}商品 × ${result.months?.length ?? 0}ヶ月分を取り込みました`}
+        </span>
+      )}
+    </>
+  )
+}
+
+// 楽天APIは販売数を返さないので、ここはNintから取り込んだ実績。
+// レビューの伸びと違って過去14ヶ月分が一度に入るため、取り込んだ時点で伸びが分かる。
+function NintBadge({ nint }) {
+  if (!nint) return null
+  const ym = nint.latest_month
+  const label = ym ? `${ym.slice(0, 4)}/${ym.slice(4)}` : ''
+  const up = nint.growth_rate != null && nint.growth_rate > 0
+  return (
+    <div style={{
+      fontSize: 12, background: '#fff7ed', border: '1px solid #fed7aa',
+      borderRadius: 4, padding: '3px 6px',
+    }}>
+      <div style={{ fontWeight: 700, color: '#9a3412' }}>
+        {label} {nint.units != null ? `${nint.units.toLocaleString()}個` : '—'}
+        {nint.sales_amount != null && (
+          <span style={{ fontWeight: 400 }}> / {Math.round(nint.sales_amount).toLocaleString()}円</span>
+        )}
+      </div>
+      {nint.growth_rate != null && (
+        <div style={{ fontSize: 11, color: up ? '#15803d' : '#9ca3af' }}>
+          {nint.base_month ? `${nint.base_month.slice(4)}月比` : '前月比'} {up ? '+' : ''}{nint.growth_rate}%
+        </div>
+      )}
+    </div>
+  )
+}
+
 function WatchlistCard({ item, onUpdate, onDelete }) {
   const [monthlySales, setMonthlySales] = useState(item.monthly_sales ?? '')
   const [folder, setFolder] = useState(item.folder ?? '')
@@ -706,6 +778,7 @@ function WatchlistCard({ item, onUpdate, onDelete }) {
         <div style={{ fontSize: 12, color: '#6b7280' }}>
           ★{(item.review_average ?? 0).toFixed(2)}（{(item.review_count ?? 0).toLocaleString()}件）
         </div>
+        <NintBadge nint={item.nint} />
 
         <label style={{ ...labelStyle, marginTop: 4 }}>
           月間売上（手動）

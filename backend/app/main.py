@@ -192,6 +192,11 @@ def _migrate():
          "ALTER TABLE research_candidates ADD COLUMN prev_review_count INTEGER"),
         ("research_candidates","prev_fetched_at",
          "ALTER TABLE research_candidates ADD COLUMN prev_fetched_at TIMESTAMP"),
+        # Nintの売上データと突き合わせるキー（商品URL由来の "ショップ名/商品コード"）
+        ("research_candidates","url_key",
+         "ALTER TABLE research_candidates ADD COLUMN url_key VARCHAR"),
+        ("research_watchlist_items","url_key",
+         "ALTER TABLE research_watchlist_items ADD COLUMN url_key VARCHAR"),
         # FBA納品プラン用リードタイム詳細
         ("order_settings","lt_order_to_warehouse", "ALTER TABLE order_settings ADD COLUMN lt_order_to_warehouse INTEGER DEFAULT 7"),
         ("order_settings","lt_shipping_request", "ALTER TABLE order_settings ADD COLUMN lt_shipping_request INTEGER DEFAULT 7"),

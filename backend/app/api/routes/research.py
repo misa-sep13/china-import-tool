@@ -1,15 +1,33 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone, timedelta
+import csv
+import io
+import re
 from app.core.database import get_db
-from app.models.research import ResearchTarget, ResearchCandidate, ResearchWatchlistItem, RakutenGenre
+from app.models.research import (
+    ResearchTarget, ResearchCandidate, ResearchWatchlistItem, RakutenGenre, NintSales,
+)
 
 router = APIRouter(prefix="/research", tags=["リサーチツール"])
 
 JST = timezone(timedelta(hours=9))
+
+# 楽天APIのitemCode（ponopono:10001898）と、商品URL上のコード（ponopono/102622）は
+# 体系が違う。Nintは後者を使うので、URLから作ったキーで突き合わせる
+_URL_KEY_RE = re.compile(r"item\.rakuten\.co\.jp/([^/?#]+)/([^/?#]+)")
+
+
+def make_url_key(item_url: Optional[str]) -> Optional[str]:
+    """商品URLから "ショップ名/商品コード" を取り出す。末尾のスラッシュや
+    クエリ（?rafcid=... など）が付いていても同じキーになる。"""
+    if not item_url:
+        return None
+    m = _URL_KEY_RE.search(item_url)
+    return f"{m.group(1)}/{m.group(2)}" if m else None
 
 
 class TargetIn(BaseModel):
@@ -191,6 +209,7 @@ def bulk_import_candidates(data: CandidateBulkIn, db: Session = Depends(get_db))
             image_url=item.image_url,
             rank=item.rank,
             fetched_at=fetched_at,
+            url_key=make_url_key(item.item_url),
             prev_review_count=prev[0] if prev else None,
             prev_fetched_at=prev[1] if prev else None,
         ))
@@ -250,12 +269,134 @@ def list_candidates(
         r[0] for r in db.query(ResearchWatchlistItem.item_code).all()
     }
 
+    nint = build_nint_map(db, [r.url_key for r in rows])
+
+    # Nint由来の並べ替えは、値がDBの列に無いのでPython側で行う
+    if sort in ("nint_units", "nint_growth"):
+        field = "units" if sort == "nint_units" else "growth_rate"
+
+        def nint_val(c):
+            v = (nint.get(c.url_key) or {}).get(field)
+            return v if v is not None else None
+
+        rows.sort(key=lambda c: (nint_val(c) is not None, nint_val(c) or 0),
+                  reverse=(order == "desc"))
+
     return {
-        "candidates": [_candidate_dict(r, picked=r.item_code in picked_codes) for r in rows],
+        "candidates": [
+            _candidate_dict(r, picked=r.item_code in picked_codes, nint=nint.get(r.url_key))
+            for r in rows
+        ],
         # 上限で切れたまま黙って表示すると「全部見た」と誤解するので伝える
         "truncated": len(rows) >= LIMIT,
         "limit": LIMIT,
     }
+
+
+# ---------- Nintの売上CSV取り込み ----------
+
+# "202604売上指数" / "202604販売個数（個）" のような列名から年月を拾う
+_NINT_AMOUNT_RE = re.compile(r"^(\d{6})売上指数")
+_NINT_UNITS_RE = re.compile(r"^(\d{6})販売個数")
+
+
+@router.post("/nint/import")
+async def import_nint_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """NintのCSV書き出しを取り込む。
+
+    楽天APIは販売数を返さないので、売上はNintの提供機能で書き出したCSVから取る。
+    月の列は書き出した期間によって変わるため、列名のパターンから拾う。
+    商品詳細（1行）でも商品一覧（複数行）でも同じ形式なのでどちらも通る。
+    """
+    raw = await file.read()
+    text = None
+    # Excel経由だとShift_JISで保存されることがあるので順に試す
+    for enc in ("utf-8-sig", "utf-8", "cp932"):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        raise HTTPException(400, "CSVの文字コードを判別できませんでした")
+
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(400, "CSVの見出し行が読み取れませんでした")
+
+    months = {}   # 年月 -> {"amount": 列名, "units": 列名}
+    for col in reader.fieldnames:
+        col = (col or "").strip()
+        m = _NINT_AMOUNT_RE.match(col)
+        if m:
+            months.setdefault(m.group(1), {})["amount"] = col
+            continue
+        m = _NINT_UNITS_RE.match(col)
+        if m:
+            months.setdefault(m.group(1), {})["units"] = col
+
+    if not months:
+        raise HTTPException(400, "売上指数・販売個数の列が見つかりません。Nintの書き出しCSVか確認してください")
+
+    def to_int(v):
+        v = (v or "").strip().replace(",", "")
+        try:
+            return int(float(v))
+        except (ValueError, TypeError):
+            return None
+
+    imported_items = 0
+    imported_rows = 0
+    skipped = []
+
+    for row in reader:
+        item_url = (row.get("url") or "").strip()
+        url_key = make_url_key(item_url)
+        if not url_key:
+            name = (row.get("商品名") or "")[:30]
+            skipped.append(name or "(商品名なし)")
+            continue
+
+        item_name = (row.get("商品名") or "").strip()
+        shop_name = (row.get("ショップ名") or "").strip()
+        image_url = (row.get("画像URL") or "").strip()
+
+        # 同じ商品を入れ直したときに重複しないよう、一度消してから入れる
+        db.query(NintSales).filter(NintSales.url_key == url_key).delete()
+
+        for ym, cols in months.items():
+            amount = to_int(row.get(cols.get("amount", ""))) if cols.get("amount") else None
+            units = to_int(row.get(cols.get("units", ""))) if cols.get("units") else None
+            if amount is None and units is None:
+                continue
+            db.add(NintSales(
+                url_key=url_key,
+                ym=ym,
+                sales_amount=amount,
+                units=units,
+                item_name=item_name,
+                shop_name=shop_name,
+                item_url=item_url,
+                image_url=image_url,
+            ))
+            imported_rows += 1
+        imported_items += 1
+
+    db.commit()
+    return {
+        "imported_items": imported_items,
+        "imported_months": imported_rows,
+        "months": sorted(months.keys()),
+        "skipped": skipped[:10],
+    }
+
+
+@router.get("/nint/summary")
+def nint_summary(db: Session = Depends(get_db)):
+    """取り込み済みNintデータの概要。画面で状況を出すために使う。"""
+    total = db.query(NintSales.url_key).distinct().count()
+    latest = db.query(NintSales.ym).order_by(NintSales.ym.desc()).first()
+    return {"items": total, "latest_month": latest[0] if latest else None}
 
 
 # ---------- ジャンル一覧（画面からジャンルIDを選ぶため） ----------
@@ -338,6 +479,7 @@ def pick_item(data: WatchlistPickIn, db: Session = Depends(get_db)):
         shop_name=data.shop_name,
         item_url=data.item_url,
         image_url=data.image_url,
+        url_key=make_url_key(data.item_url),
         folder=data.folder,
         memo=data.memo,
     )
@@ -367,7 +509,8 @@ def list_watchlist(
     q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
 
     rows = q.all()
-    return {"items": [_watchlist_dict(r) for r in rows]}
+    nint = build_nint_map(db, [r.url_key for r in rows])
+    return {"items": [_watchlist_dict(r, nint=nint.get(r.url_key)) for r in rows]}
 
 
 @router.put("/watchlist/{item_id}")
@@ -409,6 +552,47 @@ def _target_dict(t: ResearchTarget) -> dict:
     }
 
 
+def build_nint_map(db: Session, url_keys: list) -> dict:
+    """url_keyごとに、直近月の売上・販売個数と、少し前と比べた伸びをまとめる。
+
+    Nintは14ヶ月分の履歴を一度に書き出せるので、レビューのように
+    数十日待たなくても、取り込んだ時点で伸びが分かる。
+    """
+    keys = [k for k in url_keys if k]
+    if not keys:
+        return {}
+
+    rows = db.query(NintSales).filter(NintSales.url_key.in_(keys)).all()
+
+    by_key = {}
+    for r in rows:
+        by_key.setdefault(r.url_key, []).append(r)
+
+    out = {}
+    for key, items in by_key.items():
+        items.sort(key=lambda x: x.ym)          # 年月の昇順
+        latest = items[-1]
+        # 3ヶ月前と比べる。単月は変動が大きく、伸びているかの判断に使いにくい
+        base = items[-4] if len(items) >= 4 else items[0]
+
+        growth = None
+        if base.units and latest.units is not None and base is not latest:
+            growth = round((latest.units - base.units) / base.units * 100, 1)
+
+        out[key] = {
+            "latest_month": latest.ym,
+            "units": latest.units,
+            "sales_amount": latest.sales_amount,
+            "growth_rate": growth,
+            "base_month": base.ym if base is not latest else None,
+            "history": [
+                {"ym": i.ym, "units": i.units, "sales_amount": i.sales_amount}
+                for i in items
+            ],
+        }
+    return out
+
+
 def _review_delta(c: ResearchCandidate):
     """前回バッチからのレビュー増加数。前回のデータが無ければNone（初回取得）。"""
     if c.prev_review_count is None:
@@ -431,9 +615,11 @@ def _review_delta_rate(c: ResearchCandidate):
     return round(delta / prev * 100, 1)
 
 
-def _candidate_dict(c: ResearchCandidate, picked: bool = False) -> dict:
+def _candidate_dict(c: ResearchCandidate, picked: bool = False, nint: dict = None) -> dict:
     return {
         "id": c.id,
+        "url_key": c.url_key,
+        "nint": nint,
         "research_target_id": c.research_target_id,
         "item_code": c.item_code,
         "item_name": c.item_name,
@@ -454,9 +640,11 @@ def _candidate_dict(c: ResearchCandidate, picked: bool = False) -> dict:
     }
 
 
-def _watchlist_dict(w: ResearchWatchlistItem) -> dict:
+def _watchlist_dict(w: ResearchWatchlistItem, nint: dict = None) -> dict:
     return {
         "id": w.id,
+        "url_key": w.url_key,
+        "nint": nint,
         "item_code": w.item_code,
         "item_name": w.item_name,
         "item_price": w.item_price,
