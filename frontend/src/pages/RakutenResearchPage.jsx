@@ -2,6 +2,15 @@ import { useState, useEffect, useCallback } from 'react'
 import api from '../api/client'
 
 const TYPE_LABEL = { shop: 'セラー', keyword: 'キーワード', genre: 'ジャンル' }
+
+// url_key（"luckyhill/nz-48ss"）からNintの商品詳細URLを組み立てる。
+// 商品詳細は追跡リストの契約件数に関係なく開けるので、リサーチはこの経路を使う。
+function nintUrl(urlKey) {
+  if (!urlKey || !urlKey.includes('/')) return null
+  const [shop, code] = urlKey.split('/')
+  const unique = encodeURIComponent(`1#:@${shop}#:@${code}`)
+  return `https://ec.nint.jp/v/item/detail?Cpage=rakuten&catalogId=0&unique_item_code=${unique}`
+}
 const TYPE_INPUT_LABEL = {
   shop: 'ショップコード（店舗URLの識別子）',
   keyword: '検索キーワード',
@@ -653,6 +662,7 @@ function ProductCard({ item, actionLabel, actionDisabled, onAction, sellerSaved,
         </div>
         <ReviewDeltaBadge delta={item.review_delta} rate={item.review_delta_rate} since={item.prev_fetched_at} />
         <NintBadge nint={item.nint} />
+        <NintOpenButton urlKey={item.url_key} hasData={!!item.nint} />
         <button onClick={onAction} disabled={actionDisabled} style={{ ...btnPrimary, marginTop: 'auto', opacity: actionDisabled ? 0.6 : 1 }}>
           {actionLabel}
         </button>
@@ -730,6 +740,30 @@ function NintImportButton({ onImported }) {
 
 // 楽天APIは販売数を返さないので、ここはNintから取り込んだ実績。
 // レビューの伸びと違って過去14ヶ月分が一度に入るため、取り込んだ時点で伸びが分かる。
+// 売上がまだ無い商品は、その場でNintを開けるようにする。
+// 開けば拡張機能が自動で取り込むので、数字を手で写す必要がない。
+function NintOpenButton({ urlKey, hasData }) {
+  const url = nintUrl(urlKey)
+  if (!url) return null
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      title={hasData ? 'Nintで最新の売上を見る' : 'Nintで売上を見る（開くと自動で取り込まれます）'}
+      style={{
+        fontSize: 11, fontWeight: 600, textAlign: 'center', textDecoration: 'none',
+        borderRadius: 4, padding: '3px 6px',
+        background: hasData ? '#f1f5f9' : '#004aad',
+        color: hasData ? '#475569' : '#fff',
+        border: hasData ? '1px solid #cbd5e1' : 'none',
+      }}
+    >
+      {hasData ? 'Nintで再確認' : 'Nintで売上を見る'}
+    </a>
+  )
+}
+
 function NintBadge({ nint }) {
   if (!nint) return null
   const ym = nint.latest_month
@@ -779,6 +813,7 @@ function WatchlistCard({ item, onUpdate, onDelete }) {
           ★{(item.review_average ?? 0).toFixed(2)}（{(item.review_count ?? 0).toLocaleString()}件）
         </div>
         <NintBadge nint={item.nint} />
+        <NintOpenButton urlKey={item.url_key} hasData={!!item.nint} />
 
         <label style={{ ...labelStyle, marginTop: 4 }}>
           月間売上（手動）
