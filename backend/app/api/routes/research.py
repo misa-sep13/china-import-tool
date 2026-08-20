@@ -391,6 +391,60 @@ async def import_nint_csv(file: UploadFile = File(...), db: Session = Depends(ge
     }
 
 
+class NintMonth(BaseModel):
+    ym: str
+    sales_amount: Optional[int] = None
+    units: Optional[int] = None
+
+
+class NintCaptureItem(BaseModel):
+    url_key: Optional[str] = None
+    item_url: Optional[str] = None
+    item_name: Optional[str] = None
+    shop_name: Optional[str] = None
+    image_url: Optional[str] = None
+    months: list[NintMonth] = []
+
+
+class NintCaptureIn(BaseModel):
+    items: list[NintCaptureItem]
+
+
+@router.post("/nint/capture")
+def capture_nint(data: NintCaptureIn, db: Session = Depends(get_db)):
+    """拡張機能が、利用者が開いているNintの画面から読み取った内容を受け取る。
+
+    Nintへのアクセスを増やさないため、拡張機能はページが既に取得済みの
+    データを見るだけで、自分から追加のリクエストは出さない。
+    一覧画面を開けばその画面分がまとめて入るので、1商品ずつにはならない。
+    """
+    saved, skipped = 0, 0
+    for item in data.items:
+        url_key = item.url_key or make_url_key(item.item_url)
+        if not url_key or not item.months:
+            skipped += 1
+            continue
+
+        db.query(NintSales).filter(NintSales.url_key == url_key).delete()
+        for m in item.months:
+            if m.sales_amount is None and m.units is None:
+                continue
+            db.add(NintSales(
+                url_key=url_key,
+                ym=m.ym,
+                sales_amount=m.sales_amount,
+                units=m.units,
+                item_name=item.item_name,
+                shop_name=item.shop_name,
+                item_url=item.item_url,
+                image_url=item.image_url,
+            ))
+        saved += 1
+
+    db.commit()
+    return {"saved": saved, "skipped": skipped}
+
+
 @router.get("/nint/summary")
 def nint_summary(db: Session = Depends(get_db)):
     """取り込み済みNintデータの概要。画面で状況を出すために使う。"""
