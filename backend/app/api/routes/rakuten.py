@@ -1762,7 +1762,8 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
             ).first() is not None
             # 便を履歴にも残す。同じ商品を航空・船に分けたとき、
             # どちらで何個頼んだのか後から追えないと入荷照合で困る
-            ship_label = {"air": "航空便", "sea": "船便"}.get(item.get("shipping", ""), "")
+            # 船便が既定なので、印を付けるのは航空便だけにする
+            ship_label = "航空便予定" if item.get("shipping") == "air" else ""
             base_memo = body.get("memo") or "発注Excelから登録"
             db.add(RakutenOrderHistory(
                 sku=item["sku"],

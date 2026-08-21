@@ -765,13 +765,11 @@ export default function RakutenOrderPage() {
         </button>
         {/* 航空便に振り分けた分があることを、押す前に分かるようにする */}
         {checkedSkus.size > 0 && (() => {
-          const rows = splitTargets()
-          const air = rows.filter(r => r.shipping === 'air')
-          const sea = rows.filter(r => r.shipping === 'sea')
+          const air = splitTargets().filter(r => r.shipping === 'air')
           if (!air.length) return null
           return (
             <span style={{ fontSize: 12, color: '#2563eb' }}>
-              航空便 {air.length}行（備考に「航空便予定」）／ 船便 {sea.length}行
+              航空便 {air.length}行に「航空便予定」を付けます（船便は既定なので印なし）
             </span>
           )
         })()}
