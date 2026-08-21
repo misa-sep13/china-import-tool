@@ -1153,13 +1153,46 @@ def _daily_avg_from_table(db, exclude_start=None, exclude_end=None) -> dict[str,
     return result
 
 
-def _super_sale_add_qty(settings_row, product) -> int:
-    """反映モード（B）のとき、その商品に上乗せするセール販売数を返す。"""
+def _super_sale_qty_by_sku(db, settings_row) -> dict[str, int]:
+    """反映モード（B）のとき、設定した期間の販売実績をSKU別に集計する。
+
+    商品ごとに手入力させると数百件では現実的でないので、日別販売数から
+    自動で出す。期間を設定するだけで発注数に反映される。
+    """
+    if not settings_row.super_sale_enabled:
+        return {}
+    if (settings_row.super_sale_mode or "A") != "B":
+        return {}
+    start, end = settings_row.super_sale_start, settings_row.super_sale_end
+    if not start or not end:
+        return {}
+
+    from app.models.rakuten_daily_sales import RakutenDailySales
+    from sqlalchemy import func as sa_func
+
+    rows = (
+        db.query(RakutenDailySales.sku, sa_func.sum(RakutenDailySales.qty))
+        .filter(RakutenDailySales.sale_date >= start, RakutenDailySales.sale_date <= end)
+        .group_by(RakutenDailySales.sku)
+        .all()
+    )
+    return {sku: int(total or 0) for sku, total in rows}
+
+
+def _super_sale_add_qty(settings_row, product, auto_by_sku: dict) -> int:
+    """反映モード（B）のとき、その商品に上乗せするセール販売数を返す。
+
+    基本は期間中の実績から自動で出す。商品マスタに手入力があればそちらを優先する
+    （まだ実績が無い新商品などに備えた上書き用）。
+    """
     if not settings_row.super_sale_enabled:
         return 0
     if (settings_row.super_sale_mode or "A") != "B":
         return 0
-    return getattr(product, "super_sale_qty", 0) or 0
+    manual = getattr(product, "super_sale_qty", 0) or 0
+    if manual > 0:
+        return manual
+    return auto_by_sku.get(product.sku, 0)
 
 
 def _super_sale_exclusion(settings_row):
@@ -1179,6 +1212,7 @@ def _super_sale_exclusion(settings_row):
 def get_recommendations(db: Session = Depends(get_db)):
     settings_row = _get_or_create_settings(db)
     ss_start, ss_end = _super_sale_exclusion(settings_row)
+    ss_qty_by_sku = _super_sale_qty_by_sku(db, settings_row)
     sku_daily_avgs = _daily_avg_from_table(db, ss_start, ss_end)
     s = RakutenCalcSettings(
         lead_days=settings_row.lead_days,
@@ -1285,7 +1319,7 @@ def get_recommendations(db: Session = Depends(get_db)):
             ordered=ordered,
             sales_30_recent=sales_recent,
             sales_30_prev=sales_prev,
-            super_sale_qty=_super_sale_add_qty(settings_row, p),
+            super_sale_qty=_super_sale_add_qty(settings_row, p, ss_qty_by_sku),
             sales_90=p.sales_90 or 0,
             stockout_days_90=p.stockout_days_90 or 0,
             daily_avg_7=da.get("avg_7", 0),
@@ -1337,6 +1371,7 @@ def get_all_products_order(db: Session = Depends(get_db)):
     """全商品（is_component=False）を発注推奨リストと同じ形式で返す"""
     settings_row = _get_or_create_settings(db)
     ss_start, ss_end = _super_sale_exclusion(settings_row)
+    ss_qty_by_sku = _super_sale_qty_by_sku(db, settings_row)
     sku_daily_avgs = _daily_avg_from_table(db, ss_start, ss_end)
     s = RakutenCalcSettings(
         lead_days=settings_row.lead_days,
@@ -1396,7 +1431,7 @@ def get_all_products_order(db: Session = Depends(get_db)):
             ordered=ordered,
             sales_30_recent=sales_recent,
             sales_30_prev=sales_prev,
-            super_sale_qty=_super_sale_add_qty(settings_row, p),
+            super_sale_qty=_super_sale_add_qty(settings_row, p, ss_qty_by_sku),
             sales_90=getattr(p, 'sales_90', None) or 0,
             stockout_days_90=getattr(p, 'stockout_days_90', None) or 0,
             daily_avg_7=da.get("avg_7", 0),
