@@ -1655,10 +1655,24 @@ def migrate_legacy_inbound(body: Optional[dict] = None, db: Session = Depends(ge
 
 @router.post("/orders/excel")
 def download_order_excel(body: dict, db: Session = Depends(get_db)):
-    """発注リストをタオタロウ形式Excelで出力"""
+    """発注リストをタオタロウ形式Excelで出力
+
+    タオタロウは航空便と船便を1つの発注にまとめられないため、便ごとに
+    別々のExcelを出す。shipping="air" のときは備考に「航空便予定」を足して、
+    タオタロウ側でどちらの便か分かるようにする。
+    """
     from app.services.excel_export import build_rakuten_taotaro_excel
     order_items = body.get("items", [])  # [{sku, qty}, ...]
     record_history = bool(body.get("record_history"))
+    shipping = (body.get("shipping") or "").strip()   # "air" | "sea" | ""
+
+    def with_shipping_note(note: str) -> str:
+        """航空便のときだけ備考に印を付ける。元の備考があれば後ろに足す。"""
+        if shipping != "air":
+            return note or ""
+        mark = "航空便予定"
+        note = (note or "").strip()
+        return f"{note} {mark}" if note else mark
     ordered_at = date.today()
     if body.get("ordered_at"):
         try:
@@ -1695,7 +1709,7 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
                 "qty":           qty * (p.set_size or 1),
                 "price":         p.price or 0,
                 "customer_memo": p.customer_memo or "",
-                "notes":         p.notes or "",
+                "notes":         with_shipping_note(p.notes),
             })
         # set_components + purchase_componentsを展開して追加行として出力
         try:
@@ -1729,7 +1743,7 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
                 "qty":           qty * comp_qty,
                 "price":         comp_price or 0,
                 "customer_memo": comp.get("customer_memo", ""),
-                "notes":         comp.get("notes", ""),
+                "notes":         with_shipping_note(comp.get("notes", "")),
             })
 
     xls = build_rakuten_taotaro_excel(excel_items)
@@ -1740,19 +1754,25 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
                 RakutenOrderHistory.is_deleted == False,
                 RakutenOrderHistory.is_delivered == False,
             ).first() is not None
+            # 便を履歴にも残す。同じ商品を航空・船に分けたとき、
+            # どちらで何個頼んだのか後から追えないと入荷照合で困る
+            ship_label = {"air": "航空便", "sea": "船便"}.get(shipping, "")
+            base_memo = body.get("memo") or "発注Excelから登録"
             db.add(RakutenOrderHistory(
                 sku=item["sku"],
                 name=item["name"],
                 qty=item["qty"],
                 stage=2 if has_pending else 1,
                 ordered_at=ordered_at,
-                memo=body.get("memo") or "発注Excelから登録",
+                memo=f"{base_memo}（{ship_label}）" if ship_label else base_memo,
             ))
         db.commit()
+    # 航空便と船便を続けて出すので、同じファイル名だと上書きされて分からなくなる
+    suffix = {"air": "_air", "sea": "_sea"}.get(shipping, "")
     return StreamingResponse(
         io.BytesIO(xls),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=rakuten_order.xlsx"},
+        headers={"Content-Disposition": f"attachment; filename=rakuten_order{suffix}.xlsx"},
     )
 
 

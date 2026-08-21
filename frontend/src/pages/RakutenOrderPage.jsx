@@ -595,16 +595,22 @@ function ShipmentTab() {
   )
 }
 
-async function downloadExcel(items, memo = '発注Excelから登録', suffix = '') {
+// shipping: '' | 'air' | 'sea'
+// タオタロウは航空便と船便を1つの発注にまとめられないので、便ごとに別ファイルを出す。
+// 航空便は備考に「航空便予定」が入る（バックエンド側で付与）。
+async function downloadExcel(items, memo = '発注Excelから登録', suffix = '', shipping = '') {
   const res = await api.post('/rakuten/orders/excel', {
     items,
     record_history: true,
     memo,
+    shipping,
   }, { responseType: 'blob' })
   const url = URL.createObjectURL(new Blob([res.data]))
   const a = document.createElement('a')
+  const shipTag = shipping === 'air' ? '_航空便' : shipping === 'sea' ? '_船便' : ''
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
   a.href = url
-  a.download = `${new Date().toISOString().slice(0,10).replace(/-/g,'')}_rakuten_order${suffix ? '_' + suffix : ''}.xlsx`
+  a.download = `${date}_rakuten_order${shipTag}${suffix ? '_' + suffix : ''}.xlsx`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -613,6 +619,9 @@ export default function RakutenOrderPage() {
   const qc = useQueryClient()
   const [tab, setTab] = useState('order')
   const [orderInputs, setOrderInputs] = useState({})
+  // 航空便で頼む数。既定は0で、入力した分だけが航空便のExcelに回る。
+  // 残り（発注数 − 航空便）が船便になるので、同じ商品を2便に分けられる
+  const [airInputs, setAirInputs] = useState({})
   const [ordering, setOrdering] = useState(null)
   const [downloading, setDownloading] = useState(false)
   const [checkedSkus, setCheckedSkus] = useState(new Set())
@@ -682,16 +691,33 @@ export default function RakutenOrderPage() {
     }
   }
 
+  // チェックした商品を、航空便ぶんと船便ぶんに振り分ける。
+  // 航空便に入れた数を発注数から引いた残りが船便になる
+  const splitTargets = () => {
+    const air = [], sea = []
+    displayItems.filter(item => checkedSkus.has(item.sku)).forEach(item => {
+      const total = Number(orderInputs[item.sku] ?? item.order_qty) || 0
+      const airQty = Math.min(Number(airInputs[item.sku]) || 0, total)
+      const seaQty = total - airQty
+      if (airQty > 0) air.push({ sku: item.sku, qty: airQty })
+      if (seaQty > 0) sea.push({ sku: item.sku, qty: seaQty })
+    })
+    return { air, sea }
+  }
+
   const handleExcelDownload = async () => {
-    const targets = displayItems
-      .filter(item => checkedSkus.has(item.sku))
-      .map(item => ({ sku: item.sku, qty: Number(orderInputs[item.sku] ?? item.order_qty) }))
-      .filter(i => i.qty > 0)
-    if (targets.length === 0) { alert('チェックした商品（発注数1以上）がありません'); return }
+    const { air, sea } = splitTargets()
+    if (air.length === 0 && sea.length === 0) {
+      alert('チェックした商品（発注数1以上）がありません')
+      return
+    }
     setDownloading(true)
     try {
-      await downloadExcel(targets)
+      // タオタロウは1発注に両方の便を入れられないので、別々のファイルにする
+      if (air.length) await downloadExcel(air, '発注Excelから登録', '', 'air')
+      if (sea.length) await downloadExcel(sea, '発注Excelから登録', '', 'sea')
       setCheckedSkus(new Set())
+      setAirInputs({})
       qc.invalidateQueries(['rakuten-all-products-order'])
       qc.invalidateQueries(['rakuten-order-history'])
     } finally {
@@ -737,10 +763,20 @@ export default function RakutenOrderPage() {
           style={{ fontSize: 13, background: checkedSkus.size > 0 ? '#22c55e' : '#cbd5e1', color: '#fff', border: 'none' }}
           disabled={downloading || checkedSkus.size === 0}
           onClick={handleExcelDownload}
-          title="チェックした行だけがExcelに書き込まれます"
+          title="チェックした行だけがExcelに書き込まれます。航空便に数を入れた分は別ファイルになります"
         >
           {downloading ? '生成中...' : `📥 発注Excel（チェックした${checkedSkus.size}件）`}
         </button>
+        {/* 航空便に振り分けた分があると2ファイルになるので、押す前に分かるようにする */}
+        {checkedSkus.size > 0 && (() => {
+          const { air, sea } = splitTargets()
+          if (!air.length) return null
+          return (
+            <span style={{ fontSize: 12, color: '#2563eb' }}>
+              航空便 {air.length}件 ／ 船便 {sea.length}件 → Excelを2つ出力します
+            </span>
+          )
+        })()}
       </div>
 
       {/* タブ */}
@@ -880,6 +916,24 @@ export default function RakutenOrderPage() {
                             onChange={e => setOrderInputs(p => ({ ...p, [item.sku]: e.target.value }))}
                             style={{ width: 60, textAlign: 'center', padding: '4px 6px', fontSize: 13 }}
                           />
+                          {/* 航空便に回す数。残りが船便になるので、同じ商品を2便に分けられる。
+                              チェックした行だけ出す（普段は船便だけなので邪魔にならないように） */}
+                          {isChecked && (
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                              <span style={{ fontSize: 11, color: '#64748b' }}>空</span>
+                              <input
+                                type="number" min={0} max={Number(inputVal) || 0}
+                                value={airInputs[item.sku] ?? ''}
+                                placeholder="0"
+                                title="航空便で頼む数。残りは船便になります"
+                                onChange={e => setAirInputs(p => ({ ...p, [item.sku]: e.target.value }))}
+                                style={{
+                                  width: 52, textAlign: 'center', padding: '4px 6px', fontSize: 13,
+                                  borderColor: Number(airInputs[item.sku]) > 0 ? '#2563eb' : undefined,
+                                }}
+                              />
+                            </span>
+                          )}
                           <button
                             className="btn btn-primary"
                             style={{ padding: '4px 10px', fontSize: 12 }}
