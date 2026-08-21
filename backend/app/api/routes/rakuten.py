@@ -1657,17 +1657,17 @@ def migrate_legacy_inbound(body: Optional[dict] = None, db: Session = Depends(ge
 def download_order_excel(body: dict, db: Session = Depends(get_db)):
     """発注リストをタオタロウ形式Excelで出力
 
-    タオタロウは航空便と船便を1つの発注にまとめられないため、便ごとに
-    別々のExcelを出す。shipping="air" のときは備考に「航空便予定」を足して、
-    タオタロウ側でどちらの便か分かるようにする。
+    航空便と船便が混ざっていてもExcelは1つにまとめ、航空便の行だけ備考に
+    「航空便予定」を入れて区別する。同じ商品を航空5・船5のように分けたい場合は、
+    items に同じSKUを shipping 違いで2件入れる。
     """
     from app.services.excel_export import build_rakuten_taotaro_excel
-    order_items = body.get("items", [])  # [{sku, qty}, ...]
+    order_items = body.get("items", [])  # [{sku, qty, shipping}, ...]
     record_history = bool(body.get("record_history"))
-    shipping = (body.get("shipping") or "").strip()   # "air" | "sea" | ""
+    default_shipping = (body.get("shipping") or "").strip()   # "air" | "sea" | ""
 
-    def with_shipping_note(note: str) -> str:
-        """航空便のときだけ備考に印を付ける。元の備考があれば後ろに足す。"""
+    def with_shipping_note(note: str, shipping: str) -> str:
+        """航空便の行だけ備考に印を付ける。元の備考があれば後ろに足す。"""
         if shipping != "air":
             return note or ""
         mark = "航空便予定"
@@ -1690,11 +1690,17 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
             qty = 0
         if not sku or not qty:
             continue
+        item_shipping = (oi.get("shipping") or default_shipping or "").strip()
         p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
         if not p:
             continue
         if record_history:
-            h = history_items.setdefault(sku, {"sku": sku, "name": p.name, "qty": 0})
+            # 同じ商品を航空・船に分けたときは別々の発注として記録する。
+            # まとめると、どちらで何個頼んだのか入荷時に照合できなくなる
+            key = (sku, item_shipping)
+            h = history_items.setdefault(
+                key, {"sku": sku, "name": p.name, "qty": 0, "shipping": item_shipping}
+            )
             h["qty"] += qty
         # 本体行（set_componentsありかつspec空の場合はスキップ）
         if not (p.set_components and not (p.spec or "").strip()):
@@ -1709,7 +1715,7 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
                 "qty":           qty * (p.set_size or 1),
                 "price":         p.price or 0,
                 "customer_memo": p.customer_memo or "",
-                "notes":         with_shipping_note(p.notes),
+                "notes":         with_shipping_note(p.notes, item_shipping),
             })
         # set_components + purchase_componentsを展開して追加行として出力
         try:
@@ -1743,7 +1749,7 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
                 "qty":           qty * comp_qty,
                 "price":         comp_price or 0,
                 "customer_memo": comp.get("customer_memo", ""),
-                "notes":         with_shipping_note(comp.get("notes", "")),
+                "notes":         with_shipping_note(comp.get("notes", ""), item_shipping),
             })
 
     xls = build_rakuten_taotaro_excel(excel_items)
@@ -1756,7 +1762,7 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
             ).first() is not None
             # 便を履歴にも残す。同じ商品を航空・船に分けたとき、
             # どちらで何個頼んだのか後から追えないと入荷照合で困る
-            ship_label = {"air": "航空便", "sea": "船便"}.get(shipping, "")
+            ship_label = {"air": "航空便", "sea": "船便"}.get(item.get("shipping", ""), "")
             base_memo = body.get("memo") or "発注Excelから登録"
             db.add(RakutenOrderHistory(
                 sku=item["sku"],
@@ -1767,12 +1773,10 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
                 memo=f"{base_memo}（{ship_label}）" if ship_label else base_memo,
             ))
         db.commit()
-    # 航空便と船便を続けて出すので、同じファイル名だと上書きされて分からなくなる
-    suffix = {"air": "_air", "sea": "_sea"}.get(shipping, "")
     return StreamingResponse(
         io.BytesIO(xls),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=rakuten_order{suffix}.xlsx"},
+        headers={"Content-Disposition": "attachment; filename=rakuten_order.xlsx"},
     )
 
 

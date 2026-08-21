@@ -595,22 +595,19 @@ function ShipmentTab() {
   )
 }
 
-// shipping: '' | 'air' | 'sea'
-// タオタロウは航空便と船便を1つの発注にまとめられないので、便ごとに別ファイルを出す。
-// 航空便は備考に「航空便予定」が入る（バックエンド側で付与）。
-async function downloadExcel(items, memo = '発注Excelから登録', suffix = '', shipping = '') {
+// items の各要素に shipping（'air' | 'sea' | ''）を持たせると、
+// 航空便の行だけ備考に「航空便予定」が入る（付与はバックエンド側）。
+// Excelは航空・船が混ざっていても1つにまとめる。
+async function downloadExcel(items, memo = '発注Excelから登録', suffix = '') {
   const res = await api.post('/rakuten/orders/excel', {
     items,
     record_history: true,
     memo,
-    shipping,
   }, { responseType: 'blob' })
   const url = URL.createObjectURL(new Blob([res.data]))
   const a = document.createElement('a')
-  const shipTag = shipping === 'air' ? '_航空便' : shipping === 'sea' ? '_船便' : ''
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
   a.href = url
-  a.download = `${date}_rakuten_order${shipTag}${suffix ? '_' + suffix : ''}.xlsx`
+  a.download = `${new Date().toISOString().slice(0,10).replace(/-/g,'')}_rakuten_order${suffix ? '_' + suffix : ''}.xlsx`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -691,31 +688,30 @@ export default function RakutenOrderPage() {
     }
   }
 
-  // チェックした商品を、航空便ぶんと船便ぶんに振り分ける。
-  // 航空便に入れた数を発注数から引いた残りが船便になる
+  // チェックした商品を1つのリストにする。航空便に入れた数を発注数から引いた
+  // 残りが船便になるので、同じ商品が航空・船の2行になることもある
   const splitTargets = () => {
-    const air = [], sea = []
+    const rows = []
     displayItems.filter(item => checkedSkus.has(item.sku)).forEach(item => {
       const total = Number(orderInputs[item.sku] ?? item.order_qty) || 0
       const airQty = Math.min(Number(airInputs[item.sku]) || 0, total)
       const seaQty = total - airQty
-      if (airQty > 0) air.push({ sku: item.sku, qty: airQty })
-      if (seaQty > 0) sea.push({ sku: item.sku, qty: seaQty })
+      if (airQty > 0) rows.push({ sku: item.sku, qty: airQty, shipping: 'air' })
+      if (seaQty > 0) rows.push({ sku: item.sku, qty: seaQty, shipping: 'sea' })
     })
-    return { air, sea }
+    return rows
   }
 
   const handleExcelDownload = async () => {
-    const { air, sea } = splitTargets()
-    if (air.length === 0 && sea.length === 0) {
+    const targets = splitTargets()
+    if (targets.length === 0) {
       alert('チェックした商品（発注数1以上）がありません')
       return
     }
     setDownloading(true)
     try {
-      // タオタロウは1発注に両方の便を入れられないので、別々のファイルにする
-      if (air.length) await downloadExcel(air, '発注Excelから登録', '', 'air')
-      if (sea.length) await downloadExcel(sea, '発注Excelから登録', '', 'sea')
+      // 航空・船が混ざっていてもExcelは1つ。航空便の行だけ備考で区別する
+      await downloadExcel(targets)
       setCheckedSkus(new Set())
       setAirInputs({})
       qc.invalidateQueries(['rakuten-all-products-order'])
@@ -767,13 +763,15 @@ export default function RakutenOrderPage() {
         >
           {downloading ? '生成中...' : `📥 発注Excel（チェックした${checkedSkus.size}件）`}
         </button>
-        {/* 航空便に振り分けた分があると2ファイルになるので、押す前に分かるようにする */}
+        {/* 航空便に振り分けた分があることを、押す前に分かるようにする */}
         {checkedSkus.size > 0 && (() => {
-          const { air, sea } = splitTargets()
+          const rows = splitTargets()
+          const air = rows.filter(r => r.shipping === 'air')
+          const sea = rows.filter(r => r.shipping === 'sea')
           if (!air.length) return null
           return (
             <span style={{ fontSize: 12, color: '#2563eb' }}>
-              航空便 {air.length}件 ／ 船便 {sea.length}件 → Excelを2つ出力します
+              航空便 {air.length}行（備考に「航空便予定」）／ 船便 {sea.length}行
             </span>
           )
         })()}
