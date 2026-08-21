@@ -657,6 +657,7 @@ class RakutenProductIn(BaseModel):
     inbound:          int = 0
     sales_30_recent:  int = 0
     sales_30_prev:    int = 0
+    super_sale_qty:   int = 0            # 前回スーパーセールの販売数（反映モードで上乗せ）
     cost_jpy:         Optional[float] = None
     selling_price:    Optional[float] = None
     shipping_fee:     int = 180
@@ -1088,9 +1089,13 @@ def _ordered_by_sku_stage(db):
     return o1, o2
 
 
-def _daily_avg_from_table(db) -> dict[str, dict]:
+def _daily_avg_from_table(db, exclude_start=None, exclude_end=None) -> dict[str, dict]:
     """rakuten_daily_salesから7日・30日・前30日(31〜60日前)のSKU別日販を算出（在庫切れ日を除外）。
     戻り値: {sku: {"avg_7": float, "avg_30": float, "avg_prev_30": float}}
+
+    exclude_start/end を渡すと、その期間（スーパーセール等）を在庫切れ日と同じ扱いで
+    除外する。分母の日数からも差し引くので、セール中の跳ねた販売数に引きずられて
+    日販が過大にならない。
     """
     from app.models.rakuten_daily_sales import RakutenDailySales
     today = date.today()
@@ -1105,8 +1110,17 @@ def _daily_avg_from_table(db) -> dict[str, dict]:
     ).filter(RakutenDailySales.sale_date >= cutoff_60).all()
     if not rows:
         return {}
+
+    def in_excluded(d) -> bool:
+        if not exclude_start or not exclude_end:
+            return False
+        return exclude_start <= d <= exclude_end
+
     sku_data: dict[str, dict] = {}
     for sku, sale_date, qty, is_stockout in rows:
+        # セール期間は在庫切れ日と同様に「なかった日」として扱う
+        if in_excluded(sale_date):
+            is_stockout = True
         if sku not in sku_data:
             sku_data[sku] = {
                 "sum_7": 0, "sum_30": 0, "sum_prev_30": 0,
@@ -1139,10 +1153,33 @@ def _daily_avg_from_table(db) -> dict[str, dict]:
     return result
 
 
+def _super_sale_add_qty(settings_row, product) -> int:
+    """反映モード（B）のとき、その商品に上乗せするセール販売数を返す。"""
+    if not settings_row.super_sale_enabled:
+        return 0
+    if (settings_row.super_sale_mode or "A") != "B":
+        return 0
+    return getattr(product, "super_sale_qty", 0) or 0
+
+
+def _super_sale_exclusion(settings_row):
+    """除外モード（A）のときだけ、日販から除くセール期間を返す。
+
+    反映モード（B）は「通常の発注数に上乗せ」なので、日販からは除かない
+    （除いたうえで上乗せすると二重に補正してしまう）。
+    """
+    if not settings_row.super_sale_enabled:
+        return None, None
+    if (settings_row.super_sale_mode or "A") != "A":
+        return None, None
+    return settings_row.super_sale_start, settings_row.super_sale_end
+
+
 @router.get("/orders/recommendations")
 def get_recommendations(db: Session = Depends(get_db)):
     settings_row = _get_or_create_settings(db)
-    sku_daily_avgs = _daily_avg_from_table(db)
+    ss_start, ss_end = _super_sale_exclusion(settings_row)
+    sku_daily_avgs = _daily_avg_from_table(db, ss_start, ss_end)
     s = RakutenCalcSettings(
         lead_days=settings_row.lead_days,
         target_days=settings_row.target_days,
@@ -1248,7 +1285,7 @@ def get_recommendations(db: Session = Depends(get_db)):
             ordered=ordered,
             sales_30_recent=sales_recent,
             sales_30_prev=sales_prev,
-            super_sale_qty=0,
+            super_sale_qty=_super_sale_add_qty(settings_row, p),
             sales_90=p.sales_90 or 0,
             stockout_days_90=p.stockout_days_90 or 0,
             daily_avg_7=da.get("avg_7", 0),
@@ -1299,7 +1336,8 @@ def get_recommendations(db: Session = Depends(get_db)):
 def get_all_products_order(db: Session = Depends(get_db)):
     """全商品（is_component=False）を発注推奨リストと同じ形式で返す"""
     settings_row = _get_or_create_settings(db)
-    sku_daily_avgs = _daily_avg_from_table(db)
+    ss_start, ss_end = _super_sale_exclusion(settings_row)
+    sku_daily_avgs = _daily_avg_from_table(db, ss_start, ss_end)
     s = RakutenCalcSettings(
         lead_days=settings_row.lead_days,
         target_days=settings_row.target_days,
@@ -1358,7 +1396,7 @@ def get_all_products_order(db: Session = Depends(get_db)):
             ordered=ordered,
             sales_30_recent=sales_recent,
             sales_30_prev=sales_prev,
-            super_sale_qty=0,
+            super_sale_qty=_super_sale_add_qty(settings_row, p),
             sales_90=getattr(p, 'sales_90', None) or 0,
             stockout_days_90=getattr(p, 'stockout_days_90', None) or 0,
             daily_avg_7=da.get("avg_7", 0),

@@ -28,6 +28,8 @@ class RakutenProduct(Base):
     sales_90         = Column(Integer, default=0) # 直近63日販売数（発注計算に使用・楽天API上限63日）
     stockout_days_90 = Column(Integer, default=0) # 在庫切れ日数（在庫管理機能実装後に自動更新）
     sales_updated_at = Column(DateTime, nullable=True)
+    # 前回スーパーセールでの販売数。反映モード時に発注数へ上乗せする
+    super_sale_qty   = Column(Integer, default=0)
     cost_jpy         = Column(Float)             # 仕入原価（円）
     selling_price    = Column(Float)             # 販売価格（円）
     shipping_fee     = Column(Integer, default=180)  # 送料（円）デフォルト:ネコポス180円
