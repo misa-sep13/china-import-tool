@@ -787,9 +787,10 @@ async def update_product(product_id: int, data: RakutenProductIn, request: Reque
                 from app.services.rakuten_rms import push_inventory_and_record
                 rms_items = []
 
-                # 自分自身をRMSに反映
-                manage_number = p.rakuten_item_url or p.sku.split("_")[0]
-                rms_items.append({"manage_number": manage_number, "variant_id": p.sku, "quantity": p.stock})
+                # 自分自身をRMSに反映（発送資材は楽天に出品していないので対象外）
+                if not p.is_material:
+                    manage_number = p.rakuten_item_url or p.sku.split("_")[0]
+                    rms_items.append({"manage_number": manage_number, "variant_id": p.sku, "quantity": p.stock})
 
                 # この商品を参照しているセット商品の在庫も自動計算して反映（is_component問わず）
                 set_products = db.query(RakutenProduct).filter(
@@ -916,6 +917,9 @@ async def bulk_update_stock(body: dict, request: Request, background_tasks: Back
     # 実在庫を更新していない場合（発注済1/2のみ等）はupdated_skusが空なのでpushは発生しない。
     if settings and settings.rms_service_secret and settings.rms_license_key and updated_skus:
         for p in all_products:
+            if p.is_material:
+                # 発送資材は楽天に出品していないのでRMSへ送る必要が無い
+                continue
             if p.sku in updated_skus or (p.set_components and any(c.get("sku") in updated_skus for c in _parse(p))):
                 manage_number = p.rakuten_item_url or p.sku.split("_")[0]
                 rms_items.append({"manage_number": manage_number, "variant_id": p.sku, "quantity": sku_stock.get(p.sku, 0)})
