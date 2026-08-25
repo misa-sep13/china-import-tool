@@ -233,6 +233,12 @@ def list_inventory(q: Optional[str] = None, db: Session = Depends(get_db)):
         d = _out(r)
         p = products.get(r.product_id)
         d["product_unit_per_set"] = _unit_per_set(p) if p else (r.unit_per_set or 1)
+        # SKU・名称は登録時点のコピーではなく、常に商品マスタの最新値を見せる
+        # （マスタ側でSKUをリネームしたときに就労支援側が古いままにならないように）
+        if p:
+            d["sku"] = p.sku
+            if p.name:
+                d["name_jp"] = p.name
         result.append(d)
     return result
 
@@ -286,7 +292,20 @@ def list_work_instructions(q: Optional[str] = None, db: Session = Depends(get_db
         WelfareWorkInstruction.order_date.desc(),
         WelfareWorkInstruction.id.desc(),
     ).limit(2000).all()
-    return [_work_out(r) for r in rows]
+    pids = [r.product_id for r in rows if r.product_id]
+    products = {p.id: p for p in db.query(RakutenProduct).filter(RakutenProduct.id.in_(pids)).all()} if pids else {}
+    result = []
+    for r in rows:
+        d = _work_out(r)
+        p = products.get(r.product_id)
+        # SKU・名称は商品マスタの最新値を見せる（マスタ側でSKUをリネームしても
+        # 就労支援側の表示が古いSKUのままにならないように）
+        if p:
+            d["sku"] = p.sku
+            if p.name:
+                d["name_jp"] = p.name
+        result.append(d)
+    return result
 
 
 @router.post("/preview-excel")
