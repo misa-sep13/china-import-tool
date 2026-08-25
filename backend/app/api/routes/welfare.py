@@ -363,6 +363,22 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
             w.source_sheet or "",
         ))
 
+    # 同じ商品は前回と同じ指示（保管／戻し等）である場合が多いので、
+    # 過去（一番新しいもの）の指示をデフォルト値として引き継ぐ。
+    # Excel側に指示が入っている行はそちらを優先する。
+    last_instruction_by_product: dict[int, str] = {}
+    for pid, instruction in (
+        db.query(WelfareWorkInstruction.product_id, WelfareWorkInstruction.instruction)
+        .filter(
+            WelfareWorkInstruction.product_id.isnot(None),
+            WelfareWorkInstruction.instruction.isnot(None),
+            WelfareWorkInstruction.instruction != "",
+        )
+        .order_by(WelfareWorkInstruction.id.asc())
+        .all()
+    ):
+        last_instruction_by_product[pid] = instruction
+
     unmatched_items = []
     imported_items = []
     skipped_items = []
@@ -419,7 +435,10 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 units=row["units"],
                 unit_per_set=unit,
                 qty=qty,
-                instruction=row.get("instruction") or "",
+                instruction=(
+                    row.get("instruction")
+                    or (last_instruction_by_product.get(product.id, "") if product else "")
+                ),
                 remaining_units=remaining_units_value,
                 remaining_qty=remaining_qty,
                 note=None,
@@ -427,6 +446,8 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
             )
             db.add(new_work)
             work_imported += 1
+            if product and new_work.instruction:
+                last_instruction_by_product[product.id] = new_work.instruction
         if not product:
             continue
         # 取込では就労支援在庫へ加算しない。
