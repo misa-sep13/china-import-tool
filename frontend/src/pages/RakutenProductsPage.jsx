@@ -10,7 +10,7 @@ const EMPTY = {
   sales_30_recent: 0, sales_30_prev: 0,
   cost_jpy: null, selling_price: null, shipping_fee: 180,
   customer_memo: '', notes: '', memo: '',
-  set_components: '', purchase_components: '', is_component: false, is_material: false, is_active: true,
+  set_components: '', purchase_components: '', is_component: false, is_material: false, is_promo: false, is_active: true,
 }
 
 const BASE_URL = api.defaults.baseURL || ''
@@ -552,6 +552,20 @@ export default function RakutenProductsPage() {
                 </label>
                 <div style={{ fontSize: 11, color: '#64748b', marginLeft: 26, marginTop: 2 }}>
                   仕入時に送料・税の按分は受けますが、商品原価にはなりません。発注・在庫一覧にも表示されません。
+                </div>
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!form.is_promo}
+                    onChange={e => setForm(p => ({ ...p, is_promo: e.target.checked }))}
+                    style={{ width: 'auto', accentColor: '#3b82f6' }}
+                  />
+                  <span>🎁 販促品（レビューキャンペーン特典等 — 楽天には出品していない）</span>
+                </label>
+                <div style={{ fontSize: 11, color: '#64748b', marginLeft: 26, marginTop: 2 }}>
+                  楽天RMSへのpush対象外・発注推奨や在庫一覧にも表示されません。就労支援在庫で数量だけ把握したい商品用です。
                 </div>
               </div>
             </div>

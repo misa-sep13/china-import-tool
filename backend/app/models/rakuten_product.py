@@ -48,5 +48,8 @@ class RakutenProduct(Base):
     # is_material=商品を届けるために使うもの（販売費）。
     # 仕入時に送料・税の按分は受けるが、商品原価(cost_jpy)には計上しない。
     is_material  = Column(Boolean, default=False)
+    # レビューキャンペーン等の販促品（楽天には出品していない・在庫は就労支援の
+    # 保管数把握のためだけにマスタ登録する）。RMS push・発注推奨・在庫一覧の対象外。
+    is_promo     = Column(Boolean, default=False)
     is_active    = Column(Boolean, default=True)
     created_at   = Column(DateTime, server_default=func.now())

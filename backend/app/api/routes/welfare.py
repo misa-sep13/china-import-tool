@@ -955,6 +955,68 @@ def backfill_from_product(db: Session = Depends(get_db)):
     return {"updated": updated}
 
 
+class WelfareMergeProductsIn(BaseModel):
+    keep_sku: str    # 統合先（残す方）
+    remove_sku: str  # 統合元（消す方）
+
+
+@router.post("/inventory/merge-products")
+def merge_duplicate_products(data: WelfareMergeProductsIn, db: Session = Depends(get_db)):
+    """スペル違いなどで別商品として登録されてしまった重複マスタを統合する。
+
+    remove_sku側の就労支援在庫（残数）をkeep_sku側へ合算し、履歴（荷受け・入出庫）も
+    keep_sku側の商品IDに付け替えたうえで、remove_sku側のマスタは非表示化（is_active=False）する。
+    """
+    keep = db.query(RakutenProduct).filter(RakutenProduct.sku == data.keep_sku, RakutenProduct.is_active == True).first()
+    remove = db.query(RakutenProduct).filter(RakutenProduct.sku == data.remove_sku, RakutenProduct.is_active == True).first()
+    if not keep:
+        raise HTTPException(404, f"統合先SKUが見つかりません: {data.keep_sku}")
+    if not remove:
+        raise HTTPException(404, f"統合元SKUが見つかりません: {data.remove_sku}")
+    if keep.id == remove.id:
+        raise HTTPException(400, "同じ商品は統合できません")
+
+    keep_item = db.query(WelfareInventoryItem).filter(WelfareInventoryItem.product_id == keep.id).first()
+    remove_item = db.query(WelfareInventoryItem).filter(WelfareInventoryItem.product_id == remove.id).first()
+
+    moved_qty = 0
+    if remove_item:
+        moved_qty = remove_item.remaining_qty or 0
+        if not keep_item:
+            keep_item = WelfareInventoryItem(
+                product_id=keep.id, sku=keep.sku, name_jp=keep.name,
+                buy_url=keep.buy_url, supplier_spec=keep.supplier_spec,
+                unit_per_set=_unit_per_set(keep),
+                total_received_units=0, total_received_qty=0, withdrawn_qty=0, remaining_qty=0,
+            )
+            db.add(keep_item)
+            db.flush()
+        keep_item.total_received_units = (keep_item.total_received_units or 0) + (remove_item.total_received_units or 0)
+        keep_item.total_received_qty = (keep_item.total_received_qty or 0) + (remove_item.total_received_qty or 0)
+        keep_item.withdrawn_qty = (keep_item.withdrawn_qty or 0) + (remove_item.withdrawn_qty or 0)
+        keep_item.remaining_qty = (keep_item.remaining_qty or 0) + (remove_item.remaining_qty or 0)
+        db.delete(remove_item)
+
+    # 履歴はkeep側の商品IDへ付け替えて残す（消さない）
+    db.query(WelfareInventoryMovement).filter(WelfareInventoryMovement.product_id == remove.id).update(
+        {"product_id": keep.id, "sku": keep.sku}
+    )
+    db.query(WelfareWorkInstruction).filter(WelfareWorkInstruction.product_id == remove.id).update(
+        {"product_id": keep.id, "sku": keep.sku}
+    )
+
+    remove.is_active = False
+    db.commit()
+
+    return {
+        "ok": True,
+        "keep_sku": keep.sku,
+        "removed_sku": remove.sku,
+        "moved_remaining_qty": moved_qty,
+        "keep_item_remaining_qty": keep_item.remaining_qty if keep_item else 0,
+    }
+
+
 @router.get("/movements")
 def list_movements(item_id: Optional[int] = None, limit: int = 200,
                    movement_type: Optional[str] = None, db: Session = Depends(get_db)):

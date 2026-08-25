@@ -164,8 +164,8 @@ async def retry_rms_push_failures(db: Session = Depends(get_db)):
             r.resolved = True
             r.resolved_at = datetime.now(timezone.utc)
             continue
-        if p.is_material:
-            # 発送資材は楽天に出品していないので再送しようがない（送るだけ無駄に失敗する）
+        if p.is_material or p.is_promo:
+            # 発送資材・販促品は楽天に出品していないので再送しようがない（送るだけ無駄に失敗する）
             stale.append(r.sku)
             r.resolved = True
             r.resolved_at = datetime.now(timezone.utc)
@@ -320,8 +320,8 @@ def _build_rms_stock_items(all_products: list[RakutenProduct], sku_stock: dict, 
         # RMSにページが無い内部SKU（y91_case等）はpush対象外
         if p.is_component and not p.rakuten_item_url:
             continue
-        # 発送資材は楽天に出品していないのでRMSへ送る必要が無い（manage_numberも無い）
-        if p.is_material:
+        # 発送資材・販促品は楽天に出品していないのでRMSへ送る必要が無い（manage_numberも無い）
+        if p.is_material or p.is_promo:
             continue
         sku = (p.sku or "").strip()
         if not sku or not re.match(r'^[a-zA-Z0-9_\-]+$', sku):
@@ -668,6 +668,7 @@ class RakutenProductIn(BaseModel):
     purchase_components: Optional[str] = None  # JSON文字列（発注用付属品・在庫連動しない）
     is_component:     bool = False          # 単品（セット構成用内部管理）フラグ
     is_material:      bool = False          # 発送用の梱包資材（商品原価に載せず資材費に計上）
+    is_promo:         bool = False          # レビューキャンペーン等の販促品（楽天未出品・RMS push対象外）
     is_active:        bool = True
 
 class RakutenProductOut(RakutenProductIn):
@@ -685,7 +686,7 @@ def list_products(db: Session = Depends(get_db)):
 @router.get("/stock")
 def list_stock(db: Session = Depends(get_db)):
     """在庫・損益一覧（バリエーション商品のみ、is_component=Falseを対象）。
-    発送資材(is_material)は販売商品ではないので除外する。"""
+    発送資材(is_material)・販促品(is_promo)は販売商品ではないので除外する。"""
     settings = _get_or_create_settings(db)
     commission_rate = settings.commission_rate or 0.09
     products = (
@@ -694,6 +695,7 @@ def list_stock(db: Session = Depends(get_db)):
             RakutenProduct.is_active == True,
             RakutenProduct.is_component == False,
             RakutenProduct.is_material == False,
+            RakutenProduct.is_promo == False,
         )
         .order_by(RakutenProduct.sku.asc())
         .all()
@@ -787,8 +789,8 @@ async def update_product(product_id: int, data: RakutenProductIn, request: Reque
                 from app.services.rakuten_rms import push_inventory_and_record
                 rms_items = []
 
-                # 自分自身をRMSに反映（発送資材は楽天に出品していないので対象外）
-                if not p.is_material:
+                # 自分自身をRMSに反映（発送資材・販促品は楽天に出品していないので対象外）
+                if not p.is_material and not p.is_promo:
                     manage_number = p.rakuten_item_url or p.sku.split("_")[0]
                     rms_items.append({"manage_number": manage_number, "variant_id": p.sku, "quantity": p.stock})
 
@@ -917,8 +919,8 @@ async def bulk_update_stock(body: dict, request: Request, background_tasks: Back
     # 実在庫を更新していない場合（発注済1/2のみ等）はupdated_skusが空なのでpushは発生しない。
     if settings and settings.rms_service_secret and settings.rms_license_key and updated_skus:
         for p in all_products:
-            if p.is_material:
-                # 発送資材は楽天に出品していないのでRMSへ送る必要が無い
+            if p.is_material or p.is_promo:
+                # 発送資材・販促品は楽天に出品していないのでRMSへ送る必要が無い
                 continue
             if p.sku in updated_skus or (p.set_components and any(c.get("sku") in updated_skus for c in _parse(p))):
                 manage_number = p.rakuten_item_url or p.sku.split("_")[0]
@@ -1303,6 +1305,7 @@ def get_recommendations(db: Session = Depends(get_db)):
         and p.sku not in parent_orders
         and not (not p.is_component and p.set_components)  # セット販売商品（parent_ordersに入らなかったもの）は除外
         and not getattr(p, "is_material", False)  # 発送資材は販売商品ではないので発注推奨に出さない
+        and not getattr(p, "is_promo", False)  # 販促品も同様に発注推奨対象外
     ]
 
     # 通常単品 + 親発注品を合わせて計算
@@ -1410,12 +1413,13 @@ def get_all_products_order(db: Session = Depends(get_db)):
             unit_sales[unit_sku]["prev"]   += (p.sales_30_prev   or 0) * qty
 
     # is_component=False・buy_urlあり（内部SKUのみ除外、セット組・本体はすべて表示）
-    # 発送資材(is_material)は販売商品ではないので在庫一覧にも出さない
+    # 発送資材(is_material)・販促品(is_promo)は販売商品ではないので在庫一覧にも出さない
     targets = sorted(
         [
             p for p in all_products
             if not p.is_component
             and not getattr(p, "is_material", False)
+            and not getattr(p, "is_promo", False)
             and (p.buy_url or "").strip()
         ],
         key=lambda p: p.sku or ""
@@ -1601,6 +1605,7 @@ def migrate_legacy_inbound(body: Optional[dict] = None, db: Session = Depends(ge
         RakutenProduct.is_active == True,
         RakutenProduct.is_component == False,
         RakutenProduct.is_material == False,  # 発送資材は発注対象に含めない
+        RakutenProduct.is_promo == False,  # 販促品も発注対象に含めない
     ).order_by(RakutenProduct.sku.asc()).all()
 
     rows = []
@@ -1794,7 +1799,7 @@ CSV_COLUMNS = [
     "set_size", "rakuten_item_url", "rakuten_sku_id", "supplier", "standard_stock",
     "stock", "inbound", "sales_30_recent", "sales_30_prev",
     "customer_memo", "notes", "memo", "set_components", "purchase_components", "is_component",
-    "is_material",
+    "is_material", "is_promo",
 ]
 
 CSV_COLUMN_LABELS = {
@@ -1821,6 +1826,7 @@ CSV_COLUMN_LABELS = {
     "purchase_components": "発注用付属品JSON(在庫連動しない)",
     "is_component":     "単品フラグ(TRUE/FALSE)",
     "is_material":      "発送資材フラグ(TRUE/FALSE)",
+    "is_promo":         "販促品フラグ(TRUE/FALSE)",
 }
 
 @router.get("/products/csv/template")
@@ -1836,7 +1842,7 @@ def download_csv_template():
         "https://item.taobao.com/xxx", "12.5",
         "1", "https://item.rakuten.co.jp/shop/xxx/", "12345678-A", "タオタロウ", "50",
         "100", "0", "45", "40",
-        "お客様専用メモ例", "備考例", "内部メモ例", "", "", "FALSE",
+        "お客様専用メモ例", "備考例", "内部メモ例", "", "", "FALSE", "FALSE",
     ])
     output.seek(0)
     # BOM付きUTF-8でExcelで文字化けしないように
@@ -1873,6 +1879,7 @@ def export_products_csv(db: Session = Depends(get_db)):
             getattr(p, 'purchase_components', '') or "",
             "TRUE" if p.is_component else "FALSE",
             "TRUE" if getattr(p, "is_material", False) else "FALSE",
+            "TRUE" if getattr(p, "is_promo", False) else "FALSE",
         ])
     output.seek(0)
     content = "﻿" + output.getvalue()
@@ -1964,6 +1971,8 @@ def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_
         # 列が存在するときだけ更新対象に含める
         if "is_material" in normalized:
             data["is_material"] = normalized.get("is_material", "").upper() in ("TRUE", "1", "YES", "はい")
+        if "is_promo" in normalized:
+            data["is_promo"] = normalized.get("is_promo", "").upper() in ("TRUE", "1", "YES", "はい")
 
         existing = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
         if existing:

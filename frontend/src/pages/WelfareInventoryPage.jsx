@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 
@@ -117,6 +117,69 @@ export default function WelfareInventoryPage() {
   const [pendingWorkDeletes, setPendingWorkDeletes] = useState([])
   const [committingWorkDeleteIds, setCommittingWorkDeleteIds] = useState([])
   const [inventorySort, setInventorySort] = useState('sku')
+
+  // 未照合行からの新規マスタ登録（レビューキャンペーン品等の販促品用）
+  const [regRow, setRegRow] = useState(null)
+  const [regForm, setRegForm] = useState({ sku: '', name: '', is_promo: true })
+  const [registering, setRegistering] = useState(false)
+  const [registeredKeys, setRegisteredKeys] = useState(new Set())
+
+  // スペル違い等で別マスタとして登録されてしまった重複SKUの統合
+  const [mergeOpen, setMergeOpen] = useState(false)
+  const [mergeKeepSku, setMergeKeepSku] = useState('')
+  const [mergeRemoveSku, setMergeRemoveSku] = useState('')
+  const [merging, setMerging] = useState(false)
+  const [mergeResult, setMergeResult] = useState(null)
+
+  async function handleMerge() {
+    if (!mergeKeepSku.trim() || !mergeRemoveSku.trim()) {
+      alert('統合先SKUと統合元SKUの両方を入力してください')
+      return
+    }
+    if (!confirm(`「${mergeRemoveSku}」の在庫を「${mergeKeepSku}」に合算し、「${mergeRemoveSku}」は非表示にします。よろしいですか？`)) return
+    setMerging(true)
+    setMergeResult(null)
+    try {
+      const res = await api.post('/welfare/inventory/merge-products', {
+        keep_sku: mergeKeepSku.trim(),
+        remove_sku: mergeRemoveSku.trim(),
+      })
+      setMergeResult(res.data)
+      setMergeKeepSku(''); setMergeRemoveSku('')
+      qc.invalidateQueries(['welfare-inventory'])
+      qc.invalidateQueries(['rakuten-products'])
+    } catch (e) {
+      setMergeResult({ error: e.response?.data?.detail || e.message })
+    } finally {
+      setMerging(false)
+    }
+  }
+
+  function openRegister(i, item) {
+    setRegRow(i)
+    setRegForm({ sku: '', name: item.name_cn || '', is_promo: true })
+  }
+
+  async function handleRegisterWelfare(item, i) {
+    if (!regForm.sku.trim()) { alert('SKUを入力してください'); return }
+    setRegistering(true)
+    try {
+      await api.post('/rakuten/products', {
+        sku: regForm.sku.trim(),
+        name: regForm.name.trim() || item.name_cn,
+        buy_url: item.buy_url || '',
+        supplier_spec: item.supplier_spec || '',
+        is_promo: regForm.is_promo,
+      })
+      setRegisteredKeys(prev => new Set(prev).add(i))
+      setRegRow(null)
+      qc.invalidateQueries(['rakuten-products'])
+    } catch (e) {
+      alert('登録エラー: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setRegistering(false)
+    }
+  }
 
   const getInventoryDraftValue = (item, draft = {}) => ({
     name_jp: draft.name_jp ?? item.name_jp ?? '',
@@ -568,19 +631,71 @@ export default function WelfareInventoryPage() {
           )}
 
           {importResult.unmatched_items?.length > 0 && (
-            <details style={{ marginBottom: 8 }}>
+            <details open style={{ marginBottom: 8 }}>
               <summary style={{ cursor: 'pointer', color: '#d97706', fontWeight: 600 }}>未照合 {importResult.unmatched_items.length}件</summary>
+              <div style={{ fontSize: 11, color: '#92400e', margin: '6px 0' }}>
+                レビューキャンペーン品など楽天に出品していない商品は、「登録」から販促品としてマスタ登録できます
+                （登録後、このファイルをもう一度取り込むと在庫として反映できるようになります）。
+              </div>
               <table style={{ marginTop: 6, fontSize: 12 }}>
-                <thead><tr><th>シート</th><th>商品名</th><th>仕様</th><th>数量</th><th>URL</th></tr></thead>
+                <thead><tr><th>シート</th><th>商品名</th><th>仕様</th><th>数量</th><th>URL</th><th></th></tr></thead>
                 <tbody>
                   {importResult.unmatched_items.map((item, i) => (
-                    <tr key={i}>
-                      <td>{item.sheet}</td>
-                      <td>{item.name_cn}</td>
-                      <td>{item.supplier_spec}</td>
-                      <td>{item.units}</td>
-                      <td>{item.buy_url ? <a href={item.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11 }}>URL</a> : '-'}</td>
-                    </tr>
+                    <Fragment key={i}>
+                      <tr>
+                        <td>{item.sheet}</td>
+                        <td>{item.name_cn}</td>
+                        <td>{item.supplier_spec}</td>
+                        <td>{item.units}</td>
+                        <td>{item.buy_url ? <a href={item.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11 }}>URL</a> : '-'}</td>
+                        <td>
+                          {registeredKeys.has(i) ? (
+                            <span style={{ color: '#16a34a', fontWeight: 700 }}>登録済</span>
+                          ) : (
+                            <button
+                              className="btn btn-secondary"
+                              style={{ fontSize: 11, padding: '2px 8px' }}
+                              onClick={() => openRegister(i, item)}
+                            >
+                              登録
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                      {regRow === i && (
+                        <tr>
+                          <td colSpan={6} style={{ background: '#fffbeb', padding: 8 }}>
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                              <input
+                                placeholder="SKU（例: y99_fish）"
+                                value={regForm.sku}
+                                onChange={e => setRegForm(p => ({ ...p, sku: e.target.value }))}
+                                style={{ fontSize: 12, width: 160 }}
+                              />
+                              <input
+                                placeholder="商品名（日本語）"
+                                value={regForm.name}
+                                onChange={e => setRegForm(p => ({ ...p, name: e.target.value }))}
+                                style={{ fontSize: 12, width: 220 }}
+                              />
+                              <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <input
+                                  type="checkbox"
+                                  checked={regForm.is_promo}
+                                  onChange={e => setRegForm(p => ({ ...p, is_promo: e.target.checked }))}
+                                  style={{ width: 'auto' }}
+                                />
+                                🎁 販促品（RMS push対象外）
+                              </label>
+                              <button className="btn btn-primary" style={{ fontSize: 12 }} disabled={registering} onClick={() => handleRegisterWelfare(item, i)}>
+                                {registering ? '登録中...' : '登録する'}
+                              </button>
+                              <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={() => setRegRow(null)}>キャンセル</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -590,6 +705,24 @@ export default function WelfareInventoryPage() {
       )}
 
       {activeTab === 'inventory' && <div className="card">
+        <details style={{ marginBottom: 10 }} open={mergeOpen} onToggle={e => setMergeOpen(e.target.open)}>
+          <summary style={{ cursor: 'pointer', color: '#64748b', fontSize: 12 }}>重複SKUを統合（スペル違い等で別マスタになってしまった場合）</summary>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+            <input placeholder="統合元SKU（消える方）" value={mergeRemoveSku} onChange={e => setMergeRemoveSku(e.target.value)} style={{ fontSize: 12, width: 180 }} />
+            <span style={{ fontSize: 12 }}>→</span>
+            <input placeholder="統合先SKU（残る方）" value={mergeKeepSku} onChange={e => setMergeKeepSku(e.target.value)} style={{ fontSize: 12, width: 180 }} />
+            <button className="btn btn-secondary" style={{ fontSize: 12 }} disabled={merging} onClick={handleMerge}>
+              {merging ? '統合中...' : '統合する'}
+            </button>
+          </div>
+          {mergeResult && (
+            <div style={{ fontSize: 12, marginTop: 6, color: mergeResult.error ? '#dc2626' : '#16a34a' }}>
+              {mergeResult.error
+                ? mergeResult.error
+                : `${mergeResult.removed_sku} → ${mergeResult.keep_sku} に統合（残数 +${mergeResult.moved_remaining_qty}、合計 ${mergeResult.keep_item_remaining_qty}）`}
+            </div>
+          )}
+        </details>
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
           <button
             className={inventorySort === 'qty' ? 'btn-primary' : 'btn-secondary'}
