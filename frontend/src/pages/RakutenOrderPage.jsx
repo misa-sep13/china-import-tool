@@ -18,6 +18,10 @@ function ShipmentTab() {
   const [retrying, setRetrying] = useState(false)
   const [retryResult, setRetryResult] = useState(null)
 
+  // 複数ファイルを選んだ場合、1件ずつ内容確認→保存してから次へ進むキュー
+  const [fileQueue, setFileQueue] = useState([])
+  const [queueTotal, setQueueTotal] = useState(0)
+
   // 入荷済みなのに在庫へ入っていない行（未照合・紐づけ間違いで弾かれた行）の復旧用
   const [pastOrders, setPastOrders] = useState([])
   const [openPastId, setOpenPastId] = useState(null)
@@ -120,11 +124,9 @@ function ShipmentTab() {
     loadPastOrders()
   }, [])
 
-  async function handleFile(e) {
-    const file = e.target.files[0]
-    if (!file) return
+  async function processFile(file) {
     setUploading(true)
-    setParsed(null); setMatched([]); setUnmatched([]); setDone(false); setReceiveResult(null)
+    setParsed(null); setMatched([]); setUnmatched([]); setDone(false); setReceiveResult(null); setNote('')
     const fd = new FormData()
     fd.append('file', file)
     try {
@@ -137,6 +139,27 @@ function ShipmentTab() {
       alert('読み込みエラー: ' + (e.response?.data?.detail || e.message))
     } finally {
       setUploading(false)
+    }
+  }
+
+  function handleFile(e) {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''  // 同じファイルを選び直しても onChange が発火するように
+    if (files.length === 0) return
+    setQueueTotal(files.length)
+    setFileQueue(files.slice(1))
+    processFile(files[0])
+  }
+
+  // 「続けて取り込む」時、複数ファイルまとめて選んでいれば自動で次のファイルへ進む
+  function advanceQueue() {
+    if (fileQueue.length > 0) {
+      const [next, ...rest] = fileQueue
+      setFileQueue(rest)
+      processFile(next)
+    } else {
+      setQueueTotal(0)
+      resetImport()
     }
   }
 
@@ -326,7 +349,9 @@ function ShipmentTab() {
                   )}
                 </div>
               )}
-              <button className="btn btn-secondary" onClick={resetImport}>続けて取り込む</button>
+              <button className="btn btn-secondary" onClick={advanceQueue}>
+                {fileQueue.length > 0 ? `次のファイルへ（残り${fileQueue.length}件）` : '続けて取り込む'}
+              </button>
             </div>
           : <>
               {pastOrders.length > 0 && (
@@ -431,8 +456,16 @@ function ShipmentTab() {
 
               <div className="card" style={{ marginBottom: 16 }}>
                 <h3 style={{ marginBottom: 12 }}>配送依頼ファイル（send-order-list.xls）</h3>
-                <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={uploading} />
+                <input type="file" accept=".xlsx,.xls" multiple onChange={handleFile} disabled={uploading} />
+                <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 6 }}>
+                  複数ファイルをまとめて選択できます（1件ずつ内容確認・保存してから自動で次へ進みます）
+                </div>
                 {uploading && <span style={{ marginLeft: 12, color: '#888' }}>読み込み・照合中...</span>}
+                {queueTotal > 1 && (
+                  <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, color: '#2563eb' }}>
+                    配送依頼 {queueTotal - fileQueue.length}/{queueTotal}件目
+                  </div>
+                )}
               </div>
 
               {parsed && (
