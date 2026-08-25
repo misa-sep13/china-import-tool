@@ -124,37 +124,6 @@ export default function WelfareInventoryPage() {
   const [registering, setRegistering] = useState(false)
   const [registeredKeys, setRegisteredKeys] = useState(new Set())
 
-  // スペル違い等で別マスタとして登録されてしまった重複SKUの統合
-  const [mergeOpen, setMergeOpen] = useState(false)
-  const [mergeKeepSku, setMergeKeepSku] = useState('')
-  const [mergeRemoveSku, setMergeRemoveSku] = useState('')
-  const [merging, setMerging] = useState(false)
-  const [mergeResult, setMergeResult] = useState(null)
-
-  async function handleMerge() {
-    if (!mergeKeepSku.trim() || !mergeRemoveSku.trim()) {
-      alert('統合先SKUと統合元SKUの両方を入力してください')
-      return
-    }
-    if (!confirm(`「${mergeRemoveSku}」の在庫を「${mergeKeepSku}」に合算し、「${mergeRemoveSku}」は非表示にします。よろしいですか？`)) return
-    setMerging(true)
-    setMergeResult(null)
-    try {
-      const res = await api.post('/welfare/inventory/merge-products', {
-        keep_sku: mergeKeepSku.trim(),
-        remove_sku: mergeRemoveSku.trim(),
-      })
-      setMergeResult(res.data)
-      setMergeKeepSku(''); setMergeRemoveSku('')
-      qc.invalidateQueries(['welfare-inventory'])
-      qc.invalidateQueries(['rakuten-products'])
-    } catch (e) {
-      setMergeResult({ error: e.response?.data?.detail || e.message })
-    } finally {
-      setMerging(false)
-    }
-  }
-
   function openRegister(i, item) {
     setRegRow(i)
     setRegForm({ sku: '', name: item.name_cn || '', is_promo: true })
@@ -171,9 +140,13 @@ export default function WelfareInventoryPage() {
         supplier_spec: item.supplier_spec || '',
         is_promo: regForm.is_promo,
       })
+      // 登録済みマスタとbuy_urlで再照合し、この行（既存の未照合レコード）に
+      // そのままSKUを埋める。再取込は不要（重複行を作らないため）。
+      await api.post('/welfare/work-instructions/backfill-products')
       setRegisteredKeys(prev => new Set(prev).add(i))
       setRegRow(null)
       qc.invalidateQueries(['rakuten-products'])
+      qc.invalidateQueries(['welfare-work-instructions'])
     } catch (e) {
       alert('登録エラー: ' + (e.response?.data?.detail || e.message))
     } finally {
@@ -635,7 +608,7 @@ export default function WelfareInventoryPage() {
               <summary style={{ cursor: 'pointer', color: '#d97706', fontWeight: 600 }}>未照合 {importResult.unmatched_items.length}件</summary>
               <div style={{ fontSize: 11, color: '#92400e', margin: '6px 0' }}>
                 レビューキャンペーン品など楽天に出品していない商品は、「登録」から販促品としてマスタ登録できます
-                （登録後、このファイルをもう一度取り込むと在庫として反映できるようになります）。
+                （登録すると自動で照合し直すので、ファイルの再取込は不要です。下の「就労支援荷受け」タブに反映されます）。
               </div>
               <table style={{ marginTop: 6, fontSize: 12 }}>
                 <thead><tr><th>シート</th><th>商品名</th><th>仕様</th><th>数量</th><th>URL</th><th></th></tr></thead>
@@ -705,24 +678,6 @@ export default function WelfareInventoryPage() {
       )}
 
       {activeTab === 'inventory' && <div className="card">
-        <details style={{ marginBottom: 10 }} open={mergeOpen} onToggle={e => setMergeOpen(e.target.open)}>
-          <summary style={{ cursor: 'pointer', color: '#64748b', fontSize: 12 }}>重複SKUを統合（スペル違い等で別マスタになってしまった場合）</summary>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
-            <input placeholder="統合元SKU（消える方）" value={mergeRemoveSku} onChange={e => setMergeRemoveSku(e.target.value)} style={{ fontSize: 12, width: 180 }} />
-            <span style={{ fontSize: 12 }}>→</span>
-            <input placeholder="統合先SKU（残る方）" value={mergeKeepSku} onChange={e => setMergeKeepSku(e.target.value)} style={{ fontSize: 12, width: 180 }} />
-            <button className="btn btn-secondary" style={{ fontSize: 12 }} disabled={merging} onClick={handleMerge}>
-              {merging ? '統合中...' : '統合する'}
-            </button>
-          </div>
-          {mergeResult && (
-            <div style={{ fontSize: 12, marginTop: 6, color: mergeResult.error ? '#dc2626' : '#16a34a' }}>
-              {mergeResult.error
-                ? mergeResult.error
-                : `${mergeResult.removed_sku} → ${mergeResult.keep_sku} に統合（残数 +${mergeResult.moved_remaining_qty}、合計 ${mergeResult.keep_item_remaining_qty}）`}
-            </div>
-          )}
-        </details>
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
           <button
             className={inventorySort === 'qty' ? 'btn-primary' : 'btn-secondary'}
