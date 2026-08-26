@@ -10,7 +10,10 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.rakuten_product import RakutenProduct
-from app.models.welfare import WelfareInventoryItem, WelfareInventoryMovement, WelfareWorkInstruction
+from app.models.welfare import (
+    WelfareInventoryItem, WelfareInventoryMovement, WelfareWorkInstruction,
+    WelfarePackingOrder,
+)
 
 
 router = APIRouter(prefix="/welfare", tags=["welfare"])
@@ -1061,3 +1064,206 @@ def list_movements(item_id: Optional[int] = None, limit: int = 200,
         "note": r.note,
         "created_at": r.created_at.isoformat() if r.created_at else None,
     } for r in rows]
+
+
+# ============================================================
+# 再梱包の作業依頼（就労支援さん向け）
+#
+# 従来はスプレッドシートを毎回複製し、作る商品にセット数を書いて渡していた。
+# 金額は「セット数 × 1セットあたりの単価」で、月ごとに合計して請求する。
+# ============================================================
+
+class PackingOrderIn(BaseModel):
+    order_month: Optional[str] = None    # 未指定なら order_date から作る
+    order_date: Optional[str] = None
+    priority: Optional[int] = None
+    product_id: Optional[int] = None
+    sku: Optional[str] = None
+    name_jp: Optional[str] = None
+    set_qty: Optional[int] = None
+    set_count: Optional[int] = None
+    unit_price: Optional[float] = None
+    packing_material: Optional[str] = None
+    packing_method: Optional[str] = None
+    note: Optional[str] = None
+    status: Optional[str] = None
+    completed_count: Optional[int] = None
+
+
+def _packing_out(r: WelfarePackingOrder) -> dict:
+    return {
+        "id": r.id,
+        "order_month": r.order_month,
+        "order_date": r.order_date,
+        "priority": r.priority,
+        "product_id": r.product_id,
+        "sku": r.sku,
+        "name_jp": r.name_jp,
+        "image_data_url": r.image_data_url,
+        "set_qty": r.set_qty,
+        "set_count": r.set_count,
+        "unit_price": r.unit_price,
+        "amount": r.amount,
+        "packing_material": r.packing_material,
+        "packing_method": r.packing_method,
+        "note": r.note,
+        "status": r.status,
+        "completed_count": r.completed_count,
+        "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+    }
+
+
+def _month_of(date_str: str | None) -> str:
+    d = (date_str or "").strip()
+    if len(d) >= 7:
+        return d[:7]
+    return datetime.now().strftime("%Y-%m")
+
+
+def _calc_amount(set_count, unit_price) -> float:
+    return round((set_count or 0) * (unit_price or 0), 2)
+
+
+@router.get("/packing-orders")
+def list_packing_orders(
+    month: Optional[str] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """作業依頼を返す。month(YYYY-MM)で絞ると請求の単位になる。
+
+    並びは 優先順位 → 依頼日。優先順位が空の行は後ろに送る
+    （就労支援さんは上から順に作業するため）。
+    """
+    q = db.query(WelfarePackingOrder)
+    if month:
+        q = q.filter(WelfarePackingOrder.order_month == month)
+    if status:
+        q = q.filter(WelfarePackingOrder.status == status)
+    rows = q.all()
+    rows.sort(key=lambda r: (
+        r.priority if r.priority is not None else 9999,
+        r.order_date or "",
+        r.id,
+    ))
+
+    items = [_packing_out(r) for r in rows]
+    total = round(sum(r.amount or 0 for r in rows), 2)
+    total_sets = sum(r.set_count or 0 for r in rows)
+    return {
+        "items": items,
+        "month": month,
+        "total_amount": total,
+        "total_sets": total_sets,
+        "count": len(items),
+    }
+
+
+@router.get("/packing-orders/months")
+def packing_order_months(db: Session = Depends(get_db)):
+    """月ごとの合計。請求書を作るときの一覧に使う。"""
+    rows = db.query(WelfarePackingOrder).all()
+    by_month: dict[str, dict] = {}
+    for r in rows:
+        m = r.order_month or _month_of(r.order_date)
+        e = by_month.setdefault(m, {"month": m, "count": 0, "sets": 0, "amount": 0.0})
+        e["count"] += 1
+        e["sets"] += r.set_count or 0
+        e["amount"] += r.amount or 0
+    out = sorted(by_month.values(), key=lambda x: x["month"], reverse=True)
+    for e in out:
+        e["amount"] = round(e["amount"], 2)
+    return {"months": out}
+
+
+@router.post("/packing-orders")
+def create_packing_order(data: PackingOrderIn, db: Session = Depends(get_db)):
+    """作業依頼を1件作る。
+
+    梱包材・梱包方法・単価・1セットの数は、指定が無ければ商品マスタから引く。
+    毎回同じ内容を入力し直さなくてよいようにするため。
+    """
+    product = None
+    if data.product_id:
+        product = db.query(RakutenProduct).filter(
+            RakutenProduct.id == data.product_id).first()
+    elif (data.sku or "").strip():
+        product = db.query(RakutenProduct).filter(
+            RakutenProduct.sku == data.sku.strip()).first()
+
+    def pick(value, attr, default=None):
+        if value is not None and value != "":
+            return value
+        if product is not None:
+            v = getattr(product, attr, None)
+            if v is not None and v != "":
+                return v
+        return default
+
+    order_date = (data.order_date or datetime.now().strftime("%Y-%m-%d")).strip()
+    set_count = data.set_count or 0
+    unit_price = pick(data.unit_price, "packing_unit_price", 0) or 0
+
+    row = WelfarePackingOrder(
+        order_month=(data.order_month or _month_of(order_date)),
+        order_date=order_date,
+        priority=data.priority,
+        product_id=product.id if product else None,
+        sku=pick(data.sku, "sku", ""),
+        name_jp=pick(data.name_jp, "name", ""),
+        set_qty=pick(data.set_qty, "packing_set_qty", 0) or 0,
+        set_count=set_count,
+        unit_price=unit_price,
+        amount=_calc_amount(set_count, unit_price),
+        packing_material=pick(data.packing_material, "packing_material", ""),
+        packing_method=pick(data.packing_method, "packing_method", ""),
+        note=data.note or "",
+        status=data.status or "open",
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _packing_out(row)
+
+
+@router.patch("/packing-orders/{order_id}")
+def update_packing_order(order_id: int, data: PackingOrderIn, db: Session = Depends(get_db)):
+    row = db.query(WelfarePackingOrder).filter(WelfarePackingOrder.id == order_id).first()
+    if not row:
+        raise HTTPException(404, "作業依頼が見つかりません")
+
+    for field in ("order_month", "order_date", "priority", "sku", "name_jp",
+                  "set_qty", "set_count", "unit_price", "packing_material",
+                  "packing_method", "note", "completed_count"):
+        v = getattr(data, field, None)
+        if v is not None:
+            setattr(row, field, v)
+
+    if data.status is not None:
+        row.status = data.status
+        if data.status == "done" and row.completed_at is None:
+            row.completed_at = datetime.now(timezone.utc)
+            # 実績が未入力なら依頼数どおり作れたものとして扱う
+            if not row.completed_count:
+                row.completed_count = row.set_count
+        if data.status != "done":
+            row.completed_at = None
+
+    # 金額は常に セット数 × 単価 で置き直す（手で編集させると請求がずれる）
+    row.amount = _calc_amount(row.set_count, row.unit_price)
+    if row.order_date and not row.order_month:
+        row.order_month = _month_of(row.order_date)
+
+    db.commit()
+    db.refresh(row)
+    return _packing_out(row)
+
+
+@router.delete("/packing-orders/{order_id}")
+def delete_packing_order(order_id: int, db: Session = Depends(get_db)):
+    row = db.query(WelfarePackingOrder).filter(WelfarePackingOrder.id == order_id).first()
+    if not row:
+        raise HTTPException(404, "作業依頼が見つかりません")
+    db.delete(row)
+    db.commit()
+    return {"deleted": order_id}

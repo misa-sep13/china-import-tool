@@ -221,6 +221,15 @@ def _migrate():
         # 販促品／レビュー特典フラグ。楽天に出品していないのでRMS push・発注推奨・
         # 在庫一覧の対象外にするが、就労支援在庫の数量把握のためマスタ登録は可能にする
         ("rakuten_products","is_promo", "ALTER TABLE rakuten_products ADD COLUMN is_promo BOOLEAN DEFAULT FALSE"),
+        # 就労支援さんへの再梱包依頼で使う（商品ごとに毎回同じ内容なのでマスタに持たせる）
+        ("rakuten_products","packing_material",
+         "ALTER TABLE rakuten_products ADD COLUMN packing_material TEXT"),
+        ("rakuten_products","packing_method",
+         "ALTER TABLE rakuten_products ADD COLUMN packing_method TEXT"),
+        ("rakuten_products","packing_unit_price",
+         "ALTER TABLE rakuten_products ADD COLUMN packing_unit_price FLOAT"),
+        ("rakuten_products","packing_set_qty",
+         "ALTER TABLE rakuten_products ADD COLUMN packing_set_qty INTEGER"),
     ]
 
     inspector = inspect(engine)

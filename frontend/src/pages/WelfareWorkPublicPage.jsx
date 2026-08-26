@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../api/client'
+import WelfarePackingOrders from '../components/WelfarePackingOrders'
 
 const fmtDate = (v) => {
   if (!v) return ''
@@ -58,6 +59,8 @@ const imageThumb = (src) => (
 export default function WelfareWorkPublicPage() {
   const [search, setSearch] = useState('')
   const [activeWorkDate, setActiveWorkDate] = useState('')
+  // 荷受けの作業指示と、再梱包の作業依頼を切り替える
+  const [view, setView] = useState('work')
 
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ['welfare-work-public', search],
@@ -118,6 +121,25 @@ export default function WelfareWorkPublicPage() {
           <button className="btn btn-secondary" onClick={() => window.print()}>印刷</button>
         </div>
 
+        {/* 荷受けの指示と、再梱包の作業依頼は見る場面が違うのでタブで分ける */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }} className="no-print">
+          {[
+            { key: 'work', label: '荷受けの作業指示' },
+            { key: 'packing', label: '再梱包の作業依頼' },
+          ].map(t => (
+            <button
+              key={t.key}
+              onClick={() => setView(t.key)}
+              className={view === t.key ? 'btn btn-primary' : 'btn btn-secondary'}
+              style={{ minWidth: 160 }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {view === 'packing' ? <WelfarePackingOrders /> : (
+        <>
         <div className="top-actions">
           <input
             className="search-input-ja"
@@ -203,6 +225,8 @@ export default function WelfareWorkPublicPage() {
             </div>
           )}
         </div>
+        </>
+        )}
       </div>
     </div>
   )

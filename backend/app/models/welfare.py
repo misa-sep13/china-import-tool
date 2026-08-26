@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, DateTime, Text, ForeignKey
+from sqlalchemy import Boolean, Column, Integer, Float, String, DateTime, Text, ForeignKey
 from sqlalchemy.sql import func
 from app.core.database import Base
 
@@ -75,5 +75,48 @@ class WelfareWorkInstruction(Base):
     # 「就労支援在庫に反映」で残の数量だけを在庫化する。二重計上防止用。
     is_reflected = Column(Boolean, default=False, index=True)
     reflected_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class WelfarePackingOrder(Base):
+    """就労支援さんへの再梱包の作業依頼。
+
+    従来はスプレッドシートで毎回シートを複製し、作る商品にセット数を書いて
+    渡していた。それをツール内で完結させる。
+
+    金額は「セット数 × 1セットあたりの単価」。単価・梱包材・梱包方法は
+    商品ごとに毎回同じなので商品マスタ(rakuten_products.packing_*)に持たせ、
+    依頼作成時にコピーしてくる。今回だけ違う場合はこちらで上書きできる
+    （後からマスタを直しても、過去の依頼の金額が変わらないようにするため）。
+
+    請求は order_month（YYYY-MM）single単位で集計する。
+    """
+    __tablename__ = "welfare_packing_orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_month = Column(String, index=True)   # 請求の単位 YYYY-MM
+    order_date = Column(String, index=True)    # 依頼日 YYYY-MM-DD
+    priority = Column(Integer)                 # 優先順位（小さいほど先）
+
+    product_id = Column(Integer, ForeignKey("rakuten_products.id"), nullable=True, index=True)
+    sku = Column(String, index=True)
+    name_jp = Column(String)
+    image_data_url = Column(Text)
+
+    set_qty = Column(Integer, default=0)       # 1セットに入れる数（全数量）
+    set_count = Column(Integer, default=0)     # 作るセット数
+    unit_price = Column(Float, default=0)      # 1セットあたりの報酬（円）
+    amount = Column(Float, default=0)          # set_count × unit_price
+
+    packing_material = Column(Text)            # 梱包材の種類
+    packing_method = Column(Text)              # 梱包方法
+    note = Column(Text)
+
+    # 依頼中 / 完了。完了にした分も請求には含める
+    status = Column(String, default="open", index=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    completed_count = Column(Integer, default=0)   # 実際に作れた数（未入力なら set_count）
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

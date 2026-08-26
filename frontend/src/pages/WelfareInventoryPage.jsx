@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
+import WelfarePackingAdmin from '../components/WelfarePackingAdmin'
 
 const fmtDate = (v) => {
   if (!v) return '-'
@@ -546,6 +547,12 @@ export default function WelfareInventoryPage() {
         >
           就労支援荷受け
         </button>
+        <button
+          className={`btn ${activeTab === 'packing' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setActiveTab('packing')}
+        >
+          再梱包の作業依頼
+        </button>
       </div>
 
       {importResult && (
@@ -676,6 +683,8 @@ export default function WelfareInventoryPage() {
           )}
         </div>
       )}
+
+      {activeTab === 'packing' && <WelfarePackingAdmin />}
 
       {activeTab === 'inventory' && <div className="card">
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
