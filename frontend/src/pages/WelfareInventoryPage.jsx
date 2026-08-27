@@ -718,7 +718,7 @@ export default function WelfareInventoryPage() {
                   <th>換算</th>
                   <th>入荷数</th>
                   <th>残量</th>
-                  <th>指示</th>
+                  <th>実在庫</th>
                   <th>備考</th>
                   <th>更新</th>
                   <th></th>
@@ -776,7 +776,11 @@ export default function WelfareInventoryPage() {
                           )}
                         </div>
                       </td>
-                      <td style={{ minWidth: 160 }}>{item.instruction || '-'}</td>
+                      {/* 楽天「在庫・損益」に登録されている実在庫。
+                          就労支援の手元の残量とは別物なので青で見分けられるようにする */}
+                      <td style={{ textAlign: 'right', fontWeight: 700, color: '#2563eb' }}>
+                        {item.rakuten_stock == null ? '-' : item.rakuten_stock.toLocaleString()}
+                      </td>
                       <td style={{ minWidth: 160 }}>{item.note || '-'}</td>
                       <td style={{ whiteSpace: 'nowrap', color: '#64748b', fontSize: 12 }}>{fmtDate(item.last_received_at)}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>
