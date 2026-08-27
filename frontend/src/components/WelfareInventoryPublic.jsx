@@ -19,14 +19,19 @@ export default function WelfareInventoryPublic() {
 
   const visible = useMemo(() => {
     // 残がないものは作業に使えないので出さない
-    const list = rows.filter(r => (r.remaining_qty || 0) > 0)
+    let list = rows.filter(r => (r.remaining_qty || 0) > 0)
     const q = search.trim().toLowerCase()
-    if (!q) return list
-    return list.filter(r =>
-      (r.sku || '').toLowerCase().includes(q)
-      || (r.name_jp || '').toLowerCase().includes(q)
-      || (r.supplier_spec || '').toLowerCase().includes(q)
-    )
+    if (q) {
+      list = list.filter(r =>
+        (r.sku || '').toLowerCase().includes(q)
+        || (r.name_jp || '').toLowerCase().includes(q)
+        || (r.supplier_spec || '').toLowerCase().includes(q)
+      )
+    }
+    // 数量順だと探しにくいのでSKU順に並べる。
+    // y9 と y10 が入れ違わないよう、数字の部分は数として比べる
+    return [...list].sort((a, b) =>
+      (a.sku || '').localeCompare(b.sku || '', 'ja', { numeric: true }))
   }, [rows, search])
 
   return (
@@ -52,10 +57,10 @@ export default function WelfareInventoryPublic() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, whiteSpace: 'nowrap' }}>
             <thead>
               <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-                {['写真', 'SKU', '商品名', '仕様', '換算', '残量', '指示', '備考'].map(h => (
+                {['写真', 'SKU', '商品名', '仕様', '換算', '残量', '実在庫', '備考'].map(h => (
                   <th key={h} style={{
                     padding: '10px 12px',
-                    textAlign: ['残量', '換算'].includes(h) ? 'right' : 'left',
+                    textAlign: ['残量', '実在庫', '換算'].includes(h) ? 'right' : 'left',
                   }}>{h}</th>
                 ))}
               </tr>
@@ -81,11 +86,16 @@ export default function WelfareInventoryPublic() {
                   <td style={{ padding: '10px 12px', textAlign: 'right' }}>
                     {(r.unit_per_set || 1) > 1 ? `${r.unit_per_set}個で1` : '1個で1'}
                   </td>
-                  <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700 }}>
+                  <td style={{ padding: '10px 12px', textAlign: 'right' }}>
                     {(r.remaining_qty || 0).toLocaleString()}
                   </td>
-                  <td style={{ padding: '10px 12px', whiteSpace: 'normal', maxWidth: 200 }}>
-                    {r.instruction || '-'}
+                  {/* 楽天「在庫・損益」に登録されている実在庫。
+                      就労支援の手元の残量とは別物なので青で見分けられるようにする */}
+                  <td style={{
+                    padding: '10px 12px', textAlign: 'right',
+                    fontWeight: 700, color: '#2563eb',
+                  }}>
+                    {r.rakuten_stock == null ? '-' : r.rakuten_stock.toLocaleString()}
                   </td>
                   <td style={{ padding: '10px 12px', whiteSpace: 'normal', maxWidth: 200 }}>
                     {r.note || '-'}

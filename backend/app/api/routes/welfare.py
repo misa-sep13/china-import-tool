@@ -243,6 +243,9 @@ def list_inventory(q: Optional[str] = None, db: Session = Depends(get_db)):
             d["sku"] = p.sku
             if p.name:
                 d["name_jp"] = p.name
+        # 楽天「在庫・損益」に登録されている実在庫。就労支援の手元の残量とは別物
+        # （手元にあっても出品在庫に入れていない分などがあるため）
+        d["rakuten_stock"] = (p.stock if p else None)
         result.append(d)
     return result
 
