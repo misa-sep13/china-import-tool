@@ -1393,9 +1393,19 @@ def delete_packing_task(task_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/packing-tasks/bulk")
-def bulk_upsert_packing_tasks(data: list[PackingTaskIn], db: Session = Depends(get_db)):
-    """作業マスタをまとめて登録する。同じ作業名があれば上書きする。"""
+def bulk_upsert_packing_tasks(
+    data: list[PackingTaskIn],
+    deactivate_missing: bool = False,
+    db: Session = Depends(get_db),
+):
+    """作業マスタをまとめて登録する。同じ作業名があれば上書きする。
+
+    deactivate_missing=true のときは、送ったリストに無い作業を無効にする。
+    取り込む内容を減らしたときに、前回入れた分を画面から消すために使う。
+    削除ではなく無効化なのは、過去の依頼から辿れるようにしておくため。
+    """
     created = updated = 0
+    sent_names = {(i.name or "").strip() for i in data if (i.name or "").strip()}
     for i, item in enumerate(data):
         name = (item.name or "").strip()
         if not name:
@@ -1416,5 +1426,14 @@ def bulk_upsert_packing_tasks(data: list[PackingTaskIn], db: Session = Depends(g
         row.note = item.note or ""
         row.sort_order = item.sort_order if item.sort_order is not None else i
         row.is_active = True
+
+    deactivated = 0
+    if deactivate_missing:
+        for row in db.query(WelfarePackingTask).filter(
+                WelfarePackingTask.is_active == True).all():
+            if (row.name or "").strip() not in sent_names:
+                row.is_active = False
+                deactivated += 1
+
     db.commit()
-    return {"created": created, "updated": updated}
+    return {"created": created, "updated": updated, "deactivated": deactivated}

@@ -95,12 +95,22 @@ export default function WelfarePackingAdmin() {
   // 初回だけ使う想定の取り込み。作業名で照合して上書きするので、
   // 間違えて2回押しても増えない
   const seedTasks = useMutation({
-    mutationFn: () => api.post('/welfare/packing-tasks/bulk', initialTasks).then(r => r.data),
+    // deactivate_missing: リストから外した作業は一覧から消す。
+    // 取り込む内容を減らしたとき、前回入れた分が残らないようにするため
+    mutationFn: () => api.post('/welfare/packing-tasks/bulk', initialTasks,
+      { params: { deactivate_missing: true } }).then(r => r.data),
     onSuccess: (d) => {
       refreshTasks()
-      alert(`取り込みました（新規${d.created}件 / 更新${d.updated}件）`)
+      alert(`取り込みました（新規${d.created}件 / 更新${d.updated}件`
+        + `${d.deactivated ? ` / 一覧から外した${d.deactivated}件` : ''}）`)
     },
     onError: (e) => alert('取り込みエラー: ' + (e.response?.data?.detail || e.message)),
+  })
+
+  const removeTask = useMutation({
+    mutationFn: (id) => api.delete(`/welfare/packing-tasks/${id}`),
+    onSuccess: refreshTasks,
+    onError: (e) => alert('削除エラー: ' + (e.response?.data?.detail || e.message)),
   })
 
   const updateTask = useMutation({
@@ -332,7 +342,7 @@ export default function WelfarePackingAdmin() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-                  {['作業名', 'SKU', '楽天の商品名', '全数量', '単価', '梱包材', '作業内容'].map(h => (
+                  {['作業名', 'SKU', '楽天の商品名', '全数量', '単価', '梱包材', '作業内容', ''].map(h => (
                     <th key={h} style={{ padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -379,6 +389,18 @@ export default function WelfarePackingAdmin() {
                           const v = e.target.value
                           if (v !== (t.packing_method || '')) updateTask.mutate({ id: t.id, body: { packing_method: v } })
                         }} />
+                    </td>
+                    <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                      <button className="btn btn-secondary"
+                        style={{ padding: '2px 8px', fontSize: 12, color: '#dc2626' }}
+                        onClick={() => {
+                          if (confirm(`「${t.name}」を一覧から外しますか？
+過去の依頼はそのまま残ります。`)) {
+                            removeTask.mutate(t.id)
+                          }
+                        }}>
+                        削除
+                      </button>
                     </td>
                   </tr>
                 ))}
