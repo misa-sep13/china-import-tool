@@ -57,10 +57,10 @@ export default function WelfareInventoryPublic() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, whiteSpace: 'nowrap' }}>
             <thead>
               <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-                {['写真', 'SKU', '商品名', '仕様', '換算', '残量', '実在庫', '備考'].map(h => (
+                {['写真', 'SKU', '商品名', '仕様', '換算', '入荷数', '残量', '実在庫', '備考'].map(h => (
                   <th key={h} style={{
                     padding: '10px 12px',
-                    textAlign: ['残量', '実在庫', '換算'].includes(h) ? 'right' : 'left',
+                    textAlign: ['入荷数', '残量', '実在庫', '換算'].includes(h) ? 'right' : 'left',
                   }}>{h}</th>
                 ))}
               </tr>
@@ -85,6 +85,9 @@ export default function WelfareInventoryPublic() {
                   </td>
                   <td style={{ padding: '10px 12px', textAlign: 'right' }}>
                     {(r.unit_per_set || 1) > 1 ? `${r.unit_per_set}個で1` : '1個で1'}
+                  </td>
+                  <td style={{ padding: '10px 12px', textAlign: 'right', color: '#64748b' }}>
+                    {(r.total_received_qty || 0).toLocaleString()}
                   </td>
                   <td style={{ padding: '10px 12px', textAlign: 'right' }}>
                     {(r.remaining_qty || 0).toLocaleString()}
