@@ -8,6 +8,17 @@ const fmtDate = (v) => {
   try { return new Date(v).toLocaleDateString('ja-JP') } catch { return v }
 }
 
+// シート名が日付として読めない便（例: 物流面单）は、取り込んだ日をタブ名にする。
+// 管理画面(WelfareInventoryPage)と同じ扱いにしないと、同じデータなのに
+// 管理画面では「8/25」、公開ページでは「物流面单」と別のタブ名になってしまう
+const fmtImportDate = (row) => {
+  const ts = row.created_at || row.updated_at
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
 const fmtWorkDate = (row) => {
   const sheet = String(row.source_sheet || '').trim()
   if (/^\d{2}$/.test(sheet)) return `${Number(sheet.slice(0, 1))}/${Number(sheet.slice(1))}`
@@ -24,7 +35,7 @@ const fmtWorkDate = (row) => {
     const day = d.length === 3 ? Number(d.slice(1)) : Number(d.slice(2))
     return `${month}/${day}${compact[2]}`
   }
-  return sheet || fmtDate(row.order_date) || '-'
+  return fmtImportDate(row) || sheet || fmtDate(row.order_date) || '-'
 }
 
 const workDateSortValue = (date) => {
