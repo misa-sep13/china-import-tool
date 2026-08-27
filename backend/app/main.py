@@ -1213,7 +1213,15 @@ from app.core.auth import auth_enabled, verify_token, check_service_token
 # ・就労支援の公開ページ（work-public）が使う一覧取得は、施設の作業者が
 #   ログインなしで見るためのものなので除外
 _AUTH_EXEMPT_PREFIXES = ("/api/auth/", "/docs", "/openapi.json", "/redoc")
-_AUTH_PUBLIC_GET_PATHS = {"/api/welfare/work-instructions"}
+# 就労支援さん用の公開ページ(/welfare/work-public)はログイン不要で開くので、
+# そこが読むGETだけを公開する。書き込み(POST/PATCH/DELETE)は対象外なので、
+# 公開ページから依頼を作ったり金額を変えたりはできない。
+# 作業マスタ(packing-tasks)は公開ページで使わないため、あえて入れていない。
+_AUTH_PUBLIC_GET_PATHS = {
+    "/api/welfare/work-instructions",
+    "/api/welfare/packing-orders",
+    "/api/welfare/packing-orders/months",
+}
 # 外注さんには見せない（APIキー等が見える設定画面）
 _AUTH_OWNER_ONLY_PREFIXES = ("/api/settings", "/api/rakuten/settings")
 
