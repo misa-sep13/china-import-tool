@@ -1084,6 +1084,7 @@ class PackingOrderIn(BaseModel):
     order_date: Optional[str] = None
     priority: Optional[int] = None
     task_id: Optional[int] = None        # 作業マスタから作る場合
+    source_batch: Optional[str] = None   # どの便の荷受けから作ったか
     sku: Optional[str] = None
     name_jp: Optional[str] = None
     set_qty: Optional[int] = None
@@ -1103,6 +1104,7 @@ def _packing_out(r: WelfarePackingOrder) -> dict:
         "order_date": r.order_date,
         "priority": r.priority,
         "task_id": r.task_id,
+        "source_batch": r.source_batch,
         "sku": r.sku,
         "name_jp": r.name_jp,
         "image_data_url": r.image_data_url,
@@ -1219,6 +1221,7 @@ def create_packing_order(data: PackingOrderIn, db: Session = Depends(get_db)):
         order_date=order_date,
         priority=data.priority,
         task_id=task.id if task else None,
+        source_batch=(data.source_batch or ""),
         sku=pick(data.sku, "sku", ""),
         name_jp=name,
         set_qty=pick(data.set_qty, "set_qty", 0) or 0,
@@ -1494,10 +1497,13 @@ def packing_order_candidates(
         base = re.split(r"[_-]", s, maxsplit=1)[0]
         return base if base in task_by_code else ""
 
-    # すでに依頼にした分は候補から外す（同じ月に二重で作らないため）
-    ordered_task_ids = {
-        o.task_id for o in db.query(WelfarePackingOrder).filter(
-            WelfarePackingOrder.status == "open").all()
+    # 同じ便から二重に依頼を作らないよう、依頼済みの (便, 作業) を控える。
+    # 便が違えば同じ作業でも候補に出す（別の便で同じ商品が来たとき、
+    # 前の依頼がまだ作業中でも気づけるようにするため）。
+    # 依頼した便は、依頼を作ったときの荷受け側の便ラベルを note に持たせている
+    ordered_pairs = {
+        (o.source_batch or "", o.task_id)
+        for o in db.query(WelfarePackingOrder).all()
         if o.task_id
     }
 
@@ -1519,7 +1525,9 @@ def packing_order_candidates(
         if not code:
             continue
         task = task_by_code.get(code)
-        if task is None or task.id in ordered_task_ids:
+        if task is None:
+            continue
+        if (label, task.id) in ordered_pairs:
             continue
 
         e = grouped.setdefault((label, task.id), {

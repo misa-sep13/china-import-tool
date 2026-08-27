@@ -278,6 +278,8 @@ export default function WelfarePackingAdmin() {
                             priority: i + 1,
                             task_id: x.task_id,
                             set_count: picked[x.task_id],
+                            // どの便から作ったかを残す。同じ便から二重に作らないため
+                            source_batch: activeBatch,
                           })
                         }
                         setPicked({})

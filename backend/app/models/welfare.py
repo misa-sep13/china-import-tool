@@ -129,6 +129,9 @@ class WelfarePackingOrder(Base):
     priority = Column(Integer)                 # 優先順位（小さいほど先）
 
     task_id = Column(Integer, ForeignKey("welfare_packing_tasks.id"), nullable=True, index=True)
+    # どの便の荷受けから作った依頼か（"8/25"）。同じ便から二重に作らないために持つ。
+    # 便が違えば同じ作業でも作れる（別の便で同じ商品が来ることがあるため）
+    source_batch = Column(String, index=True)
     product_id = Column(Integer, ForeignKey("rakuten_products.id"), nullable=True, index=True)
     sku = Column(String, index=True)
     name_jp = Column(String)
