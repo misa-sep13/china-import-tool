@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 import base64
 import io
 import json
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
@@ -1235,7 +1236,7 @@ def create_packing_order(data: PackingOrderIn, db: Session = Depends(get_db)):
     return _packing_out(row)
 
 
-@router.patch("/packing-orders/{order_id}")
+@router.patch("/packing-orders/{order_id:int}")
 def update_packing_order(order_id: int, data: PackingOrderIn, db: Session = Depends(get_db)):
     row = db.query(WelfarePackingOrder).filter(WelfarePackingOrder.id == order_id).first()
     if not row:
@@ -1268,7 +1269,7 @@ def update_packing_order(order_id: int, data: PackingOrderIn, db: Session = Depe
     return _packing_out(row)
 
 
-@router.delete("/packing-orders/{order_id}")
+@router.delete("/packing-orders/{order_id:int}")
 def delete_packing_order(order_id: int, db: Session = Depends(get_db)):
     row = db.query(WelfarePackingOrder).filter(WelfarePackingOrder.id == order_id).first()
     if not row:
@@ -1368,7 +1369,7 @@ def create_packing_task(data: PackingTaskIn, db: Session = Depends(get_db)):
     return _task_out(row)
 
 
-@router.patch("/packing-tasks/{task_id}")
+@router.patch("/packing-tasks/{task_id:int}")
 def update_packing_task(task_id: int, data: PackingTaskIn, db: Session = Depends(get_db)):
     row = db.query(WelfarePackingTask).filter(WelfarePackingTask.id == task_id).first()
     if not row:
@@ -1383,7 +1384,7 @@ def update_packing_task(task_id: int, data: PackingTaskIn, db: Session = Depends
     return _task_out(row)
 
 
-@router.delete("/packing-tasks/{task_id}")
+@router.delete("/packing-tasks/{task_id:int}")
 def delete_packing_task(task_id: int, db: Session = Depends(get_db)):
     """使わなくなった作業は無効にする。過去の依頼は残したいので削除はしない。"""
     row = db.query(WelfarePackingTask).filter(WelfarePackingTask.id == task_id).first()
@@ -1445,3 +1446,107 @@ def bulk_upsert_packing_tasks(
 
     db.commit()
     return {"created": created, "updated": updated, "deactivated": deactivated}
+
+
+@router.get("/packing-orders/candidates")
+def packing_order_candidates(
+    since: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """荷受けで「作業」指示が付いた商品から、作業依頼の候補を作って返す。
+
+    since(YYYY-MM-DD)を渡すと、その日以降に取り込んだ荷受けだけを見る。
+    未指定だと過去の未処理分まで全部積み上がって実態と合わなくなるため、
+    画面からは直近の便に絞って使う。
+
+    荷受けのSKUは色・サイズ違いまで分かれている（y48_glay-s）が、
+    作業マスタは商品ページ単位（y48）なので、rakuten_item_url で寄せる。
+    同じ作業に当たる荷受け行は1つにまとめる（色違いをまとめて何セット作るか）。
+
+    セット数は 残数 ÷ 1セットの数。割り切れない分は切り捨てる
+    （足りない分で1セット作れないため）。
+    """
+    tasks = db.query(WelfarePackingTask).filter(
+        WelfarePackingTask.is_active == True).all()
+    task_by_code = {}
+    for t in tasks:
+        code = (t.sku or "").strip()
+        if code:
+            task_by_code.setdefault(code, t)
+    if not task_by_code:
+        return {"candidates": [], "message": "作業マスタが未登録です"}
+
+    # 商品SKU → 商品ページのコード
+    code_by_sku = {}
+    for p in db.query(RakutenProduct).all():
+        code = (p.rakuten_item_url or "").strip()
+        if code:
+            code_by_sku[p.sku] = code
+
+    def code_of(sku: str) -> str:
+        s = (sku or "").strip()
+        if not s:
+            return ""
+        if s in code_by_sku:
+            return code_by_sku[s]
+        if s in task_by_code:
+            return s
+        base = re.split(r"[_-]", s, maxsplit=1)[0]
+        return base if base in task_by_code else ""
+
+    # すでに依頼にした分は候補から外す（同じ月に二重で作らないため）
+    ordered_task_ids = {
+        o.task_id for o in db.query(WelfarePackingOrder).filter(
+            WelfarePackingOrder.status == "open").all()
+        if o.task_id
+    }
+
+    grouped: dict[int, dict] = {}
+    rows = db.query(WelfareWorkInstruction).all()
+    for r in rows:
+        remaining = r.remaining_qty or 0
+        if remaining <= 0:
+            continue
+        if since:
+            # 取り込んだ日で絞る。荷受けは同じ便がまとめて入るのでこれで足りる
+            ts = r.created_at or r.updated_at
+            if ts is None or ts.strftime("%Y-%m-%d") < since:
+                continue
+        # 「作業」を含む指示だけが対象（保管だけの行は再梱包しない）
+        if "作業" not in str(r.instruction or ""):
+            continue
+        code = code_of(r.sku)
+        if not code:
+            continue
+        task = task_by_code.get(code)
+        if task is None or task.id in ordered_task_ids:
+            continue
+
+        e = grouped.setdefault(task.id, {
+            "task_id": task.id,
+            "task_name": task.name,
+            "sku": code,
+            "set_qty": task.set_qty,
+            "unit_price": task.unit_price or 0,
+            "packing_material": task.packing_material,
+            "packing_method": task.packing_method,
+            "remaining_qty": 0,
+            "sources": [],
+        })
+        e["remaining_qty"] += remaining
+        e["sources"].append({
+            "sku": r.sku,
+            "name_jp": r.name_jp,
+            "remaining_qty": remaining,
+            "order_date": r.order_date,
+        })
+
+    out = []
+    for e in grouped.values():
+        per = e["set_qty"] or 1
+        e["suggested_set_count"] = int(e["remaining_qty"] // per) if per > 0 else 0
+        e["suggested_amount"] = round(e["suggested_set_count"] * (e["unit_price"] or 0), 2)
+        out.append(e)
+
+    out.sort(key=lambda x: -x["suggested_amount"])
+    return {"candidates": out}

@@ -26,6 +26,13 @@ export default function WelfarePackingAdmin() {
   })
   const [taskQuery, setTaskQuery] = useState('')
   const [taskSearch, setTaskSearch] = useState('')
+  // 荷受けから作った候補。既定は直近30日ぶんだけ見る
+  // （全期間だと過去の未処理分まで積み上がって実態と合わない）
+  const [since, setSince] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30)
+    return d.toISOString().slice(0, 10)
+  })
+  const [picked, setPicked] = useState({})   // {task_id: セット数}
   // 商品と紐づかない作業（郵便書簡・封筒など）を手で足すためのフォーム
   const [newTask, setNewTask] = useState({
     name: '', sku: '', set_qty: '', unit_price: '', packing_material: '', packing_method: '',
@@ -43,10 +50,16 @@ export default function WelfarePackingAdmin() {
     queryKey: ['packing-tasks'],
     queryFn: () => api.get('/welfare/packing-tasks').then(r => r.data),
   })
+  const { data: candData, isFetching: candLoading } = useQuery({
+    queryKey: ['packing-candidates', since],
+    queryFn: () => api.get('/welfare/packing-orders/candidates',
+      { params: since ? { since } : {} }).then(r => r.data),
+  })
 
   const rows = data?.items || []
   const months = monthsData?.months || []
   const tasks = tasksData?.tasks || []
+  const fromReceiving = candData?.candidates || []   // 荷受けから作った依頼の候補
 
   const candidates = useMemo(() => {
     const q = taskQuery.trim().toLowerCase()
@@ -170,7 +183,116 @@ export default function WelfarePackingAdmin() {
             </div>
           </div>
 
-          {/* 依頼の追加 */}
+          {/* 荷受けから作った候補。チェックして一括で依頼にする */}
+          <details open={fromReceiving.length > 0} style={{ marginBottom: 16 }}>
+            <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 600, padding: '6px 0' }}>
+              荷受けから作業依頼を作る（{candLoading ? '…' : `${fromReceiving.length}件`}）
+            </summary>
+            <div style={{
+              padding: 14, marginTop: 8, borderRadius: 8,
+              background: '#f0f9ff', border: '1px solid #bae6fd',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+                <label style={{ fontSize: 12, color: '#0c4a6e' }}>いつ以降の荷受けを見るか</label>
+                <input type="date" value={since} style={{ width: 'auto' }}
+                  onChange={e => setSince(e.target.value)} />
+                <span style={{ fontSize: 12, color: '#0369a1' }}>
+                  「作業」指示が付いた商品から、作れるセット数を出しています
+                </span>
+              </div>
+
+              {fromReceiving.length === 0 ? (
+                <div style={{ padding: 16, textAlign: 'center', color: '#64748b', fontSize: 13 }}>
+                  {candLoading ? '読み込み中...' : '対象の荷受けがありません'}
+                </div>
+              ) : (
+                <>
+                  <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 6 }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                          {['', '作業名', 'SKU', '荷受けの残', '入数', 'セット数', '金額'].map(h => (
+                            <th key={h} style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {fromReceiving.map(x => {
+                          const on = picked[x.task_id] !== undefined
+                          const count = on ? picked[x.task_id] : x.suggested_set_count
+                          return (
+                            <tr key={x.task_id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                              <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                                <input type="checkbox" checked={on} style={{ width: 'auto' }}
+                                  onChange={e => setPicked(p => {
+                                    const n = { ...p }
+                                    if (e.target.checked) n[x.task_id] = x.suggested_set_count
+                                    else delete n[x.task_id]
+                                    return n
+                                  })} />
+                              </td>
+                              <td style={{ padding: '8px 10px' }}>
+                                <div style={{ fontWeight: 600 }}>{x.task_name}</div>
+                                <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                  {x.sources.length}件の荷受けから
+                                </div>
+                              </td>
+                              <td style={{ padding: '8px 10px' }}>{x.sku}</td>
+                              <td style={{ padding: '8px 10px', textAlign: 'right' }}>{x.remaining_qty}</td>
+                              <td style={{ padding: '8px 10px', textAlign: 'right' }}>{x.set_qty || 1}</td>
+                              <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                                <input type="number" value={count} style={{ width: 80 }}
+                                  disabled={!on}
+                                  onChange={e => setPicked(p => ({ ...p, [x.task_id]: Number(e.target.value || 0) }))} />
+                              </td>
+                              <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>
+                                {yen(count * (x.unit_price || 0))}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                    <button className="btn btn-primary"
+                      disabled={Object.keys(picked).length === 0 || create.isPending}
+                      onClick={async () => {
+                        const list = fromReceiving.filter(x => picked[x.task_id] !== undefined)
+                        if (!list.length) return
+                        const total = list.reduce((s, x) => s + picked[x.task_id] * (x.unit_price || 0), 0)
+                        if (!confirm(`${list.length}件を${form.order_date}の依頼にします（合計${yen(total)}）`)) return
+                        for (const [i, x] of list.entries()) {
+                          await api.post('/welfare/packing-orders', {
+                            order_date: form.order_date,
+                            priority: i + 1,
+                            task_id: x.task_id,
+                            set_count: picked[x.task_id],
+                          })
+                        }
+                        setPicked({})
+                        refresh()
+                        qc.invalidateQueries({ queryKey: ['packing-fromReceiving'] })
+                      }}>
+                      選んだ{Object.keys(picked).length}件を依頼にする
+                    </button>
+                    <button className="btn btn-secondary"
+                      onClick={() => setPicked(
+                        Object.fromEntries(fromReceiving.map(x => [x.task_id, x.suggested_set_count])))}>
+                      すべて選ぶ
+                    </button>
+                    {Object.keys(picked).length > 0 && (
+                      <button className="btn btn-secondary" onClick={() => setPicked({})}>
+                        選択を外す
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </details>
+
+          {/* 依頼の追加（手入力） */}
           <div style={{
             padding: 14, marginBottom: 16, borderRadius: 8,
             background: '#f8fafc', border: '1px solid #e2e8f0',
