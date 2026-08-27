@@ -1017,6 +1017,11 @@ def merge_duplicate_products(data: WelfareMergeProductsIn, db: Session = Depends
         keep_item.total_received_qty = (keep_item.total_received_qty or 0) + (remove_item.total_received_qty or 0)
         keep_item.withdrawn_qty = (keep_item.withdrawn_qty or 0) + (remove_item.withdrawn_qty or 0)
         keep_item.remaining_qty = (keep_item.remaining_qty or 0) + (remove_item.remaining_qty or 0)
+        # remove_item を消す前に、そこを参照している入出庫履歴をkeep_item側へ
+        # 付け替えないと、外部キー制約違反で削除に失敗する
+        db.query(WelfareInventoryMovement).filter(WelfareInventoryMovement.item_id == remove_item.id).update(
+            {"item_id": keep_item.id}
+        )
         db.delete(remove_item)
 
     # 履歴はkeep側の商品IDへ付け替えて残す（消さない）
