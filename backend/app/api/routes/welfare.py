@@ -12,7 +12,7 @@ from app.core.database import get_db
 from app.models.rakuten_product import RakutenProduct
 from app.models.welfare import (
     WelfareInventoryItem, WelfareInventoryMovement, WelfareWorkInstruction,
-    WelfarePackingOrder,
+    WelfarePackingTask, WelfarePackingOrder,
 )
 
 
@@ -1077,7 +1077,7 @@ class PackingOrderIn(BaseModel):
     order_month: Optional[str] = None    # 未指定なら order_date から作る
     order_date: Optional[str] = None
     priority: Optional[int] = None
-    product_id: Optional[int] = None
+    task_id: Optional[int] = None        # 作業マスタから作る場合
     sku: Optional[str] = None
     name_jp: Optional[str] = None
     set_qty: Optional[int] = None
@@ -1096,7 +1096,7 @@ def _packing_out(r: WelfarePackingOrder) -> dict:
         "order_month": r.order_month,
         "order_date": r.order_date,
         "priority": r.priority,
-        "product_id": r.product_id,
+        "task_id": r.task_id,
         "sku": r.sku,
         "name_jp": r.name_jp,
         "image_data_url": r.image_data_url,
@@ -1180,38 +1180,42 @@ def packing_order_months(db: Session = Depends(get_db)):
 def create_packing_order(data: PackingOrderIn, db: Session = Depends(get_db)):
     """作業依頼を1件作る。
 
-    梱包材・梱包方法・単価・1セットの数は、指定が無ければ商品マスタから引く。
+    梱包材・梱包方法・単価・1セットの数は、指定が無ければ作業マスタから引く。
     毎回同じ内容を入力し直さなくてよいようにするため。
+    引いた値は依頼側に控える（後からマスタを直しても過去の請求額が動かないように）。
     """
-    product = None
-    if data.product_id:
-        product = db.query(RakutenProduct).filter(
-            RakutenProduct.id == data.product_id).first()
-    elif (data.sku or "").strip():
-        product = db.query(RakutenProduct).filter(
-            RakutenProduct.sku == data.sku.strip()).first()
+    task = None
+    if data.task_id:
+        task = db.query(WelfarePackingTask).filter(
+            WelfarePackingTask.id == data.task_id).first()
+        if not task:
+            raise HTTPException(404, "作業マスタが見つかりません")
 
     def pick(value, attr, default=None):
         if value is not None and value != "":
             return value
-        if product is not None:
-            v = getattr(product, attr, None)
+        if task is not None:
+            v = getattr(task, attr, None)
             if v is not None and v != "":
                 return v
         return default
 
     order_date = (data.order_date or datetime.now().strftime("%Y-%m-%d")).strip()
     set_count = data.set_count or 0
-    unit_price = pick(data.unit_price, "packing_unit_price", 0) or 0
+    unit_price = pick(data.unit_price, "unit_price", 0) or 0
+
+    name = pick(data.name_jp, "name", "")
+    if not name:
+        raise HTTPException(400, "作業を選ぶか、作業名を入れてください")
 
     row = WelfarePackingOrder(
         order_month=(data.order_month or _month_of(order_date)),
         order_date=order_date,
         priority=data.priority,
-        product_id=product.id if product else None,
+        task_id=task.id if task else None,
         sku=pick(data.sku, "sku", ""),
-        name_jp=pick(data.name_jp, "name", ""),
-        set_qty=pick(data.set_qty, "packing_set_qty", 0) or 0,
+        name_jp=name,
+        set_qty=pick(data.set_qty, "set_qty", 0) or 0,
         set_count=set_count,
         unit_price=unit_price,
         amount=_calc_amount(set_count, unit_price),
@@ -1267,3 +1271,145 @@ def delete_packing_order(order_id: int, db: Session = Depends(get_db)):
     db.delete(row)
     db.commit()
     return {"deleted": order_id}
+
+
+# ============================================================
+# 再梱包の作業マスタ
+#
+# 「この商品はこう梱包する」を1件1作業として持つ。商品マスタとは分けている。
+# 同じ商品でも入数違いで作業が分かれたり、逆にマスタに無い作業もあるため。
+# ============================================================
+
+class PackingTaskIn(BaseModel):
+    name: Optional[str] = None
+    sku: Optional[str] = None
+    set_qty: Optional[int] = None
+    unit_price: Optional[float] = None
+    packing_material: Optional[str] = None
+    packing_method: Optional[str] = None
+    note: Optional[str] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+def _task_out(t: WelfarePackingTask, product: RakutenProduct | None = None) -> dict:
+    return {
+        "id": t.id,
+        "name": t.name,
+        "sku": t.sku,
+        "product_name": (product.name if product else None),
+        "set_qty": t.set_qty,
+        "unit_price": t.unit_price,
+        "packing_material": t.packing_material,
+        "packing_method": t.packing_method,
+        "note": t.note,
+        "sort_order": t.sort_order,
+        "is_active": t.is_active,
+    }
+
+
+@router.get("/packing-tasks")
+def list_packing_tasks(
+    q: Optional[str] = None,
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+):
+    """作業マスタ一覧。sku があれば商品マスタの名前も添えて返す（確認用）。"""
+    query = db.query(WelfarePackingTask)
+    if not include_inactive:
+        query = query.filter(WelfarePackingTask.is_active == True)
+    rows = query.all()
+
+    if q:
+        kw = q.strip().lower()
+        rows = [t for t in rows
+                if kw in (t.name or "").lower() or kw in (t.sku or "").lower()]
+
+    # SKUごとの商品名を1回で引く（表示の確認用なので厳密でなくてよい）
+    skus = {(t.sku or "").strip() for t in rows if (t.sku or "").strip()}
+    products: dict[str, RakutenProduct] = {}
+    if skus:
+        found = db.query(RakutenProduct).filter(
+            RakutenProduct.is_active == True).all()
+        for p in found:
+            code = (p.rakuten_item_url or "").strip() or p.sku
+            if code in skus and code not in products:
+                products[code] = p
+
+    rows.sort(key=lambda t: (t.sort_order or 0, t.name or ""))
+    return {"tasks": [_task_out(t, products.get((t.sku or "").strip())) for t in rows]}
+
+
+@router.post("/packing-tasks")
+def create_packing_task(data: PackingTaskIn, db: Session = Depends(get_db)):
+    if not (data.name or "").strip():
+        raise HTTPException(400, "作業名を入れてください")
+    row = WelfarePackingTask(
+        name=data.name.strip(),
+        sku=(data.sku or "").strip(),
+        set_qty=data.set_qty,
+        unit_price=data.unit_price or 0,
+        packing_material=data.packing_material or "",
+        packing_method=data.packing_method or "",
+        note=data.note or "",
+        sort_order=data.sort_order or 0,
+        is_active=True if data.is_active is None else data.is_active,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _task_out(row)
+
+
+@router.patch("/packing-tasks/{task_id}")
+def update_packing_task(task_id: int, data: PackingTaskIn, db: Session = Depends(get_db)):
+    row = db.query(WelfarePackingTask).filter(WelfarePackingTask.id == task_id).first()
+    if not row:
+        raise HTTPException(404, "作業マスタが見つかりません")
+    for field in ("name", "sku", "set_qty", "unit_price", "packing_material",
+                  "packing_method", "note", "sort_order", "is_active"):
+        v = getattr(data, field, None)
+        if v is not None:
+            setattr(row, field, v)
+    db.commit()
+    db.refresh(row)
+    return _task_out(row)
+
+
+@router.delete("/packing-tasks/{task_id}")
+def delete_packing_task(task_id: int, db: Session = Depends(get_db)):
+    """使わなくなった作業は無効にする。過去の依頼は残したいので削除はしない。"""
+    row = db.query(WelfarePackingTask).filter(WelfarePackingTask.id == task_id).first()
+    if not row:
+        raise HTTPException(404, "作業マスタが見つかりません")
+    row.is_active = False
+    db.commit()
+    return {"deactivated": task_id}
+
+
+@router.post("/packing-tasks/bulk")
+def bulk_upsert_packing_tasks(data: list[PackingTaskIn], db: Session = Depends(get_db)):
+    """作業マスタをまとめて登録する。同じ作業名があれば上書きする。"""
+    created = updated = 0
+    for i, item in enumerate(data):
+        name = (item.name or "").strip()
+        if not name:
+            continue
+        row = db.query(WelfarePackingTask).filter(
+            WelfarePackingTask.name == name).first()
+        if row is None:
+            row = WelfarePackingTask(name=name)
+            db.add(row)
+            created += 1
+        else:
+            updated += 1
+        row.sku = (item.sku or "").strip()
+        row.set_qty = item.set_qty
+        row.unit_price = item.unit_price or 0
+        row.packing_material = item.packing_material or ""
+        row.packing_method = item.packing_method or ""
+        row.note = item.note or ""
+        row.sort_order = item.sort_order if item.sort_order is not None else i
+        row.is_active = True
+    db.commit()
+    return {"created": created, "updated": updated}

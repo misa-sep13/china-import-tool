@@ -51,11 +51,5 @@ class RakutenProduct(Base):
     # レビューキャンペーン等の販促品（楽天には出品していない・在庫は就労支援の
     # 保管数把握のためだけにマスタ登録する）。RMS push・発注推奨・在庫一覧の対象外。
     is_promo     = Column(Boolean, default=False)
-    # 就労支援さんへの再梱包依頼で使う。商品ごとに毎回同じ内容なのでマスタに持たせ、
-    # 依頼を作るたびに入力し直さなくてよいようにする（依頼側で上書きも可）。
-    packing_material = Column(Text)          # 梱包材の種類（OPP大・チャック袋小 等）
-    packing_method   = Column(Text)          # 梱包方法の説明
-    packing_unit_price = Column(Float)       # 1セットあたりの報酬単価（円）
-    packing_set_qty  = Column(Integer)       # 1セットに入れる数（全数量）
     is_active    = Column(Boolean, default=True)
     created_at   = Column(DateTime, server_default=func.now())

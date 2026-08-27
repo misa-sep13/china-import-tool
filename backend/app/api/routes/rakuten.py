@@ -669,11 +669,6 @@ class RakutenProductIn(BaseModel):
     is_component:     bool = False          # 単品（セット構成用内部管理）フラグ
     is_material:      bool = False          # 発送用の梱包資材（商品原価に載せず資材費に計上）
     is_promo:         bool = False          # レビューキャンペーン等の販促品（楽天未出品・RMS push対象外）
-    # 就労支援さんへの再梱包依頼で使う。商品ごとに毎回同じ内容なのでマスタに持たせる
-    packing_material:   Optional[str] = None    # 梱包材の種類
-    packing_method:     Optional[str] = None    # 梱包方法（作業内容）
-    packing_unit_price: Optional[float] = None  # 1セットあたりの報酬（円）
-    packing_set_qty:    Optional[int] = None    # 1セットに入れる数
     is_active:        bool = True
 
 class RakutenProductOut(RakutenProductIn):

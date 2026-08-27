@@ -11,7 +11,6 @@ const EMPTY = {
   cost_jpy: null, selling_price: null, shipping_fee: 180,
   customer_memo: '', notes: '', memo: '',
   set_components: '', purchase_components: '', is_component: false, is_material: false, is_promo: false, is_active: true,
-  packing_set_qty: null, packing_unit_price: null, packing_material: '', packing_method: '',
 }
 
 const BASE_URL = api.defaults.baseURL || ''
@@ -568,38 +567,6 @@ export default function RakutenProductsPage() {
                 <div style={{ fontSize: 11, color: '#64748b', marginLeft: 26, marginTop: 2 }}>
                   楽天RMSへのpush対象外・発注推奨や在庫一覧にも表示されません。就労支援在庫で数量だけ把握したい商品用です。
                 </div>
-              </div>
-            </div>
-
-            {/* 再梱包の作業依頼で使う設定。商品ごとに毎回同じなのでここに持たせ、
-                依頼を作るたびに入力し直さなくてよいようにする */}
-            <div style={{ borderTop: '1px solid #e2e8f0', margin: '0 0 16px', paddingTop: 14 }}>
-              <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 4 }}>再梱包の作業依頼（就労支援さん向け）</h3>
-              <p style={{ fontSize: 12, color: '#475569', marginBottom: 10 }}>
-                ここに入れておくと、作業依頼を作るときに自動で入ります。金額は「セット数 × 単価」で計算されます。
-              </p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
-                <div className="form-group" style={{ margin: 0 }}>
-                  <label>1セットに入れる数</label>
-                  <input type="number" value={form.packing_set_qty ?? ''} placeholder="12"
-                    onChange={e => setForm(p => ({ ...p, packing_set_qty: e.target.value === '' ? null : Number(e.target.value) }))} />
-                </div>
-                <div className="form-group" style={{ margin: 0 }}>
-                  <label>1セットあたりの単価（円）</label>
-                  <input type="number" step="0.1" value={form.packing_unit_price ?? ''} placeholder="3"
-                    onChange={e => setForm(p => ({ ...p, packing_unit_price: e.target.value === '' ? null : Number(e.target.value) }))} />
-                </div>
-                <div className="form-group" style={{ margin: 0 }}>
-                  <label>梱包材の種類</label>
-                  <input value={form.packing_material || ''} placeholder="OPP大・サンクスシール"
-                    onChange={e => setForm(p => ({ ...p, packing_material: e.target.value }))} />
-                </div>
-              </div>
-              <div className="form-group" style={{ marginTop: 10, marginBottom: 0 }}>
-                <label>梱包方法（作業内容）</label>
-                <textarea rows={2} value={form.packing_method || ''}
-                  placeholder="4カラーを1枚ずつOPP大に入れる（厚くなりすぎないように）"
-                  onChange={e => setForm(p => ({ ...p, packing_method: e.target.value }))} />
               </div>
             </div>
 

@@ -13,16 +13,18 @@ const fmtMonth = (m) => {
 /**
  * 再梱包の作業依頼を作る・直す管理画面。
  *
- * 梱包材・梱包方法・単価は商品マスタに持たせてあるので、商品を選べば自動で入る。
- * 今回だけ違う場合はここで上書きできる（マスタは変えない）。
+ * 梱包材・梱包方法・単価・1セットの数は「作業マスタ」に持たせてあるので、
+ * 作業を選べば自動で入る。今回だけ違う場合はここで上書きできる。
  */
 export default function WelfarePackingAdmin() {
   const qc = useQueryClient()
+  const [tab, setTab] = useState('orders')
   const [month, setMonth] = useState(thisMonth())
   const [form, setForm] = useState({
-    order_date: today(), priority: '', sku: '', set_count: '', note: '',
+    order_date: today(), priority: '', task_id: '', set_count: '', note: '',
   })
-  const [skuQuery, setSkuQuery] = useState('')
+  const [taskQuery, setTaskQuery] = useState('')
+  const [taskSearch, setTaskSearch] = useState('')
 
   const { data } = useQuery({
     queryKey: ['packing-orders', month],
@@ -32,39 +34,47 @@ export default function WelfarePackingAdmin() {
     queryKey: ['packing-order-months'],
     queryFn: () => api.get('/welfare/packing-orders/months').then(r => r.data),
   })
-  const { data: products = [] } = useQuery({
-    queryKey: ['rakuten-products-for-packing'],
-    queryFn: () => api.get('/rakuten/products').then(r => r.data),
-    staleTime: 5 * 60 * 1000,
+  const { data: tasksData } = useQuery({
+    queryKey: ['packing-tasks'],
+    queryFn: () => api.get('/welfare/packing-tasks').then(r => r.data),
   })
 
   const rows = data?.items || []
   const months = monthsData?.months || []
+  const tasks = tasksData?.tasks || []
 
   const candidates = useMemo(() => {
-    const q = skuQuery.trim().toLowerCase()
+    const q = taskQuery.trim().toLowerCase()
     if (!q) return []
-    return products
-      .filter(p => (p.sku || '').toLowerCase().includes(q)
-        || (p.name || '').toLowerCase().includes(q))
-      .slice(0, 12)
-  }, [products, skuQuery])
+    return tasks.filter(t =>
+      (t.name || '').toLowerCase().includes(q) || (t.sku || '').toLowerCase().includes(q)
+    ).slice(0, 12)
+  }, [tasks, taskQuery])
 
   const selected = useMemo(
-    () => products.find(p => p.sku === form.sku) || null,
-    [products, form.sku]
+    () => tasks.find(t => t.id === Number(form.task_id)) || null,
+    [tasks, form.task_id]
   )
+
+  const filteredTasks = useMemo(() => {
+    const q = taskSearch.trim().toLowerCase()
+    if (!q) return tasks
+    return tasks.filter(t =>
+      (t.name || '').toLowerCase().includes(q) || (t.sku || '').toLowerCase().includes(q)
+    )
+  }, [tasks, taskSearch])
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['packing-orders'] })
     qc.invalidateQueries({ queryKey: ['packing-order-months'] })
   }
+  const refreshTasks = () => qc.invalidateQueries({ queryKey: ['packing-tasks'] })
 
   const create = useMutation({
     mutationFn: (body) => api.post('/welfare/packing-orders', body).then(r => r.data),
     onSuccess: () => {
-      setForm(f => ({ order_date: f.order_date, priority: '', sku: '', set_count: '', note: '' }))
-      setSkuQuery('')
+      setForm(f => ({ order_date: f.order_date, priority: '', task_id: '', set_count: '', note: '' }))
+      setTaskQuery('')
       refresh()
     },
     onError: (e) => alert('登録エラー: ' + (e.response?.data?.detail || e.message)),
@@ -81,13 +91,19 @@ export default function WelfarePackingAdmin() {
     onSuccess: refresh,
   })
 
+  const updateTask = useMutation({
+    mutationFn: ({ id, body }) => api.patch(`/welfare/packing-tasks/${id}`, body).then(r => r.data),
+    onSuccess: refreshTasks,
+    onError: (e) => alert('更新エラー: ' + (e.response?.data?.detail || e.message)),
+  })
+
   const submit = () => {
-    if (!form.sku) return alert('商品を選んでください')
+    if (!form.task_id) return alert('作業を選んでください')
     if (!form.set_count) return alert('セット数を入れてください')
     create.mutate({
       order_date: form.order_date,
       priority: form.priority === '' ? null : Number(form.priority),
-      sku: form.sku,
+      task_id: Number(form.task_id),
       set_count: Number(form.set_count),
       note: form.note || '',
     })
@@ -95,177 +111,256 @@ export default function WelfarePackingAdmin() {
 
   return (
     <div className="card">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
-        <h3 style={{ margin: 0 }}>再梱包の作業依頼</h3>
-        <select value={month} onChange={e => setMonth(e.target.value)} style={{ width: 'auto' }}>
-          {(months.some(m => m.month === month) ? months : [{ month }, ...months]).map(m => (
-            <option key={m.month} value={m.month}>{fmtMonth(m.month)}</option>
-          ))}
-        </select>
-        <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-          <div style={{ fontSize: 12, color: '#64748b' }}>{fmtMonth(month)} 合計</div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>{yen(data?.total_amount)}</div>
-        </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        {[{ k: 'orders', l: '作業依頼' }, { k: 'tasks', l: `作業マスタ（${tasks.length}）` }].map(t => (
+          <button key={t.k} onClick={() => setTab(t.k)}
+            className={`btn ${tab === t.k ? 'btn-primary' : 'btn-secondary'}`}>
+            {t.l}
+          </button>
+        ))}
       </div>
 
-      {/* 依頼の追加 */}
-      <div style={{
-        padding: 14, marginBottom: 16, borderRadius: 8,
-        background: '#f8fafc', border: '1px solid #e2e8f0',
-      }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-          <div className="form-group" style={{ margin: 0 }}>
-            <label>依頼日</label>
-            <input type="date" value={form.order_date}
-              onChange={e => setForm(f => ({ ...f, order_date: e.target.value }))} />
+      {tab === 'orders' ? (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+            <select value={month} onChange={e => setMonth(e.target.value)} style={{ width: 'auto' }}>
+              {(months.some(m => m.month === month) ? months : [{ month }, ...months]).map(m => (
+                <option key={m.month} value={m.month}>{fmtMonth(m.month)}</option>
+              ))}
+            </select>
+            <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+              <div style={{ fontSize: 12, color: '#64748b' }}>{fmtMonth(month)} 合計</div>
+              <div style={{ fontSize: 22, fontWeight: 700 }}>{yen(data?.total_amount)}</div>
+            </div>
           </div>
-          <div className="form-group" style={{ margin: 0 }}>
-            <label>優先順位</label>
-            <input type="number" value={form.priority} placeholder="1"
-              onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} />
-          </div>
-          <div className="form-group" style={{ margin: 0, position: 'relative' }}>
-            <label>商品（SKU・名前で検索）</label>
-            <input
-              value={form.sku || skuQuery}
-              placeholder="ガーゼ / y104 など"
-              onChange={e => { setSkuQuery(e.target.value); setForm(f => ({ ...f, sku: '' })) }}
-            />
-            {candidates.length > 0 && !form.sku && (
-              <div style={{
-                position: 'absolute', zIndex: 20, top: '100%', left: 0, right: 0,
-                background: '#fff', border: '1px solid #cbd5e1', borderRadius: 6,
-                maxHeight: 240, overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,.08)',
-              }}>
-                {candidates.map(p => (
-                  <div key={p.id}
-                    onClick={() => { setForm(f => ({ ...f, sku: p.sku })); setSkuQuery('') }}
-                    style={{ padding: '8px 10px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid #f1f5f9' }}
-                  >
-                    <div style={{ fontWeight: 600 }}>{p.name || p.sku}</div>
-                    <div style={{ fontSize: 11, color: '#94a3b8' }}>
-                      {p.sku}
-                      {p.packing_unit_price ? ` ・ 単価${yen(p.packing_unit_price)}` : ' ・ 単価未設定'}
-                    </div>
+
+          {/* 依頼の追加 */}
+          <div style={{
+            padding: 14, marginBottom: 16, borderRadius: 8,
+            background: '#f8fafc', border: '1px solid #e2e8f0',
+          }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>依頼日</label>
+                <input type="date" value={form.order_date}
+                  onChange={e => setForm(f => ({ ...f, order_date: e.target.value }))} />
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>優先順位</label>
+                <input type="number" value={form.priority} placeholder="1"
+                  onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} />
+              </div>
+              <div className="form-group" style={{ margin: 0, position: 'relative' }}>
+                <label>作業（名前・SKUで検索）</label>
+                <input
+                  value={selected ? selected.name : taskQuery}
+                  placeholder="ガーゼ / y27 など"
+                  onChange={e => { setTaskQuery(e.target.value); setForm(f => ({ ...f, task_id: '' })) }}
+                />
+                {candidates.length > 0 && !form.task_id && (
+                  <div style={{
+                    position: 'absolute', zIndex: 20, top: '100%', left: 0, right: 0,
+                    background: '#fff', border: '1px solid #cbd5e1', borderRadius: 6,
+                    maxHeight: 240, overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,.08)',
+                  }}>
+                    {candidates.map(t => (
+                      <div key={t.id}
+                        onClick={() => { setForm(f => ({ ...f, task_id: t.id })); setTaskQuery('') }}
+                        style={{ padding: '8px 10px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid #f1f5f9' }}
+                      >
+                        <div style={{ fontWeight: 600 }}>{t.name}</div>
+                        <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                          {t.sku || '(SKU紐づけなし)'} ・ {yen(t.unit_price)}
+                          {t.set_qty ? ` ・ 1セット${t.set_qty}個` : ''}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>セット数</label>
+                <input type="number" value={form.set_count} placeholder="200"
+                  onChange={e => setForm(f => ({ ...f, set_count: e.target.value }))} />
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>備考（任意）</label>
+                <input value={form.note}
+                  onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
+              </div>
+            </div>
+
+            {selected && (
+              <div style={{ marginTop: 10, fontSize: 12, color: '#475569' }}>
+                単価 <b>{yen(selected.unit_price)}</b>
+                {selected.set_qty ? <> ／ 1セット {selected.set_qty}個</> : null}
+                {form.set_count
+                  ? <> → 金額 <b>{yen(selected.unit_price * Number(form.set_count))}</b></>
+                  : null}
+                {selected.packing_method && (
+                  <div style={{ marginTop: 4 }}>作業内容: {selected.packing_method}</div>
+                )}
               </div>
             )}
-          </div>
-          <div className="form-group" style={{ margin: 0 }}>
-            <label>セット数</label>
-            <input type="number" value={form.set_count} placeholder="200"
-              onChange={e => setForm(f => ({ ...f, set_count: e.target.value }))} />
-          </div>
-          <div className="form-group" style={{ margin: 0 }}>
-            <label>備考（任意）</label>
-            <input value={form.note}
-              onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
-          </div>
-        </div>
 
-        {selected && (
-          <div style={{ marginTop: 10, fontSize: 12, color: '#475569' }}>
-            {selected.packing_unit_price
-              ? <>単価 <b>{yen(selected.packing_unit_price)}</b> ／ 1セット {selected.packing_set_qty || '-'}個
-                  {form.set_count
-                    ? <> → 金額 <b>{yen(selected.packing_unit_price * Number(form.set_count))}</b></>
-                    : null}
-                </>
-              : <span style={{ color: '#b45309' }}>
-                  ⚠ この商品は梱包の単価が未設定です。商品マスタで設定すると次回から自動で入ります
-                </span>}
-            {selected.packing_method && (
-              <div style={{ marginTop: 4 }}>作業内容: {selected.packing_method}</div>
-            )}
+            <div style={{ marginTop: 12 }}>
+              <button className="btn btn-primary" onClick={submit} disabled={create.isPending}>
+                {create.isPending ? '追加中...' : '依頼に追加'}
+              </button>
+            </div>
           </div>
-        )}
 
-        <div style={{ marginTop: 12 }}>
-          <button className="btn btn-primary" onClick={submit} disabled={create.isPending}>
-            {create.isPending ? '追加中...' : '依頼に追加'}
-          </button>
-        </div>
-      </div>
-
-      {/* 依頼一覧 */}
-      {rows.length === 0 ? (
-        <div style={{ padding: 30, textAlign: 'center', color: '#9ca3af' }}>
-          {fmtMonth(month)}の依頼はまだありません
-        </div>
+          {/* 依頼一覧 */}
+          {rows.length === 0 ? (
+            <div style={{ padding: 30, textAlign: 'center', color: '#9ca3af' }}>
+              {fmtMonth(month)}の依頼はまだありません
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                    {['優先', '依頼日', '作業名', '全数量', 'セット数', '単価', '金額', '状態', ''].map(h => (
+                      <th key={h} style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(r => (
+                    <tr key={r.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                        <input type="number" defaultValue={r.priority ?? ''} style={{ width: 56 }}
+                          onBlur={e => {
+                            const v = e.target.value === '' ? null : Number(e.target.value)
+                            if (v !== r.priority) update.mutate({ id: r.id, body: { priority: v } })
+                          }} />
+                      </td>
+                      <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>{r.order_date}</td>
+                      <td style={{ padding: '8px 10px' }}>
+                        <div style={{ fontWeight: 600 }}>{r.name_jp}</div>
+                        {r.sku && <div style={{ fontSize: 11, color: '#94a3b8' }}>{r.sku}</div>}
+                      </td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>{r.set_qty || '-'}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                        <input type="number" defaultValue={r.set_count} style={{ width: 80 }}
+                          onBlur={e => {
+                            const v = Number(e.target.value || 0)
+                            if (v !== r.set_count) update.mutate({ id: r.id, body: { set_count: v } })
+                          }} />
+                      </td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                        <input type="number" step="0.1" defaultValue={r.unit_price} style={{ width: 70 }}
+                          onBlur={e => {
+                            const v = Number(e.target.value || 0)
+                            if (v !== r.unit_price) update.mutate({ id: r.id, body: { unit_price: v } })
+                          }} />
+                      </td>
+                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{yen(r.amount)}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                        <button className="btn btn-secondary" style={{ padding: '2px 10px', fontSize: 12 }}
+                          onClick={() => update.mutate({
+                            id: r.id, body: { status: r.status === 'done' ? 'open' : 'done' },
+                          })}>
+                          {r.status === 'done' ? '完了' : '依頼中'}
+                        </button>
+                      </td>
+                      <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                        <button className="btn btn-secondary"
+                          style={{ padding: '2px 8px', fontSize: 12, color: '#dc2626' }}
+                          onClick={() => { if (confirm('この依頼を削除しますか？')) remove.mutate(r.id) }}>
+                          削除
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ background: '#f8fafc', borderTop: '2px solid #e2e8f0', fontWeight: 700 }}>
+                    <td colSpan={4} style={{ padding: 10, textAlign: 'right' }}>合計</td>
+                    <td style={{ padding: 10, textAlign: 'right' }}>{(data?.total_sets || 0).toLocaleString()}</td>
+                    <td />
+                    <td style={{ padding: 10, textAlign: 'right' }}>{yen(data?.total_amount)}</td>
+                    <td colSpan={2} />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-                {['優先', '依頼日', '商品名', '全数量', 'セット数', '単価', '金額', '状態', ''].map(h => (
-                  <th key={h} style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(r => (
-                <tr key={r.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                    <input type="number" defaultValue={r.priority ?? ''} style={{ width: 56 }}
-                      onBlur={e => {
-                        const v = e.target.value === '' ? null : Number(e.target.value)
-                        if (v !== r.priority) update.mutate({ id: r.id, body: { priority: v } })
-                      }} />
-                  </td>
-                  <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>{r.order_date}</td>
-                  <td style={{ padding: '8px 10px' }}>
-                    <div style={{ fontWeight: 600 }}>{r.name_jp || r.sku}</div>
-                    <div style={{ fontSize: 11, color: '#94a3b8' }}>{r.sku}</div>
-                  </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{r.set_qty || '-'}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                    <input type="number" defaultValue={r.set_count} style={{ width: 80 }}
-                      onBlur={e => {
-                        const v = Number(e.target.value || 0)
-                        if (v !== r.set_count) update.mutate({ id: r.id, body: { set_count: v } })
-                      }} />
-                  </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                    <input type="number" step="0.1" defaultValue={r.unit_price} style={{ width: 70 }}
-                      onBlur={e => {
-                        const v = Number(e.target.value || 0)
-                        if (v !== r.unit_price) update.mutate({ id: r.id, body: { unit_price: v } })
-                      }} />
-                  </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{yen(r.amount)}</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                    <button
-                      className="btn btn-secondary"
-                      style={{ padding: '2px 10px', fontSize: 12 }}
-                      onClick={() => update.mutate({
-                        id: r.id, body: { status: r.status === 'done' ? 'open' : 'done' },
-                      })}
-                    >
-                      {r.status === 'done' ? '完了' : '依頼中'}
-                    </button>
-                  </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                    <button
-                      className="btn btn-secondary"
-                      style={{ padding: '2px 8px', fontSize: 12, color: '#dc2626' }}
-                      onClick={() => { if (confirm('この依頼を削除しますか？')) remove.mutate(r.id) }}
-                    >削除</button>
-                  </td>
+        /* 作業マスタ */
+        <>
+          <div style={{ marginBottom: 12 }}>
+            <input
+              className="search-input-ja"
+              style={{ maxWidth: 320 }}
+              value={taskSearch}
+              onChange={e => setTaskSearch(e.target.value)}
+              placeholder="作業名・SKUで検索"
+            />
+            <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>
+              単価・梱包材・作業内容はここで直せます。依頼を作るときにこの内容がコピーされます
+              （後から直しても、過去の依頼の金額は変わりません）。
+            </div>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                  {['作業名', 'SKU', '楽天の商品名', '全数量', '単価', '梱包材', '作業内容'].map(h => (
+                    <th key={h} style={{ padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr style={{ background: '#f8fafc', borderTop: '2px solid #e2e8f0', fontWeight: 700 }}>
-                <td colSpan={4} style={{ padding: 10, textAlign: 'right' }}>合計</td>
-                <td style={{ padding: 10, textAlign: 'right' }}>{(data?.total_sets || 0).toLocaleString()}</td>
-                <td />
-                <td style={{ padding: 10, textAlign: 'right' }}>{yen(data?.total_amount)}</td>
-                <td colSpan={2} />
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {filteredTasks.map(t => (
+                  <tr key={t.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '8px 10px', fontWeight: 600, minWidth: 180 }}>{t.name}</td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <input defaultValue={t.sku || ''} style={{ width: 110 }} placeholder="-"
+                        onBlur={e => {
+                          const v = e.target.value.trim()
+                          if (v !== (t.sku || '')) updateTask.mutate({ id: t.id, body: { sku: v } })
+                        }} />
+                    </td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#64748b', maxWidth: 200 }}>
+                      {t.product_name || (t.sku ? '（マスタに無し）' : '—')}
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <input type="number" defaultValue={t.set_qty ?? ''} style={{ width: 60 }}
+                        onBlur={e => {
+                          const v = e.target.value === '' ? null : Number(e.target.value)
+                          if (v !== t.set_qty) updateTask.mutate({ id: t.id, body: { set_qty: v } })
+                        }} />
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <input type="number" step="0.1" defaultValue={t.unit_price ?? 0} style={{ width: 66 }}
+                        onBlur={e => {
+                          const v = Number(e.target.value || 0)
+                          if (v !== t.unit_price) updateTask.mutate({ id: t.id, body: { unit_price: v } })
+                        }} />
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <input defaultValue={t.packing_material || ''} style={{ width: 150 }}
+                        onBlur={e => {
+                          const v = e.target.value
+                          if (v !== (t.packing_material || '')) updateTask.mutate({ id: t.id, body: { packing_material: v } })
+                        }} />
+                    </td>
+                    <td style={{ padding: '8px 10px', minWidth: 300 }}>
+                      <textarea defaultValue={t.packing_method || ''} rows={2}
+                        style={{ width: '100%', minWidth: 280 }}
+                        onBlur={e => {
+                          const v = e.target.value
+                          if (v !== (t.packing_method || '')) updateTask.mutate({ id: t.id, body: { packing_method: v } })
+                        }} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   )

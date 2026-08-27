@@ -79,6 +79,32 @@ class WelfareWorkInstruction(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class WelfarePackingTask(Base):
+    """再梱包の作業マスタ。
+
+    「この商品はこう梱包する」を1件1作業として持つ。商品マスタには持たせない。
+    再梱包は販売商品と1対1ではなく、同じ商品でも入数違いで作業が分かれたり
+    （キッチンタオル4色/同色）、逆にマスタに無い作業もある（レビュー特典など）
+    ため、就労支援の中で独立して管理する。
+
+    sku は楽天商品マスタへの参考リンク。空でもよい。
+    """
+    __tablename__ = "welfare_packing_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)          # 作業名（就労支援さんが見る名前）
+    sku = Column(String, index=True)           # 楽天の商品コード。紐づけない場合は空
+    set_qty = Column(Integer)                  # 1セットに入れる数
+    unit_price = Column(Float, default=0)      # 1セットあたりの報酬（円）
+    packing_material = Column(Text)            # 梱包材の種類
+    packing_method = Column(Text)              # 梱包方法（作業内容）
+    note = Column(Text)
+    sort_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class WelfarePackingOrder(Base):
     """就労支援さんへの再梱包の作業依頼。
 
@@ -99,6 +125,7 @@ class WelfarePackingOrder(Base):
     order_date = Column(String, index=True)    # 依頼日 YYYY-MM-DD
     priority = Column(Integer)                 # 優先順位（小さいほど先）
 
+    task_id = Column(Integer, ForeignKey("welfare_packing_tasks.id"), nullable=True, index=True)
     product_id = Column(Integer, ForeignKey("rakuten_products.id"), nullable=True, index=True)
     sku = Column(String, index=True)
     name_jp = Column(String)

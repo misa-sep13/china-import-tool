@@ -1,0 +1,362 @@
+[
+ {
+  "name": "ガーゼハンカチ 12枚セット",
+  "sku": "y27",
+  "set_qty": 12,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "糸の飛び出しはカットしてください。柄をバラバラに計12枚いれる。柄被りは2枚まで。偏りが出ないようにうまく分配してもらえると助かります。",
+  "sort_order": 0
+ },
+ {
+  "name": "シャンプーハット 王冠",
+  "sku": "",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "入れる",
+  "sort_order": 1
+ },
+ {
+  "name": "木製バナー",
+  "sku": "",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "プチプチ",
+  "packing_method": "厚みが出ないように並べてプチプチ（プチプチが重ならないように）",
+  "sort_order": 2
+ },
+ {
+  "name": "犬用歯ブラシ",
+  "sku": "y34",
+  "set_qty": 3,
+  "unit_price": 3,
+  "packing_material": "OPP長・サンクスシール",
+  "packing_method": "※ゴミが入ってたら取り除く、ふたが緩い時は締める、キャップ部のリングが外れていたり破損や汚れがある場合は使わない。　3本ずつ入れて、セロテープで口を止めたら、左上にサンクスシール",
+  "sort_order": 3
+ },
+ {
+  "name": "キッチンタオル4枚セット",
+  "sku": "y47",
+  "set_qty": 4,
+  "unit_price": 3,
+  "packing_material": "OPP大・サンクスシール",
+  "packing_method": "4カラーを1枚ずつOPP大に入れる（厚くなりすぎないように）",
+  "sort_order": 4
+ },
+ {
+  "name": "スクールソックス6足セット",
+  "sku": "y60",
+  "set_qty": 3,
+  "unit_price": 3,
+  "packing_material": "配布する袋",
+  "packing_method": "配布する袋に3足（6枚ずつ）入れてください",
+  "sort_order": 5
+ },
+ {
+  "name": "メルサージュヒスケア",
+  "sku": "",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPP小",
+  "packing_method": "OPP小に入れてくるっと余白なくしてセロテープで止めてください。上の取り出し口は開いたままでOK。メルサージュの小箱に入るだけ入れて戻してください。",
+  "sort_order": 6
+ },
+ {
+  "name": "竹炭キッチンタオル10枚セット",
+  "sku": "y47",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPPA3・サンクスシール",
+  "packing_method": "折らずに10枚ずつ入れてサンクスシール",
+  "sort_order": 7
+ },
+ {
+  "name": "トラベルボトル 4個セット",
+  "sku": "y74",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPP・サンクスシール",
+  "packing_method": "※EVA袋に入っていない場合は４本ずつ入れる→入るサイズのＯＰＰに入れてサンクスシール",
+  "sort_order": 8
+ },
+ {
+  "name": "ビジネスソックス4足セット",
+  "sku": "",
+  "set_qty": 4,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "1足ずつ入ってる袋から出す→中国語の紙ラベルを剥がす→4足ずつOPPに入れる→OPPに商品ラベルを貼る→サンクスシールで封をする",
+  "sort_order": 9
+ },
+ {
+  "name": "5本指ビジネスソックス5足セット　黒・ネイビー・グレー",
+  "sku": "y71",
+  "set_qty": 5,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "1足ずつ入ってる袋から出す→中国語の紙ラベルを剥がす→5足ずつOPPに入れる",
+  "sort_order": 10
+ },
+ {
+  "name": "鉛筆 持ち方 矯正 鉛筆グリップ",
+  "sku": "y49",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPP小テープ付き・レター",
+  "packing_method": "箱から取り出し（箱は資源ゴミにしてください）入れる。レターも一緒に入れる",
+  "sort_order": 11
+ },
+ {
+  "name": "おむつポーチ",
+  "sku": "",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "",
+  "packing_method": "ゴミがあることが多いのと縫製がちゃんとしていない時があるので、確認してください。問題なければ袋に戻してください",
+  "sort_order": 12
+ },
+ {
+  "name": "カラーヘアゴム",
+  "sku": "",
+  "set_qty": 48,
+  "unit_price": 3,
+  "packing_material": "元の袋・サンクスシール",
+  "packing_method": "元の袋が汚ければOPP中でもOK　同じ色をまとめて入れてください。色の順番はバラバラでOKです",
+  "sort_order": 13
+ },
+ {
+  "name": "ランチバッグ",
+  "sku": "y58",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "縫製ほつれや糸のチェックをしたあと、OPP大に入れる",
+  "sort_order": 14
+ },
+ {
+  "name": "キッチンタオル同色４枚セット",
+  "sku": "y47",
+  "set_qty": 4,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "同じカラーを4枚ずつOPP大に入れる（厚くなりすぎないように）",
+  "sort_order": 15
+ },
+ {
+  "name": "介護シューズ グレー ピンク",
+  "sku": "y48",
+  "set_qty": 2,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "今回から新しいOPP（薄めの少し大き目A4）に不織布袋も一緒に入れる※画像参照",
+  "sort_order": 16
+ },
+ {
+  "name": "2折アウトドアクッション",
+  "sku": "y82",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "タグを切って、広げてからOPPテープ付きに入れる",
+  "sort_order": 17
+ },
+ {
+  "name": "ダイヤルロック＆ダイヤルロック蛍光",
+  "sku": "y62",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "説明書",
+  "packing_method": "ダイヤルロック専用の説明書を袋の中に入れる",
+  "sort_order": 18
+ },
+ {
+  "name": "スポーツソックス４足セット",
+  "sku": "y87",
+  "set_qty": 4,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "同じ色の靴下を4足（８枚）入れる　必ずLRを１セット",
+  "sort_order": 19
+ },
+ {
+  "name": "マルチクリップ",
+  "sku": "",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPP小・サンクステープ",
+  "packing_method": "厚みを1cmに抑える必要があるため、クリップ部分が重ならないように入れる（長3封筒にはいればOK）",
+  "sort_order": 20
+ },
+ {
+  "name": "8折アウトドアクッション",
+  "sku": "y81",
+  "set_qty": 2,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "8折になっているものを2つ折りにして、付属の袋をひっくり返し、OPP袋に入れる",
+  "sort_order": 21
+ },
+ {
+  "name": "4折アウトドアクッション",
+  "sku": "y81",
+  "set_qty": 2,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "4折になっているものを2つ折りにして、付属の袋をひっくり返し、OPP袋に入れる※付属の袋が長いので折らずにクッションに巻き付ける形がいいかも",
+  "sort_order": 22
+ },
+ {
+  "name": "レディースソックス冬用4足",
+  "sku": "",
+  "set_qty": 4,
+  "unit_price": 3,
+  "packing_material": "ピンクの袋",
+  "packing_method": "ピンクの袋に2足（4枚）ずつ入れる　薄手の靴下6足の冬バージョン　※4足なので注意",
+  "sort_order": 23
+ },
+ {
+  "name": "ソープディスペンサー",
+  "sku": "",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "",
+  "packing_method": "箱から出し色を確認（箱に色W/B/Gを記入）→汚れ等ないか検品→キャップ部分がずれていないかチェック→ずれていたらはめる→元に戻す",
+  "sort_order": 24
+ },
+ {
+  "name": "シリコン耳栓＆ケース",
+  "sku": "y91",
+  "set_qty": 2,
+  "unit_price": 3,
+  "packing_material": "OPP小テープ付き",
+  "packing_method": "耳栓とケースを入れる",
+  "sort_order": 25
+ },
+ {
+  "name": "スポンジラック",
+  "sku": "y78",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "A4宅配袋　レター2種",
+  "packing_method": "箱の隙間からレター2種を入れて、A4宅配袋に入れる",
+  "sort_order": 26
+ },
+ {
+  "name": "眉毛ハサミ",
+  "sku": "review_brow_scissors_black",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPP小",
+  "packing_method": "OPPの余白をなくすように1本ずつ入れる",
+  "sort_order": 27
+ },
+ {
+  "name": "シークレットインソール",
+  "sku": "",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "26.5＆27.5の2種類と1.5cm、2.5cm、3.5cmの厚みがあります。それぞれをOPPにいれ種類と厚みごとにまとめる",
+  "sort_order": 28
+ },
+ {
+  "name": "帆布ポーチ",
+  "sku": "review_pouch_bear",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "",
+  "packing_method": "縫製が甘いものがあるので糸など切り、袋に戻す。検品は外側だけでＯＫ　下側半分ほど折り、袋に入れる",
+  "sort_order": 29
+ },
+ {
+  "name": "シリコン耳栓",
+  "sku": "y91",
+  "set_qty": 2,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き小（ポストカード用）",
+  "packing_method": "空のケースのふたを閉じて、耳栓とケースを１セットで袋に入れる",
+  "sort_order": 30
+ },
+ {
+  "name": "猫ハンモックファーあり、ファー無し",
+  "sku": "y96",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "たたんで入れる　MとLがあるので注意",
+  "sort_order": 31
+ },
+ {
+  "name": "ペット用フェイスマスク",
+  "sku": "y114",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "",
+  "packing_method": "箱から出してOPP袋にいれる。透明部分が潰れないように。粉っぽければ拭いてください。MとS分ける。箱は資源ゴミでお願いします。",
+  "sort_order": 32
+ },
+ {
+  "name": "マウスピースケース",
+  "sku": "",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "",
+  "packing_method": "小傷やミラー汚れ、ミラー外れなどあるのでダメなものは分けてください。箱に戻してフタは開けっ放し。ダメなものはわかるようにしてください",
+  "sort_order": 33
+ },
+ {
+  "name": "トラベルボトルグレーカラー3本",
+  "sku": "y124",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "EVA袋に入っていなければいれてOPP",
+  "sort_order": 34
+ },
+ {
+  "name": "光るシュシュ",
+  "sku": "",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "絶縁体を軽く抜き、点灯確認 問題なければ絶縁体を戻しOPP袋に入れる ダメなものの個数と色の報告をお願いします。",
+  "sort_order": 35
+ },
+ {
+  "name": "チモシーケース",
+  "sku": "",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPP",
+  "packing_method": "開封し汚れや縫製チェック 問題ないものは元の袋もしくはOPP ※うさぎのしっぽがとれかかっていたら分けておいてください",
+  "sort_order": 36
+ },
+ {
+  "name": "シャンプーハットティアラ",
+  "sku": "",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "OPPテープ付き",
+  "packing_method": "入れる",
+  "sort_order": 37
+ },
+ {
+  "name": "たまごっちハードケース（硬い方）",
+  "sku": "y134",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "サンキューシール",
+  "packing_method": "保護フィルムを中に入れる、中国語のシールに大きいサンキューシールを貼る",
+  "sort_order": 38
+ },
+ {
+  "name": "たまごっちシリコンケース",
+  "sku": "y133",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "",
+  "packing_method": "保護フィルムを中に入れる、同じ色のロングストラップを入れる（なるべくぐちゃぐちゃに入れないでほしいです）",
+  "sort_order": 39
+ }
+]
