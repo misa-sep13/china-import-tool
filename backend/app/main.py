@@ -1225,6 +1225,7 @@ _AUTH_EXEMPT_PREFIXES = ("/api/auth/", "/docs", "/openapi.json", "/redoc")
 # 作業マスタ(packing-tasks)は公開ページで使わないため、あえて入れていない。
 _AUTH_PUBLIC_GET_PATHS = {
     "/api/welfare/work-instructions",
+    "/api/welfare/inventory",
     "/api/welfare/packing-orders",
     "/api/welfare/packing-orders/months",
 }

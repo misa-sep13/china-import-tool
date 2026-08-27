@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../api/client'
 import WelfarePackingOrders from '../components/WelfarePackingOrders'
+import WelfareInventoryPublic from '../components/WelfareInventoryPublic'
 
 const fmtDate = (v) => {
   if (!v) return ''
@@ -134,6 +135,7 @@ export default function WelfareWorkPublicPage() {
           {[
             { key: 'work', label: '荷受けの作業指示' },
             { key: 'packing', label: '再梱包の作業依頼' },
+            { key: 'inventory', label: '就労支援在庫' },
           ].map(t => (
             <button
               key={t.key}
@@ -146,7 +148,8 @@ export default function WelfareWorkPublicPage() {
           ))}
         </div>
 
-        {view === 'packing' ? <WelfarePackingOrders /> : (
+        {view === 'packing' ? <WelfarePackingOrders />
+          : view === 'inventory' ? <WelfareInventoryPublic /> : (
         <>
         <div className="top-actions">
           <input
