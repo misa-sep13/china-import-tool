@@ -1309,6 +1309,7 @@ def _task_out(t: WelfarePackingTask, product: RakutenProduct | None = None) -> d
         "packing_method": t.packing_method,
         "note": t.note,
         "sort_order": t.sort_order,
+        "source": t.source,
         "is_active": t.is_active,
     }
 
@@ -1358,6 +1359,7 @@ def create_packing_task(data: PackingTaskIn, db: Session = Depends(get_db)):
         packing_method=data.packing_method or "",
         note=data.note or "",
         sort_order=data.sort_order or 0,
+        source="manual",
         is_active=True if data.is_active is None else data.is_active,
     )
     db.add(row)
@@ -1403,6 +1405,10 @@ def bulk_upsert_packing_tasks(
     deactivate_missing=true のときは、送ったリストに無い作業を無効にする。
     取り込む内容を減らしたときに、前回入れた分を画面から消すために使う。
     削除ではなく無効化なのは、過去の依頼から辿れるようにしておくため。
+
+    ただし無効にするのは取り込みで作った作業(source="seed")だけ。
+    画面から手で足した作業（郵便書簡・封筒など商品でないもの）は
+    取り込みリストに載らないので、一緒に消してしまわないようにする。
     """
     created = updated = 0
     sent_names = {(i.name or "").strip() for i in data if (i.name or "").strip()}
@@ -1425,12 +1431,14 @@ def bulk_upsert_packing_tasks(
         row.packing_method = item.packing_method or ""
         row.note = item.note or ""
         row.sort_order = item.sort_order if item.sort_order is not None else i
+        row.source = "seed"
         row.is_active = True
 
     deactivated = 0
     if deactivate_missing:
         for row in db.query(WelfarePackingTask).filter(
-                WelfarePackingTask.is_active == True).all():
+                WelfarePackingTask.is_active == True,
+                WelfarePackingTask.source == "seed").all():
             if (row.name or "").strip() not in sent_names:
                 row.is_active = False
                 deactivated += 1

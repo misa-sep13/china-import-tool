@@ -100,6 +100,9 @@ class WelfarePackingTask(Base):
     packing_method = Column(Text)              # 梱包方法（作業内容）
     note = Column(Text)
     sort_order = Column(Integer, default=0)
+    # "seed"=一括取り込みで作った / "manual"=画面から手で足した。
+    # 取り込みボタンで一覧を整理するとき、手で足した作業まで消さないために使う
+    source = Column(String, default="manual", index=True)
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

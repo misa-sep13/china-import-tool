@@ -1,12 +1,21 @@
 [
  {
+  "name": "郵便書簡（ミニレター）",
+  "sku": "",
+  "set_qty": null,
+  "unit_price": 3,
+  "packing_material": "",
+  "packing_method": "",
+  "sort_order": 0
+ },
+ {
   "name": "ガーゼハンカチ 12枚セット",
   "sku": "y27",
   "set_qty": 12,
   "unit_price": 3,
   "packing_material": "OPPテープ付き",
   "packing_method": "糸の飛び出しはカットしてください。柄をバラバラに計12枚いれる。柄被りは2枚まで。偏りが出ないようにうまく分配してもらえると助かります。",
-  "sort_order": 0
+  "sort_order": 1
  },
  {
   "name": "シャンプーハット 王冠",
@@ -15,7 +24,7 @@
   "unit_price": 3,
   "packing_material": "OPPテープ付き",
   "packing_method": "入れる",
-  "sort_order": 1
+  "sort_order": 2
  },
  {
   "name": "犬用歯ブラシ",
@@ -24,7 +33,7 @@
   "unit_price": 3,
   "packing_material": "OPP長・サンクスシール",
   "packing_method": "※ゴミが入ってたら取り除く、ふたが緩い時は締める、キャップ部のリングが外れていたり破損や汚れがある場合は使わない。　3本ずつ入れて、セロテープで口を止めたら、左上にサンクスシール",
-  "sort_order": 2
+  "sort_order": 3
  },
  {
   "name": "キッチンタオル4枚セット",
@@ -33,7 +42,7 @@
   "unit_price": 3,
   "packing_material": "OPP大・サンクスシール",
   "packing_method": "4カラーを1枚ずつOPP大に入れる（厚くなりすぎないように）",
-  "sort_order": 3
+  "sort_order": 4
  },
  {
   "name": "スクールソックス6足セット",
@@ -42,7 +51,7 @@
   "unit_price": 3,
   "packing_material": "配布する袋",
   "packing_method": "配布する袋に3足（6枚ずつ）入れてください",
-  "sort_order": 4
+  "sort_order": 5
  },
  {
   "name": "竹炭キッチンタオル10枚セット",
@@ -51,7 +60,7 @@
   "unit_price": 3,
   "packing_material": "OPPA3・サンクスシール",
   "packing_method": "折らずに10枚ずつ入れてサンクスシール",
-  "sort_order": 5
+  "sort_order": 6
  },
  {
   "name": "トラベルボトル 4個セット",
@@ -60,7 +69,7 @@
   "unit_price": 3,
   "packing_material": "OPP・サンクスシール",
   "packing_method": "※EVA袋に入っていない場合は４本ずつ入れる→入るサイズのＯＰＰに入れてサンクスシール",
-  "sort_order": 6
+  "sort_order": 7
  },
  {
   "name": "5本指ビジネスソックス5足セット　黒・ネイビー・グレー",
@@ -69,7 +78,7 @@
   "unit_price": 3,
   "packing_material": "OPPテープ付き",
   "packing_method": "1足ずつ入ってる袋から出す→中国語の紙ラベルを剥がす→5足ずつOPPに入れる",
-  "sort_order": 7
+  "sort_order": 8
  },
  {
   "name": "鉛筆 持ち方 矯正 鉛筆グリップ",
@@ -78,7 +87,7 @@
   "unit_price": 3,
   "packing_material": "OPP小テープ付き・レター",
   "packing_method": "箱から取り出し（箱は資源ゴミにしてください）入れる。レターも一緒に入れる",
-  "sort_order": 8
+  "sort_order": 9
  },
  {
   "name": "ランチバッグ",
@@ -87,7 +96,7 @@
   "unit_price": 3,
   "packing_material": "OPPテープ付き",
   "packing_method": "縫製ほつれや糸のチェックをしたあと、OPP大に入れる",
-  "sort_order": 9
+  "sort_order": 10
  },
  {
   "name": "キッチンタオル同色４枚セット",
@@ -96,7 +105,7 @@
   "unit_price": 3,
   "packing_material": "OPPテープ付き",
   "packing_method": "同じカラーを4枚ずつOPP大に入れる（厚くなりすぎないように）",
-  "sort_order": 10
+  "sort_order": 11
  },
  {
   "name": "介護シューズ グレー ピンク",
@@ -105,7 +114,7 @@
   "unit_price": 3,
   "packing_material": "OPPテープ付き",
   "packing_method": "今回から新しいOPP（薄めの少し大き目A4）に不織布袋も一緒に入れる※画像参照",
-  "sort_order": 11
+  "sort_order": 12
  },
  {
   "name": "2折アウトドアクッション",
@@ -114,7 +123,7 @@
   "unit_price": 3,
   "packing_material": "OPPテープ付き",
   "packing_method": "タグを切って、広げてからOPPテープ付きに入れる",
-  "sort_order": 12
+  "sort_order": 13
  },
  {
   "name": "ダイヤルロック＆ダイヤルロック蛍光",
@@ -123,7 +132,7 @@
   "unit_price": 3,
   "packing_material": "説明書",
   "packing_method": "ダイヤルロック専用の説明書を袋の中に入れる",
-  "sort_order": 13
+  "sort_order": 14
  },
  {
   "name": "スポーツソックス４足セット",
@@ -132,7 +141,7 @@
   "unit_price": 3,
   "packing_material": "OPPテープ付き",
   "packing_method": "同じ色の靴下を4足（８枚）入れる　必ずLRを１セット",
-  "sort_order": 14
+  "sort_order": 15
  },
  {
   "name": "8折アウトドアクッション",
@@ -141,7 +150,7 @@
   "unit_price": 3,
   "packing_material": "OPPテープ付き",
   "packing_method": "8折になっているものを2つ折りにして、付属の袋をひっくり返し、OPP袋に入れる",
-  "sort_order": 15
+  "sort_order": 16
  },
  {
   "name": "4折アウトドアクッション",
@@ -150,7 +159,7 @@
   "unit_price": 3,
   "packing_material": "OPPテープ付き",
   "packing_method": "4折になっているものを2つ折りにして、付属の袋をひっくり返し、OPP袋に入れる※付属の袋が長いので折らずにクッションに巻き付ける形がいいかも",
-  "sort_order": 16
+  "sort_order": 17
  },
  {
   "name": "シリコン耳栓＆ケース",
@@ -159,7 +168,7 @@
   "unit_price": 3,
   "packing_material": "OPP小テープ付き",
   "packing_method": "耳栓とケースを入れる",
-  "sort_order": 17
+  "sort_order": 18
  },
  {
   "name": "スポンジラック",
@@ -168,7 +177,7 @@
   "unit_price": 3,
   "packing_material": "A4宅配袋　レター2種",
   "packing_method": "箱の隙間からレター2種を入れて、A4宅配袋に入れる",
-  "sort_order": 18
+  "sort_order": 19
  },
  {
   "name": "眉毛ハサミ",
@@ -177,7 +186,7 @@
   "unit_price": 3,
   "packing_material": "OPP小",
   "packing_method": "OPPの余白をなくすように1本ずつ入れる",
-  "sort_order": 19
+  "sort_order": 20
  },
  {
   "name": "帆布ポーチ",
@@ -186,7 +195,7 @@
   "unit_price": 3,
   "packing_material": "",
   "packing_method": "縫製が甘いものがあるので糸など切り、袋に戻す。検品は外側だけでＯＫ　下側半分ほど折り、袋に入れる",
-  "sort_order": 20
+  "sort_order": 21
  },
  {
   "name": "シリコン耳栓",
@@ -195,7 +204,7 @@
   "unit_price": 3,
   "packing_material": "OPPテープ付き小（ポストカード用）",
   "packing_method": "空のケースのふたを閉じて、耳栓とケースを１セットで袋に入れる",
-  "sort_order": 21
+  "sort_order": 22
  },
  {
   "name": "猫ハンモックファーあり、ファー無し",
@@ -204,7 +213,7 @@
   "unit_price": 3,
   "packing_material": "OPPテープ付き",
   "packing_method": "たたんで入れる　MとLがあるので注意",
-  "sort_order": 22
+  "sort_order": 23
  },
  {
   "name": "ペット用フェイスマスク",
@@ -213,7 +222,7 @@
   "unit_price": 3,
   "packing_material": "",
   "packing_method": "箱から出してOPP袋にいれる。透明部分が潰れないように。粉っぽければ拭いてください。MとS分ける。箱は資源ゴミでお願いします。",
-  "sort_order": 23
+  "sort_order": 24
  },
  {
   "name": "トラベルボトルグレーカラー3本",
@@ -222,7 +231,7 @@
   "unit_price": 3,
   "packing_material": "OPPテープ付き",
   "packing_method": "EVA袋に入っていなければいれてOPP",
-  "sort_order": 24
+  "sort_order": 25
  },
  {
   "name": "たまごっちハードケース（硬い方）",
@@ -231,7 +240,7 @@
   "unit_price": 3,
   "packing_material": "サンキューシール",
   "packing_method": "保護フィルムを中に入れる、中国語のシールに大きいサンキューシールを貼る",
-  "sort_order": 25
+  "sort_order": 26
  },
  {
   "name": "たまごっちシリコンケース",
@@ -240,6 +249,6 @@
   "unit_price": 3,
   "packing_material": "",
   "packing_method": "保護フィルムを中に入れる、同じ色のロングストラップを入れる（なるべくぐちゃぐちゃに入れないでほしいです）",
-  "sort_order": 26
+  "sort_order": 27
  }
 ]

@@ -26,6 +26,10 @@ export default function WelfarePackingAdmin() {
   })
   const [taskQuery, setTaskQuery] = useState('')
   const [taskSearch, setTaskSearch] = useState('')
+  // 商品と紐づかない作業（郵便書簡・封筒など）を手で足すためのフォーム
+  const [newTask, setNewTask] = useState({
+    name: '', sku: '', set_qty: '', unit_price: '', packing_material: '', packing_method: '',
+  })
 
   const { data } = useQuery({
     queryKey: ['packing-orders', month],
@@ -111,6 +115,16 @@ export default function WelfarePackingAdmin() {
     mutationFn: (id) => api.delete(`/welfare/packing-tasks/${id}`),
     onSuccess: refreshTasks,
     onError: (e) => alert('削除エラー: ' + (e.response?.data?.detail || e.message)),
+  })
+
+  const createTask = useMutation({
+    mutationFn: (body) => api.post('/welfare/packing-tasks', body).then(r => r.data),
+    onSuccess: () => {
+      setNewTask({ name: '', sku: '', set_qty: '', unit_price: '',
+        packing_material: '', packing_method: '' })
+      refreshTasks()
+    },
+    onError: (e) => alert('登録エラー: ' + (e.response?.data?.detail || e.message)),
   })
 
   const updateTask = useMutation({
@@ -338,6 +352,68 @@ export default function WelfarePackingAdmin() {
               （後から直しても、過去の依頼の金額は変わりません）。
             </div>
           </div>
+
+          {/* 商品と紐づかない作業（郵便書簡・封筒など）を手で足す。
+              SKUは空でよい */}
+          <details style={{ marginBottom: 14 }}>
+            <summary style={{ cursor: 'pointer', fontSize: 13, color: '#334155', padding: '6px 0' }}>
+              ＋ 作業を手で追加する（郵便書簡・封筒など商品でないもの）
+            </summary>
+            <div style={{
+              padding: 14, marginTop: 8, borderRadius: 8,
+              background: '#f8fafc', border: '1px solid #e2e8f0',
+            }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>作業名 <span style={{ color: '#dc2626' }}>*</span></label>
+                  <input value={newTask.name} placeholder="郵便書簡（ミニレター）"
+                    onChange={e => setNewTask(f => ({ ...f, name: e.target.value }))} />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>SKU（任意）</label>
+                  <input value={newTask.sku} placeholder="空でOK"
+                    onChange={e => setNewTask(f => ({ ...f, sku: e.target.value }))} />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>1セットの数（任意）</label>
+                  <input type="number" value={newTask.set_qty} placeholder="-"
+                    onChange={e => setNewTask(f => ({ ...f, set_qty: e.target.value }))} />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>単価（円）</label>
+                  <input type="number" step="0.1" value={newTask.unit_price} placeholder="3"
+                    onChange={e => setNewTask(f => ({ ...f, unit_price: e.target.value }))} />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>梱包材（任意）</label>
+                  <input value={newTask.packing_material} placeholder="セロテープ、両面テープ"
+                    onChange={e => setNewTask(f => ({ ...f, packing_material: e.target.value }))} />
+                </div>
+              </div>
+              <div className="form-group" style={{ marginTop: 10, marginBottom: 0 }}>
+                <label>作業内容（任意）</label>
+                <textarea rows={2} value={newTask.packing_method}
+                  onChange={e => setNewTask(f => ({ ...f, packing_method: e.target.value }))} />
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <button className="btn btn-primary" disabled={createTask.isPending}
+                  onClick={() => {
+                    if (!newTask.name.trim()) return alert('作業名を入れてください')
+                    createTask.mutate({
+                      name: newTask.name.trim(),
+                      sku: newTask.sku.trim(),
+                      set_qty: newTask.set_qty === '' ? null : Number(newTask.set_qty),
+                      unit_price: newTask.unit_price === '' ? 0 : Number(newTask.unit_price),
+                      packing_material: newTask.packing_material,
+                      packing_method: newTask.packing_method,
+                      sort_order: 999,
+                    })
+                  }}>
+                  {createTask.isPending ? '追加中...' : 'この作業を追加'}
+                </button>
+              </div>
+            </div>
+          </details>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>

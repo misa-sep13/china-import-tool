@@ -224,6 +224,9 @@ def _migrate():
         # 再梱包の作業依頼が、どの作業マスタから作られたか
         ("welfare_packing_orders","task_id",
          "ALTER TABLE welfare_packing_orders ADD COLUMN task_id INTEGER"),
+        # 作業マスタの出所（seed=一括取り込み / manual=手で追加）
+        ("welfare_packing_tasks","source",
+         "ALTER TABLE welfare_packing_tasks ADD COLUMN source VARCHAR DEFAULT 'manual'"),
     ]
 
     inspector = inspect(engine)
