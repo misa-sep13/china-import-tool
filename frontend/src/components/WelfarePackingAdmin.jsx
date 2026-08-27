@@ -26,12 +26,9 @@ export default function WelfarePackingAdmin() {
   })
   const [taskQuery, setTaskQuery] = useState('')
   const [taskSearch, setTaskSearch] = useState('')
-  // 荷受けから作った候補。既定は直近30日ぶんだけ見る
-  // （全期間だと過去の未処理分まで積み上がって実態と合わない）
-  const [since, setSince] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 30)
-    return d.toISOString().slice(0, 10)
-  })
+  // 荷受けから作った候補。便（荷受けを取り込んだ日）ごとに分けて見る。
+  // 全期間をまとめると、どの便の話か分からなくなるため
+  const [batch, setBatch] = useState('')
   const [picked, setPicked] = useState({})   // {task_id: セット数}
   // 商品と紐づかない作業（郵便書簡・封筒など）を手で足すためのフォーム
   const [newTask, setNewTask] = useState({
@@ -51,15 +48,17 @@ export default function WelfarePackingAdmin() {
     queryFn: () => api.get('/welfare/packing-tasks').then(r => r.data),
   })
   const { data: candData, isFetching: candLoading } = useQuery({
-    queryKey: ['packing-candidates', since],
-    queryFn: () => api.get('/welfare/packing-orders/candidates',
-      { params: since ? { since } : {} }).then(r => r.data),
+    queryKey: ['packing-candidates'],
+    queryFn: () => api.get('/welfare/packing-orders/candidates').then(r => r.data),
   })
 
   const rows = data?.items || []
   const months = monthsData?.months || []
   const tasks = tasksData?.tasks || []
-  const fromReceiving = candData?.candidates || []   // 荷受けから作った依頼の候補
+  const batches = candData?.batches || []            // 便ごとの候補
+  // 便が未選択なら、いちばん新しい便を見る
+  const activeBatch = batches.some(b => b.batch === batch) ? batch : (batches[0]?.batch || '')
+  const fromReceiving = batches.find(b => b.batch === activeBatch)?.items || []
 
   const candidates = useMemo(() => {
     const q = taskQuery.trim().toLowerCase()
@@ -186,19 +185,29 @@ export default function WelfarePackingAdmin() {
           {/* 荷受けから作った候補。チェックして一括で依頼にする */}
           <details open={fromReceiving.length > 0} style={{ marginBottom: 16 }}>
             <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 600, padding: '6px 0' }}>
-              荷受けから作業依頼を作る（{candLoading ? '…' : `${fromReceiving.length}件`}）
+              荷受けから作業依頼を作る
+              {candLoading ? '（…）' : batches.length === 0 ? '（対象なし）'
+                : `　${activeBatch} の便：${fromReceiving.length}件`}
             </summary>
             <div style={{
               padding: 14, marginTop: 8, borderRadius: 8,
               background: '#f0f9ff', border: '1px solid #bae6fd',
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-                <label style={{ fontSize: 12, color: '#0c4a6e' }}>いつ以降の荷受けを見るか</label>
-                <input type="date" value={since} style={{ width: 'auto' }}
-                  onChange={e => setSince(e.target.value)} />
-                <span style={{ fontSize: 12, color: '#0369a1' }}>
-                  「作業」指示が付いた商品から、作れるセット数を出しています
-                </span>
+              {/* 便（荷受けを取り込んだ日）ごとのタブ。荷受け画面と同じ並び */}
+              <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+                {batches.map(b => (
+                  <button
+                    key={b.batch}
+                    onClick={() => { setBatch(b.batch); setPicked({}) }}
+                    className={`btn ${b.batch === activeBatch ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ padding: '4px 12px', fontSize: 13 }}
+                  >
+                    {b.batch} ({b.count})
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 12, color: '#0369a1', marginBottom: 10 }}>
+                荷受けで「作業」指示が付いた商品から、作れるセット数を出しています
               </div>
 
               {fromReceiving.length === 0 ? (
@@ -261,7 +270,8 @@ export default function WelfarePackingAdmin() {
                         const list = fromReceiving.filter(x => picked[x.task_id] !== undefined)
                         if (!list.length) return
                         const total = list.reduce((s, x) => s + picked[x.task_id] * (x.unit_price || 0), 0)
-                        if (!confirm(`${list.length}件を${form.order_date}の依頼にします（合計${yen(total)}）`)) return
+                        if (!confirm(`${activeBatch} の便から${list.length}件を`
+                          + `${form.order_date}の依頼にします（合計${yen(total)}）`)) return
                         for (const [i, x] of list.entries()) {
                           await api.post('/welfare/packing-orders', {
                             order_date: form.order_date,

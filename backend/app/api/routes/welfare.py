@@ -1450,14 +1450,14 @@ def bulk_upsert_packing_tasks(
 
 @router.get("/packing-orders/candidates")
 def packing_order_candidates(
-    since: Optional[str] = None,
+    batch: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     """荷受けで「作業」指示が付いた商品から、作業依頼の候補を作って返す。
 
-    since(YYYY-MM-DD)を渡すと、その日以降に取り込んだ荷受けだけを見る。
-    未指定だと過去の未処理分まで全部積み上がって実態と合わなくなるため、
-    画面からは直近の便に絞って使う。
+    便（荷受けを取り込んだ日）ごとに分けて返す。全期間をまとめると
+    過去の未処理分まで積み上がって、どの便の話か分からなくなるため。
+    batch("M/D")を渡すとその便だけを返す。
 
     荷受けのSKUは色・サイズ違いまで分かれている（y48_glay-s）が、
     作業マスタは商品ページ単位（y48）なので、rakuten_item_url で寄せる。
@@ -1507,11 +1507,11 @@ def packing_order_candidates(
         remaining = r.remaining_qty or 0
         if remaining <= 0:
             continue
-        if since:
-            # 取り込んだ日で絞る。荷受けは同じ便がまとめて入るのでこれで足りる
-            ts = r.created_at or r.updated_at
-            if ts is None or ts.strftime("%Y-%m-%d") < since:
-                continue
+        # 荷受け画面と同じく、取り込んだ日を便の名前にする
+        ts = r.created_at or r.updated_at
+        label = f"{ts.month}/{ts.day}" if ts else "(日付なし)"
+        if batch and label != batch:
+            continue
         # 「作業」を含む指示だけが対象（保管だけの行は再梱包しない）
         if "作業" not in str(r.instruction or ""):
             continue
@@ -1522,7 +1522,9 @@ def packing_order_candidates(
         if task is None or task.id in ordered_task_ids:
             continue
 
-        e = grouped.setdefault(task.id, {
+        e = grouped.setdefault((label, task.id), {
+            "batch": label,
+            "batch_sort": ts.strftime("%Y-%m-%d") if ts else "",
             "task_id": task.id,
             "task_name": task.name,
             "sku": code,
@@ -1541,12 +1543,26 @@ def packing_order_candidates(
             "order_date": r.order_date,
         })
 
-    out = []
+    by_batch: dict[str, dict] = {}
     for e in grouped.values():
         per = e["set_qty"] or 1
         e["suggested_set_count"] = int(e["remaining_qty"] // per) if per > 0 else 0
         e["suggested_amount"] = round(e["suggested_set_count"] * (e["unit_price"] or 0), 2)
-        out.append(e)
+        b = by_batch.setdefault(e["batch"], {
+            "batch": e["batch"],
+            "batch_sort": e["batch_sort"],
+            "items": [],
+        })
+        b["items"].append(e)
 
-    out.sort(key=lambda x: -x["suggested_amount"])
-    return {"candidates": out}
+    batches = sorted(by_batch.values(), key=lambda x: x["batch_sort"], reverse=True)
+    for b in batches:
+        b["items"].sort(key=lambda x: -x["suggested_amount"])
+        b["count"] = len(b["items"])
+        b["total_amount"] = round(sum(x["suggested_amount"] for x in b["items"]), 2)
+
+    return {
+        "batches": batches,
+        # 便を指定して呼ばれたときは、その便の中身をそのまま使えるようにする
+        "candidates": batches[0]["items"] if (batch and batches) else [],
+    }
