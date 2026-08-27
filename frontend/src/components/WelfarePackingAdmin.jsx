@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
+import initialTasks from '../data/welfarePackingTasks.json'
 
 const yen = (v) => `¥${Math.round(v || 0).toLocaleString()}`
 const today = () => new Date().toISOString().slice(0, 10)
@@ -89,6 +90,17 @@ export default function WelfarePackingAdmin() {
   const remove = useMutation({
     mutationFn: (id) => api.delete(`/welfare/packing-orders/${id}`),
     onSuccess: refresh,
+  })
+
+  // 初回だけ使う想定の取り込み。作業名で照合して上書きするので、
+  // 間違えて2回押しても増えない
+  const seedTasks = useMutation({
+    mutationFn: () => api.post('/welfare/packing-tasks/bulk', initialTasks).then(r => r.data),
+    onSuccess: (d) => {
+      refreshTasks()
+      alert(`取り込みました（新規${d.created}件 / 更新${d.updated}件）`)
+    },
+    onError: (e) => alert('取り込みエラー: ' + (e.response?.data?.detail || e.message)),
   })
 
   const updateTask = useMutation({
@@ -291,13 +303,26 @@ export default function WelfarePackingAdmin() {
         /* 作業マスタ */
         <>
           <div style={{ marginBottom: 12 }}>
-            <input
-              className="search-input-ja"
-              style={{ maxWidth: 320 }}
-              value={taskSearch}
-              onChange={e => setTaskSearch(e.target.value)}
-              placeholder="作業名・SKUで検索"
-            />
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                className="search-input-ja"
+                style={{ maxWidth: 320 }}
+                value={taskSearch}
+                onChange={e => setTaskSearch(e.target.value)}
+                placeholder="作業名・SKUで検索"
+              />
+              <button
+                className="btn btn-secondary"
+                disabled={seedTasks.isPending}
+                onClick={() => {
+                  if (confirm(`いま使っている作業 ${initialTasks.length}件を取り込みます。
+`
+                    + '同じ作業名があれば上書きします。よろしいですか？')) seedTasks.mutate()
+                }}
+              >
+                {seedTasks.isPending ? '取り込み中...' : `作業${initialTasks.length}件を取り込む`}
+              </button>
+            </div>
             <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>
               単価・梱包材・作業内容はここで直せます。依頼を作るときにこの内容がコピーされます
               （後から直しても、過去の依頼の金額は変わりません）。
