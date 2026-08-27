@@ -118,9 +118,6 @@ export default function WelfareWorkPublicPage() {
     }
   }, [activeWorkDate, workDateTabs])
 
-  const totalQty = selectedRows.reduce((sum, r) => sum + (r.units || 0), 0)
-  const totalRemaining = selectedRows.reduce((sum, r) => sum + workRemainingQty(r), 0)
-
   return (
     <div style={{ minHeight: '100vh', background: '#f5f6fa', padding: '28px 36px' }}>
       <div style={{ maxWidth: 1480, margin: '0 auto' }}>
@@ -159,21 +156,6 @@ export default function WelfareWorkPublicPage() {
             onChange={e => setSearch(e.target.value)}
             placeholder="SKU・商品名・仕様・注文番号で検索"
           />
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 16 }}>
-          <div className="card" style={{ margin: 0 }}>
-            <div style={{ fontSize: 12, color: '#64748b' }}>作業行</div>
-            <div style={{ fontSize: 24, fontWeight: 700 }}>{selectedRows.length}</div>
-          </div>
-          <div className="card" style={{ margin: 0 }}>
-            <div style={{ fontSize: 12, color: '#64748b' }}>単品数合計</div>
-            <div style={{ fontSize: 24, fontWeight: 700 }}>{totalQty}</div>
-          </div>
-          <div className="card" style={{ margin: 0 }}>
-            <div style={{ fontSize: 12, color: '#64748b' }}>残合計</div>
-            <div style={{ fontSize: 24, fontWeight: 700 }}>{totalRemaining}</div>
-          </div>
         </div>
 
         <div className="card" style={{ padding: 12 }}>
