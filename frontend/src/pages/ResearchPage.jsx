@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import api from '../api/client'
-import ScoutPanel from '../components/ScoutPanel'
 
 /**
  * リサーチ（競合リサーチシート ／ セラースカウト）。
@@ -16,22 +15,34 @@ export default function ResearchPage() {
   const [ready, setReady] = useState(false)
 
   // iframeの中へ、APIのURLとログイン済みトークンを渡す。
-  // シート側はこれがあるときだけサーバーへ保存する（無ければ手元保存のまま動く）
+  // 中のスクリプトはこれを見て保存先とAPIの向き先を決める。
+  //
+  // onLoadでは遅い（中のスクリプトが先に走ってしまう）ので、
+  // srcを付ける前の空のiframeに書き込んでおく。about:blank の段階なら
+  // 同一オリジンとして触れるため、この順番なら確実に間に合う。
   const injectConfig = () => {
     const win = frameRef.current?.contentWindow
     if (!win) return
     try {
       win.__ARS_API__ = api.defaults.baseURL || ''
-      const t = localStorage.getItem('auth_token') || ''
-      win.__ARS_TOKEN__ = t
+      win.__ARS_TOKEN__ = localStorage.getItem('auth_token') || ''
     } catch {
       /* 別オリジンなら触れないが、同じサイトから配信しているので通常は通る */
     }
   }
 
-  useEffect(() => { setReady(false) }, [tab])
-
   const sheetUrl = `${import.meta.env.BASE_URL}research/sheet.html`
+  const scoutUrl = `${import.meta.env.BASE_URL}research/scout.html`
+  const url = tab === 'sheet' ? sheetUrl : scoutUrl
+
+  // srcを空にしておき、設定を書き込んでから読み込ませる
+  useEffect(() => {
+    const f = frameRef.current
+    if (!f) return
+    setReady(false)
+    injectConfig()
+    f.src = url
+  }, [url])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 40px)' }}>
@@ -45,35 +56,26 @@ export default function ResearchPage() {
             {t.l}
           </button>
         ))}
-        {tab === 'sheet' && (
-          <a className="btn btn-secondary" href={sheetUrl} target="_blank" rel="noreferrer"
-            style={{ marginLeft: 'auto', textDecoration: 'none' }}>
-            新しいタブで開く
-          </a>
-        )}
+        <a className="btn btn-secondary" href={url} target="_blank" rel="noreferrer"
+          style={{ marginLeft: 'auto', textDecoration: 'none' }}>
+          新しいタブで開く
+        </a>
       </div>
 
-      {tab === 'sheet' ? (
-        <div style={{
-          flex: 1, minHeight: 0, border: '1px solid #e5e7eb',
-          borderRadius: 8, overflow: 'hidden', background: '#fff',
-        }}>
-          <iframe
-            ref={frameRef}
-            src={sheetUrl}
-            title="競合リサーチシート"
-            style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
-            onLoad={() => { injectConfig(); setReady(true) }}
-          />
-          {!ready && (
-            <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>
-              読み込み中...
-            </div>
-          )}
-        </div>
-      ) : (
-        <ScoutPanel />
-      )}
+      {/* どちらも配布版のHTMLをそのまま使う。作り直すと見た目も機能も変わるため。
+          保存先とAPIの向き先だけ、埋め込み側から差し替えている */}
+      <div style={{
+        flex: 1, minHeight: 0, border: '1px solid #e5e7eb',
+        borderRadius: 8, overflow: 'hidden', background: '#fff',
+      }}>
+        <iframe
+          key={tab}
+          ref={frameRef}
+          title={tab === 'sheet' ? '競合リサーチシート' : 'セラースカウト'}
+          style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+          onLoad={() => { injectConfig(); setReady(true) }}
+        />
+      </div>
     </div>
   )
 }

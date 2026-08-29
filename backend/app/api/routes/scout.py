@@ -213,64 +213,148 @@ def push_crawl_result(data: CrawlResultIn, db: Session = Depends(get_db)):
 
 @router.get("/products")
 def list_products(
-    q: Optional[str] = None,
-    seller_id: Optional[str] = None,
+    kw: Optional[str] = None,
+    seller: Optional[str] = None,
     folder: Optional[str] = None,
-    min_sales: Optional[int] = None,
-    max_reviews: Optional[int] = None,
+    sales_min: Optional[int] = None,
+    sales_max: Optional[int] = None,
+    rev_min: Optional[int] = None,
+    rev_max: Optional[int] = None,
+    price_min: Optional[int] = None,
+    price_max: Optional[int] = None,
+    rating_max: Optional[float] = None,
     sort: str = "price_desc",
     limit: int = 600,
     db: Session = Depends(get_db),
 ):
-    """巡回で集めた商品。配布版の画面と同じ絞り込みができるようにする。"""
+    """巡回で集めた商品。
+
+    パラメータと戻り値は配布版のセラースカウトに合わせてある
+    （画面はそのHTMLをそのまま使っているため）。
+    """
     query = db.query(ScoutProduct)
-    if seller_id:
-        query = query.filter(ScoutProduct.seller_id == seller_id)
-    if min_sales is not None:
-        query = query.filter(ScoutProduct.sales_min >= min_sales)
-    if max_reviews is not None:
-        query = query.filter(ScoutProduct.reviews <= max_reviews)
+    if seller:
+        query = query.filter(ScoutProduct.seller_id == seller)
+    if sales_min:
+        query = query.filter(ScoutProduct.sales_min >= sales_min)
+    if sales_max:
+        query = query.filter(ScoutProduct.sales_min <= sales_max)
+    if rev_min:
+        query = query.filter(ScoutProduct.reviews >= rev_min)
+    if rev_max:
+        query = query.filter(ScoutProduct.reviews <= rev_max)
+    if price_min:
+        query = query.filter(ScoutProduct.price >= price_min)
+    if price_max:
+        query = query.filter(ScoutProduct.price <= price_max)
+    if rating_max:
+        query = query.filter(ScoutProduct.rating <= rating_max)
     rows = query.all()
 
     sellers = {s.seller_id: s for s in db.query(ScoutSeller).all()}
     if folder:
         rows = [r for r in rows
-                if (sellers.get(r.seller_id).folder if sellers.get(r.seller_id) else None) == folder]
-    if q:
-        kw = q.strip().lower()
-        rows = [r for r in rows if kw in (r.title or "").lower()
-                or kw in (r.asin or "").lower()]
+                if (sellers[r.seller_id].folder if r.seller_id in sellers else None) == folder]
+    if kw:
+        k = kw.strip().lower()
+        rows = [r for r in rows if k in (r.title or "").lower()
+                or k in (r.asin or "").lower()]
 
     key = {
         "price_desc": lambda r: -(r.price or 0),
         "price_asc": lambda r: (r.price or 0),
         "sales_desc": lambda r: -(r.sales_min or 0),
-        "reviews_asc": lambda r: (r.reviews if r.reviews is not None else 10 ** 9),
+        "sales_asc": lambda r: (r.sales_min or 0),
+        "rev_asc": lambda r: (r.reviews if r.reviews is not None else 10 ** 9),
+        "rev_desc": lambda r: -(r.reviews or 0),
         "rank_asc": lambda r: (r.rank if r.rank is not None else 10 ** 9),
     }.get(sort, lambda r: -(r.price or 0))
     rows.sort(key=key)
 
     total = len(rows)
-    rows = rows[:limit]
+    rows = rows[:max(1, limit)]
 
-    # かごに入っているASINは画面で見分けたい
     in_basket = {b.asin for b in db.query(ScoutBasket)
                  .filter(ScoutBasket.taken_at.is_(None)).all()}
 
     return {
-        "products": [{
+        "total": total,
+        "rows": [{
             "seller_id": r.seller_id,
-            "seller_name": (sellers.get(r.seller_id).name if sellers.get(r.seller_id) else None),
-            "asin": r.asin, "title": r.title, "image": r.image, "url": r.url,
+            "seller_name": (sellers[r.seller_id].name
+                            if r.seller_id in sellers else r.seller_id),
+            "asin": r.asin, "title": r.title, "image": r.image,
+            "url": r.url or f"https://www.amazon.co.jp/dp/{r.asin}",
             "price": r.price, "sales_min": r.sales_min, "sales_text": r.sales_text,
             "reviews": r.reviews, "rating": r.rating,
             "page": r.page, "rank": r.rank,
-            "in_basket": r.asin in in_basket,
+            "in_cart": r.asin in in_basket,
             "last_seen": r.last_seen.isoformat() if r.last_seen else None,
         } for r in rows],
-        "total": total,
-        "shown": len(rows),
     }
+
+
+@router.get("/status")
+def scout_status(db: Session = Depends(get_db)):
+    """画面が定期的に見に来る状態。
+
+    配布版はローカルサーバーが巡回を実行していたので進捗を返していたが、
+    ここでは巡回は手元のPCで走るため「実行中」は常にfalse。
+    画面側は running=false なら操作を受け付ける作りになっている。
+    """
+    sellers = db.query(ScoutSeller).all()
+    latest = max((s.last_run_at for s in sellers if s.last_run_at), default=None)
+    return {
+        "running": False,
+        "phase": "",
+        "done": 0,
+        "total": 0,
+        "current": "",
+        "blocked": len([s for s in sellers if s.last_status == "blocked"]),
+        "last_run_at": latest.isoformat() if latest else None,
+        "message": "巡回は手元のPCで実行します（scripts/scout/sync_server.py）",
+    }
+
+
+@router.get("/csv")
+def export_csv(
+    kw: Optional[str] = None,
+    seller: Optional[str] = None,
+    folder: Optional[str] = None,
+    sales_min: Optional[int] = None,
+    sales_max: Optional[int] = None,
+    rev_min: Optional[int] = None,
+    rev_max: Optional[int] = None,
+    price_min: Optional[int] = None,
+    price_max: Optional[int] = None,
+    rating_max: Optional[float] = None,
+    sort: str = "price_desc",
+    limit: int = 100000,
+    db: Session = Depends(get_db),
+):
+    """絞り込んだ結果をCSVで落とす。Excelで開けるようBOM付きにする。"""
+    import csv as _csv
+    import io as _io
+    from fastapi.responses import StreamingResponse
+
+    data = list_products(kw=kw, seller=seller, folder=folder,
+                         sales_min=sales_min, sales_max=sales_max,
+                         rev_min=rev_min, rev_max=rev_max,
+                         price_min=price_min, price_max=price_max,
+                         rating_max=rating_max, sort=sort, limit=limit, db=db)
+    buf = _io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(["ASIN", "商品名", "セラー", "価格", "月間販売数",
+                "レビュー数", "評価", "順位", "URL"])
+    for r in data["rows"]:
+        w.writerow([r["asin"], r["title"], r["seller_name"], r["price"],
+                    r["sales_min"], r["reviews"], r["rating"], r["rank"], r["url"]])
+    out = "﻿" + buf.getvalue()
+    return StreamingResponse(
+        _io.BytesIO(out.encode("utf-8")),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="seller_scout.csv"'},
+    )
 
 
 # ---------- かご（リサーチシートへ送る） ----------
@@ -306,7 +390,8 @@ def list_basket(db: Session = Depends(get_db)):
             "rating": p.rating if p else None,
             "added_at": b.added_at.isoformat() if b.added_at else None,
         })
-    return {"items": out, "count": len(out)}
+    # 配布版の画面は rows で読む
+    return {"rows": out, "items": out, "count": len(out)}
 
 
 @router.get("/basket/count")
@@ -419,3 +504,64 @@ def summary(db: Session = Depends(get_db)):
         "basket_count": db.query(ScoutBasket)
             .filter(ScoutBasket.taken_at.is_(None)).count(),
     }
+
+
+# ---------- 配布版の画面が叩く残りのAPI ----------
+# 巡回・ブックマーク取り込みはブラウザ自動操縦なのでサーバーでは動かない。
+# 画面から押されたときは、手元で実行する旨を返して知らせる。
+
+_LOCAL_ONLY = (
+    "この操作は手元のPCで実行します。"
+    "scripts/scout/sync_server.py を動かしてください"
+)
+
+
+@router.post("/crawl")
+def crawl_not_here():
+    return {"ok": False, "running": False, "message": _LOCAL_ONLY}
+
+
+@router.post("/stop")
+def stop_not_here():
+    return {"ok": False, "running": False, "message": "巡回は手元のPCで止めてください"}
+
+
+@router.post("/import")
+def import_not_here():
+    return {"ok": False, "message":
+            "ブックマークの取り込みは手元のPCで実行します。"
+            "配布版のセラースカウトで取り込んでから、"
+            "scripts/scout/sync_server.py を動かしてください"}
+
+
+@router.post("/resolve")
+def resolve_not_here():
+    return {"ok": False, "message": _LOCAL_ONLY}
+
+
+@router.post("/basket/register")
+def basket_register(db: Session = Depends(get_db)):
+    """かごの中身を競合リサーチシートへ渡す印を付ける。
+
+    シート側は /scout/basket を読んで行にするので、ここでは
+    「渡した」印だけ付ける（もう一度押しても二重に入らないように）。
+    """
+    rows = db.query(ScoutBasket).filter(ScoutBasket.taken_at.is_(None)).all()
+    if not rows:
+        return {"ok": False, "count": 0}
+    return {"ok": True, "count": len(rows)}
+
+
+@router.get("/basket/registered")
+def basket_registered(db: Session = Depends(get_db)):
+    n = db.query(ScoutBasket).filter(ScoutBasket.taken_at.isnot(None)).count()
+    return {"count": n}
+
+
+@router.get("/keepa")
+def keepa_not_here(asin: str = ""):
+    """Keepaのグラフ中継。配布版はローカルサーバーが取りに行っていた。
+
+    ここでは中継しないので、画面側は画像が出ないだけで他の機能は動く。
+    """
+    raise HTTPException(404, "Keepaグラフは手元のセラースカウトでご覧ください")

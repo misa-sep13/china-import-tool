@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>セラースカウト</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#fff; --line:#e4e7ec; --text:#1c2333; --sub:#6b7280;
+    --accent:#ff6a00; --accent2:#0b57d0; --ok:#15803d; --warn:#b45309; --bad:#b91c1c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:"Yu Gothic UI","Meiryo",system-ui,sans-serif;font-size:13px}
+  .wrap{display:flex;min-height:100vh}
+
+  /* ---- 左の絞り込み ---- */
+  .side{width:270px;flex:0 0 270px;background:var(--panel);border-right:1px solid var(--line);
+        padding:14px;overflow-y:auto;height:100vh;position:sticky;top:0}
+  .logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;margin-bottom:2px}
+  .logo .mark{width:26px;height:26px;border-radius:7px;background:var(--accent);color:#fff;
+        display:grid;place-items:center;font-size:14px}
+  .logo small{display:block;color:var(--sub);font-weight:400;font-size:11px}
+  h3{font-size:12px;color:var(--sub);margin:18px 0 8px;font-weight:700;
+     letter-spacing:.04em;display:flex;align-items:center;gap:6px}
+  .fld{margin-bottom:14px}
+  .fld label{display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px}
+  .fld label b{color:var(--accent);font-weight:700}
+  input[type=range]{width:100%;accent-color:var(--accent);margin:0}
+  .rangepair{display:flex;gap:6px;align-items:center}
+  .num,select,input[type=text]{width:100%;padding:6px 8px;border:1px solid var(--line);
+        border-radius:6px;font-size:12px;background:#fff;color:var(--text)}
+  .btn{display:block;width:100%;padding:9px;border:0;border-radius:8px;cursor:pointer;
+       font-size:13px;font-weight:700;margin-bottom:7px;background:#eef1f5;color:var(--text)}
+  .btn:hover{filter:brightness(.96)}
+  .btn.primary{background:var(--accent);color:#fff}
+  .btn.blue{background:var(--accent2);color:#fff}
+  .btn.ghost{background:#fff;border:1px solid var(--line)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .sellers{border:1px solid var(--line);border-radius:8px;max-height:320px;overflow-y:auto}
+  .srow{display:flex;align-items:center;gap:7px;padding:6px 8px;border-bottom:1px solid #f0f1f4;
+        cursor:pointer;font-size:12px}
+  .srow:last-child{border-bottom:0}
+  .srow:hover{background:#f8f9fb}
+  .srow.on{background:#fff4ec}
+  .srow .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .srow .ct{color:var(--sub);font-size:11px;flex:0 0 auto}
+  .dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:#d1d5db}
+  .dot.ok{background:var(--ok)} .dot.blocked{background:var(--bad)}
+  .dot.error{background:var(--warn)} .dot.empty{background:#94a3b8}
+
+  /* ---- 右の一覧 ---- */
+  .main{flex:1;padding:16px 20px;min-width:0}
+  /* 下までスクロールしても、件数・並び替え・かごが見えるように貼り付ける */
+  .top{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;
+       position:sticky;top:0;z-index:20;background:var(--bg);
+       padding:14px 0 11px;margin:-16px 0 0;border-bottom:1px solid var(--line)}
+  .top h1{font-size:20px;margin:0}
+  .top .cnt{color:var(--sub);font-size:12px;margin-top:3px}
+  .tools{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+  .tools select,.tools input{width:auto;min-width:120px}
+
+  .prog{margin:12px 0;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:11px 13px;display:none}
+  .prog.show{display:block}
+  .bar{height:7px;background:#eef1f5;border-radius:99px;overflow:hidden;margin:7px 0 5px}
+  .bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .4s}
+  .prog .line{display:flex;justify-content:space-between;font-size:12px}
+  .prog pre{margin:8px 0 0;max-height:130px;overflow:auto;background:#0f172a;color:#cbd5e1;
+        padding:8px;border-radius:6px;font-size:11px;line-height:1.5;white-space:pre-wrap}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:14px;margin-top:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+        display:flex;flex-direction:column}
+  .card .ph{height:190px;display:grid;place-items:center;background:#fff;padding:10px}
+  .card .ph img{max-width:100%;max-height:100%;object-fit:contain}
+  .card .bd{padding:9px 11px 11px;display:flex;flex-direction:column;gap:5px;flex:1}
+  .shop{font-size:11px;color:var(--accent2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .asin{font-family:Consolas,monospace;font-size:11px;background:#f2f4f7;border-radius:4px;
+        padding:1px 5px;align-self:flex-start;cursor:pointer}
+  .ttl{font-size:12px;line-height:1.45;max-height:53px;overflow:hidden;
+       color:inherit;text-decoration:none}
+  .ttl:hover{text-decoration:underline}
+  .addbtn{margin-top:6px;width:100%;padding:6px;border:1px solid var(--line);border-radius:6px;
+        background:#fff;color:var(--accent2);font-size:11px;font-weight:700;cursor:pointer}
+  .addbtn:hover{background:#f2f6fd}
+  .addbtn.in{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+  .meta{display:flex;justify-content:space-between;align-items:flex-end;margin-top:auto;
+        padding-top:6px;border-top:1px solid #f0f1f4}
+  .price{font-size:16px;font-weight:700}
+  .sales{color:var(--accent);font-weight:700;font-size:13px;text-align:right}
+  .sales small{display:block;color:var(--sub);font-weight:400;font-size:10px}
+  .stars{color:#f59e0b;font-size:11px}
+  .stars span{color:var(--sub)}
+  .none{color:#c2c7d0}
+
+  table{width:100%;border-collapse:collapse;background:var(--panel);margin-top:14px;
+        border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{padding:7px 9px;border-bottom:1px solid #f0f1f4;text-align:left;font-size:12px}
+  th{background:#fafbfc;color:var(--sub);font-size:11px;position:sticky;top:0}
+  td img{width:44px;height:44px;object-fit:contain}
+  tr:hover td{background:#fafbfc}
+  .empty{text-align:center;color:var(--sub);padding:60px 0}
+  .toast{position:fixed;right:18px;bottom:18px;background:#111827;color:#fff;padding:10px 15px;
+         border-radius:8px;font-size:12px;opacity:0;transition:.25s;pointer-events:none;z-index:99}
+  .toast.show{opacity:1}
+
+  /* ---- 画像にカーソルを当てたときのパネル ---- */
+  #hov{position:fixed;z-index:50;width:530px;background:var(--panel);border:1px solid var(--line);
+       border-radius:12px;box-shadow:0 12px 34px rgba(15,23,42,.22);padding:11px;display:none}
+  #hov.on{display:block}
+  #hov .kp{width:100%;height:200px;background:#fafbfc;border:1px solid var(--line);
+       border-radius:8px;display:grid;place-items:center;overflow:hidden}
+  #hov .kp img{max-width:100%;max-height:100%}
+  #hov .kp .ld{color:var(--sub);font-size:12px}
+  #hov .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;
+       font-size:12px;color:var(--sub)}
+  #hov .hd b{color:var(--text);font-family:Consolas,monospace}
+  #hov .acts{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
+  #hov .acts a,#hov .acts button{flex:1 1 auto;text-align:center;padding:7px 9px;border-radius:7px;
+       font-size:12px;font-weight:700;text-decoration:none;border:1px solid var(--line);
+       background:#fff;color:var(--text);cursor:pointer;white-space:nowrap}
+  #hov .acts a.pri{background:var(--accent);color:#fff;border-color:var(--accent)}
+  #hov .acts a:hover,#hov .acts button:hover{filter:brightness(.95)}
+  #hov .note{margin-top:7px;font-size:11px;color:var(--sub);line-height:1.6}
+</style>
+<script>
+// ---- 一元管理サーバーへ向ける ------------------------------------------
+// 配布版は「HTMLとAPIが同じローカルサーバー」だったので /api/... で済んでいた。
+// 一元管理ではHTMLをGitHub Pagesから、APIをRenderから出すので、
+// 呼び先を差し替えたうえでログイン済みのトークンを付ける。
+// 埋め込み元(ResearchPage)が window.__ARS_API__ / __ARS_TOKEN__ を渡してくる。
+(function(){
+  const BASE = (window.__ARS_API__ || '').replace(/\/$/, '');
+  const TOKEN = window.__ARS_TOKEN__ || '';
+  if(!BASE) return;                      // 単体で開いたときは何もしない
+  const origFetch = window.fetch.bind(window);
+  window.fetch = function(input, init){
+    let url = (typeof input === 'string') ? input : (input && input.url) || '';
+    if(url.startsWith('/api/')){
+      // /api/products → <BASE>/scout/products
+      url = BASE + '/scout' + url.slice(4);
+      init = Object.assign({}, init);
+      init.headers = Object.assign({}, (init && init.headers) || {});
+      if(TOKEN) init.headers['Authorization'] = 'Bearer ' + TOKEN;
+      return origFetch(url, init);
+    }
+    return origFetch(input, init);
+  };
+  // location.href で叩いているCSV出力も向け直す
+  window.__ARS_CSV__ = function(qs){
+    const u = BASE + '/scout/csv?' + qs;
+    origFetch(u, {headers: TOKEN ? {'Authorization':'Bearer ' + TOKEN} : {}})
+      .then(r => r.blob())
+      .then(b => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(b);
+        a.download = 'seller_scout.csv';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+      });
+  };
+})();
+</script>
+</head>
+<body>
+<div class="wrap">
+
+  <aside class="side">
+    <div class="logo"><div class="mark">検</div>
+      <div>セラースカウト<small id="dbinfo">読み込み中…</small></div></div>
+
+    <h3>絞り込み</h3>
+    <div class="fld">
+      <label>月間販売数 <b id="lblSales">50〜300+</b></label>
+      <div class="rangepair">
+        <select class="num" id="salesMin"></select>
+        <span>〜</span>
+        <select class="num" id="salesMax"></select>
+      </div>
+    </div>
+    <div class="fld">
+      <label>レビュー数 <b id="lblRev">0〜50件</b></label>
+      <input type="range" id="revMax" min="0" max="500" step="10" value="50">
+      <div class="rangepair" style="margin-top:5px">
+        <input class="num" type="number" id="revMinN" value="0" min="0">
+        <span>〜</span>
+        <input class="num" type="number" id="revMaxN" value="50" min="0">
+      </div>
+    </div>
+    <div class="fld">
+      <label>価格(円)</label>
+      <div class="rangepair">
+        <input class="num" type="number" id="priceMin" placeholder="下限">
+        <span>〜</span>
+        <input class="num" type="number" id="priceMax" placeholder="上限">
+      </div>
+    </div>
+    <div class="fld">
+      <label>レビューレート</label>
+      <select class="num" id="rateMax">
+        <option value="">指定なし</option>
+        <option value="4.2">★4.2以下</option>
+        <option value="4.0">★4.0以下</option>
+        <option value="3.7">★3.7以下</option>
+        <option value="3.5">★3.5以下</option>
+      </select>
+    </div>
+    <div class="fld">
+      <label>キーワード / ASIN</label>
+      <input type="text" id="kw" placeholder="タイトルの一部やASIN">
+    </div>
+    <button class="btn ghost" id="btnReset">絞り込みをリセット</button>
+
+    <h3>表示</h3>
+    <div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">
+        <input type="checkbox" id="hoverOn" style="width:auto;margin:0">
+        <span>画像にカーソルで調べる</span>
+      </label>
+      <label id="keepaWrap" style="display:flex;align-items:center;gap:8px;font-size:12px;
+             cursor:pointer;margin:7px 0 0 20px;padding-top:7px;border-top:1px solid #f0f1f4">
+        <input type="checkbox" id="keepaOn" style="width:auto;margin:0">
+        <span>Keepaのグラフも出す</span>
+      </label>
+    </div>
+
+    <h3>データ更新</h3>
+    <button class="btn blue" id="btnImport">ブックマークを取り込む</button>
+    <button class="btn ghost" id="btnResolve" style="display:none"></button>
+    <div class="fld">
+      <label>更新する範囲</label>
+      <select class="num" id="scope">
+        <option value="all">登録セラー全部</option>
+        <option value="stale">7日以上前のセラーだけ</option>
+        <option value="selected">左で選んだセラーだけ</option>
+        <option value="resume">前回の続きから</option>
+      </select>
+    </div>
+    <div class="fld">
+      <label>どこまで読むか</label>
+      <select class="num" id="pages">
+        <option value="12:1" selected>売れている限り読む（推奨）</option>
+        <option value="4:0">4ページ固定</option>
+        <option value="3:0">3ページ固定</option>
+        <option value="1:0">1ページだけ（ざっと見る）</option>
+      </select>
+    </div>
+    <div id="cappedBox" style="display:none;background:#fff7ed;border:1px solid #fed7aa;
+         border-radius:8px;padding:9px 11px;margin-bottom:9px;font-size:12px">
+      <b style="color:var(--warn)">⚠ 読み切れていないセラー</b>
+      <div id="cappedTxt" style="margin:4px 0 7px;color:var(--sub)"></div>
+      <button class="btn ghost" style="margin:0" id="btnCapped">この会社だけ深追いする</button>
+    </div>
+    <div class="fld">
+      <label>巡回の速さ <b id="lblPace">約16秒/社</b></label>
+      <select class="num" id="pace">
+        <option value="fast" selected>速い（約16秒/社・実測でブロック0）</option>
+        <option value="normal">標準（約26秒/社）</option>
+        <option value="slow">ゆっくり（約50秒/社・弾かれた後用）</option>
+      </select>
+    </div>
+    <button class="btn primary" id="btnRun">🔄 更新する</button>
+    <button class="btn ghost" id="btnStop" disabled>停止する</button>
+
+    <h3>セラー <span id="selCnt" style="color:var(--sub);font-weight:400"></span></h3>
+    <select class="num" id="folder" style="margin-bottom:7px"><option value="">すべてのフォルダ</option></select>
+    <div class="sellers" id="sellerList"></div>
+  </aside>
+
+  <main class="main">
+    <div class="top">
+      <div>
+        <h1>検索結果</h1>
+        <div class="cnt" id="resultCnt">—</div>
+      </div>
+      <div class="tools">
+        <select id="sort">
+          <option value="price" selected>価格が高い順</option>
+          <option value="price_asc">価格が安い順</option>
+          <option value="sales">販売数が多い順</option>
+          <option value="reviews">レビューが少ない順（狙い目）</option>
+          <option value="rating_asc">評価が低い順</option>
+          <option value="rating">評価が高い順</option>
+          <option value="new">新しく見つけた順</option>
+          <option value="rank">ベストセラー順</option>
+        </select>
+        <select id="view"><option value="grid">カード表示</option><option value="table">表で見る</option></select>
+        <button class="btn" style="width:auto;margin:0;padding:7px 13px" id="btnCsv">CSV出力</button>
+        <span id="basketBox" style="display:none;align-items:center;gap:8px;
+              background:#eef4ff;border:1px solid #c7d9f7;border-radius:8px;padding:5px 8px 5px 11px">
+          <b style="color:var(--accent2)" id="basketCnt"></b>
+          <button class="btn blue" style="width:auto;margin:0;padding:6px 12px;font-size:12px"
+                  id="btnBasketRegister">📋 競合リサーチシートに登録</button>
+          <button class="btn" style="width:auto;margin:0;padding:5px 9px;font-size:11px"
+                  id="btnBasketClear">空にする</button>
+        </span>
+      </div>
+    </div>
+
+    <div class="prog" id="prog">
+      <div class="line"><b id="progTitle">巡回中…</b><span id="progRight"></span></div>
+      <div class="bar"><i id="progBar"></i></div>
+      <div class="line"><span id="progSeller"></span><span id="progNote"></span></div>
+      <pre id="progLog"></pre>
+    </div>
+
+    <div id="out"></div>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+<div id="hov"></div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const SALES_STEPS = [0,10,20,30,40,50,100,200,300,400,500,1000];
+let SELLERS = [], picked = new Set(), timer = null, lastRunning = false, CAPPED = [];
+// 競合リサーチシートへ持っていく「かご」。中身はサーバ側(basket表)が本体で、
+// ここは画面のボタンの見た目をすぐ切り替えるための控え
+let BASKET = new Set();
+
+function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show");
+  setTimeout(()=>t.classList.remove("show"), 2600); }
+function esc(s){ return (s??"").toString().replace(/[&<>"]/g,c=>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+/* ---- 販売数のプルダウン。下限は10個から選べる ---- */
+(function initSales(){
+  const mn = $("#salesMin"), mx = $("#salesMax");
+  SALES_STEPS.forEach(v=>{
+    mn.insertAdjacentHTML("beforeend", `<option value="${v}">${v===0?"指定なし":v+"個以上"}</option>`);
+    mx.insertAdjacentHTML("beforeend", `<option value="${v}">${v}個</option>`);
+  });
+  mx.insertAdjacentHTML("beforeend", `<option value="0" selected>上限なし(300+)</option>`);
+  mn.value = "50";
+})();
+
+function filters(){
+  const p = new URLSearchParams();
+  p.set("sales_min", $("#salesMin").value);
+  p.set("sales_max", $("#salesMax").value);
+  p.set("rev_min", $("#revMinN").value||0);
+  p.set("rev_max", $("#revMaxN").value||0);
+  if($("#priceMin").value) p.set("price_min",$("#priceMin").value);
+  if($("#priceMax").value) p.set("price_max",$("#priceMax").value);
+  if($("#rateMax").value)  p.set("rating_max",$("#rateMax").value);
+  if($("#kw").value.trim()) p.set("kw",$("#kw").value.trim());
+  if($("#folder").value)   p.set("folder",$("#folder").value);
+  if(picked.size===1)      p.set("seller",[...picked][0]);
+  p.set("sort", $("#sort").value);
+  p.set("limit", "600");
+  return p;
+}
+
+function labels(){
+  const mn=+$("#salesMin").value, mx=+$("#salesMax").value;
+  $("#lblSales").textContent = (mn?mn:0) + "〜" + (mx? mx+"" : "300+");
+  $("#lblRev").textContent = ($("#revMinN").value||0)+"〜"+($("#revMaxN").value||0)+"件";
+}
+
+/* ---- つながっていないときは、黙って空にせず理由を出す ----
+   index.html をダブルクリックで開くと file:// になり、/api/… を取りに行けない。
+   何も言わずに0件を出すと「データが無い」と誤解するので、必ず理由を書く。 */
+function offline(msg, how){
+  $("#resultCnt").textContent = "";
+  $("#out").innerHTML = `<div class="empty" style="text-align:left;max-width:620px;
+      margin:40px auto;background:var(--panel);border:1px solid #fecaca;
+      border-left:4px solid var(--bad);border-radius:10px;padding:18px 20px;color:var(--text)">
+      <div style="font-size:15px;font-weight:700;color:var(--bad);margin-bottom:8px">⚠ ${esc(msg)}</div>
+      <div style="color:var(--sub);line-height:1.9">${how}</div></div>`;
+  $("#dbinfo").textContent = "つながっていません";
+}
+
+const FILE_MODE = location.protocol === "file:";
+
+async function load(){
+  labels();
+  if (FILE_MODE) return offline(
+    "このHTMLを直接開いても商品は表示されません",
+    `いまアドレス欄が <code>file:///…</code> になっています。この開き方だと
+     データの置き場所につながれません。<br><br>
+     フォルダにある <b>【セラースカウトを開く】.bat</b> をダブルクリックしてください。
+     黒い窓が出て、ブラウザが自動で開きます。<br><br>
+     すでに起動しているなら <a href="http://127.0.0.1:8791/">http://127.0.0.1:8791/</a> を開いてください。`);
+  let d;
+  try {
+    const r = await fetch("/api/products?"+filters().toString());
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    d = await r.json();
+  } catch(e) {
+    return offline("データの置き場所につながりません",
+      `<b>【セラースカウトを開く】.bat</b> の黒い窓を閉じてしまっていませんか？<br>
+       もう一度ダブルクリックして起動してください。<br><br>
+       <span style="color:#9aa1ad">詳細: ${esc(e.message)}</span>`);
+  }
+  $("#resultCnt").textContent = `条件に一致する商品が ${d.total.toLocaleString()} 件`
+      + (d.rows.length < d.total ? `（先頭 ${d.rows.length} 件を表示）` : "");
+  $("#out").innerHTML = d.rows.length
+      ? ($("#view").value==="grid" ? grid(d.rows) : table(d.rows))
+      : `<div class="empty">条件に合う商品がありません。<br>
+         絞り込みをゆるめるか、「🔄 更新する」でデータを集めてください。</div>`;
+}
+
+function stars(r,n){
+  if(!r) return `<span class="none">評価なし</span>`;
+  return `<span class="stars">★${r.toFixed(1)} <span>(${(n||0).toLocaleString()})</span></span>`;
+}
+function salesTag(v){
+  return v ? `<div class="sales">${v}+<small>月間販売数</small></div>`
+           : `<div class="sales none" style="font-weight:400">—<small>50未満</small></div>`;
+}
+
+function grid(rows){
+  return `<div class="grid">` + rows.map(r=>`
+    <div class="card">
+      <div class="ph">${r.image?`<img loading="lazy" src="${esc(r.image)}" alt=""
+           data-asin="${esc(r.asin)}" data-url="${esc(r.url)}">`:""}</div>
+      <div class="bd">
+        <div class="shop" title="${esc(r.seller_name)}">${esc(r.seller_name)}</div>
+        <span class="asin" data-copy="${esc(r.asin)}">${esc(r.asin)}</span>
+        <a class="ttl" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>
+        ${stars(r.rating, r.reviews)}
+        <div class="meta">
+          <div class="price">${r.price?("¥"+r.price.toLocaleString()):"—"}</div>
+          ${salesTag(r.sales_min)}
+        </div>
+        <button class="addbtn ${BASKET.has(r.asin)?"in":""}" data-add="${esc(r.asin)}">
+          ${BASKET.has(r.asin) ? "✓ リサーチシート待ち" : "＋ リサーチシートへ"}</button>
+      </div>
+    </div>`).join("") + `</div>`;
+}
+
+function table(rows){
+  return `<table><thead><tr><th>画像</th><th>商品タイトル</th><th>ASIN</th>
+    <th>価格</th><th>月間販売数</th><th>レビュー</th><th>評価</th><th>ショップ名</th>
+    <th>シート</th></tr></thead>
+    <tbody>` + rows.map(r=>`<tr>
+      <td>${r.image?`<img loading="lazy" src="${esc(r.image)}"
+          data-asin="${esc(r.asin)}" data-url="${esc(r.url)}">`:""}</td>
+      <td><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a></td>
+      <td><span class="asin" data-copy="${esc(r.asin)}">${esc(r.asin)}</span></td>
+      <td>${r.price?("¥"+r.price.toLocaleString()):"—"}</td>
+      <td style="color:var(--accent);font-weight:700">${r.sales_min?r.sales_min+"+":"—"}</td>
+      <td>${(r.reviews||0).toLocaleString()}</td>
+      <td>${r.rating?"★"+r.rating.toFixed(1):"—"}</td>
+      <td>${esc(r.seller_name)}</td>
+      <td><button class="addbtn ${BASKET.has(r.asin)?"in":""}" style="width:auto;padding:4px 8px"
+          data-add="${esc(r.asin)}">${BASKET.has(r.asin)?"✓":"＋"}</button></td></tr>`)
+      .join("") + `</tbody></table>`;
+}
+
+/* ---- セラー一覧 ---- */
+async function loadSellers(){
+  if (FILE_MODE) return;
+  let d;
+  try { d = await (await fetch("/api/sellers")).json(); } catch(e) { return; }
+  SELLERS = d.sellers;
+  const fol = $("#folder");
+  fol.innerHTML = `<option value="">すべてのフォルダ</option>` +
+      d.folders.map(f=>`<option value="${esc(f)}">${esc(f.split(" / ").pop())}</option>`).join("");
+  drawSellers();
+}
+function drawSellers(){
+  const f = $("#folder").value;
+  const list = SELLERS.filter(s=>!f || s.folder===f);
+  $("#selCnt").textContent = `${list.length}件`;
+  $("#sellerList").innerHTML = list.map(s=>`
+    <div class="srow ${picked.has(s.seller_id)?"on":""}" data-id="${esc(s.seller_id)}"
+         title="${esc(s.name)}&#10;最終取得: ${esc(s.last_run_at||"未取得")}">
+      <span class="dot ${esc(s.last_status||"")}" title="${
+        {ok:"取得できました",empty:"出品なし（撤退の可能性）",blocked:"ブロックされました",
+         error:"エラー"}[s.last_status] || "未取得"}"></span>
+      <span class="nm">${esc(s.name||s.seller_id)}</span>
+      <span class="ct">${s.hit_count||0}</span>
+    </div>`).join("") || `<div style="padding:12px;color:var(--sub)">セラーがいません</div>`;
+}
+
+/* ---- 巡回の進捗 ---- */
+async function poll(){
+  if (FILE_MODE) return;
+  let s;
+  try { s = await (await fetch("/api/status")).json(); }
+  catch(e) { $("#dbinfo").textContent = "つながっていません"; return; }
+  $("#dbinfo").textContent =
+      `セラー${s.seller_total||0}件 / 商品${(s.product_total||0).toLocaleString()}件`;
+  // 商品ページでブックマークしたもの（セラーIDがURLに無い）が残っていたら誘導する
+  const rb = $("#btnResolve"), pend = s.asin_pending || 0;
+  rb.style.display = pend ? "block" : "none";
+  rb.textContent = `商品ページからセラーを探す (${pend}件)`;
+  // 上限に当たって読み切れなかったセラーは、必ず画面に出す。
+  // 記録しても表示しなければ、探すのに人力が要るのと同じこと
+  CAPPED = s.capped || [];
+  $("#cappedBox").style.display = CAPPED.length ? "block" : "none";
+  if (CAPPED.length){
+    $("#cappedTxt").textContent =
+      `${CAPPED.length}社が上限まで読んでもまだ売れている商品が続いています：` +
+      CAPPED.slice(0,3).map(c=>c.name||c.seller_id).join("、") +
+      (CAPPED.length>3 ? ` 他${CAPPED.length-3}社` : "");
+  }
+  const on = !!s.running;
+  $("#prog").classList.toggle("show", on || s.state==="cooldown" || s.state==="captcha");
+  $("#btnRun").disabled = on;  $("#btnStop").disabled = !on;  rb.disabled = on;
+  if(on || s.state){
+    const tot = s.total||0, idx = s.index||0;
+    $("#progBar").style.width = tot ? Math.round(idx/tot*100)+"%" : "0";
+    $("#progTitle").textContent =
+        s.state==="captcha" ? "⚠ 画像認証が出ました。ブラウザの窓で認証してください"
+      : s.state==="cooldown"? `⏸ ブロックされました。${s.wait_sec||0}秒待っています`
+      : on ? "巡回中…" : "終了";
+    $("#progRight").textContent = tot ? `${idx} / ${tot} 件` : "";
+    $("#progSeller").textContent = s.seller ? `いま: ${s.seller}` : "";
+    $("#progNote").textContent =
+        `成功 ${s.done||0} / ブロック ${s.blocked||0}` +
+        (s.elapsed_sec ? ` / ${Math.floor(s.elapsed_sec/60)}分${s.elapsed_sec%60}秒` : "");
+    $("#progLog").textContent = s.log||"";
+    $("#progLog").scrollTop = 1e6;
+  }
+  if(lastRunning && !on){ toast("巡回が終わりました"); load(); loadSellers(); }
+  lastRunning = on;
+}
+
+/* ---- 画像にカーソルを当てたときのパネル ----
+   Keepaの価格推移グラフは graph.keepa.com が返す普通のPNG。APIキーは要らない。
+   ただし一覧に600枚あるので、開いた1枚だけ読みに行く(先読みしない)。       */
+const HOV = $("#hov");
+let hovTimer = null, hovAsin = null;
+
+// Amazonの一覧画像は 218px しかない。._AC_UY218_ を外すと原寸(実測2000px)が取れる。
+// 画像検索は元画像が大きいほど当たるので、検索に渡すのは必ず原寸の方
+function fullImage(src){ return (src || "").replace(/\._[^.\/]*_\.(jpg|png)/i, ".$1"); }
+
+// graph.keepa.com を直接 <img> に貼ると Chrome に弾かれる(規格外のCORPヘッダを
+// 返してくるため)。サーバ側で取ってきて中継したものを読む。キャッシュも効く
+function keepaUrl(asin){ return "/api/keepa?asin=" + encodeURIComponent(asin); }
+
+// パネルを出すか / その中にKeepaも出すか。どちらも既定はオフ。選択は覚えておく
+const hoverWanted = () => localStorage.getItem("hover") === "1";
+const keepaWanted = () => localStorage.getItem("keepa") === "1";
+
+function showHover(img){
+  if(!hoverWanted()) return;              // オフなら何も出さない・何も読みに行かない
+  const asin = img.dataset.asin;
+  if(!asin || hovAsin === asin) return;
+  hovAsin = asin;
+  const full = fullImage(img.src), e = encodeURIComponent(full);
+  const kp = keepaWanted();
+  HOV.innerHTML = `
+    ${kp ? `<div class="hd"><span>価格・ランキングの推移（Keepa）</span><b>${esc(asin)}</b></div>
+    <div class="kp"><span class="ld">グラフを読み込んでいます…</span></div>`
+         : `<div class="hd"><span>この商品を調べる</span><b>${esc(asin)}</b></div>`}
+    <div class="acts">
+      <a class="pri" href="${esc(img.dataset.url)}" target="_blank" rel="noopener">Amazonで開く</a>
+      <a href="https://www.aliprice.com/img/search?imageUrl=${e}" target="_blank" rel="noopener">AIプライス</a>
+      <a href="https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=${e}"
+         target="_blank" rel="noopener">1688 画像検索</a>
+      <a href="https://lens.google.com/uploadbyurl?url=${e}" target="_blank" rel="noopener">Google Lens</a>
+      <button data-copyimg="${esc(full)}">画像URLをコピー</button>
+    </div>
+    <div class="note">AIプライス拡張のアイコンはAmazonの商品ページ上でしか出ません。
+      拡張を使うときは「Amazonで開く」から。画像検索は原寸(2000px)を渡しています。</div>`;
+  if(kp){                       // オフのときは Keepa を一切読みに行かない
+    const im = new Image();
+    im.onload  = () => { if(hovAsin===asin) HOV.querySelector(".kp").innerHTML = `<img src="${im.src}">`; };
+    im.onerror = () => { if(hovAsin===asin)
+        HOV.querySelector(".kp").innerHTML = `<span class="ld">グラフを取得できませんでした</span>`; };
+    im.src = keepaUrl(asin);
+  }
+
+  // 画面からはみ出さない位置に置く
+  const r = img.getBoundingClientRect(), W = 530, H = kp ? 330 : 130, M = 10;
+  let left = r.right + M, top = r.top;
+  if(left + W > innerWidth)  left = Math.max(M, r.left - W - M);
+  if(top  + H > innerHeight) top  = Math.max(M, innerHeight - H - M);
+  HOV.style.left = left + "px"; HOV.style.top = top + "px";
+  HOV.classList.add("on");
+}
+
+function hideHover(){ HOV.classList.remove("on"); hovAsin = null; }
+
+document.addEventListener("mouseover", e => {
+  const img = e.target.closest("img[data-asin]");
+  if(img){ clearTimeout(hovTimer); hovTimer = setTimeout(()=>showHover(img), 320); return; }
+  // パネルの中にいるあいだは消さない(ボタンを押せるように)
+  if(!e.target.closest("#hov")){ clearTimeout(hovTimer); hovTimer = setTimeout(hideHover, 220); }
+});
+HOV.addEventListener("click", e => {
+  const b = e.target.closest("[data-copyimg]");
+  if(b){ navigator.clipboard.writeText(b.dataset.copyimg); toast("画像URLをコピーしました"); }
+});
+document.addEventListener("keydown", e => { if(e.key === "Escape") hideHover(); });
+addEventListener("scroll", hideHover, true);
+
+/* ---- 競合リサーチシートへ渡す「かご」 ---- */
+async function basketLoad(){
+  try{
+    const d = await (await fetch("/api/basket?img=0")).json();
+    BASKET = new Set(d.rows.map(r => r.asin));
+  }catch(e){ BASKET = new Set(); }
+  basketPaint();
+}
+function basketPaint(){
+  const box = $("#basketBox");
+  box.style.display = BASKET.size ? "flex" : "none";
+  $("#basketCnt").textContent = `🛒 ${BASKET.size}件`;
+}
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-add]"); if(!b) return;
+  const asin = b.dataset.add, inCart = BASKET.has(asin);
+  b.disabled = true;
+  try{
+    await fetch(inCart ? "/api/basket/remove" : "/api/basket/add", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify({asin})});
+    inCart ? BASKET.delete(asin) : BASKET.add(asin);
+    // ボタンだけ差し替える(一覧を作り直すとスクロール位置が飛ぶ)
+    document.querySelectorAll(`[data-add="${asin}"]`).forEach(el=>{
+      el.classList.toggle("in", !inCart);
+      el.textContent = el.style.width === "auto"
+        ? (inCart ? "＋" : "✓")
+        : (inCart ? "＋ リサーチシートへ" : "✓ リサーチシート待ち");
+    });
+    basketPaint();
+    if(!inCart) toast("かごに入れました。競合リサーチシートの「セラースカウトから取り込む」で受け取れます");
+  }catch(err){ toast("入れられませんでした: " + err.message); }
+  b.disabled = false;
+});
+$("#btnBasketRegister").addEventListener("click", async e=>{
+  const b = e.target; b.disabled = true; const keep = b.textContent;
+  b.textContent = "登録しています…";
+  try{
+    const r = await (await fetch("/api/basket/register", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body:"{}"})).json();
+    if(!r.ok){ toast("かごが空です"); }
+    else {
+      toast(`${r.count}件を競合リサーチシートに送りました。`
+          + `シート側に「新しいリサーチ」として追加されます`);
+      // かごは空になるので表示を戻す
+      setTimeout(()=>{ basketLoad().then(load); }, 6500);
+    }
+  }catch(err){ toast("登録できませんでした: " + err.message); }
+  b.textContent = keep; b.disabled = false;
+});
+$("#btnBasketClear").addEventListener("click", async ()=>{
+  if(!confirm(`かごの ${BASKET.size} 件を空にします。よろしいですか？`)) return;
+  for(const a of [...BASKET]){
+    await fetch("/api/basket/remove", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify({asin:a})});
+  }
+  BASKET.clear(); basketPaint(); load(); toast("空にしました");
+});
+
+/* ---- 操作 ---- */
+$("#sellerList").addEventListener("click", e=>{
+  const row = e.target.closest(".srow"); if(!row) return;
+  const id = row.dataset.id;
+  picked.has(id) ? picked.delete(id) : picked.add(id);
+  drawSellers(); load();
+});
+document.addEventListener("click", e=>{
+  const el = e.target.closest("[data-copy]"); if(!el) return;
+  navigator.clipboard.writeText(el.dataset.copy);
+  toast("ASIN をコピーしました: " + el.dataset.copy);
+});
+["salesMin","salesMax","revMinN","revMaxN","priceMin","priceMax","rateMax","sort","view"]
+  .forEach(id => $("#"+id).addEventListener("change", load));
+["pace","pages"].forEach(id => $("#"+id).addEventListener("change", ()=>{
+  const n = $("#sellerList").querySelectorAll(".srow").length || 283;
+  const early = $("#pages").value.endsWith(":1");
+  // 実測(2026-08-17): 4ページ固定=16秒/社、賢く打ち切る=8秒/社
+  let sec = {fast:16, normal:26, slow:50}[$("#pace").value];
+  if (early) sec = Math.round(sec * 0.52);
+  else if ($("#pages").value.startsWith("3")) sec = Math.round(sec * 0.85);
+  else if ($("#pages").value.startsWith("1")) sec = Math.round(sec * 0.45);
+  const m = Math.round(n * sec / 60);
+  $("#lblPace").textContent = `約${sec}秒/社 → ${n}社で約${
+      m>=60 ? Math.floor(m/60)+"時間"+(m%60?m%60+"分":"") : m+"分"}`;
+}));
+$("#revMax").addEventListener("input", e=>{ $("#revMaxN").value = e.target.value; labels(); });
+$("#revMax").addEventListener("change", load);
+let kwT; $("#kw").addEventListener("input", ()=>{ clearTimeout(kwT); kwT=setTimeout(load,350); });
+$("#folder").addEventListener("change", ()=>{ drawSellers(); load(); });
+$("#btnReset").addEventListener("click", ()=>{
+  // 既定は「月50個以上・上限なし / レビュー0〜50件」
+  $("#salesMin").value="50"; $("#salesMax").value="0";
+  $("#revMinN").value=0; $("#revMaxN").value=50; $("#revMax").value=50;
+  $("#priceMin").value=""; $("#priceMax").value=""; $("#rateMax").value="";
+  $("#sort").value="price";
+  $("#kw").value=""; picked.clear(); drawSellers(); load();
+});
+$("#btnCsv").addEventListener("click", ()=>{
+  if(window.__ARS_CSV__){ window.__ARS_CSV__(filters().toString()); }
+  else { location.href = "/api/csv?" + filters().toString(); }
+});
+$("#btnImport").addEventListener("click", async ()=>{
+  const r = await (await fetch("/api/import",{method:"POST"})).json();
+  toast(r.message ? r.message.split("\n").pop() : "取り込みました");
+  loadSellers();
+});
+$("#btnCapped").addEventListener("click", async ()=>{
+  if(!CAPPED.length) return;
+  const pace = $("#pace").value;
+  const r = await (await fetch("/api/crawl",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ sellers: CAPPED.map(c=>c.seller_id), pages: 30,
+                            early_stop:true, fast: pace==="fast",
+                            slow: pace==="slow", hidden:true })})).json();
+  toast(r.message); lastRunning = true; poll();
+});
+$("#btnResolve").addEventListener("click", async ()=>{
+  const r = await (await fetch("/api/resolve",{method:"POST",
+      headers:{"Content-Type":"application/json"}, body:"{}"})).json();
+  toast(r.message); lastRunning = true; poll();
+});
+$("#btnRun").addEventListener("click", async ()=>{
+  const scope = $("#scope").value, pace = $("#pace").value;
+  const [pg, es] = $("#pages").value.split(":");
+  const body = { pages: +pg, early_stop: es === "1",
+                 fast: pace==="fast", slow: pace==="slow" };
+  if(scope==="resume") body.resume = true;
+  else if(scope==="stale") body.stale_days = 7;
+  else if(scope==="selected"){
+    if(!picked.size) return toast("左のセラー一覧から選んでください");
+    body.sellers = [...picked];
+  }
+  const r = await (await fetch("/api/crawl",{method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)})).json();
+  toast(r.message);
+  lastRunning = true; poll();
+});
+$("#btnStop").addEventListener("click", async ()=>{
+  const r = await (await fetch("/api/stop",{method:"POST"})).json();
+  toast(r.message);
+});
+
+function syncDisplayBoxes(){
+  const on = hoverWanted();
+  $("#hoverOn").checked = on;
+  $("#keepaOn").checked = keepaWanted();
+  // パネルを出さない設定のときは、Keepaの選択肢を触れなくする
+  $("#keepaOn").disabled = !on;
+  $("#keepaWrap").style.opacity = on ? "1" : ".45";
+  $("#keepaWrap").style.cursor  = on ? "pointer" : "not-allowed";
+}
+$("#hoverOn").addEventListener("change", e=>{
+  localStorage.setItem("hover", e.target.checked ? "1" : "0");
+  hideHover(); syncDisplayBoxes();
+  toast(e.target.checked ? "画像にカーソルを当てると出ます" : "カーソルを当てても出しません");
+});
+$("#keepaOn").addEventListener("change", e=>{
+  localStorage.setItem("keepa", e.target.checked ? "1" : "0");
+  hideHover();
+  toast(e.target.checked ? "Keepaのグラフも出します" : "Keepaのグラフは出しません");
+});
+syncDisplayBoxes();
+
+basketLoad().then(load);          // かごの状態を先に取ってからボタンを描く
+loadSellers(); poll();
+setInterval(poll, 2500);
+</script>
+</body>
+</html>
