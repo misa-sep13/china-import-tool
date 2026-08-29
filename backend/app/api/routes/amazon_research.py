@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.amazon_research import (
     AmazonResearch, AmazonResearchItem, AmazonResearchSettings,
+    AmazonResearchSheet, AmazonResearchSheetBackup,
 )
 from app.services import amazon_research_calc as calc
 
@@ -349,3 +350,111 @@ def bulk_create_items(data: List[ItemIn], db: Session = Depends(get_db)):
         _save_calc(row, calc.compute(row, s))
     db.commit()
     return {"created": created, "updated": updated}
+
+
+# ============================================================
+# 競合リサーチシート（HTML版）の保存先
+#
+# もらったHTMLは1枚で完結していて、状態を丸ごとJSONで持っている。
+# そのHTMLをそのまま埋め込み、保存先だけ localStorage からここへ差し替える。
+# ブラウザの5MB制限を受けず、別のPCからも同じシートが見える。
+# ============================================================
+
+_BACKUP_KEEP = 60          # 残す世代の数
+_BACKUP_INTERVAL_SEC = 600 # この間隔を空けて世代を作る（保存のたびだと増えすぎる）
+
+
+class SheetIn(BaseModel):
+    data: dict | list | None = None
+    workspace: Optional[str] = None
+
+
+@router.get("/sheet")
+def get_sheet(workspace: str = "default", db: Session = Depends(get_db)):
+    row = db.query(AmazonResearchSheet).filter(
+        AmazonResearchSheet.workspace == workspace).first()
+    if row is None or not row.data:
+        return {"data": None, "updated_at": None, "size_bytes": 0}
+    try:
+        data = json.loads(row.data)
+    except (ValueError, TypeError):
+        data = None
+    return {
+        "data": data,
+        "size_bytes": row.size_bytes or 0,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.put("/sheet")
+def put_sheet(body: SheetIn, workspace: str = "default", db: Session = Depends(get_db)):
+    """シート全体を保存する。丸ごと上書きなので、間隔を空けて世代も残す。"""
+    if body.data is None:
+        raise HTTPException(400, "データがありません")
+    ws = (body.workspace or workspace or "default").strip() or "default"
+    raw = json.dumps(body.data, ensure_ascii=False)
+
+    row = db.query(AmazonResearchSheet).filter(
+        AmazonResearchSheet.workspace == ws).first()
+    if row is None:
+        row = AmazonResearchSheet(workspace=ws)
+        db.add(row)
+
+    # 前回の世代から間隔が空いていれば、上書き前の中身を控える
+    now = datetime.now(timezone.utc)
+    last = (db.query(AmazonResearchSheetBackup)
+            .filter(AmazonResearchSheetBackup.workspace == ws)
+            .order_by(AmazonResearchSheetBackup.created_at.desc())
+            .first())
+    should_backup = row.data and (
+        last is None
+        or last.created_at is None
+        or (now - last.created_at).total_seconds() >= _BACKUP_INTERVAL_SEC
+    )
+    if should_backup:
+        db.add(AmazonResearchSheetBackup(
+            workspace=ws, data=row.data, size_bytes=row.size_bytes or 0))
+        # 古い世代を落とす
+        olds = (db.query(AmazonResearchSheetBackup)
+                .filter(AmazonResearchSheetBackup.workspace == ws)
+                .order_by(AmazonResearchSheetBackup.created_at.desc())
+                .offset(_BACKUP_KEEP).all())
+        for o in olds:
+            db.delete(o)
+
+    row.data = raw
+    row.size_bytes = len(raw.encode("utf-8"))
+    db.commit()
+    db.refresh(row)
+    return {
+        "saved": True,
+        "size_bytes": row.size_bytes,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.get("/sheet/backups")
+def list_sheet_backups(workspace: str = "default", db: Session = Depends(get_db)):
+    rows = (db.query(AmazonResearchSheetBackup)
+            .filter(AmazonResearchSheetBackup.workspace == workspace)
+            .order_by(AmazonResearchSheetBackup.created_at.desc())
+            .limit(_BACKUP_KEEP).all())
+    return {"backups": [{
+        "id": r.id,
+        "size_bytes": r.size_bytes or 0,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+    } for r in rows]}
+
+
+@router.get("/sheet/backups/{backup_id:int}")
+def get_sheet_backup(backup_id: int, db: Session = Depends(get_db)):
+    row = db.query(AmazonResearchSheetBackup).filter(
+        AmazonResearchSheetBackup.id == backup_id).first()
+    if not row:
+        raise HTTPException(404, "控えが見つかりません")
+    try:
+        data = json.loads(row.data)
+    except (ValueError, TypeError):
+        raise HTTPException(500, "控えを読めませんでした")
+    return {"data": data,
+            "created_at": row.created_at.isoformat() if row.created_at else None}

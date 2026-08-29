@@ -97,3 +97,37 @@ class AmazonResearchSettings(Base):
     customs_fee_jpy = Column(Float, default=2000)  # 通関料（船便のみ・便あたり）
     rate_updated_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AmazonResearchSheet(Base):
+    """競合リサーチシート（HTML版）の保存先。
+
+    もらったHTMLは1枚で完結していて、状態を丸ごとJSONで持っている。
+    そのHTMLをそのまま画面に埋め込み、保存先だけ localStorage から
+    ここへ差し替える。ブラウザの5MB制限を受けず、別のPCからも同じものが見える。
+
+    workspace は共有の単位（HTMLの #w=xxx と同じ考え方）。
+    既定は "default"。
+    """
+    __tablename__ = "amazon_research_sheets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace = Column(String, index=True, default="default")
+    data = Column(Text)                 # シート全体のJSON
+    size_bytes = Column(Integer, default=0)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AmazonResearchSheetBackup(Base):
+    """シートの世代バックアップ。
+
+    保存のたびに丸ごと上書きするので、誤操作で消したときに戻せるよう
+    一定間隔で世代を残す（もらったHTMLの控えJSONと同じ考え方）。
+    """
+    __tablename__ = "amazon_research_sheet_backups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace = Column(String, index=True, default="default")
+    data = Column(Text)
+    size_bytes = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)

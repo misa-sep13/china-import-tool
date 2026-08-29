@@ -18,7 +18,7 @@ import RakutenReviewPage from './pages/RakutenReviewPage'
 import KeywordAnalysisPage from './pages/KeywordAnalysisPage'
 import SeoPage from './pages/SeoPage'
 import RakutenResearchPage from './pages/RakutenResearchPage'
-import AmazonResearchPage from './pages/AmazonResearchPage'
+import ResearchPage from './pages/ResearchPage'
 import RakutenDailySalesPage from './pages/RakutenDailySalesPage'
 import AdsPage from './pages/AdsPage'
 import InventoryReflectionLogsPage from './pages/InventoryReflectionLogsPage'
@@ -228,7 +228,7 @@ function App() {
           <Route path="/rakuten/review" element={<RakutenReviewPage />} />
           <Route path="/rakuten/keyword-analysis" element={<KeywordAnalysisPage />} />
           <Route path="/rakuten/seo" element={<SeoPage />} />
-          <Route path="/research" element={<AmazonResearchPage />} />
+          <Route path="/research" element={<ResearchPage />} />
           <Route path="/rakuten/research" element={<RakutenResearchPage />} />
           <Route path="/welfare/inventory" element={<WelfareInventoryPage />} />
           <Route path="/welfare/work-public" element={<WelfareWorkPublicPage />} />
