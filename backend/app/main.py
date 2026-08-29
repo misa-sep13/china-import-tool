@@ -6,6 +6,7 @@ from app.api.routes import inventory_snapshots
 from app.api.routes import material_costs
 from app.api.routes import cost_histories
 from app.api.routes import amazon_research
+from app.api.routes import scout
 from app.api.routes import welfare
 from app.api.routes import rakuten
 from app.api.routes import ads
@@ -37,6 +38,7 @@ from app.models import inventory_snapshot as inventory_snapshot_models
 from app.models import material_cost as material_cost_models
 from app.models import cost_history as cost_history_models
 from app.models import amazon_research as amazon_research_models
+from app.models import scout as scout_models
 from app.models import activity_log as activity_log_models
 from app.models import research as research_models
 
@@ -1297,6 +1299,7 @@ app.include_router(inventory_snapshots.router, prefix="/api")
 app.include_router(material_costs.router, prefix="/api")
 app.include_router(cost_histories.router, prefix="/api")
 app.include_router(amazon_research.router, prefix="/api")
+app.include_router(scout.router, prefix="/api")
 app.include_router(research_routes.router, prefix="/api")
 
 @app.get("/")

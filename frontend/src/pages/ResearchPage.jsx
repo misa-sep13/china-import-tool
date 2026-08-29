@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import api from '../api/client'
+import ScoutPanel from '../components/ScoutPanel'
 
 /**
  * リサーチ（競合リサーチシート ／ セラースカウト）。
@@ -73,34 +74,6 @@ export default function ResearchPage() {
       ) : (
         <ScoutPanel />
       )}
-    </div>
-  )
-}
-
-/**
- * セラースカウト。巡回そのものは手元のPCで動かす（Amazonはデータセンターの
- * IPからだと即ブロックされるため、SEO順位チェックと同じ考え方）。
- * ここでは巡回結果を見て、リサーチシートへ送る。
- */
-function ScoutPanel() {
-  return (
-    <div className="card">
-      <h3 style={{ marginTop: 0 }}>セラースカウト</h3>
-      <p style={{ color: '#64748b', fontSize: 13 }}>
-        登録したセラーのストアフロントを巡回し、「過去1か月で〇〇点以上購入されました」
-        バッジを集めます。SP-APIでは取れない月間販売数がここで手に入ります。
-      </p>
-      <div style={{
-        padding: 16, borderRadius: 8, background: '#fffbeb',
-        border: '1px solid #fcd34d', color: '#92400e', fontSize: 13,
-      }}>
-        <b>準備中です。</b>
-        <div style={{ marginTop: 6 }}>
-          巡回はブラウザを自動操縦するため、サーバー上では動きません
-          （データセンターのIPからだと弾かれます）。
-          SEO順位チェックと同じく「手元のPCで巡回 → 結果をサーバーへ送る」形にします。
-        </div>
-      </div>
     </div>
   )
 }
