@@ -30,7 +30,8 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(HERE, "scout.db")
+# 配布版の scout_db.py と同じファイルを見る（同じフォルダに置く前提）
+DB_PATH = os.path.join(HERE, "セラースカウト.db")
 DEFAULT_BASE = "https://china-import-tool.onrender.com/api"
 
 
