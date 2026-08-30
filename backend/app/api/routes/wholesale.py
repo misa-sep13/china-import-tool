@@ -747,3 +747,49 @@ def confirm_order(oid: int, data: ConfirmIn, db: Session = Depends(get_db)):
     o, items, s = _load(db, oid)
     return {"ok": True, "order": _order_dict(o, items, s),
             "inbound_changed": changed}
+
+
+
+class ImportFromRakutenIn(BaseModel):
+    supplier_id: int
+    rakuten_supplier: str            # 楽天マスタの仕入先名
+    skip_sets: bool = True           # セット商品を除くか
+
+
+@router.post("/items/import-from-rakuten")
+def import_from_rakuten(data: ImportFromRakutenIn, db: Session = Depends(get_db)):
+    """楽天マスタから、その仕入先の商品を卸商品として取り込む。
+
+    セット商品は既定で除く。発注するのは単品で、セットはそこから
+    組むものなので、発注画面に出ると邪魔になる。
+    """
+    sup = (db.query(WholesaleSupplier)
+           .filter(WholesaleSupplier.id == data.supplier_id).first())
+    if not sup:
+        raise HTTPException(404, "取引先が見つかりません")
+
+    q = db.query(RakutenProduct).filter(
+        RakutenProduct.supplier == data.rakuten_supplier,
+        RakutenProduct.is_active == True)
+    prods = q.all()
+
+    have = {i.rakuten_product_id for i in
+            db.query(WholesaleItem)
+            .filter(WholesaleItem.supplier_id == data.supplier_id).all()
+            if i.rakuten_product_id}
+
+    added = skipped_set = 0
+    for n, p in enumerate(sorted(prods, key=lambda x: str(x.sku))):
+        if data.skip_sets and p.set_components and p.set_components not in ("[]", "null"):
+            skipped_set += 1
+            continue
+        if p.id in have:
+            continue
+        db.add(WholesaleItem(
+            supplier_id=data.supplier_id, rakuten_product_id=p.id,
+            name=p.name, unit_price=0, sort_order=n, is_active=True))
+        added += 1
+    db.commit()
+    return {"added": added, "skipped_sets": skipped_set,
+            "total": db.query(WholesaleItem)
+                     .filter(WholesaleItem.supplier_id == data.supplier_id).count()}
