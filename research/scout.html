@@ -552,13 +552,12 @@ function showHover(img){
          : `<div class="hd"><span>この商品を調べる</span><b>${esc(asin)}</b></div>`}
     <div class="acts">
       <a class="pri" href="${esc(img.dataset.url)}" target="_blank" rel="noopener">Amazonで開く</a>
-      <a href="https://www.aliprice.com/img/search?imageUrl=${e}" target="_blank" rel="noopener">AIプライス</a>
       <a href="https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=${e}"
          target="_blank" rel="noopener">1688 画像検索</a>
       <a href="https://lens.google.com/uploadbyurl?url=${e}" target="_blank" rel="noopener">Google Lens</a>
       <button data-copyimg="${esc(full)}">画像URLをコピー</button>
     </div>
-    <div class="note">AIプライス拡張のアイコンはAmazonの商品ページ上でしか出ません。
+    <div class="note">タオタロウオーダーアシストのアイコンはAmazonの商品ページ上でしか出ません。
       拡張を使うときは「Amazonで開く」から。画像検索は原寸(2000px)を渡しています。</div>`;
   if(kp){                       // オフのときは Keepa を一切読みに行かない
     const im = new Image();
