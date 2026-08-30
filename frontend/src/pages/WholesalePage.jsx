@@ -205,12 +205,14 @@ export default function WholesalePage() {
       setReceiving(null)
       await reloadOrders()
       const un = res.data.unlinked || []
-      alert(r.mode === 'add_stock'
+      // 三項演算子の優先順位で、追記が else 側だけに付いていた。
+      // 紐付いていない商品の注意は、どちらの場合も出す
+      const base = r.mode === 'add_stock'
         ? '入荷しました。実在庫に反映しています'
         : '入荷しました。発注済のみ消しています'
-        + (un.length ? `
-
-※ 楽天と紐付いていない商品: ${un.join('、')}` : ''))
+      alert(base + (un.length
+        ? `\n\n※ 楽天と紐付いていない商品: ${un.join('、')}`
+        : ''))
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }
@@ -286,12 +288,12 @@ export default function WholesalePage() {
                 <th style={{ textAlign: 'left', whiteSpace: 'nowrap' }}>商品名</th>
                 {!isLine && <th style={{ width: 130 }}>JAN</th>}
                 <th style={{ width: 'auto' }} />
-                <th style={{ textAlign: 'right', width: 90 }}>単価(税抜)</th>
-                <th style={{ textAlign: 'right', width: 70 }}>在庫</th>
-                <th style={{ textAlign: 'right', width: 70 }}>発注1</th>
-                <th style={{ textAlign: 'right', width: 70 }}>発注2</th>
+                <th style={{ textAlign: 'right', width: 90, color: '#64748b' }}>単価(税抜)</th>
+                <th style={{ textAlign: 'right', width: 70, borderLeft: '1px solid #e2e8f0' }}>在庫</th>
+                <th style={{ textAlign: 'right', width: 70, color: '#2563eb' }}>発注1</th>
+                <th style={{ textAlign: 'right', width: 70, color: '#2563eb' }}>発注2</th>
                 <th style={{ textAlign: 'right', width: 100 }}>発注数</th>
-                <th style={{ textAlign: 'right', width: 100 }}>金額</th>
+                <th style={{ textAlign: 'right', width: 100, color: '#0f766e' }}>金額</th>
                 {!isLine && <th style={{ textAlign: 'left', width: 200 }}>納品先</th>}
               </tr>
             </thead>
@@ -303,8 +305,16 @@ export default function WholesalePage() {
                     <td style={{ whiteSpace: 'nowrap' }}>{i.name}</td>
                     {!isLine && <td style={{ fontSize: 12, color: '#64748b' }}>{i.jan_code || '—'}</td>}
                     <td />
-                    <td style={{ textAlign: 'right' }}>{i.unit_price ? yen(i.unit_price) : '—'}</td>
-                    <td style={{ textAlign: 'right' }}>{i.stock ?? '—'}</td>
+                    {/* 数字が横に並ぶので、意味ごとに色を変えて見分けられるようにする。
+                        お金＝灰、在庫＝黒（切れていたら赤）、これから来る数＝青 */}
+                    <td style={{ textAlign: 'right', color: '#64748b' }}>
+                      {i.unit_price ? yen(i.unit_price) : '—'}
+                    </td>
+                    <td style={{ textAlign: 'right', fontWeight: 600,
+                      color: i.stock ? '#0f172a' : '#dc2626',
+                      borderLeft: '1px solid #e2e8f0' }}>
+                      {i.stock ?? '—'}
+                    </td>
                     <td style={{ textAlign: 'right', color: '#2563eb' }}>{i.inbound || ''}</td>
                     <td style={{ textAlign: 'right', color: '#2563eb' }}>{i.standard_stock || ''}</td>
                     <td style={{ textAlign: 'right' }}>
@@ -312,7 +322,7 @@ export default function WholesalePage() {
                         onChange={e => setQty({ ...qty, [i.id]: Number(e.target.value) || 0 })}
                         style={{ width: '100%', padding: '4px 6px', textAlign: 'right' }} />
                     </td>
-                    <td style={{ textAlign: 'right' }}>
+                    <td style={{ textAlign: 'right', fontWeight: 600, color: '#0f766e' }}>
                       {q > 0 && i.unit_price ? yen(i.unit_price * q) : ''}
                     </td>
                     {!isLine && (
