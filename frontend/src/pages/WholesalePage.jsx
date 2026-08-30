@@ -118,6 +118,61 @@ export default function WholesalePage() {
     } finally { setBusy(false) }
   }
 
+  const [receiving, setReceiving] = useState(null)   // 入荷ダイアログ
+
+  const reloadOrders = async () => {
+    const r = await api.get(`/wholesale/orders?supplier_id=${supplierId}`)
+    setOrders(r.data)
+  }
+
+  const openReceive = async (id) => {
+    setBusy(true); setErr('')
+    try {
+      const r = await api.get(`/wholesale/orders/${id}`)
+      setReceiving({
+        order: r.data,
+        mode: 'add_stock',
+        // 届いた数は発注数から始める。欠品や分納なら画面で直す
+        qty: Object.fromEntries(r.data.items.map(i => [i.id, i.qty])),
+      })
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  const doReceive = async () => {
+    const r = receiving
+    setBusy(true); setErr('')
+    try {
+      const res = await api.post(`/wholesale/orders/${r.order.id}/receive`, {
+        mode: r.mode,
+        items: r.order.items.map(i => ({ item_id: i.id, received_qty: r.qty[i.id] || 0 })),
+      })
+      setReceiving(null)
+      await reloadOrders()
+      const un = res.data.unlinked || []
+      alert(r.mode === 'add_stock'
+        ? '入荷しました。実在庫に反映しています'
+        : '入荷しました。発注済のみ消しています'
+        + (un.length ? `
+
+※ 楽天と紐付いていない商品: ${un.join('、')}` : ''))
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  const undoReceive = async (id) => {
+    if (!window.confirm('入荷を取り消します。在庫と発注済が元に戻ります。よろしいですか？')) return
+    setBusy(true); setErr('')
+    try {
+      await api.post(`/wholesale/orders/${id}/undo-receive`, {})
+      await reloadOrders()
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
   const supplier = suppliers.find(s => s.id === supplierId)
   const yen = n => (n || 0).toLocaleString('ja-JP')
 
@@ -230,7 +285,7 @@ export default function WholesalePage() {
           <thead>
             <tr style={{ background: '#f8fafc' }}>
               <th>発注日</th><th style={{ textAlign: 'right' }}>合計</th>
-              <th>状態</th><th>送信先</th><th></th>
+              <th>状態</th><th>入荷</th><th>送信先</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -243,16 +298,31 @@ export default function WholesalePage() {
                   {o.status === 'draft' && <span style={{ color: '#64748b' }}>未送信</span>}
                   {o.status === 'failed' && <span style={{ color: '#dc2626' }}>失敗</span>}
                 </td>
+                <td style={{ fontSize: 12 }}>
+                  {o.received_at
+                    ? <span style={{ color: '#16a34a' }}>
+                        入荷済{o.received_mode === 'clear_only' ? '（発注済のみ）' : ''}
+                      </span>
+                    : <span style={{ color: '#94a3b8' }}>—</span>}
+                </td>
                 <td style={{ fontSize: 12 }}>{o.sent_to || '—'}</td>
-                <td>
+                <td style={{ whiteSpace: 'nowrap' }}>
                   <button className="btn btn-secondary" onClick={() => openPreview(o.id)}>
                     {o.status === 'sent' ? '中身を見る' : '確認して送る'}
                   </button>
+                  {!o.received_at && (
+                    <button className="btn btn-primary" style={{ marginLeft: 6 }}
+                      onClick={() => openReceive(o.id)}>入荷</button>
+                  )}
+                  {o.received_at && (
+                    <button className="btn btn-secondary" style={{ marginLeft: 6 }}
+                      onClick={() => undoReceive(o.id)}>入荷を取消</button>
+                  )}
                 </td>
               </tr>
             ))}
             {!orders.length && (
-              <tr><td colSpan="5" style={{ textAlign: 'center', color: '#94a3b8', padding: 24 }}>
+              <tr><td colSpan="6" style={{ textAlign: 'center', color: '#94a3b8', padding: 24 }}>
                 まだ発注がありません
               </td></tr>
             )}
@@ -263,6 +333,12 @@ export default function WholesalePage() {
       {tab === 'master' && (
         <WholesaleMaster suppliers={suppliers} supplierId={supplierId}
           items={items} onChanged={() => { load(); setSupplierId(supplierId) }} />
+      )}
+
+      {receiving && (
+        <ReceiveDialog r={receiving} busy={busy}
+          onChange={setReceiving} onReceive={doReceive}
+          onClose={() => setReceiving(null)} />
       )}
 
       {preview && (
@@ -442,6 +518,88 @@ function WholesaleMaster({ suppliers, supplierId, items, onChanged }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * 入荷。
+ *
+ * 在庫に足すか、発注済を消すだけかを選べる。届く前に在庫へ
+ * 入れてしまっていることがあり、そのまま足すと二重になるため。
+ */
+function ReceiveDialog({ r, busy, onChange, onReceive, onClose }) {
+  const o = r.order
+  const yen = n => (n || 0).toLocaleString('ja-JP')
+  const totalQty = o.items.reduce((a, i) => a + (r.qty[i.id] || 0), 0)
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 1000,
+      display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 10,
+        width: 'min(680px, 94vw)', maxHeight: '92vh', overflow: 'auto', padding: 24 }}>
+        <h3 style={{ marginTop: 0 }}>入荷処理</h3>
+        <div style={{ color: '#64748b', fontSize: 13, marginBottom: 16 }}>
+          {o.supplier_name}　/　{o.order_date} の発注（{yen(o.total)} 円）
+        </div>
+
+        <table style={{ width: '100%', fontSize: 14, marginBottom: 16 }}>
+          <thead>
+            <tr style={{ background: '#f8fafc' }}>
+              <th style={{ textAlign: 'left', padding: 6 }}>商品名</th>
+              <th style={{ textAlign: 'right', padding: 6 }}>発注数</th>
+              <th style={{ textAlign: 'right', padding: 6, width: 120 }}>届いた数</th>
+            </tr>
+          </thead>
+          <tbody>
+            {o.items.map(i => (
+              <tr key={i.id}>
+                <td style={{ padding: 6 }}>{i.name}</td>
+                <td style={{ textAlign: 'right', padding: 6, color: '#64748b' }}>{i.qty}</td>
+                <td style={{ textAlign: 'right', padding: 6 }}>
+                  <input type="number" min="0" value={r.qty[i.id] ?? 0}
+                    onChange={e => onChange({ ...r,
+                      qty: { ...r.qty, [i.id]: Number(e.target.value) || 0 } })}
+                    style={{ width: 100, padding: '4px 6px', textAlign: 'right' }} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <div style={{ display: 'grid', gap: 10, marginBottom: 16 }}>
+          {[
+            ['add_stock', '実在庫に足す',
+             'ふつうの入荷。届いた数を在庫へ加算し、発注済から減らします'],
+            ['clear_only', '発注済を消すだけ',
+             'すでに在庫へ入れてある場合。在庫は動かさず、発注済だけ減らします'],
+          ].map(([k, label, desc]) => (
+            <label key={k} style={{ display: 'flex', gap: 10, alignItems: 'flex-start',
+              padding: 12, borderRadius: 6, cursor: 'pointer',
+              border: r.mode === k ? '2px solid #2563eb' : '1px solid #e5e7eb',
+              background: r.mode === k ? '#eff6ff' : '#fff' }}>
+              <input type="radio" checked={r.mode === k} style={{ marginTop: 3 }}
+                onChange={() => onChange({ ...r, mode: k })} />
+              <div>
+                <div style={{ fontWeight: 600 }}>{label}</div>
+                <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{desc}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        <div style={{ fontSize: 13, color: '#64748b' }}>
+          合計 {totalQty} 個を入荷します
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 20, justifyContent: 'flex-end' }}>
+          <button className="btn btn-secondary" onClick={onClose}>やめる</button>
+          <button className="btn btn-primary" onClick={onReceive} disabled={busy || !totalQty}
+            style={{ padding: '10px 28px' }}>
+            {busy ? '処理中…' : '入荷する'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

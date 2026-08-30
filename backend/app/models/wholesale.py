@@ -96,6 +96,13 @@ class WholesaleOrder(Base):
     file_name = Column(String)
     error = Column(Text)                          # 送信に失敗したときの理由
 
+    # 入荷。発注してから届くまでを追えるように、発注と同じ行に持つ
+    received_at = Column(DateTime(timezone=True), nullable=True)
+    received_mode = Column(String)   # add_stock（在庫に足す）/ clear_only（発注済を消すだけ）
+
+    # 発注済への反映。二重に足さないよう、反映したかどうかを覚えておく
+    inbound_applied = Column(Boolean, default=False)
+
     memo = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(),
@@ -122,3 +129,6 @@ class WholesaleOrderItem(Base):
     amount = Column(Float, default=0)
     note = Column(String)
     sort_order = Column(Integer, default=0)
+
+    # 実際に届いた数。欠品や分納があるので、発注数とは別に持つ
+    received_qty = Column(Integer, default=0)

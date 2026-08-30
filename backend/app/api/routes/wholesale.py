@@ -16,6 +16,7 @@ from app.models.wholesale import (
     WholesaleSupplier, WholesaleItem, WholesaleOrder, WholesaleOrderItem,
 )
 from app.models.rakuten_product import RakutenProduct
+from app.models.inventory_reflection_log import InventoryReflectionLog
 from app.services import wholesale_excel as wx
 from app.services import mailer
 
@@ -217,12 +218,16 @@ def _order_dict(o, items=None, supplier=None):
         "status": o.status, "sent_at": o.sent_at.isoformat() if o.sent_at else None,
         "sent_to": o.sent_to, "sent_cc": o.sent_cc,
         "file_name": o.file_name, "error": o.error, "memo": o.memo,
+        "received_at": o.received_at.isoformat() if o.received_at else None,
+        "received_mode": o.received_mode,
+        "inbound_applied": bool(o.inbound_applied),
     }
     if items is not None:
         d["items"] = [{
             "id": x.id, "item_id": x.item_id, "item_code": x.item_code,
             "jan_code": x.jan_code, "name": x.name, "unit_price": x.unit_price,
             "qty": x.qty, "amount": x.amount, "note": x.note,
+            "received_qty": x.received_qty or 0,
         } for x in items]
     return d
 
@@ -433,10 +438,14 @@ def send_order(oid: int, data: SendIn, db: Session = Depends(get_db)):
     o.sent_to, o.sent_cc = to, cc
     o.sent_subject, o.sent_body = subject, body
     o.error = None
+
+    # 発注済に足す。手で入れてあった場合は画面から取り消せる
+    changed = _apply_inbound(db, o, items)
     db.commit()
 
     o, items, s = _load(db, oid)
-    return {"ok": True, "order": _order_dict(o, items, s)}
+    return {"ok": True, "order": _order_dict(o, items, s),
+            "inbound_changed": changed}
 
 
 @router.get("/mail/status")
@@ -459,3 +468,200 @@ def mail_test():
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"接続できませんでした: {type(e).__name__}: {e}")
+
+
+# ---------- 発注済への反映と入荷 ----------
+
+def _linked_products(db, items):
+    """明細から楽天マスタの商品を引く。紐付いていないものは飛ばす。"""
+    ids = [x.item_id for x in items if x.item_id]
+    if not ids:
+        return {}
+    link = {w.id: w.rakuten_product_id
+            for w in db.query(WholesaleItem).filter(WholesaleItem.id.in_(ids)).all()
+            if w.rakuten_product_id}
+    if not link:
+        return {}
+    prods = {p.id: p for p in db.query(RakutenProduct)
+             .filter(RakutenProduct.id.in_(link.values())).all()}
+    return {x.item_id: prods[link[x.item_id]]
+            for x in items if x.item_id in link and link[x.item_id] in prods}
+
+
+def _apply_inbound(db, o, items):
+    """発注済1に足す。送信したときに呼ぶ。
+
+    二重に足さないよう inbound_applied で見張る。すでに手で入れて
+    いた場合に困るので、画面から外せるようにしてある。
+    """
+    if o.inbound_applied:
+        return []
+    prods = _linked_products(db, items)
+    changed = []
+    for x in items:
+        p = prods.get(x.item_id)
+        if not p or not x.qty:
+            continue
+        before = p.inbound or 0
+        p.inbound = before + x.qty
+        changed.append({"sku": p.sku, "name": p.name,
+                        "before": before, "after": p.inbound, "qty": x.qty})
+    o.inbound_applied = True
+    return changed
+
+
+class ApplyInboundIn(BaseModel):
+    apply: bool = True     # False で取り消し（手で入れていた場合）
+
+
+@router.post("/orders/{oid:int}/apply-inbound")
+def apply_inbound(oid: int, data: ApplyInboundIn, db: Session = Depends(get_db)):
+    """発注済への反映を、あとから付けたり外したりする。
+
+    送信時に自動で足しているが、すでに手で入れてあった場合は
+    二重になる。そのときここで取り消す。
+    """
+    o, items, _ = _load(db, oid)
+    if data.apply:
+        changed = _apply_inbound(db, o, items)
+    else:
+        if not o.inbound_applied:
+            raise HTTPException(400, "まだ発注済に反映していません")
+        prods = _linked_products(db, items)
+        changed = []
+        for x in items:
+            p = prods.get(x.item_id)
+            if not p or not x.qty:
+                continue
+            before = p.inbound or 0
+            p.inbound = max(0, before - x.qty)
+            changed.append({"sku": p.sku, "name": p.name,
+                            "before": before, "after": p.inbound, "qty": -x.qty})
+        o.inbound_applied = False
+    db.commit()
+    return {"ok": True, "applied": o.inbound_applied, "changed": changed}
+
+
+class ReceiveItemIn(BaseModel):
+    item_id: int              # WholesaleOrderItem の id
+    received_qty: int = 0
+
+
+class ReceiveIn(BaseModel):
+    """入荷。
+
+    mode:
+      add_stock  … 実在庫に足す（ふつうの入荷）
+      clear_only … 発注済を消すだけ（先に在庫へ入れてあったとき）
+    """
+    mode: str = "add_stock"
+    items: List[ReceiveItemIn] = []
+    note: Optional[str] = None
+
+
+@router.post("/orders/{oid:int}/receive")
+def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)):
+    """入荷処理。実在庫と発注済を動かす。
+
+    在庫を先に入れてしまっていることがあるので、足すかどうかを
+    選べるようにしている（clear_only）。どちらでも発注済からは
+    減らす。数えた結果を残せるよう、届いた数は明細ごとに持つ。
+    """
+    o, items, _ = _load(db, oid)
+    if o.received_at:
+        raise HTTPException(400, "この発注はすでに入荷済みです")
+    if data.mode not in ("add_stock", "clear_only"):
+        raise HTTPException(400, "mode は add_stock か clear_only です")
+
+    # 画面から届いた数が来ていればそれを使う。無ければ発注数どおり
+    recv = {r.item_id: r.received_qty for r in data.items}
+    for x in items:
+        x.received_qty = recv.get(x.id, x.qty) or 0
+
+    prods = _linked_products(db, items)
+    unlinked = [x.name for x in items if x.item_id not in prods]
+
+    # セット商品の再計算に使うので、楽天の全商品を持ってくる
+    from app.api.routes.rakuten import _recalc_dependent_set_stock
+    all_products = db.query(RakutenProduct).filter(
+        RakutenProduct.is_active == True).all()
+    sku_stock = {p.sku: (p.stock or 0) for p in all_products}
+    updated = set()
+    changed = []
+
+    for x in items:
+        p = prods.get(x.item_id)
+        q = x.received_qty or 0
+        if not p or not q:
+            continue
+        before_stock, before_inbound = p.stock or 0, p.inbound or 0
+        if data.mode == "add_stock":
+            p.stock = before_stock + q
+            sku_stock[p.sku] = p.stock
+            updated.add(p.sku)
+        # 発注済からは、どちらの場合も減らす
+        p.inbound = max(0, before_inbound - q)
+        changed.append({
+            "sku": p.sku, "name": p.name, "qty": q,
+            "stock_before": before_stock, "stock_after": p.stock or 0,
+            "inbound_before": before_inbound, "inbound_after": p.inbound or 0,
+        })
+        _log_reflection(db, o, p, q, before_stock, before_inbound, data.mode)
+
+    if updated:
+        _recalc_dependent_set_stock(all_products, sku_stock, updated)
+
+    o.received_at = datetime.now(timezone.utc)
+    o.received_mode = data.mode
+    if data.note:
+        o.memo = ((o.memo or "") + "\n" + data.note).strip()
+    db.commit()
+
+    o, items, s = _load(db, oid)
+    return {"ok": True, "order": _order_dict(o, items, s),
+            "changed": changed, "unlinked": unlinked}
+
+
+def _log_reflection(db, o, p, qty, before_stock, before_inbound, mode):
+    """在庫反映履歴に残す。どこから動いた在庫かを後で辿れるように。"""
+    label = "卸入荷" if mode == "add_stock" else "卸入荷(発注済のみ)"
+    db.add(InventoryReflectionLog(
+        source="wholesale_receive",
+        source_label=label,
+        source_id=o.id,
+        source_ref="卸発注",
+        sku=p.sku,
+        name=p.name,
+        supplier=p.supplier,
+        received_qty=qty,
+        stock_before=before_stock,
+        stock_after=p.stock or 0,
+        inbound_before=before_inbound,
+        inbound_after=p.inbound or 0,
+        rms_push_items=0,
+        note=f"卸発注 {o.order_date} から反映",
+    ))
+
+
+@router.post("/orders/{oid:int}/undo-receive")
+def undo_receive(oid: int, db: Session = Depends(get_db)):
+    """入荷を取り消す。押し間違えたときのため。"""
+    o, items, _ = _load(db, oid)
+    if not o.received_at:
+        raise HTTPException(400, "まだ入荷していません")
+
+    prods = _linked_products(db, items)
+    for x in items:
+        p = prods.get(x.item_id)
+        q = x.received_qty or 0
+        if not p or not q:
+            continue
+        if o.received_mode == "add_stock":
+            p.stock = max(0, (p.stock or 0) - q)
+        p.inbound = (p.inbound or 0) + q
+
+    o.received_at = None
+    o.received_mode = None
+    db.commit()
+    o, items, s = _load(db, oid)
+    return {"ok": True, "order": _order_dict(o, items, s)}

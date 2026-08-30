@@ -236,6 +236,16 @@ def _migrate():
         # どの便の荷受けから作った依頼か（同じ便からの二重作成を防ぐ）
         ("welfare_packing_orders","source_batch",
          "ALTER TABLE welfare_packing_orders ADD COLUMN source_batch VARCHAR"),
+
+        # 卸発注の入荷。create_all は既にある表に列を足さないので、ここで足す
+        ("wholesale_orders","received_at",
+         "ALTER TABLE wholesale_orders ADD COLUMN received_at TIMESTAMP"),
+        ("wholesale_orders","received_mode",
+         "ALTER TABLE wholesale_orders ADD COLUMN received_mode VARCHAR"),
+        ("wholesale_orders","inbound_applied",
+         "ALTER TABLE wholesale_orders ADD COLUMN inbound_applied BOOLEAN DEFAULT FALSE"),
+        ("wholesale_order_items","received_qty",
+         "ALTER TABLE wholesale_order_items ADD COLUMN received_qty INTEGER DEFAULT 0"),
     ]
 
     inspector = inspect(engine)
