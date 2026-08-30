@@ -41,3 +41,4 @@ logs/
 
 # セラースカウトのローカルDB（巡回結果は個人のPCに置き、サーバーへ送る）
 scripts/scout/セラースカウト.db*
+scripts/scout/run_status.json
