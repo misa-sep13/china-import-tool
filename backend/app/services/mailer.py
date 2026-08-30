@@ -8,6 +8,7 @@ git やバックアップに残るため。
 """
 import imaplib
 import os
+import re
 import smtplib
 import ssl
 import time
@@ -55,6 +56,20 @@ SENT_CANDIDATES = ["Sent", "INBOX.Sent", "Sent Messages", "Sent Items",
                    "INBOX.送信済みトレイ", "送信済みトレイ", "INBOX.Sent Messages"]
 
 
+def _list_name(line):
+    """IMAPのLIST応答からフォルダ名だけ取り出す。
+
+    応答は (属性) "区切り" "名前" の形。素朴に split すると区切り文字
+    まで拾ってしまうので、末尾の引用符の中だけを取る。
+    引用符が無いサーバーもあるので、その場合は最後の語を使う。
+    """
+    m = re.search(r'"([^"]*)"\s*$', line)
+    if m:
+        return m.group(1)
+    parts = line.rsplit(" ", 1)
+    return parts[-1].strip() if parts else ""
+
+
 def _find_sent_folder(im):
     """送信済みトレイを探す。
 
@@ -68,10 +83,9 @@ def _find_sent_folder(im):
             for raw in boxes:
                 line = raw.decode(errors="replace") if isinstance(raw, bytes) else str(raw)
                 if r"\Sent" in line:
-                    # 例: (\HasNoChildren \Sent) "." "INBOX.Sent" の形で返る
-                    parts = line.split(' "')
-                    if parts:
-                        return parts[-1].strip().strip('"')
+                    name = _list_name(line)
+                    if name:
+                        return name
     except Exception:
         pass
 
@@ -201,9 +215,9 @@ def check_sent_folder():
             if typ == "OK":
                 for raw in boxes:
                     line = raw.decode(errors="replace") if isinstance(raw, bytes) else str(raw)
-                    parts = line.split(' "')
-                    if parts:
-                        names.append(parts[-1].strip().strip('"'))
+                    n = _list_name(line)
+                    if n:
+                        names.append(n)
             return {"ok": bool(folder), "folder": folder,
                     "host": c["imap_host"], "port": c["imap_port"],
                     "folders": names[:40]}
