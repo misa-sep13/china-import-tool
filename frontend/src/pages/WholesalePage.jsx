@@ -278,17 +278,20 @@ export default function WholesalePage() {
 
       {tab === 'order' && (
         <>
+          {/* 商品名のあとに空の列を置いて余白を吸わせる。こうしないと
+              商品名が横いっぱいに広がり、在庫や発注数が右端まで離れる */}
           <table className="table" style={{ width: '100%', background: '#fff' }}>
             <thead>
               <tr style={{ background: '#f8fafc' }}>
-                <th style={{ textAlign: 'left' }}>商品名</th>
-                {!isLine && <th>JAN</th>}
-                {!isLine && <th style={{ textAlign: 'right' }}>単価(税抜)</th>}
-                <th style={{ textAlign: 'right' }}>在庫</th>
-                <th style={{ textAlign: 'right' }}>発注済</th>
-                <th style={{ textAlign: 'right', width: 110 }}>発注数</th>
-                {!isLine && <th style={{ textAlign: 'right' }}>金額</th>}
-                {!isLine && <th style={{ textAlign: 'left' }}>納品先</th>}
+                <th style={{ textAlign: 'left', whiteSpace: 'nowrap' }}>商品名</th>
+                {!isLine && <th style={{ width: 130 }}>JAN</th>}
+                {!isLine && <th style={{ textAlign: 'right', width: 90 }}>単価(税抜)</th>}
+                <th style={{ width: 'auto' }} />
+                <th style={{ textAlign: 'right', width: 70 }}>在庫</th>
+                <th style={{ textAlign: 'right', width: 70 }}>発注済</th>
+                <th style={{ textAlign: 'right', width: 100 }}>発注数</th>
+                {!isLine && <th style={{ textAlign: 'right', width: 90 }}>金額</th>}
+                {!isLine && <th style={{ textAlign: 'left', width: 200 }}>納品先</th>}
               </tr>
             </thead>
             <tbody>
@@ -296,15 +299,16 @@ export default function WholesalePage() {
                 const q = qty[i.id] || 0
                 return (
                   <tr key={i.id} style={{ background: q > 0 ? '#eff6ff' : undefined }}>
-                    <td>{i.name}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{i.name}</td>
                     {!isLine && <td style={{ fontSize: 12, color: '#64748b' }}>{i.jan_code || '—'}</td>}
                     {!isLine && <td style={{ textAlign: 'right' }}>{yen(i.unit_price)}</td>}
+                    <td />
                     <td style={{ textAlign: 'right' }}>{i.stock ?? '—'}</td>
                     <td style={{ textAlign: 'right', color: '#2563eb' }}>{i.inbound || ''}</td>
                     <td style={{ textAlign: 'right' }}>
                       <input type="number" min="0" value={q || ''}
                         onChange={e => setQty({ ...qty, [i.id]: Number(e.target.value) || 0 })}
-                        style={{ width: 90, padding: '4px 6px', textAlign: 'right' }} />
+                        style={{ width: '100%', padding: '4px 6px', textAlign: 'right' }} />
                     </td>
                     {!isLine && (
                       <td style={{ textAlign: 'right' }}>{q > 0 ? yen(i.unit_price * q) : ''}</td>
