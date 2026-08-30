@@ -8,6 +8,7 @@ from app.api.routes import cost_histories
 from app.api.routes import amazon_research
 from app.api.routes import scout
 from app.api.routes import welfare
+from app.api.routes import wholesale
 from app.api.routes import rakuten
 from app.api.routes import ads
 from app.api.routes import review as review_routes
@@ -41,6 +42,7 @@ from app.models import amazon_research as amazon_research_models
 from app.models import scout as scout_models
 from app.models import activity_log as activity_log_models
 from app.models import research as research_models
+from app.models import wholesale as wholesale_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -1301,6 +1303,7 @@ app.include_router(cost_histories.router, prefix="/api")
 app.include_router(amazon_research.router, prefix="/api")
 app.include_router(scout.router, prefix="/api")
 app.include_router(research_routes.router, prefix="/api")
+app.include_router(wholesale.router, prefix="/api")
 
 @app.get("/")
 def root():
