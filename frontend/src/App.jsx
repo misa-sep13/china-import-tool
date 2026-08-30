@@ -139,7 +139,7 @@ function App() {
         </NavLink>
         {!isContractor && (
           <NavLink to="/settings" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-            ⚙️ 設定
+            ⚙️ Amazon設定
           </NavLink>
         )}
 
@@ -168,11 +168,6 @@ function App() {
         <NavLink to="/rakuten/invoices" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📄 仕入管理
         </NavLink>
-        {!isContractor && (
-          <NavLink to="/rakuten/settings" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-            ⚙️ 楽天設定
-          </NavLink>
-        )}
         <NavLink to="/rakuten/inventory-reflections" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📥 在庫反映履歴
         </NavLink>
@@ -188,6 +183,11 @@ function App() {
         <NavLink to="/rakuten/research" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🔎 商品リサーチ
         </NavLink>
+        {!isContractor && (
+          <NavLink to="/rakuten/settings" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+            ⚙️ 楽天設定
+          </NavLink>
+        )}
         <div style={{ borderTop: '1px solid #2d3748', margin: '16px 0 8px', paddingTop: 8, fontSize: 11, color: '#475569', fontWeight: 700, letterSpacing: 1, paddingLeft: 16 }}>
           就労支援
         </div>
