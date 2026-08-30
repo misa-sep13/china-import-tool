@@ -25,6 +25,8 @@ export default function WholesalePage() {
   const [mailStatus, setMailStatus] = useState(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [receiving, setReceiving] = useState(null)   // 入荷ダイアログ
+  const [message, setMessage] = useState(null)      // LINEに貼る文面
   const [orderDate, setOrderDate] = useState(today)
   // 手で日付を変えたかどうか。変えていなければ今日に追従させる
   const [dateTouched, setDateTouched] = useState(false)
@@ -74,6 +76,9 @@ export default function WholesalePage() {
   // 1枚の発注書に書けないので、選んだ時点で気づけるようにする
   const places = [...new Set(chosen.map(i => `${i.deliver_zip || ''}|${i.deliver_address || ''}|${i.deliver_note || ''}`))]
   const mixedPlace = places.length > 1
+
+  const supplier = suppliers.find(s => s.id === supplierId)
+  const yen = n => (n || 0).toLocaleString('ja-JP')
 
   // 取引先によって発注の出し方が違う。
   // エジソン等は発注書のExcel＋メール、マレフィオーレはLINEに貼る文面
@@ -145,8 +150,11 @@ export default function WholesalePage() {
     } finally { setBusy(false) }
   }
 
-  const [receiving, setReceiving] = useState(null)   // 入荷ダイアログ
-  const [message, setMessage] = useState(null)      // LINEに貼る文面
+
+  const reloadOrders = async () => {
+    const r = await api.get(`/wholesale/orders?supplier_id=${supplierId}`)
+    setOrders(r.data)
+  }
 
   const openMessage = async (id) => {
     setBusy(true); setErr('')
@@ -169,11 +177,6 @@ export default function WholesalePage() {
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }
-  }
-
-  const reloadOrders = async () => {
-    const r = await api.get(`/wholesale/orders?supplier_id=${supplierId}`)
-    setOrders(r.data)
   }
 
   const openReceive = async (id) => {
@@ -224,8 +227,6 @@ export default function WholesalePage() {
     } finally { setBusy(false) }
   }
 
-  const supplier = suppliers.find(s => s.id === supplierId)
-  const yen = n => (n || 0).toLocaleString('ja-JP')
 
   return (
     <div style={{ padding: 20 }}>
