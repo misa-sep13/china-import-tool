@@ -312,6 +312,9 @@ def scout_status(db: Session = Depends(get_db)):
         "current": "",
         "blocked": len([s for s in sellers if s.last_status == "blocked"]),
         "last_run_at": latest.isoformat() if latest else None,
+        # 画面上部の「セラー〇件 / 商品〇件」がここを見ている
+        "seller_total": len(sellers),
+        "product_total": db.query(ScoutProduct).count(),
         "message": "巡回は手元のPCで実行します（scripts/scout/sync_server.py）",
     }
 
