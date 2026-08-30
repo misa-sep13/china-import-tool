@@ -144,7 +144,7 @@ def run_crawl(extra_args):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base", default=os.environ.get("SCOUT_API", DEFAULT_BASE))
+    ap.add_argument("--base", default=os.environ.get("SCOUT_API", ""))
     ap.add_argument("--token", default=os.environ.get("APP_TOKEN", ""))
     ap.add_argument("--run-by", default=os.environ.get("SCOUT_RUN_BY", ""),
                     help="誰が巡回したか（画面に出る）")
@@ -154,8 +154,23 @@ def main():
     ap.add_argument("--sellers", default="", help="セラーIDをカンマ区切りで指定")
     args, rest = ap.parse_known_args()
 
-    base = args.base.rstrip("/")
-    run_by = args.run_by or os.environ.get("USERNAME") or "unknown"
+    # setup.py で保存した設定を使う。毎回トークンを打たなくて済むように。
+    # コマンドラインで渡されたものがあれば、そちらを優先する。
+    conf = {}
+    conf_path = os.path.join(os.path.expanduser("~"), ".scout_config.json")
+    if os.path.exists(conf_path):
+        try:
+            with open(conf_path, encoding="utf-8") as f:
+                conf = json.load(f)
+        except Exception:
+            pass
+
+    base = (args.base or conf.get("base") or DEFAULT_BASE).rstrip("/")
+    args.token = args.token or conf.get("token", "")
+    run_by = args.run_by or conf.get("run_by") or os.environ.get("USERNAME") or "unknown"
+
+    if not args.token:
+        raise SystemExit("トークンがありません。先に初回設定を実行してください: python setup.py")
     if not os.path.exists(DB_PATH):
         print(f"ローカルDBを作ります: {DB_PATH}")
 
