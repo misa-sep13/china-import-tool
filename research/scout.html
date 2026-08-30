@@ -132,8 +132,16 @@
 // 呼び先を差し替えたうえでログイン済みのトークンを付ける。
 // 埋め込み元(ResearchPage)が window.__ARS_API__ / __ARS_TOKEN__ を渡してくる。
 (function(){
-  const BASE = (window.__ARS_API__ || '').replace(/\/$/, '');
-  const TOKEN = window.__ARS_TOKEN__ || '';
+  function cfg(k){
+    // 埋め込み元が渡してくれた値。srcを入れる前に書いた分はナビゲーションで
+    // 消えるので、消えていたら親から読み直す（同じサイトなので参照できる）。
+    if(window[k]) return window[k];
+    try { if(window.parent && window.parent !== window && window.parent[k])
+            return window.parent[k]; } catch(e){ /* 別オリジンなら諦める */ }
+    return '';
+  }
+  const BASE = cfg('__ARS_API__').replace(/\/$/, '');
+  const TOKEN = cfg('__ARS_TOKEN__');
   if(!BASE) return;                      // 単体で開いたときは何もしない
   const origFetch = window.fetch.bind(window);
   window.fetch = function(input, init){
