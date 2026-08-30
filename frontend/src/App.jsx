@@ -150,11 +150,11 @@ function App() {
         <NavLink to="/rakuten/orders" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📦 発注管理
         </NavLink>
-        <NavLink to="/rakuten/stock" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-          📊 在庫・損益
-        </NavLink>
         <NavLink to="/wholesale" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🏭 卸発注
+        </NavLink>
+        <NavLink to="/rakuten/stock" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          📊 在庫・損益
         </NavLink>
         <NavLink to="/rakuten/sales" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📈 売上管理
