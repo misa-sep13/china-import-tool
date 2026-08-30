@@ -52,13 +52,15 @@ def api(path, token, method="GET", body=None, timeout=180):
 
 
 def open_db():
-    if not os.path.exists(DB_PATH):
-        raise SystemExit(f"ローカルDBがありません: {DB_PATH}\n"
-                         "先に配布版のセラースカウトを一度起動してください")
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
-    return con
+    """ローカルDBを開く。無ければ配布版と同じ形で作る。
 
+    配布版の connect() が CREATE TABLE IF NOT EXISTS と migrate() を持って
+    いるので、これを通せば手で作るより確実に同じ形になる。
+    配布版を一度起動しないと始められない、という制約を無くすため。
+    """
+    sys.path.insert(0, HERE)
+    import scout_db
+    return scout_db.connect(DB_PATH)
 
 def pull_sellers(base, token):
     """サーバーのセラー一覧をローカルDBへ入れる。巡回対象を全員で揃えるため。"""
@@ -154,6 +156,8 @@ def main():
 
     base = args.base.rstrip("/")
     run_by = args.run_by or os.environ.get("USERNAME") or "unknown"
+    if not os.path.exists(DB_PATH):
+        print(f"ローカルDBを作ります: {DB_PATH}")
 
     if args.push_only:
         push_results(base, args.token, run_by)
