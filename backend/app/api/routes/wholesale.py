@@ -31,6 +31,7 @@ XLSX_MIME = ("application/vnd.openxmlformats-officedocument"
 class SupplierIn(BaseModel):
     name: str
     honorific: Optional[str] = "御中"
+    order_method: Optional[str] = "excel_mail"
     email_to: Optional[str] = None
     email_cc: Optional[str] = None
     mail_subject: Optional[str] = None
@@ -43,6 +44,7 @@ class SupplierIn(BaseModel):
 def _supplier_dict(s):
     return {
         "id": s.id, "name": s.name, "honorific": s.honorific,
+        "order_method": s.order_method or "excel_mail",
         "email_to": s.email_to, "email_cc": s.email_cc,
         "mail_subject": s.mail_subject, "mail_greeting": s.mail_greeting,
         "mail_body": s.mail_body, "sort_order": s.sort_order,
@@ -218,6 +220,7 @@ def _order_dict(o, items=None, supplier=None):
         "status": o.status, "sent_at": o.sent_at.isoformat() if o.sent_at else None,
         "sent_to": o.sent_to, "sent_cc": o.sent_cc,
         "file_name": o.file_name, "error": o.error, "memo": o.memo,
+        "message_text": o.message_text,
         "received_at": o.received_at.isoformat() if o.received_at else None,
         "received_mode": o.received_mode,
         "inbound_applied": bool(o.inbound_applied),
@@ -678,3 +681,69 @@ def undo_receive(oid: int, db: Session = Depends(get_db)):
     db.commit()
     o, items, s = _load(db, oid)
     return {"ok": True, "order": _order_dict(o, items, s)}
+
+
+# ---------- LINEで送る発注 ----------
+
+def build_message(db, o, items):
+    """LINEに貼る発注の文面を作る。
+
+    すでに発注済がある商品は「追加300（計900）」と書く。相手が
+    前回からの積み上げを把握できるようにするため、今までそう
+    書いて送っていた形に合わせている。
+
+    発注済が0の商品は数量だけ書く。
+    """
+    prods = _linked_products(db, items)
+    lines = ["発注お願いします！", ""]
+    for x in items:
+        if not x.qty:
+            continue
+        p = prods.get(x.item_id)
+        already = (p.inbound or 0) if p else 0
+        if already > 0:
+            lines.append(f"・{x.name}追加{x.qty}（計{already + x.qty}）")
+        else:
+            lines.append(f"・{x.name}{x.qty}")
+    return "\n".join(lines)
+
+
+@router.get("/orders/{oid:int}/message")
+def get_message(oid: int, db: Session = Depends(get_db)):
+    """LINEに貼る文面。送信前はその場で組み立て、送信後は送った文面を返す。
+
+    送ったあとに発注済が変わっても、送った内容は変わってはいけない。
+    """
+    o, items, s = _load(db, oid)
+    text = o.message_text or build_message(db, o, items)
+    return {"order": _order_dict(o, items, s), "text": text}
+
+
+class ConfirmIn(BaseModel):
+    """LINEで送ったことを記録する。文面は画面で直せるので受け取る。"""
+    text: Optional[str] = None
+
+
+@router.post("/orders/{oid:int}/confirm")
+def confirm_order(oid: int, data: ConfirmIn, db: Session = Depends(get_db)):
+    """LINEで送ったあとに押す。発注済へ反映し、送信済みにする。
+
+    メールと違い実際に送るのは人なので、送ったかどうかはここで
+    教えてもらう。押した時点で発注済に足す。
+    """
+    o, items, s = _load(db, oid)
+    if o.status == "sent":
+        raise HTTPException(400, "この発注はすでに送信済みです")
+
+    # 文面は発注済を足す前に確定させる。先に足すと「計」がずれる
+    o.message_text = data.text or build_message(db, o, items)
+    changed = _apply_inbound(db, o, items)
+
+    o.status = "sent"
+    o.sent_at = datetime.now(timezone.utc)
+    o.sent_to = "LINE"
+    db.commit()
+
+    o, items, s = _load(db, oid)
+    return {"ok": True, "order": _order_dict(o, items, s),
+            "inbound_changed": changed}

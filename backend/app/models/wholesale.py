@@ -21,6 +21,9 @@ class WholesaleSupplier(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)              # 株式会社エジソン販売
     honorific = Column(String, default="御中")      # 御中 / 様
+    # 発注の出し方。excel_mail … 発注書を作ってメール
+    #                text_line  … LINEに貼る文面を作る（Excelもメールも使わない）
+    order_method = Column(String, default="excel_mail")
     email_to = Column(String)                      # order@edisonmama.com
     email_cc = Column(String)                      # 複数はカンマ区切り
     mail_subject = Column(String, default="発注書になります")
@@ -95,6 +98,10 @@ class WholesaleOrder(Base):
     sent_body = Column(Text)
     file_name = Column(String)
     error = Column(Text)                          # 送信に失敗したときの理由
+
+    # LINEで送る発注のとき、実際に送った文面。あとで何を頼んだか
+    # 見返せるように残す
+    message_text = Column(Text)
 
     # 入荷。発注してから届くまでを追えるように、発注と同じ行に持つ
     received_at = Column(DateTime(timezone=True), nullable=True)

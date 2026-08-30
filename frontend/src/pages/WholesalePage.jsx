@@ -75,6 +75,10 @@ export default function WholesalePage() {
   const places = [...new Set(chosen.map(i => `${i.deliver_zip || ''}|${i.deliver_address || ''}|${i.deliver_note || ''}`))]
   const mixedPlace = places.length > 1
 
+  // 取引先によって発注の出し方が違う。
+  // エジソン等は発注書のExcel＋メール、マレフィオーレはLINEに貼る文面
+  const isLine = supplier?.order_method === 'text_line'
+
   const createOrder = async () => {
     if (!chosen.length) return
     setBusy(true); setErr('')
@@ -91,8 +95,13 @@ export default function WholesalePage() {
           name: i.name, unit_price: i.unit_price, qty: qty[i.id], note: i.note,
         })),
       })
-      const p = await api.get(`/wholesale/orders/${r.data.id}/preview`)
-      setPreview({ ...p.data, editing: { ...p.data.mail } })
+      if (isLine) {
+        const m = await api.get(`/wholesale/orders/${r.data.id}/message`)
+        setMessage({ order: m.data.order, text: m.data.text })
+      } else {
+        const p = await api.get(`/wholesale/orders/${r.data.id}/preview`)
+        setPreview({ ...p.data, editing: { ...p.data.mail } })
+      }
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }
@@ -137,6 +146,30 @@ export default function WholesalePage() {
   }
 
   const [receiving, setReceiving] = useState(null)   // 入荷ダイアログ
+  const [message, setMessage] = useState(null)      // LINEに貼る文面
+
+  const openMessage = async (id) => {
+    setBusy(true); setErr('')
+    try {
+      const m = await api.get(`/wholesale/orders/${id}/message`)
+      setMessage({ order: m.data.order, text: m.data.text })
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  const confirmSent = async () => {
+    setBusy(true); setErr('')
+    try {
+      await api.post(`/wholesale/orders/${message.order.id}/confirm`,
+                     { text: message.text })
+      setMessage(null); setQty({})
+      await reloadOrders()
+      setTab('history')
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
 
   const reloadOrders = async () => {
     const r = await api.get(`/wholesale/orders?supplier_id=${supplierId}`)
@@ -248,13 +281,13 @@ export default function WholesalePage() {
             <thead>
               <tr style={{ background: '#f8fafc' }}>
                 <th style={{ textAlign: 'left' }}>商品名</th>
-                <th>JAN</th>
-                <th style={{ textAlign: 'right' }}>単価(税抜)</th>
+                {!isLine && <th>JAN</th>}
+                {!isLine && <th style={{ textAlign: 'right' }}>単価(税抜)</th>}
                 <th style={{ textAlign: 'right' }}>在庫</th>
                 <th style={{ textAlign: 'right' }}>発注済</th>
                 <th style={{ textAlign: 'right', width: 110 }}>発注数</th>
-                <th style={{ textAlign: 'right' }}>金額</th>
-                <th style={{ textAlign: 'left' }}>納品先</th>
+                {!isLine && <th style={{ textAlign: 'right' }}>金額</th>}
+                {!isLine && <th style={{ textAlign: 'left' }}>納品先</th>}
               </tr>
             </thead>
             <tbody>
@@ -263,8 +296,8 @@ export default function WholesalePage() {
                 return (
                   <tr key={i.id} style={{ background: q > 0 ? '#eff6ff' : undefined }}>
                     <td>{i.name}</td>
-                    <td style={{ fontSize: 12, color: '#64748b' }}>{i.jan_code || '—'}</td>
-                    <td style={{ textAlign: 'right' }}>{yen(i.unit_price)}</td>
+                    {!isLine && <td style={{ fontSize: 12, color: '#64748b' }}>{i.jan_code || '—'}</td>}
+                    {!isLine && <td style={{ textAlign: 'right' }}>{yen(i.unit_price)}</td>}
                     <td style={{ textAlign: 'right' }}>{i.stock ?? '—'}</td>
                     <td style={{ textAlign: 'right', color: '#2563eb' }}>{i.inbound || ''}</td>
                     <td style={{ textAlign: 'right' }}>
@@ -272,17 +305,21 @@ export default function WholesalePage() {
                         onChange={e => setQty({ ...qty, [i.id]: Number(e.target.value) || 0 })}
                         style={{ width: 90, padding: '4px 6px', textAlign: 'right' }} />
                     </td>
-                    <td style={{ textAlign: 'right' }}>{q > 0 ? yen(i.unit_price * q) : ''}</td>
-                    <td style={{ fontSize: 12, color: '#64748b' }}>
-                      {i.deliver_note || i.deliver_address || '—'}
-                    </td>
+                    {!isLine && (
+                      <td style={{ textAlign: 'right' }}>{q > 0 ? yen(i.unit_price * q) : ''}</td>
+                    )}
+                    {!isLine && (
+                      <td style={{ fontSize: 12, color: '#64748b' }}>
+                        {i.deliver_note || i.deliver_address || '—'}
+                      </td>
+                    )}
                   </tr>
                 )
               })}
             </tbody>
           </table>
 
-          {mixedPlace && (
+          {mixedPlace && !isLine && (
             <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e',
               padding: 12, borderRadius: 6, marginTop: 12 }}>
               納品先が違う商品が混ざっています。1枚の発注書には1つの納品先しか書けないので、
@@ -292,14 +329,21 @@ export default function WholesalePage() {
 
           <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end',
             alignItems: 'center', gap: 20 }}>
-            <div style={{ textAlign: 'right', fontSize: 14 }}>
-              <div>小計 <b>{yen(subtotal)}</b> 円</div>
-              <div style={{ color: '#64748b' }}>消費税 {yen(Math.floor(tax))} 円</div>
-              <div style={{ fontSize: 18 }}>合計 <b>{yen(total)}</b> 円（税込）</div>
-            </div>
-            <button className="btn btn-primary" disabled={!chosen.length || mixedPlace || busy}
+            {isLine ? (
+              <div style={{ fontSize: 15 }}>
+                {chosen.length} 品目 / 合計 {chosen.reduce((a, i) => a + (qty[i.id] || 0), 0)} 個
+              </div>
+            ) : (
+              <div style={{ textAlign: 'right', fontSize: 14 }}>
+                <div>小計 <b>{yen(subtotal)}</b> 円</div>
+                <div style={{ color: '#64748b' }}>消費税 {yen(Math.floor(tax))} 円</div>
+                <div style={{ fontSize: 18 }}>合計 <b>{yen(total)}</b> 円（税込）</div>
+              </div>
+            )}
+            <button className="btn btn-primary"
+              disabled={!chosen.length || (!isLine && mixedPlace) || busy}
               onClick={createOrder} style={{ padding: '10px 24px' }}>
-              発注書を作る
+              {isLine ? '発注の文面を作る' : '発注書を作る'}
             </button>
           </div>
         </>
@@ -332,8 +376,9 @@ export default function WholesalePage() {
                 </td>
                 <td style={{ fontSize: 12 }}>{o.sent_to || '—'}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
-                  <button className="btn btn-secondary" onClick={() => openPreview(o.id)}>
-                    {o.status === 'sent' ? '中身を見る' : '確認して送る'}
+                  <button className="btn btn-secondary"
+                    onClick={() => (isLine ? openMessage(o.id) : openPreview(o.id))}>
+                    {o.status === 'sent' ? '中身を見る' : (isLine ? '文面を見る' : '確認して送る')}
                   </button>
                   {!o.received_at && (
                     <button className="btn btn-primary" style={{ marginLeft: 6 }}
@@ -358,6 +403,12 @@ export default function WholesalePage() {
       {tab === 'master' && (
         <WholesaleMaster suppliers={suppliers} supplierId={supplierId}
           items={items} onChanged={() => { load(); setSupplierId(supplierId) }} />
+      )}
+
+      {message && (
+        <MessageDialog m={message} busy={busy}
+          onChange={t => setMessage({ ...message, text: t })}
+          onConfirm={confirmSent} onClose={() => setMessage(null)} />
       )}
 
       {receiving && (
@@ -624,6 +675,73 @@ function ReceiveDialog({ r, busy, onChange, onReceive, onClose }) {
             {busy ? '処理中…' : '入荷する'}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * LINEに貼る発注の文面。
+ *
+ * 送るのは人なので、コピーして貼ってもらい、送ったら「送信済にする」を
+ * 押してもらう。押した時点で発注済に反映する。
+ */
+function MessageDialog({ m, busy, onChange, onConfirm, onClose }) {
+  const [copied, setCopied] = useState(false)
+  const sent = m.order.status === 'sent'
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(m.text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // クリップボードが使えない環境では、選択してもらう
+      const ta = document.getElementById('ws-msg')
+      if (ta) { ta.select() }
+    }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 1000,
+      display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 10,
+        width: 'min(620px, 94vw)', maxHeight: '92vh', overflow: 'auto', padding: 24 }}>
+        <h3 style={{ marginTop: 0 }}>
+          {sent ? '送信済みの発注' : 'LINEで送る文面'}
+        </h3>
+        <div style={{ color: '#64748b', fontSize: 13, marginBottom: 14 }}>
+          {sent
+            ? `${m.order.order_date} に送信しました`
+            : 'コピーしてLINEに貼り付けてください。送ったら下のボタンを押します'}
+        </div>
+
+        <textarea id="ws-msg" value={m.text} readOnly={sent} rows={Math.min(16, m.text.split('\n').length + 2)}
+          onChange={e => onChange(e.target.value)}
+          style={{ width: '100%', padding: 12, fontFamily: 'inherit', fontSize: 14,
+            lineHeight: 1.7, border: '1px solid #e5e7eb', borderRadius: 6 }} />
+
+        <div style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>
+          発注済がある商品は「追加◯◯（計◯◯）」と書いています。文面はここで直せます。
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 20, justifyContent: 'flex-end' }}>
+          <button className="btn btn-secondary" onClick={onClose}>閉じる</button>
+          <button className="btn btn-secondary" onClick={copy}>
+            {copied ? '✓ コピーしました' : '文面をコピー'}
+          </button>
+          {!sent && (
+            <button className="btn btn-primary" onClick={onConfirm} disabled={busy}
+              style={{ padding: '10px 24px' }}>
+              {busy ? '処理中…' : '送信済にする'}
+            </button>
+          )}
+        </div>
+        {!sent && (
+          <div style={{ textAlign: 'right', fontSize: 12, color: '#64748b', marginTop: 6 }}>
+            押すと発注済に反映されます
+          </div>
+        )}
       </div>
     </div>
   )

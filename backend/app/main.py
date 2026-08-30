@@ -246,6 +246,10 @@ def _migrate():
          "ALTER TABLE wholesale_orders ADD COLUMN inbound_applied BOOLEAN DEFAULT FALSE"),
         ("wholesale_order_items","received_qty",
          "ALTER TABLE wholesale_order_items ADD COLUMN received_qty INTEGER DEFAULT 0"),
+        ("wholesale_suppliers","order_method",
+         "ALTER TABLE wholesale_suppliers ADD COLUMN order_method VARCHAR DEFAULT 'excel_mail'"),
+        ("wholesale_orders","message_text",
+         "ALTER TABLE wholesale_orders ADD COLUMN message_text TEXT"),
     ]
 
     inspector = inspect(engine)
