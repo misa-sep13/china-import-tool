@@ -21,11 +21,15 @@ export default function ResearchPage() {
   // srcを付ける前の空のiframeに書き込んでおく。about:blank の段階なら
   // 同一オリジンとして触れるため、この順番なら確実に間に合う。
   const injectConfig = () => {
+    // 親側にも置く。iframeへ直接書いた値は、srcを入れた瞬間の
+    // ナビゲーションで消えてしまうため、中のスクリプトは親を見に来る。
+    window.__ARS_API__ = api.defaults.baseURL || ''
+    window.__ARS_TOKEN__ = localStorage.getItem('auth_token') || ''
     const win = frameRef.current?.contentWindow
     if (!win) return
     try {
-      win.__ARS_API__ = api.defaults.baseURL || ''
-      win.__ARS_TOKEN__ = localStorage.getItem('auth_token') || ''
+      win.__ARS_API__ = window.__ARS_API__
+      win.__ARS_TOKEN__ = window.__ARS_TOKEN__
     } catch {
       /* 別オリジンなら触れないが、同じサイトから配信しているので通常は通る */
     }

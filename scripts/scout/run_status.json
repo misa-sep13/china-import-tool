@@ -1,0 +1,12 @@
+{
+ "run_id": 2,
+ "state": "finished",
+ "total": 3,
+ "done": 3,
+ "blocked": 0,
+ "errors": 0,
+ "remaining": 0,
+ "capped": 2,
+ "elapsed_sec": 182,
+ "updated_at": "2026-08-30 18:25:23"
+}
