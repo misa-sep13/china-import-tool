@@ -400,7 +400,7 @@ async function load(){
   } catch(e) {
     return offline("データの置き場所につながりません",
       `<b>【セラースカウトを開く】.bat</b> の黒い窓を閉じてしまっていませんか？<br>
-       もう一度ダブルクリックして起動してください。<br><br>
+       少し待ってから画面を再読み込みしてください。続くようなら管理者へ連絡してください。<br><br>
        <span style="color:#9aa1ad">詳細: ${esc(e.message)}</span>`);
   }
   $("#resultCnt").textContent = `条件に一致する商品が ${d.total.toLocaleString()} 件`

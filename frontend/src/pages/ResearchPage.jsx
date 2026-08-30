@@ -35,8 +35,9 @@ export default function ResearchPage() {
     }
   }
 
-  const sheetUrl = `${import.meta.env.BASE_URL}research/sheet.html`
-  const scoutUrl = `${import.meta.env.BASE_URL}research/scout.html`
+  const V = __BUILD_ID__
+  const sheetUrl = `${import.meta.env.BASE_URL}research/sheet.html?v=${V}`
+  const scoutUrl = `${import.meta.env.BASE_URL}research/scout.html?v=${V}`
   const url = tab === 'sheet' ? sheetUrl : scoutUrl
 
   // srcを空にしておき、設定を書き込んでから読み込ませる
