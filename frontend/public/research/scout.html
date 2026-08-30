@@ -388,10 +388,9 @@ async function load(){
   if (FILE_MODE) return offline(
     "このHTMLを直接開いても商品は表示されません",
     `いまアドレス欄が <code>file:///…</code> になっています。この開き方だと
-     データの置き場所につながれません。<br><br>
-     フォルダにある <b>【セラースカウトを開く】.bat</b> をダブルクリックしてください。
-     黒い窓が出て、ブラウザが自動で開きます。<br><br>
-     すでに起動しているなら <a href="http://127.0.0.1:8791/">http://127.0.0.1:8791/</a> を開いてください。`);
+     サーバーにつながりません。<br><br>
+     一元管理ツールを開き、左メニューの <b>競合リサーチ</b> から
+     <b>セラースカウト</b> のタブを選んでください。`);
   let d;
   try {
     const r = await fetch("/api/products?"+filters().toString());
@@ -399,7 +398,7 @@ async function load(){
     d = await r.json();
   } catch(e) {
     return offline("データの置き場所につながりません",
-      `<b>【セラースカウトを開く】.bat</b> の黒い窓を閉じてしまっていませんか？<br>
+      `サーバーからデータを取得できませんでした。<br>
        少し待ってから画面を再読み込みしてください。続くようなら管理者へ連絡してください。<br><br>
        <span style="color:#9aa1ad">詳細: ${esc(e.message)}</span>`);
   }
