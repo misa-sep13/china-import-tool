@@ -422,8 +422,8 @@ def send_order(oid: int, data: SendIn, db: Session = Depends(get_db)):
 
     xlsx = _build_excel(o, items, s)
     try:
-        mailer.send(to, subject, body, cc=cc,
-                    attachments=[(o.file_name, xlsx, XLSX_MIME)])
+        result = mailer.send(to, subject, body, cc=cc,
+                             attachments=[(o.file_name, xlsx, XLSX_MIME)])
     except mailer.MailNotConfigured as e:
         raise HTTPException(400, str(e))
     except Exception as e:
@@ -439,13 +439,20 @@ def send_order(oid: int, data: SendIn, db: Session = Depends(get_db)):
     o.sent_subject, o.sent_body = subject, body
     o.error = None
 
+    # 送信済みトレイに控えが残せたかどうかも記録に残す。
+    # 残せなくても送信は成功しているので、失敗扱いにはしない
+    copy = result.get("sent_copy") or {}
+    if not copy.get("saved"):
+        note = f"送信済みトレイへの保存はできませんでした（{copy.get('reason')}）"
+        o.memo = ((o.memo or "") + "\n" + note).strip()
+
     # 発注済に足す。手で入れてあった場合は画面から取り消せる
     changed = _apply_inbound(db, o, items)
     db.commit()
 
     o, items, s = _load(db, oid)
     return {"ok": True, "order": _order_dict(o, items, s),
-            "inbound_changed": changed}
+            "inbound_changed": changed, "sent_copy": copy}
 
 
 @router.get("/mail/status")
@@ -461,13 +468,19 @@ def mail_status():
 
 @router.post("/mail/test")
 def mail_test():
-    """設定が正しいか、送らずにログインだけ試す。"""
+    """設定が正しいか、送らずにログインだけ試す。
+
+    送信済みトレイに控えを残せるかも一緒に見る。SMTPは送るだけで
+    控えを残さないので、ここが繋がらないと手元に記録が残らない。
+    """
     try:
-        return {"ok": True, **mailer.test_connection()}
+        r = {"ok": True, **mailer.test_connection()}
     except mailer.MailNotConfigured as e:
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"接続できませんでした: {type(e).__name__}: {e}")
+    r["sent_folder"] = mailer.check_sent_folder()
+    return r
 
 
 # ---------- 発注済への反映と入荷 ----------

@@ -6,9 +6,11 @@
 接続情報は環境変数から読む。パスワードをコードやDBに置くと
 git やバックアップに残るため。
 """
+import imaplib
 import os
 import smtplib
 import ssl
+import time
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate
 
@@ -26,6 +28,12 @@ def config():
         "from_email": os.environ.get("SMTP_FROM_EMAIL", "")
                       or os.environ.get("SMTP_USER", ""),
         "from_name": os.environ.get("SMTP_FROM_NAME", ""),
+        # 送信済みトレイへの保存用。SMTPは送るだけで控えを残さないので、
+        # メールソフトと同じようにIMAPで自分の送信済みへ入れる
+        "imap_host": os.environ.get("IMAP_HOST", "")
+                     or os.environ.get("SMTP_HOST", ""),
+        "imap_port": int(os.environ.get("IMAP_PORT", "993") or 993),
+        "imap_folder": os.environ.get("IMAP_SENT_FOLDER", ""),
     }
 
 
@@ -40,6 +48,68 @@ def _addresses(value):
         return []
     v = value.replace("、", ",").replace("，", ",").replace(";", ",")
     return [a.strip() for a in v.split(",") if a.strip()]
+
+
+# 送信済みトレイの名前はサーバーによって違う。よくあるものを順に試す
+SENT_CANDIDATES = ["Sent", "INBOX.Sent", "Sent Messages", "Sent Items",
+                   "INBOX.送信済みトレイ", "送信済みトレイ", "INBOX.Sent Messages"]
+
+
+def _find_sent_folder(im):
+    """送信済みトレイを探す。
+
+    RFC6154 の Sent 属性（バックスラッシュ付き）が付いていればそれが確実。
+    付いていない
+    サーバーもあるので、その場合はよくある名前を順に試す。
+    """
+    try:
+        typ, boxes = im.list()
+        if typ == "OK":
+            for raw in boxes:
+                line = raw.decode(errors="replace") if isinstance(raw, bytes) else str(raw)
+                if r"\Sent" in line:
+                    # 例: (\HasNoChildren \Sent) "." "INBOX.Sent" の形で返る
+                    parts = line.split(' "')
+                    if parts:
+                        return parts[-1].strip().strip('"')
+    except Exception:
+        pass
+
+    for name in SENT_CANDIDATES:
+        try:
+            if im.select(f'"{name}"', readonly=True)[0] == "OK":
+                return name
+        except Exception:
+            continue
+    return None
+
+
+def save_to_sent(msg):
+    """送ったメールを自分の送信済みトレイへ入れる。
+
+    SMTPは送るだけで控えを残さない。メールソフトから送ったときと
+    同じように手元にも残るよう、IMAPで保存する。
+
+    ここが失敗しても送信そのものは成功しているので、例外は投げず
+    理由を返す。控えが無いことより、送れたのに失敗と表示される方が困る。
+    """
+    c = config()
+    if not c["imap_host"]:
+        return {"saved": False, "reason": "IMAPの接続先が分かりません"}
+    try:
+        ctx = ssl.create_default_context()
+        with imaplib.IMAP4_SSL(c["imap_host"], c["imap_port"],
+                               ssl_context=ctx, timeout=30) as im:
+            im.login(c["user"], c["password"])
+            folder = c["imap_folder"] or _find_sent_folder(im)
+            if not folder:
+                return {"saved": False, "reason": "送信済みトレイが見つかりません"}
+            im.append(f'"{folder}"', r"\Seen",
+                      imaplib.Time2Internaldate(time.time()),
+                      msg.as_bytes())
+            return {"saved": True, "folder": folder}
+    except Exception as e:
+        return {"saved": False, "reason": f"{type(e).__name__}: {e}"}
 
 
 def send(to, subject, body, cc=None, attachments=None):
@@ -84,7 +154,11 @@ def send(to, subject, body, cc=None, attachments=None):
             s.login(c["user"], c["password"])
             s.send_message(msg)
 
-    return to_list + cc_list
+    # 送ったあと、自分の送信済みトレイにも入れる。
+    # 失敗しても送信は成功しているので、結果だけ返して止めない
+    saved = save_to_sent(msg)
+
+    return {"recipients": to_list + cc_list, "sent_copy": saved}
 
 
 def test_connection():
@@ -106,3 +180,32 @@ def test_connection():
             s.login(c["user"], c["password"])
     return {"host": c["host"], "port": c["port"], "user": c["user"],
             "from": c["from_email"]}
+
+
+def check_sent_folder():
+    """送信済みトレイに繋がるか、どのフォルダを使うかを見る。
+
+    サーバーごとに名前が違うので、実際に繋いで確かめられるようにする。
+    """
+    c = config()
+    if not c["imap_host"] or not c["password"]:
+        return {"ok": False, "reason": "IMAPの設定がありません"}
+    try:
+        ctx = ssl.create_default_context()
+        with imaplib.IMAP4_SSL(c["imap_host"], c["imap_port"],
+                               ssl_context=ctx, timeout=30) as im:
+            im.login(c["user"], c["password"])
+            folder = c["imap_folder"] or _find_sent_folder(im)
+            typ, boxes = im.list()
+            names = []
+            if typ == "OK":
+                for raw in boxes:
+                    line = raw.decode(errors="replace") if isinstance(raw, bytes) else str(raw)
+                    parts = line.split(' "')
+                    if parts:
+                        names.append(parts[-1].strip().strip('"'))
+            return {"ok": bool(folder), "folder": folder,
+                    "host": c["imap_host"], "port": c["imap_port"],
+                    "folders": names[:40]}
+    except Exception as e:
+        return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
