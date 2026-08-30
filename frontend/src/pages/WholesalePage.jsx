@@ -285,12 +285,13 @@ export default function WholesalePage() {
               <tr style={{ background: '#f8fafc' }}>
                 <th style={{ textAlign: 'left', whiteSpace: 'nowrap' }}>商品名</th>
                 {!isLine && <th style={{ width: 130 }}>JAN</th>}
-                {!isLine && <th style={{ textAlign: 'right', width: 90 }}>単価(税抜)</th>}
                 <th style={{ width: 'auto' }} />
+                <th style={{ textAlign: 'right', width: 90 }}>単価(税抜)</th>
                 <th style={{ textAlign: 'right', width: 70 }}>在庫</th>
-                <th style={{ textAlign: 'right', width: 70 }}>発注済</th>
+                <th style={{ textAlign: 'right', width: 70 }}>発注1</th>
+                <th style={{ textAlign: 'right', width: 70 }}>発注2</th>
                 <th style={{ textAlign: 'right', width: 100 }}>発注数</th>
-                {!isLine && <th style={{ textAlign: 'right', width: 90 }}>金額</th>}
+                <th style={{ textAlign: 'right', width: 100 }}>金額</th>
                 {!isLine && <th style={{ textAlign: 'left', width: 200 }}>納品先</th>}
               </tr>
             </thead>
@@ -301,18 +302,19 @@ export default function WholesalePage() {
                   <tr key={i.id} style={{ background: q > 0 ? '#eff6ff' : undefined }}>
                     <td style={{ whiteSpace: 'nowrap' }}>{i.name}</td>
                     {!isLine && <td style={{ fontSize: 12, color: '#64748b' }}>{i.jan_code || '—'}</td>}
-                    {!isLine && <td style={{ textAlign: 'right' }}>{yen(i.unit_price)}</td>}
                     <td />
+                    <td style={{ textAlign: 'right' }}>{i.unit_price ? yen(i.unit_price) : '—'}</td>
                     <td style={{ textAlign: 'right' }}>{i.stock ?? '—'}</td>
                     <td style={{ textAlign: 'right', color: '#2563eb' }}>{i.inbound || ''}</td>
+                    <td style={{ textAlign: 'right', color: '#2563eb' }}>{i.standard_stock || ''}</td>
                     <td style={{ textAlign: 'right' }}>
                       <input type="number" min="0" value={q || ''}
                         onChange={e => setQty({ ...qty, [i.id]: Number(e.target.value) || 0 })}
                         style={{ width: '100%', padding: '4px 6px', textAlign: 'right' }} />
                     </td>
-                    {!isLine && (
-                      <td style={{ textAlign: 'right' }}>{q > 0 ? yen(i.unit_price * q) : ''}</td>
-                    )}
+                    <td style={{ textAlign: 'right' }}>
+                      {q > 0 && i.unit_price ? yen(i.unit_price * q) : ''}
+                    </td>
                     {!isLine && (
                       <td style={{ fontSize: 12, color: '#64748b' }}>
                         {i.deliver_note || i.deliver_address || '—'}
@@ -334,17 +336,15 @@ export default function WholesalePage() {
 
           <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end',
             alignItems: 'center', gap: 20 }}>
-            {isLine ? (
-              <div style={{ fontSize: 15 }}>
-                {chosen.length} 品目 / 合計 {chosen.reduce((a, i) => a + (qty[i.id] || 0), 0)} 個
-              </div>
-            ) : (
-              <div style={{ textAlign: 'right', fontSize: 14 }}>
-                <div>小計 <b>{yen(subtotal)}</b> 円</div>
-                <div style={{ color: '#64748b' }}>消費税 {yen(Math.floor(tax))} 円</div>
-                <div style={{ fontSize: 18 }}>合計 <b>{yen(total)}</b> 円（税込）</div>
-              </div>
-            )}
+            <div style={{ color: '#64748b', fontSize: 13 }}>
+              {chosen.length} 品目 / {chosen.reduce((a, i) => a + (qty[i.id] || 0), 0)} 個
+            </div>
+            {/* 金額はどの取引先でも出す。届いた請求書と突き合わせるため */}
+            <div style={{ textAlign: 'right', fontSize: 14 }}>
+              <div>小計 <b>{yen(subtotal)}</b> 円</div>
+              <div style={{ color: '#64748b' }}>消費税 {yen(Math.floor(tax))} 円</div>
+              <div style={{ fontSize: 18 }}>合計 <b>{yen(total)}</b> 円（税込）</div>
+            </div>
             <button className="btn btn-primary"
               disabled={!chosen.length || (!isLine && mixedPlace) || busy}
               onClick={createOrder} style={{ padding: '10px 24px' }}>
@@ -729,6 +729,42 @@ function MessageDialog({ m, busy, onChange, onConfirm, onClose }) {
         <div style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>
           発注済がある商品は「追加◯◯（計◯◯）」と書いています。文面はここで直せます。
         </div>
+
+        {/* 金額は文面には入れない。あとで届く請求書と突き合わせるための控え */}
+        {m.order.total > 0 && (
+          <div style={{ marginTop: 14, padding: 12, background: '#f8fafc',
+            borderRadius: 6, fontSize: 13 }}>
+            <div style={{ color: '#64748b', marginBottom: 6 }}>
+              金額の控え（LINEには入りません）
+            </div>
+            <table style={{ width: '100%', fontSize: 13 }}>
+              <tbody>
+                {m.order.items?.filter(i => i.unit_price).map(i => (
+                  <tr key={i.id}>
+                    <td>{i.name}</td>
+                    <td style={{ textAlign: 'right', width: 80 }}>
+                      {(i.unit_price || 0).toLocaleString('ja-JP')} 円
+                    </td>
+                    <td style={{ textAlign: 'right', width: 60 }}>{i.qty} 個</td>
+                    <td style={{ textAlign: 'right', width: 90 }}>
+                      {(i.amount || 0).toLocaleString('ja-JP')} 円
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{ textAlign: 'right', marginTop: 8,
+              borderTop: '1px solid #e5e7eb', paddingTop: 8 }}>
+              <div>小計 {(m.order.subtotal || 0).toLocaleString('ja-JP')} 円</div>
+              <div style={{ color: '#64748b' }}>
+                消費税 {Math.floor(m.order.tax || 0).toLocaleString('ja-JP')} 円
+              </div>
+              <div style={{ fontSize: 15 }}>
+                合計 <b>{(m.order.total || 0).toLocaleString('ja-JP')}</b> 円（税込）
+              </div>
+            </div>
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 10, marginTop: 20, justifyContent: 'flex-end' }}>
           <button className="btn btn-secondary" onClick={onClose}>閉じる</button>

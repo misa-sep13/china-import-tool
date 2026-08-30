@@ -147,6 +147,8 @@ def list_items(supplier_id: Optional[int] = None,
             stocks[p.id] = {
                 "sku": p.sku, "rakuten_name": p.name,
                 "stock": p.stock or 0, "inbound": p.inbound or 0,
+                # 発注済2。DBの互換のため standard_stock 列を使っている
+                "standard_stock": p.standard_stock or 0,
                 "sales_90": p.sales_90 or 0,
             }
     return [_item_dict(r, stocks.get(r.rakuten_product_id)) for r in rows]
