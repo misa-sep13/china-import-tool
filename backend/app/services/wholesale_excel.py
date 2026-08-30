@@ -10,9 +10,17 @@ openpyxlは数式を計算しないので、保存しただけでは値が読め
 """
 import io
 import os
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import openpyxl
+
+# サーバーはUTCで動く。そのまま date.today() を使うと日本の朝9時前が
+# 前日になり、発注書の日付がずれる
+JST = timezone(timedelta(hours=9))
+
+
+def today_jst():
+    return datetime.now(JST).date()
 
 TEMPLATE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "templates", "発注書テンプレート.xlsx")
@@ -55,7 +63,7 @@ def build(supplier, order, items):
     # 発注日。テンプレートは =TODAY() だが、あとで開き直したときに
     # 日付が変わってしまうので、実際の発注日を値で入れる
     d = order.get("order_date")
-    ws["F3"] = date.fromisoformat(d) if isinstance(d, str) and d else date.today()
+    ws["F3"] = date.fromisoformat(d) if isinstance(d, str) and d else today_jst()
 
     if order.get("order_no"):
         ws["F2"] = order["order_no"]
@@ -95,6 +103,6 @@ def file_name(supplier_name, order_date):
     今までは「美園工芸社発注書2026.8.24.xlsx」の形だったので、
     取引先が受け取ったときに違和感がないよう合わせる。
     """
-    d = order_date or date.today().isoformat()
+    d = order_date or today_jst().isoformat()
     y, m, dd = d.split("-")
     return f"美園工芸社発注書{y}.{int(m)}.{int(dd)}.xlsx"

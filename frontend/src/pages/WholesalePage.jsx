@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
 import api from '../api/client'
 
+/** 今日の日付。toISOString はUTCになり、朝9時前は前日になってしまう */
+function today() {
+  const d = new Date()
+  const p = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
 /**
  * 卸発注（メーカー品）。
  *
@@ -18,7 +25,9 @@ export default function WholesalePage() {
   const [mailStatus, setMailStatus] = useState(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
-  const [orderDate, setOrderDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [orderDate, setOrderDate] = useState(today)
+  // 手で日付を変えたかどうか。変えていなければ今日に追従させる
+  const [dateTouched, setDateTouched] = useState(false)
 
   const load = async () => {
     setErr('')
@@ -35,6 +44,15 @@ export default function WholesalePage() {
     }
   }
   useEffect(() => { load() }, [])
+
+  // 画面を開いたまま日付をまたぐことがあるので、今日に合わせ続ける。
+  // 手で変えていたらそのまま残す
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!dateTouched) setOrderDate(d => (d === today() ? d : today()))
+    }, 60000)
+    return () => clearInterval(id)
+  }, [dateTouched])
 
   useEffect(() => {
     if (!supplierId) return
@@ -211,8 +229,15 @@ export default function WholesalePage() {
         {tab === 'order' && (
           <>
             <label>発注日</label>
-            <input type="date" value={orderDate} onChange={e => setOrderDate(e.target.value)}
+            <input type="date" value={orderDate}
+              onChange={e => { setOrderDate(e.target.value); setDateTouched(true) }}
               style={{ padding: '6px 10px' }} />
+            {dateTouched && orderDate !== today() && (
+              <button className="btn btn-secondary" style={{ fontSize: 12, padding: '4px 10px' }}
+                onClick={() => { setOrderDate(today()); setDateTouched(false) }}>
+                今日に戻す
+              </button>
+            )}
           </>
         )}
       </div>

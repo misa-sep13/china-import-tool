@@ -277,7 +277,7 @@ def create_order(data: OrderIn, db: Session = Depends(get_db)):
 
     o = WholesaleOrder(
         supplier_id=data.supplier_id,
-        order_date=data.order_date or date.today().isoformat(),
+        order_date=data.order_date or wx.today_jst().isoformat(),
         order_no=data.order_no, subject=data.subject,
         delivery_date=data.delivery_date,
         deliver_zip=data.deliver_zip, deliver_address=data.deliver_address,
