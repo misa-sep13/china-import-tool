@@ -66,13 +66,21 @@ class ProductDraft(Base):
     # [{"location": "/パス/ファイル名.jpg"}] の形で持つ
     image_urls = Column(Text)
 
+    # 雛形にする既存商品の管理番号。送料・納期・属性・レイアウトなど
+    # 項目が多く、手で埋めると漏れる。実績のある商品から引き継ぐ
+    template_sku = Column(String)
+
     # ---- バリエーション ----
     # 楽天は variantSelectors（選択肢の定義）と variants（各枝）で持つ。
-    # ここでは作業しやすい形で置いて、登録時に楽天の形へ組み替える。
-    #   variant_axis   … "カラー" など軸の名前。空なら単品
-    #   variants       … [{"label":"ホワイト","suffix":"white","price":1000}, ...]
-    variant_axis = Column(String)
-    variants     = Column(Text)      # JSON配列
+    # 軸は2つまで（サイズ×種類 など）。ここでは作業しやすい形で置いて、
+    # 登録時に楽天の形へ組み替える。
+    #   variant_axis   … 1つめの軸の名前。空なら単品
+    #   variant_axis2  … 2つめの軸の名前。無ければ空
+    #   variants … 軸1つ: [{"label":"ホワイト","suffix":"white","price":1000}]
+    #              軸2つ: [{"label":"M","label2":"キャット","suffix":"m_cat"}]
+    variant_axis  = Column(String)
+    variant_axis2 = Column(String)
+    variants      = Column(Text)      # JSON配列
 
     # ---- RMSへの登録 ----
     # 登録は手元のPCでCompass経由で行う（楽天の商品APIは書込みに

@@ -61,67 +61,148 @@ def api(base, path, token, method="GET", body=None):
         raise SystemExit(f"APIエラー {e.code}: {e.read().decode()[:300]}")
 
 
-def build_variants(d):
+def build_variants(d, tmpl_variant=None):
     """バリエーションを楽天の形に組み立てる。
 
-    楽天は variantSelectors（選択肢の定義）と variants（各枝）の
-    2つで持つ。実在商品（y112）の構造に合わせている。
+    楽天は variantSelectors（選択肢の定義）と variants（各枝）で持つ。
+    軸は2つまで（Key0・Key1）。サイズ×種類のような組み合わせになる。
 
-    軸が無ければ単品として1つだけ作る。
+    送料・納期・属性などは項目が多く手で埋めると漏れるので、雛形に
+    した既存商品の枝から引き継ぐ（tmpl_variant）。価格と選択肢だけ
+    今回の値で上書きする。
     """
     sku = d["sku"]
     base_price = d["price"]
     rows = d.get("variants") or []
-    axis = (d.get("variant_axis") or "").strip()
+    axis1 = (d.get("variant_axis") or "").strip()
+    axis2 = (d.get("variant_axis2") or "").strip()
 
-    if not axis or not rows:
-        # 単品。バリエーションIDは商品番号と揃えておく
-        return None, {
-            sku: {
-                "standardPrice": base_price,
-                "merchantDefinedSkuId": sku,
-                "hidden": False,
-            }
-        }
+    # 雛形から引き継ぐもの。選択肢・価格・自社SKU番号は毎回変わるので除く
+    carry = {}
+    if tmpl_variant:
+        for k in ("restockOnCancel", "backOrderFlag", "normalDeliveryDateId",
+                  "backOrderDeliveryDateId", "articleNumber", "shipping",
+                  "features"):
+            if k in tmpl_variant:
+                carry[k] = tmpl_variant[k]
 
-    selectors = [{"key": "Key0", "displayName": axis, "values": []}]
-    variants = {}
-    for r in rows:
-        label = str(r.get("label") or "").strip()
-        if not label:
-            continue
-        # 枝のIDは y112_white の形。suffix が無ければ通し番号にする
-        suffix = str(r.get("suffix") or "").strip() or f"v{len(variants) + 1}"
-        selectors[0]["values"].append({"displayValue": label})
-        variants[f"{sku}_{suffix}"] = {
-            "selectorValues": {"Key0": label},
-            "standardPrice": int(r.get("price") or base_price),
-            "merchantDefinedSkuId": label,
+    def make(vid, selector_values, label_for_sku, price):
+        v = dict(carry)
+        v.update({
+            "standardPrice": int(price or base_price),
+            "merchantDefinedSkuId": label_for_sku,
             "hidden": False,
-        }
+        })
+        if selector_values:
+            v["selectorValues"] = selector_values
+        return vid, v
+
+    if not axis1 or not rows:
+        # 単品。バリエーションIDは商品番号と揃えておく
+        vid, v = make(sku, None, sku, base_price)
+        return None, {vid: v}
+
+    selectors = [{"key": "Key0", "displayName": axis1, "values": []}]
+    if axis2:
+        selectors.append({"key": "Key1", "displayName": axis2, "values": []})
+
+    variants = {}
+    seen1, seen2 = [], []
+    for i, r in enumerate(rows):
+        l1 = str(r.get("label") or "").strip()
+        if not l1:
+            continue
+        l2 = str(r.get("label2") or "").strip()
+        if axis2 and not l2:
+            continue
+
+        # 選択肢は重複させない。同じサイズが何度も出るため
+        if l1 not in seen1:
+            seen1.append(l1)
+            selectors[0]["values"].append({"displayValue": l1})
+        if axis2 and l2 not in seen2:
+            seen2.append(l2)
+            selectors[1]["values"].append({"displayValue": l2})
+
+        sv = {"Key0": l1}
+        if axis2:
+            sv["Key1"] = l2
+        suffix = str(r.get("suffix") or "").strip() or f"v{i + 1}"
+        # 自社SKU番号は「M-キャット」の形。あとで在庫を紐づけるときの目印
+        name = f"{l1}-{l2}" if axis2 else l1
+        vid, v = make(f"{sku}_{suffix}", sv, name, r.get("price"))
+        variants[vid] = v
+
     if not variants:
-        raise ValueError("バリエーションの名前が空です")
+        raise ValueError("バリエーションの中身が空です")
     return selectors, variants
 
 
-def build_item_body(d, shop_url):
+async def fetch_template(page, tmpl_sku, shop_url):
+    """雛形にする既存商品を読む。
+
+    送料・納期・属性・レイアウトなど項目が多く、手で埋めると必ず漏れる。
+    実績のある商品から引き継ぐ方が確実で早い。
+    """
+    r = await page.evaluate(
+        JS_SEND, ["GET",
+                  f"/api/rms/v1/es/2.0/ext/items/manage-numbers/{tmpl_sku}"
+                  f"?shopUrl={shop_url}", None])
+    if r["status"] != 200:
+        raise RuntimeError(
+            f"雛形の商品 {tmpl_sku} を読めません（{r['status']}）: {r['body'][:200]}")
+    return json.loads(r["body"])
+
+
+# 雛形から引き継ぐ、商品まるごとの設定。
+# 商品ごとに変わるもの（タイトル・説明・画像・価格・バリエーション）は含めない
+TEMPLATE_KEYS = ("itemType", "hideItem", "unlimitedInventoryFlag",
+                 "features", "payment", "itemDisplaySequence", "layout")
+
+
+def build_item_body(d, shop_url, tmpl=None):
     """商品本体（①のPUT）に送る中身を組み立てる。
 
     PUTは全項目置換なので、送らなかった項目は消える。新規登録なので
     問題ないが、既存商品に流用してはいけない。
+
+    雛形があれば、そこから共通の設定を引き継ぐ。
     """
-    selectors, variants = build_variants(d)
-    body = {
+    tmpl_variant = None
+    if tmpl:
+        vs = tmpl.get("variants") or {}
+        # どの枝でも共通の設定は同じなので、先頭を見本にする
+        tmpl_variant = next(iter(vs.values()), None)
+
+    selectors, variants = build_variants(d, tmpl_variant)
+
+    body = {}
+    if tmpl:
+        for k in TEMPLATE_KEYS:
+            if k in tmpl:
+                body[k] = tmpl[k]
+        # ジャンルは雛形と違うことがあるので、指定があればそちらを使う
+        if tmpl.get("genreId"):
+            body["genreId"] = tmpl["genreId"]
+
+    body.update({
         "title": d["rakuten_title"],
         "productDescription": {"pc": d.get("description_pc") or ""},
         "variants": variants,
-    }
+    })
     if selectors:
         body["variantSelectors"] = selectors
-    # 画像。R-Cabinetに上げたURLを渡す。楽天は location で持つ
+
+    # 画像。R-Cabinetに上げたURLを渡す。楽天は location で持つ。
+    # altには商品名を入れる（既存商品がそうなっている）
     imgs = [u for u in (d.get("image_urls") or []) if u]
     if imgs:
-        body["images"] = [{"location": u} for u in imgs]
+        alt = (d.get("rakuten_title") or "")[:100]
+        body["images"] = [{"type": "CABINET", "location": u, "alt": alt}
+                          for u in imgs]
+        # 白背景画像は1枚目を使う。検索結果に出る画像なので必須に近い
+        body["whiteBgImage"] = {"type": "CABINET", "location": imgs[0]}
+
     if d.get("catchcopy"):
         body["tagline"] = d["catchcopy"]
     if d.get("description_sp"):
@@ -293,6 +374,15 @@ async def register_one(page, d, shop_url, dry_run, base=None, token=None,
     """
     mn = d["sku"]
 
+    # 雛形の商品を読む。送料・納期・属性など項目が多いので引き継ぐ
+    tmpl = None
+    if d.get("template_sku"):
+        try:
+            tmpl = await fetch_template(page, d["template_sku"], shop_url)
+            print(f"    雛形: {d['template_sku']} から引き継ぎます")
+        except Exception as e:
+            return {"ok": False, "log": [], "error": f"雛形を読めません: {e}"}
+
     # ジャンルIDが空なら、参考にした商品から引く。楽天APIはIP制限が
     # あってサーバーからは呼べないので、ここで取る
     if not d.get("genre_id") and d.get("rival_item_code") and conf:
@@ -311,7 +401,7 @@ async def register_one(page, d, shop_url, dry_run, base=None, token=None,
         except Exception as e:
             return {"ok": False, "log": [], "error": f"画像の登録で失敗: {e}"}
 
-    item_body = build_item_body(d, shop_url)
+    item_body = build_item_body(d, shop_url, tmpl)
     n_var = len(item_body["variants"])
     suffix = f"（{n_var}バリエーション）" if n_var > 1 else ""
     print(f"  {mn}: {d['rakuten_title'][:40]}{suffix}")

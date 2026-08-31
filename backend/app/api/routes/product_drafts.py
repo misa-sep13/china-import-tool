@@ -48,6 +48,8 @@ class DraftIn(BaseModel):
     memo:            Optional[str] = None
     # バリエーション。軸が空なら単品として登録する
     variant_axis:    Optional[str] = None
+    variant_axis2:   Optional[str] = None
+    template_sku:    Optional[str] = None
     variants:        Optional[list[dict]] = None
     image_urls:      Optional[list[str]] = None
     features:        Optional[list[str]] = None
@@ -95,7 +97,8 @@ def _dict(d: ProductDraft) -> dict:
         "rival_price": d.rival_price, "rival_image_url": d.rival_image_url,
         "rival_shop_name": d.rival_shop_name,
         "ref_image_urls": refs, "memo": d.memo,
-        "variant_axis": d.variant_axis, "variants": variants,
+        "variant_axis": d.variant_axis, "variant_axis2": d.variant_axis2,
+        "variants": variants, "template_sku": d.template_sku,
         "image_urls": images,
         "features": _json_list(d.features),
         "spec_rows": _json_list(d.spec_rows),

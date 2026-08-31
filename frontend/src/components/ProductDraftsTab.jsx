@@ -201,6 +201,16 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
           </div>
 
           <div style={{ marginTop: 12 }}>
+            <span style={label}>雛形にする商品のSKU（送料・納期・属性を引き継ぎます）</span>
+            <input style={{ ...inputStyle, maxWidth: 260 }} value={form.template_sku || ''}
+              placeholder="y112 など" onChange={set('template_sku')} />
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+              送料・納期・ブランド名・原産国などは項目が多いので、似た既存商品から
+              引き継ぎます。空だとこれらが設定されないまま登録されます。
+            </div>
+          </div>
+
+          <div style={{ marginTop: 12 }}>
             <span style={label}>この商品について（生成の材料）</span>
             <textarea
               style={{ ...inputStyle, minHeight: 90 }}
@@ -297,6 +307,7 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
 function VariantEditor({ form, setForm, label, inputStyle, btnSmall }) {
   const rows = form.variants || []
   const axis = form.variant_axis || ''
+  const axis2 = form.variant_axis2 || ''
 
   const setRows = next => setForm(f => ({ ...f, variants: next }))
   const setRow = (i, key, v) =>
@@ -308,13 +319,20 @@ function VariantEditor({ form, setForm, label, inputStyle, btnSmall }) {
         バリエーション（色違い・サイズ違い）
       </div>
 
-      <div style={{ maxWidth: 260 }}>
-        <span style={label}>軸の名前</span>
-        <input style={inputStyle} value={axis} placeholder="カラー / サイズ など"
-          onChange={e => setForm(f => ({ ...f, variant_axis: e.target.value }))} />
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ maxWidth: 220 }}>
+          <span style={label}>軸1の名前</span>
+          <input style={inputStyle} value={axis} placeholder="サイズ / カラー など"
+            onChange={e => setForm(f => ({ ...f, variant_axis: e.target.value }))} />
+        </div>
+        <div style={{ maxWidth: 220 }}>
+          <span style={label}>軸2の名前（無ければ空）</span>
+          <input style={inputStyle} value={axis2} placeholder="種類 / 柄 など"
+            onChange={e => setForm(f => ({ ...f, variant_axis2: e.target.value }))} />
+        </div>
       </div>
       <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
-        空にすると単品として登録します。
+        軸1を空にすると単品として登録します。軸は2つまでです。
       </div>
 
       {axis && (
@@ -322,8 +340,9 @@ function VariantEditor({ form, setForm, label, inputStyle, btnSmall }) {
           <table style={{ width: '100%', marginTop: 10, fontSize: 13 }}>
             <thead>
               <tr style={{ color: '#64748b', fontSize: 11 }}>
-                <th style={{ textAlign: 'left' }}>選択肢の名前</th>
-                <th style={{ textAlign: 'left', width: 130 }}>枝のID（英数字）</th>
+                <th style={{ textAlign: 'left' }}>{axis || '軸1'}</th>
+                {axis2 && <th style={{ textAlign: 'left' }}>{axis2}</th>}
+                <th style={{ textAlign: 'left', width: 140 }}>枝のID（英数字）</th>
                 <th style={{ textAlign: 'left', width: 110 }}>価格（空=共通）</th>
                 <th style={{ width: 40 }} />
               </tr>
@@ -332,11 +351,17 @@ function VariantEditor({ form, setForm, label, inputStyle, btnSmall }) {
               {rows.map((r, i) => (
                 <tr key={i}>
                   <td style={{ paddingRight: 6 }}>
-                    <input style={inputStyle} value={r.label || ''} placeholder="ホワイト"
+                    <input style={inputStyle} value={r.label || ''} placeholder="M"
                       onChange={e => setRow(i, 'label', e.target.value)} />
                   </td>
+                  {axis2 && (
+                    <td style={{ paddingRight: 6 }}>
+                      <input style={inputStyle} value={r.label2 || ''} placeholder="キャット"
+                        onChange={e => setRow(i, 'label2', e.target.value)} />
+                    </td>
+                  )}
                   <td style={{ paddingRight: 6 }}>
-                    <input style={inputStyle} value={r.suffix || ''} placeholder="white"
+                    <input style={inputStyle} value={r.suffix || ''} placeholder="m_cat"
                       onChange={e => setRow(i, 'suffix', e.target.value)} />
                   </td>
                   <td style={{ paddingRight: 6 }}>
@@ -354,18 +379,20 @@ function VariantEditor({ form, setForm, label, inputStyle, btnSmall }) {
           </table>
 
           <button style={{ ...btnSmall, marginTop: 8 }}
-            onClick={() => setRows([...rows, { label: '', suffix: '', price: null }])}>
-            ＋ 選択肢を追加
+            onClick={() => setRows([...rows, { label: '', label2: '', suffix: '', price: null }])}>
+            ＋ 行を追加
           </button>
 
           {form.sku && rows.some(r => r.label) && (
             <div style={{ fontSize: 11, color: '#64748b', marginTop: 8 }}>
               楽天にはこの形で登録されます：
-              {rows.filter(r => r.label).map((r, i) => (
+              {rows.filter(r => r.label).slice(0, 4).map((r, i) => (
                 <span key={i} style={{ marginLeft: 6, fontFamily: 'monospace' }}>
                   {form.sku}_{r.suffix || `v${i + 1}`}
+                  （{axis2 ? `${r.label}-${r.label2 || ''}` : r.label}）
                 </span>
               ))}
+              {rows.length > 4 && ` …他${rows.length - 4}件`}
             </div>
           )}
         </>
