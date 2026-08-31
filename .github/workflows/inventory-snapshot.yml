@@ -14,7 +14,7 @@ on:
       platforms:
         description: '対象（rakuten,amazon）'
         required: false
-        default: 'rakuten,amazon'
+        default: 'rakuten'
       force:
         description: '月末でなくても実行する'
         required: false
@@ -36,6 +36,9 @@ jobs:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
           AUTH_SERVICE_TOKEN: ${{ secrets.AUTH_SERVICE_TOKEN }}
           PERIOD: ${{ github.event.inputs.period }}
-          PLATFORMS: ${{ github.event.inputs.platforms || 'rakuten,amazon' }}
+          # Amazonアカウント停止中のためSP-APIが403を返し続ける。amazonを含めると
+          # 楽天の確定に成功しても毎月末にジョブが失敗扱いになるので、定期実行は
+          # 楽天のみにしている。アカウント復旧後に 'rakuten,amazon' へ戻すこと。
+          PLATFORMS: ${{ github.event.inputs.platforms || 'rakuten' }}
           FORCE: ${{ github.event.inputs.force }}
         run: python scripts/capture_inventory_snapshot.py
