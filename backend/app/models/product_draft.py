@@ -66,6 +66,10 @@ class ProductDraft(Base):
     # [{"location": "/パス/ファイル名.jpg"}] の形で持つ
     image_urls = Column(Text)
 
+    # 楽天の商品属性に入れるシリーズ名。商品ごとに変わるので雛形からは
+    # 引き継げない（引き継ぐと別商品の名前が入る）
+    series_name = Column(String)
+
     # 雛形にする既存商品の管理番号。送料・納期・属性・レイアウトなど
     # 項目が多く、手で埋めると漏れる。実績のある商品から引き継ぐ
     template_sku = Column(String)

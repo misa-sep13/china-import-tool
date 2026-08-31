@@ -61,6 +61,50 @@ def api(base, path, token, method="GET", body=None):
         raise SystemExit(f"APIエラー {e.code}: {e.read().decode()[:300]}")
 
 
+# 属性は3種類に分かれる（実物のy112を見て分類した）。
+#   全商品で共通  … ブランド名・原産国。雛形から引き継ぐ
+#   商品ごと      … メーカー型番（SKU）・シリーズ名。今回の値で作る
+#   枝ごと        … カラー・代表カラー。バリエーションから作る
+COMMON_ATTRS = ("ブランド名", "原産国／製造国", "原産国/製造国")
+PER_ITEM_ATTRS = ("メーカー型番", "シリーズ名")
+PER_VARIANT_ATTRS = ("カラー", "代表カラー", "サイズ")
+
+
+def build_attributes(d, tmpl_variant, label1, label2, axis1, axis2):
+    """バリエーション1枝ぶんの属性を組み立てる。
+
+    ブランド名や原産国はどの商品でも同じなので雛形から引き継ぐ。
+    型番・シリーズ名・カラーは商品や枝ごとに変わるので作り直す。
+    引き継いだ値をそのまま残すと、別商品の型番やカラーが入ってしまう。
+    """
+    attrs = []
+
+    # 共通のものを雛形から
+    for a in (tmpl_variant or {}).get("attributes", []):
+        if a.get("name") in COMMON_ATTRS:
+            attrs.append({"name": a["name"], "values": list(a.get("values") or [])})
+
+    # 商品ごとのもの
+    attrs.append({"name": "メーカー型番", "values": [d["sku"]]})
+    series = (d.get("series_name") or "").strip()
+    if series:
+        attrs.append({"name": "シリーズ名", "values": [series]})
+
+    # 枝ごとのもの。軸の名前が「カラー」なら色として入れる
+    def add_axis(axis, label):
+        if not axis or not label:
+            return
+        name = axis.strip()
+        attrs.append({"name": name, "values": [label]})
+        # 楽天は色の絞り込みに「代表カラー」を使う
+        if name in ("カラー", "色"):
+            attrs.append({"name": "代表カラー", "values": [label]})
+
+    add_axis(axis1, label1)
+    add_axis(axis2, label2)
+    return attrs
+
+
 def build_variants(d, tmpl_variant=None):
     """バリエーションを楽天の形に組み立てる。
 
@@ -86,12 +130,13 @@ def build_variants(d, tmpl_variant=None):
             if k in tmpl_variant:
                 carry[k] = tmpl_variant[k]
 
-    def make(vid, selector_values, label_for_sku, price):
+    def make(vid, selector_values, label_for_sku, price, l1="", l2=""):
         v = dict(carry)
         v.update({
             "standardPrice": int(price or base_price),
             "merchantDefinedSkuId": label_for_sku,
             "hidden": False,
+            "attributes": build_attributes(d, tmpl_variant, l1, l2, axis1, axis2),
         })
         if selector_values:
             v["selectorValues"] = selector_values
@@ -130,7 +175,7 @@ def build_variants(d, tmpl_variant=None):
         suffix = str(r.get("suffix") or "").strip() or f"v{i + 1}"
         # 自社SKU番号は「M-キャット」の形。あとで在庫を紐づけるときの目印
         name = f"{l1}-{l2}" if axis2 else l1
-        vid, v = make(f"{sku}_{suffix}", sv, name, r.get("price"))
+        vid, v = make(f"{sku}_{suffix}", sv, name, r.get("price"), l1, l2)
         variants[vid] = v
 
     if not variants:

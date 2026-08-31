@@ -50,6 +50,7 @@ class DraftIn(BaseModel):
     variant_axis:    Optional[str] = None
     variant_axis2:   Optional[str] = None
     template_sku:    Optional[str] = None
+    series_name:     Optional[str] = None
     variants:        Optional[list[dict]] = None
     image_urls:      Optional[list[str]] = None
     features:        Optional[list[str]] = None
@@ -99,6 +100,7 @@ def _dict(d: ProductDraft) -> dict:
         "ref_image_urls": refs, "memo": d.memo,
         "variant_axis": d.variant_axis, "variant_axis2": d.variant_axis2,
         "variants": variants, "template_sku": d.template_sku,
+        "series_name": d.series_name,
         "image_urls": images,
         "features": _json_list(d.features),
         "spec_rows": _json_list(d.spec_rows),

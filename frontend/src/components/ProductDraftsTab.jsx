@@ -183,6 +183,11 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
             <div><span style={label}>SKU</span><input style={inputStyle} value={form.sku || ''} onChange={set('sku')} /></div>
             <div><span style={label}>販売価格（円）</span><input style={inputStyle} type="number" value={form.price ?? ''} onChange={set('price')} /></div>
             <div>
+              <span style={label}>シリーズ名（商品属性）</span>
+              <input style={inputStyle} value={form.series_name || ''}
+                placeholder="ミラー付きマウスピースケース" onChange={set('series_name')} />
+            </div>
+            <div>
               <span style={label}>楽天ジャンルID</span>
               <input style={inputStyle} value={form.genre_id || ''} onChange={set('genre_id')}
                 placeholder="空なら登録時にライバル商品から取ります" />
