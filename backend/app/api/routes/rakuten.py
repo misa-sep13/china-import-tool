@@ -33,6 +33,9 @@ from app.services.rakuten_sales_import import (
 
 router = APIRouter(prefix="/rakuten", tags=["rakuten"])
 
+# 商品API（Item API 2.0）のベース。在庫や受注とは別のエンドポイント
+RMS_ITEMS_BASE = "https://api.rms.rakuten.co.jp/es/2.0"
+
 
 def _log_inventory_reflection(db: Session, **kwargs) -> InventoryReflectionLog:
     log = InventoryReflectionLog(**kwargs)
@@ -3836,3 +3839,66 @@ async def debug_push_execute(
         "time_verified": time_verified,
         "results": results,
     }
+
+
+@router.get("/rms/debug-item-permissions")
+async def rms_debug_item_permissions(db: Session = Depends(get_db)):
+    """商品APIのどこまで通るかを確かめる。
+
+    商品登録が401になるとき、原因が「APIキーの権限不足」なのか
+    「呼び方が違う」のか切り分けられないと先へ進めない。
+    実際に商品を作らずに、参照系と更新系を順に叩いて結果だけ返す。
+
+    更新系は、存在しない商品番号への更新を試す。権限があれば404か
+    バリデーションエラー、権限が無ければ401が返るので区別できる。
+    """
+    import base64, httpx
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません。")
+    token = base64.b64encode(
+        f"{settings.rms_service_secret}:{settings.rms_license_key}".encode()).decode()
+    headers = {"Authorization": f"ESA {token}", "Content-Type": "application/json"}
+
+    checks = []
+    async with httpx.AsyncClient(timeout=30) as client:
+        # 参照。ここが通れば認証自体は生きている
+        r = await client.get(f"{RMS_ITEMS_BASE}/items/search",
+                             headers=headers, params={"offset": 0, "limit": 1})
+        checks.append({"名前": "商品検索（参照）", "method": "GET",
+                       "path": "/2.0/items/search", "status": r.status_code,
+                       "body": r.text[:300]})
+
+        # 更新。存在しない商品番号なので実際には何も変わらない
+        probe = "zzz-permission-probe-do-not-use"
+        r = await client.patch(f"{RMS_ITEMS_BASE}/items/manage-numbers/{probe}",
+                               headers=headers, json={"title": "権限確認"})
+        checks.append({"名前": "商品更新（PATCH）", "method": "PATCH",
+                       "path": f"/2.0/items/manage-numbers/{probe}",
+                       "status": r.status_code, "body": r.text[:300]})
+
+        # 登録。同じくprobe番号なので、通れば消す
+        r = await client.post(f"{RMS_ITEMS_BASE}/items/manage-numbers/{probe}",
+                              headers=headers, json={"title": "権限確認"})
+        checks.append({"名前": "商品登録（POST）", "method": "POST",
+                       "path": f"/2.0/items/manage-numbers/{probe}",
+                       "status": r.status_code, "body": r.text[:300]})
+        if r.status_code in (200, 201, 204):
+            # 通ってしまったら後片付けする。確認のために商品を残さない
+            d = await client.delete(
+                f"{RMS_ITEMS_BASE}/items/manage-numbers/{probe}", headers=headers)
+            checks.append({"名前": "後片付け（DELETE）", "method": "DELETE",
+                           "path": f"/2.0/items/manage-numbers/{probe}",
+                           "status": d.status_code, "body": d.text[:200]})
+
+    read_ok = checks[0]["status"] == 200
+    write_401 = any(c["status"] == 401 for c in checks[1:])
+    if read_ok and write_401:
+        verdict = ("参照はできるが更新ができない。APIキーの権限に"
+                   "「商品」の更新が入っていない可能性が高い")
+    elif not read_ok:
+        verdict = "参照からできない。APIキーそのものを確認してください"
+    else:
+        verdict = "更新系も401ではない。呼び方の問題として調べられる"
+
+    return {"判定": verdict, "結果": checks}
