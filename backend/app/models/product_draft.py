@@ -49,6 +49,14 @@ class ProductDraft(Base):
     ref_image_urls = Column(Text)   # 参考画像URL（JSON配列）
     memo           = Column(Text)
 
+    # ---- バリエーション ----
+    # 楽天は variantSelectors（選択肢の定義）と variants（各枝）で持つ。
+    # ここでは作業しやすい形で置いて、登録時に楽天の形へ組み替える。
+    #   variant_axis   … "カラー" など軸の名前。空なら単品
+    #   variants       … [{"label":"ホワイト","suffix":"white","price":1000}, ...]
+    variant_axis = Column(String)
+    variants     = Column(Text)      # JSON配列
+
     # ---- RMSへの登録 ----
     # 登録は手元のPCでCompass経由で行う（楽天の商品APIは書込みに
     # 有料オプションが要り、未契約だと401になるため）

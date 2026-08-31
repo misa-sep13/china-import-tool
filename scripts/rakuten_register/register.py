@@ -59,25 +59,63 @@ def api(base, path, token, method="GET", body=None):
         raise SystemExit(f"APIエラー {e.code}: {e.read().decode()[:300]}")
 
 
+def build_variants(d):
+    """バリエーションを楽天の形に組み立てる。
+
+    楽天は variantSelectors（選択肢の定義）と variants（各枝）の
+    2つで持つ。実在商品（y112）の構造に合わせている。
+
+    軸が無ければ単品として1つだけ作る。
+    """
+    sku = d["sku"]
+    base_price = d["price"]
+    rows = d.get("variants") or []
+    axis = (d.get("variant_axis") or "").strip()
+
+    if not axis or not rows:
+        # 単品。バリエーションIDは商品番号と揃えておく
+        return None, {
+            sku: {
+                "standardPrice": base_price,
+                "merchantDefinedSkuId": sku,
+                "hidden": False,
+            }
+        }
+
+    selectors = [{"key": "Key0", "displayName": axis, "values": []}]
+    variants = {}
+    for r in rows:
+        label = str(r.get("label") or "").strip()
+        if not label:
+            continue
+        # 枝のIDは y112_white の形。suffix が無ければ通し番号にする
+        suffix = str(r.get("suffix") or "").strip() or f"v{len(variants) + 1}"
+        selectors[0]["values"].append({"displayValue": label})
+        variants[f"{sku}_{suffix}"] = {
+            "selectorValues": {"Key0": label},
+            "standardPrice": int(r.get("price") or base_price),
+            "merchantDefinedSkuId": label,
+            "hidden": False,
+        }
+    if not variants:
+        raise ValueError("バリエーションの名前が空です")
+    return selectors, variants
+
+
 def build_item_body(d, shop_url):
     """商品本体（①のPUT）に送る中身を組み立てる。
 
     PUTは全項目置換なので、送らなかった項目は消える。新規登録なので
     問題ないが、既存商品に流用してはいけない。
     """
+    selectors, variants = build_variants(d)
     body = {
         "title": d["rakuten_title"],
         "productDescription": {"pc": d.get("description_pc") or ""},
-        "sales": {"isIncludedTax": True},
-        "variants": {
-            # バリエーションを持たない単品として登録する。
-            # 色違い等がある商品は、登録後にCompassの画面で足す
-            "normal-inventory": {
-                "referencePrice": {"value": d["price"]},
-                "standardPrice": d["price"],
-            }
-        },
+        "variants": variants,
     }
+    if selectors:
+        body["variantSelectors"] = selectors
     if d.get("catchcopy"):
         body["tagline"] = d["catchcopy"]
     if d.get("description_sp"):
@@ -146,18 +184,25 @@ async def send(page, method, path, body, label):
 async def register_one(page, d, shop_url, dry_run):
     """1商品を登録する。手順書どおり3本を順に送る。"""
     mn = d["sku"]
-    print(f"  {mn}: {d['rakuten_title'][:40]}")
+    item_body = build_item_body(d, shop_url)
+    n_var = len(item_body["variants"])
+    suffix = f"（{n_var}バリエーション）" if n_var > 1 else ""
+    print(f"  {mn}: {d['rakuten_title'][:40]}{suffix}")
 
     calls = [
         ("PUT",
          f"/api/rms/v1/es/2.0/ext/items/manage-numbers/{mn}?shopUrl={shop_url}",
-         build_item_body(d, shop_url),
+         item_body,
          "① 商品本体"),
         ("POST",
          "/api/rms/v1/es/2.1/inventories/bulk-upsert",
-         {"inventories": [{"manageNumber": mn, "variantId": "normal-inventory",
-                           # mode は必須。省略すると失敗する
-                           "quantity": 0, "mode": "ABSOLUTE"}]},
+         # 全バリエーションぶん送る。入荷前なので0で作っておき、
+         # 実際の在庫は既存の在庫連携が入れる
+         {"inventories": [
+             {"manageNumber": mn, "variantId": vid,
+              # mode は必須。省略すると失敗する
+              "quantity": 0, "mode": "ABSOLUTE"}
+             for vid in item_body["variants"].keys()]},
          "② 在庫"),
         ("PUT",
          f"/api/rms/v1/es/2.0/categories/item-mappings/manage-numbers/{mn}",

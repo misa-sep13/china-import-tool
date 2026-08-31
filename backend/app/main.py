@@ -258,6 +258,10 @@ def _migrate():
          "ALTER TABLE product_drafts ADD COLUMN register_error TEXT"),
         ("product_drafts","register_log",
          "ALTER TABLE product_drafts ADD COLUMN register_log TEXT"),
+        ("product_drafts","variant_axis",
+         "ALTER TABLE product_drafts ADD COLUMN variant_axis VARCHAR"),
+        ("product_drafts","variants",
+         "ALTER TABLE product_drafts ADD COLUMN variants TEXT"),
     ]
 
     inspector = inspect(engine)

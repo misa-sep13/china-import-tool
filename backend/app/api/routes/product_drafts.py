@@ -43,6 +43,9 @@ class DraftIn(BaseModel):
     rival_shop_name: Optional[str] = None
     ref_image_urls:  Optional[list[str]] = None
     memo:            Optional[str] = None
+    # バリエーション。軸が空なら単品として登録する
+    variant_axis:    Optional[str] = None
+    variants:        Optional[list[dict]] = None
 
 
 class AdoptIn(BaseModel):
@@ -56,6 +59,10 @@ def _dict(d: ProductDraft) -> dict:
         refs = json.loads(d.ref_image_urls or "[]")
     except Exception:
         refs = []
+    try:
+        variants = json.loads(d.variants or "[]")
+    except Exception:
+        variants = []
     return {
         "id": d.id, "sku": d.sku, "status": d.status or "draft",
         "rakuten_title": d.rakuten_title, "catchcopy": d.catchcopy,
@@ -69,6 +76,7 @@ def _dict(d: ProductDraft) -> dict:
         "rival_price": d.rival_price, "rival_image_url": d.rival_image_url,
         "rival_shop_name": d.rival_shop_name,
         "ref_image_urls": refs, "memo": d.memo,
+        "variant_axis": d.variant_axis, "variants": variants,
         "registered_at": d.registered_at.isoformat() if d.registered_at else None,
         "register_error": d.register_error,
         "created_at": d.created_at.isoformat() if d.created_at else None,
@@ -80,6 +88,8 @@ def _apply(d: ProductDraft, data: DraftIn):
     for k, v in data.model_dump(exclude_unset=True).items():
         if k == "ref_image_urls":
             d.ref_image_urls = json.dumps(v or [], ensure_ascii=False)
+        elif k == "variants":
+            d.variants = json.dumps(v or [], ensure_ascii=False)
         else:
             setattr(d, k, v)
 
