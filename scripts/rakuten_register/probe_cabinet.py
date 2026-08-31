@@ -29,6 +29,12 @@ CANDIDATES = [
     ("GET", "/api/rms/v1/es/2.0/cabinet/folders"),
     # 商品APIと同じ es/2.0 の下にある可能性
     ("GET", "/api/rms/v1/es/2.0/ext/cabinet/folders"),
+    # Compassの画面に「画像の登録・編集」があるので、Compass独自の
+    # 口を持っている可能性が高い。rms中継とは別の場所を探す
+    ("GET", "/api/images"),
+    ("GET", "/api/cabinet/folders"),
+    ("GET", "/api/cabinet/files"),
+    ("GET", "/api/rms/v1/cabinet/folders"),
 ]
 
 JS_GET = r"""
@@ -116,9 +122,13 @@ async def run():
         else:
             print("商品APIは通るのに画像の口だけ全滅なので、Compassは")
             print("R-Cabinetを中継していないようです。")
-            print("見つかりませんでした。Compassの画面で画像をアップロードするとき")
-            print("どこへ送っているか、開発者ツールのNetworkタブで見ると分かります。")
-            print("（F12 → Network → 画像をアップロード → 出てきたリクエストのURL）")
+            print()
+            print("Compassの画面には「画像の登録・編集」があるので、独自の口を")
+            print("持っているはずです。次の手順で調べられます:")
+            print("  1. いま開いているブラウザで「画像の登録・編集」を開く")
+            print("  2. F12 → Network タブ")
+            print("  3. 画像を1枚アップロードする")
+            print("  4. 一覧に出たリクエストのURLを教えてください")
 
         # 結果をファイルにも残す。画面が流れても後から見られるように
         out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
