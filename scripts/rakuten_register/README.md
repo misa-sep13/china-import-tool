@@ -77,6 +77,20 @@ python register.py               # 登録待ちを全部
 
 軸を空にすれば単品として登録します。
 
+## 画像（R-Cabinet）
+
+CompassはR-Cabinetも中継しています（`es/1.0/cabinet/`）。手元の画像を
+そのまま上げられます。
+
+```
+python upload_images.py --list                    # フォルダ一覧を見る
+python upload_images.py --folder 12345 a.jpg b.jpg
+python upload_images.py --folder 12345 --dir C:\画像フォルダ
+```
+
+上げ終わるとURLが出るので、それをドラフトの画像欄に入れてください。
+すでにR-Cabinetにある画像なら、URLを入れるだけで使えます。
+
 ## 気をつけること
 
 - **登録直後は楽天の検索に出ません。** 20〜30分かかります。すぐ見たい
