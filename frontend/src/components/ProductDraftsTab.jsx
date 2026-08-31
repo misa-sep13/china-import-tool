@@ -97,6 +97,12 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
     try {
       const body = { ...form, ...patch }
       delete body.id; delete body.created_at; delete body.updated_at
+      // サーバーが返すだけの項目。送るとバリデーションで弾かれる
+      delete body.registered_at; delete body.register_error
+      // 空の行は送らない。名前が無いバリエーションは作れない
+      if (Array.isArray(body.variants)) {
+        body.variants = body.variants.filter(v => (v.label || '').trim())
+      }
       if (body.price === '') body.price = null
       if (body.supplier_price_cny === '') body.supplier_price_cny = null
       await api.put(`/product-drafts/${draft.id}`, body)
@@ -193,6 +199,9 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
           </div>
           {genError && <div style={{ color: '#dc2626', fontSize: 12, marginTop: 6 }}>{genError}</div>}
 
+          <VariantEditor form={form} setForm={setForm} label={label}
+            inputStyle={inputStyle} btnSmall={btnSmall} />
+
           <div style={{ marginTop: 16, background: '#f8fafc', borderRadius: 6, padding: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 8 }}>仕入れ情報（1688）</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
@@ -251,6 +260,93 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
             </div>
           )}
         </div>
+      )}
+    </div>
+  )
+}
+
+
+/**
+ * バリエーション（色違いなど）の入力。
+ *
+ * 楽天は「軸（カラー）」と「枝（ホワイト・ネイビー）」で持つので、
+ * その形のまま入れてもらう。軸が空なら単品として登録する。
+ */
+function VariantEditor({ form, setForm, label, inputStyle, btnSmall }) {
+  const rows = form.variants || []
+  const axis = form.variant_axis || ''
+
+  const setRows = next => setForm(f => ({ ...f, variants: next }))
+  const setRow = (i, key, v) =>
+    setRows(rows.map((r, n) => (n === i ? { ...r, [key]: v } : r)))
+
+  return (
+    <div style={{ marginTop: 16, background: '#f8fafc', borderRadius: 6, padding: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 8 }}>
+        バリエーション（色違い・サイズ違い）
+      </div>
+
+      <div style={{ maxWidth: 260 }}>
+        <span style={label}>軸の名前</span>
+        <input style={inputStyle} value={axis} placeholder="カラー / サイズ など"
+          onChange={e => setForm(f => ({ ...f, variant_axis: e.target.value }))} />
+      </div>
+      <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+        空にすると単品として登録します。
+      </div>
+
+      {axis && (
+        <>
+          <table style={{ width: '100%', marginTop: 10, fontSize: 13 }}>
+            <thead>
+              <tr style={{ color: '#64748b', fontSize: 11 }}>
+                <th style={{ textAlign: 'left' }}>選択肢の名前</th>
+                <th style={{ textAlign: 'left', width: 130 }}>枝のID（英数字）</th>
+                <th style={{ textAlign: 'left', width: 110 }}>価格（空=共通）</th>
+                <th style={{ width: 40 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td style={{ paddingRight: 6 }}>
+                    <input style={inputStyle} value={r.label || ''} placeholder="ホワイト"
+                      onChange={e => setRow(i, 'label', e.target.value)} />
+                  </td>
+                  <td style={{ paddingRight: 6 }}>
+                    <input style={inputStyle} value={r.suffix || ''} placeholder="white"
+                      onChange={e => setRow(i, 'suffix', e.target.value)} />
+                  </td>
+                  <td style={{ paddingRight: 6 }}>
+                    <input style={inputStyle} type="number" value={r.price ?? ''}
+                      onChange={e => setRow(i, 'price',
+                        e.target.value === '' ? null : Number(e.target.value))} />
+                  </td>
+                  <td>
+                    <button style={btnSmall}
+                      onClick={() => setRows(rows.filter((_, n) => n !== i))}>×</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <button style={{ ...btnSmall, marginTop: 8 }}
+            onClick={() => setRows([...rows, { label: '', suffix: '', price: null }])}>
+            ＋ 選択肢を追加
+          </button>
+
+          {form.sku && rows.some(r => r.label) && (
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 8 }}>
+              楽天にはこの形で登録されます：
+              {rows.filter(r => r.label).map((r, i) => (
+                <span key={i} style={{ marginLeft: 6, fontFamily: 'monospace' }}>
+                  {form.sku}_{r.suffix || `v${i + 1}`}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   )
