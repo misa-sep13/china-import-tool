@@ -49,6 +49,11 @@ class ProductDraft(Base):
     ref_image_urls = Column(Text)   # 参考画像URL（JSON配列）
     memo           = Column(Text)
 
+    # 生成に渡す、この商品ならではの情報。
+    # SKUや価格だけでは「どんな商品か」が分からず、ライバルの説明を
+    # なぞるしかなくなる。自分が知っていることを書いておく場所
+    product_notes = Column(Text)
+
     # ---- 商品説明の材料 ----
     # 説明文は「特徴の箇条書き＋仕様表＋検索キーワード」という決まった
     # 形で作っている。自由文で持つと形が崩れるので、材料として分けて持つ

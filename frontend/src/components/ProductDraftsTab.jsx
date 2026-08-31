@@ -192,6 +192,19 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
             )}
           </div>
 
+          <div style={{ marginTop: 12 }}>
+            <span style={label}>この商品について（生成の材料）</span>
+            <textarea
+              style={{ ...inputStyle, minHeight: 90 }}
+              value={form.product_notes || ''}
+              placeholder={'実物を見て分かったことを書いてください。ここが一番確かな情報として使われます。\n例: シリコンのトレイが外せて洗える／フタの内側に鏡／8.45×8.44cm／PP素材'}
+              onChange={set('product_notes')} />
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+              サイズ・素材・使い方・こだわりなど。ライバルの説明と食い違うときは、
+              こちらが優先されます。
+            </div>
+          </div>
+
           <DescriptionEditor form={form} setForm={setForm} label={label}
             inputStyle={inputStyle} btnSmall={btnSmall}
             genEnabled={genEnabled} generating={generating}

@@ -53,6 +53,7 @@ class DraftIn(BaseModel):
     features:        Optional[list[str]] = None
     spec_rows:       Optional[list[dict]] = None
     seo_words:       Optional[str] = None
+    product_notes:   Optional[str] = None
 
 
 class AdoptIn(BaseModel):
@@ -98,7 +99,7 @@ def _dict(d: ProductDraft) -> dict:
         "image_urls": images,
         "features": _json_list(d.features),
         "spec_rows": _json_list(d.spec_rows),
-        "seo_words": d.seo_words,
+        "seo_words": d.seo_words, "product_notes": d.product_notes,
         "registered_at": d.registered_at.isoformat() if d.registered_at else None,
         "register_error": d.register_error,
         "created_at": d.created_at.isoformat() if d.created_at else None,
