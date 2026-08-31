@@ -100,6 +100,33 @@ def parse_result(xml):
             "url": pick("FileUrl") or pick("FilePath")}
 
 
+JS_POST_XML = r"""
+async ([path, xml]) => {
+  const m = document.querySelector('meta[name="csrf-token"]');
+  const token = m ? m.content : (window.__csrf || '');
+  const fd = new FormData();
+  fd.append('xml', xml);
+  return await new Promise((resolve) => {
+    const x = new XMLHttpRequest();
+    x.open('POST', path, true);
+    if (token) x.setRequestHeader('X-CSRF-Token', token);
+    x.onload = () => resolve({ status: x.status, body: x.responseText.slice(0, 1200) });
+    x.onerror = () => resolve({ status: 0, body: 'ネットワークエラー' });
+    x.send(fd);
+  });
+}
+"""
+
+
+def build_folder_xml(name, parent_id):
+    """フォルダ作成のXML。"""
+    safe = re.sub(r"[<>&]", "", name)[:50]
+    return ("<request><folderInsertRequest><folder>"
+            f"<folderName>{safe}</folderName>"
+            f"<folderParentId>{parent_id}</folderParentId>"
+            "</folder></folderInsertRequest></request>")
+
+
 def build_xml(folder_id, name, file_name):
     """アップロード用のXML。旧Cabinet APIの形式。"""
     # 名前に < > & が入るとXMLが壊れるので落としておく
@@ -140,6 +167,29 @@ async def run(args):
             await compass.close(ctx)
             raise SystemExit(f"フォルダ一覧が取れませんでした（{r['status']}）")
         folders = parse_folders(r["body"])
+
+        # フォルダを作る。SKUごとに分ける運用なので、新商品のたびに
+        # Compassの画面で作らずに済むようにする
+        if args.new_folder:
+            parent = args.parent or "0"
+            same = [f for f in folders if f["name"] == args.new_folder]
+            if same:
+                print(f"  同じ名前のフォルダがすでにあります: {same[0]['id']}")
+                args.folder = same[0]["id"]
+            else:
+                r = await page.evaluate(
+                    JS_POST_XML,
+                    [f"{CAB}/folder/insert", build_folder_xml(args.new_folder, parent)])
+                info = parse_result(r["body"])
+                new_id = re.search(r"<FolderId>(\d+)</FolderId>", r["body"])
+                if r["status"] == 200 and new_id:
+                    args.folder = new_id.group(1)
+                    print(f"  フォルダを作りました: {args.new_folder} → {args.folder}")
+                else:
+                    await compass.close(ctx)
+                    raise SystemExit(
+                        f"フォルダを作れませんでした（{r['status']}）: "
+                        f"{info.get('message') or r['body'][:200]}")
 
         if args.list or not args.folder:
             print()
@@ -209,6 +259,10 @@ def main():
     ap.add_argument("--dir", default="", help="フォルダごと上げる")
     ap.add_argument("--folder", default="", help="R-CabinetのフォルダID")
     ap.add_argument("--list", action="store_true", help="フォルダ一覧を見るだけ")
+    ap.add_argument("--new-folder", default="",
+                    help="このフォルダを作ってから上げる（SKU名など）")
+    ap.add_argument("--parent", default="",
+                    help="親フォルダのID。既定は基本フォルダ直下")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
