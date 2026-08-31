@@ -65,17 +65,21 @@ async def run():
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
         await page.goto("https://www.compass-next.com/")
 
-        # SPAはセッション切れでも古いURLのまま白画面になることがあるので、
-        # パスワード欄の有無で見る。念のため描画を少し待つ
+        # ログイン画面かどうかの自動判定は当てにしない。
+        # 判定が外れると「ログイン済み」と思い込んで全部401になり、
+        # 口が無いのか認証が無いのか分からなくなる（実際にそうなった）。
+        # 必ず一度止まって、人に画面を見てもらう
         await page.wait_for_timeout(2500)
-        if await page.locator("#user_password").count():
-            print()
-            print("Compassのログイン画面が出ています。ログインしてください。")
-            input("  … ログインできたらEnter: ")
-            await page.wait_for_timeout(2000)
+        print()
+        print("ブラウザを開きました。Compassの管理画面が見えていますか？")
+        print("  ログイン画面なら、ログインしてください")
+        print("  すでに管理画面ならそのままで大丈夫です")
+        input("  … 準備できたらEnter: ")
+        await page.wait_for_timeout(1500)
 
         # CSRFトークンを先に用意する。無いまま叩くと全部401になり、
         # 口が無いのか認証が通っていないのか区別できない
+        # ログイン後のページで取り直す。ログイン画面のトークンでは通らない
         got = await page.evaluate(
             """async () => {
                  const m = document.querySelector('meta[name="csrf-token"]');
