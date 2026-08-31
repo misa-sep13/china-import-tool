@@ -205,15 +205,8 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
             )}
           </div>
 
-          <div style={{ marginTop: 12 }}>
-            <span style={label}>雛形にする商品のSKU（送料・納期・属性を引き継ぎます）</span>
-            <input style={{ ...inputStyle, maxWidth: 260 }} value={form.template_sku || ''}
-              placeholder="y112 など" onChange={set('template_sku')} />
-            <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
-              送料・納期・ブランド名・原産国などは項目が多いので、似た既存商品から
-              引き継ぎます。空だとこれらが設定されないまま登録されます。
-            </div>
-          </div>
+          <TemplateEditor form={form} setForm={setForm} label={label}
+            inputStyle={inputStyle} btnSmall={btnSmall} set={set} />
 
           <div style={{ marginTop: 12 }}>
             <span style={label}>この商品について（生成の材料）</span>
@@ -610,6 +603,113 @@ function DescriptionEditor({ form, setForm, label, inputStyle, btnSmall,
             「材料を生成」を押すと、ライバルの情報と自社の情報から案を作って
             この欄に入れます。直したあと「HTMLを見る」で仕上がりを確認できます。
           </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// 配送方法セット。店舗で使っているもの
+const SHIPPING_SETS = [
+  { value: '', label: '雛形のまま' },
+  { value: '4', label: 'ネコポス' },
+  { value: '1', label: '宅急便' },
+  { value: '2', label: '宅急便コンパクト' },
+]
+
+/**
+ * 雛形と、ジャンルごとの商品仕様。
+ *
+ * 商品仕様はジャンルで項目が変わるが、楽天に定義を返すAPIが無い。
+ * 雛形にした商品が持っている項目を借りて、入力欄を出す。
+ */
+function TemplateEditor({ form, setForm, label, inputStyle, btnSmall, set }) {
+  const [info, setInfo] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const tmpl = (form.template_sku || '').trim()
+  const specs = form.item_specs || {}
+
+  const load = async () => {
+    if (!tmpl) { setInfo(null); return }
+    setLoading(true)
+    try {
+      const r = await api.get('/product-drafts/meta/template-info',
+        { params: { manage_number: tmpl } })
+      setInfo(r.data)
+    } catch {
+      setInfo(null)
+    } finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [tmpl])
+
+  const setSpec = (name, v) =>
+    setForm(f => ({ ...f, item_specs: { ...(f.item_specs || {}), [name]: v } }))
+
+  // 型番とシリーズ名は別の欄で入れるので、ここには出さない
+  const names = (info?.attribute_names || [])
+    .filter(n => !['メーカー型番', 'シリーズ名', 'カラー', '代表カラー',
+                   'サイズ', 'ブランド名', '原産国／製造国', '原産国/製造国'].includes(n))
+
+  return (
+    <div style={{ marginTop: 16, background: '#f8fafc', borderRadius: 6, padding: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 8 }}>
+        雛形・配送・商品仕様
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ maxWidth: 220 }}>
+          <span style={label}>雛形にする商品のSKU</span>
+          <input style={inputStyle} value={form.template_sku || ''}
+            placeholder="y96 など" onChange={set('template_sku')} />
+        </div>
+        <div style={{ maxWidth: 220 }}>
+          <span style={label}>配送方法</span>
+          <select style={inputStyle} value={form.shipping_set || ''}
+            onChange={set('shipping_set')}>
+            {SHIPPING_SETS.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {loading && <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>読込中…</div>}
+
+      {tmpl && info && !info.found && (
+        <div style={{ fontSize: 11, color: '#b45309', marginTop: 6 }}>
+          {tmpl} をまだ読み込んでいません。手元のPCで次を実行すると、
+          この商品のジャンルの入力欄が出るようになります：
+          <div style={{ fontFamily: 'monospace', marginTop: 2 }}>
+            python read_template.py {tmpl}
+          </div>
+        </div>
+      )}
+
+      {info?.found && (
+        <>
+          <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>
+            ジャンル {info.genre_id}　/　送料・納期・ブランド名・原産国は
+            {tmpl} から引き継ぎます
+          </div>
+
+          {names.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <span style={label}>商品仕様（このジャンルの項目）</span>
+              <table style={{ width: '100%', fontSize: 13 }}>
+                <tbody>
+                  {names.map(n => (
+                    <tr key={n}>
+                      <td style={{ width: 160, color: '#475569', paddingRight: 8 }}>{n}</td>
+                      <td>
+                        <input style={inputStyle} value={specs[n] || ''}
+                          onChange={e => setSpec(n, e.target.value)} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
     </div>

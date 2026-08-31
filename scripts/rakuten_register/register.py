@@ -90,6 +90,13 @@ def build_attributes(d, tmpl_variant, label1, label2, axis1, axis2):
     if series:
         attrs.append({"name": "シリーズ名", "values": [series]})
 
+    # ジャンルごとの商品仕様（ペットグッズの素材・多頭用 など）。
+    # 画面で入れてもらったものをそのまま属性にする
+    for name, value in (d.get("item_specs") or {}).items():
+        v = str(value or "").strip()
+        if v and name not in ("メーカー型番", "シリーズ名"):
+            attrs.append({"name": name, "values": [v]})
+
     # 枝ごとのもの。軸の名前が「カラー」なら色として入れる
     def add_axis(axis, label):
         if not axis or not label:
@@ -130,8 +137,14 @@ def build_variants(d, tmpl_variant=None):
             if k in tmpl_variant:
                 carry[k] = tmpl_variant[k]
 
+    # 配送方法セット。指定があれば雛形より優先する
+    #   4=ネコポス / 宅急便・宅急便コンパクトは店舗の設定番号
+    ship_set = str(d.get("shipping_set") or "").strip()
+
     def make(vid, selector_values, label_for_sku, price, l1="", l2=""):
         v = dict(carry)
+        if ship_set and v.get("shipping"):
+            v["shipping"] = {**v["shipping"], "shippingMethodGroup": ship_set}
         v.update({
             "standardPrice": int(price or base_price),
             "merchantDefinedSkuId": label_for_sku,

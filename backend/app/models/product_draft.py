@@ -70,6 +70,13 @@ class ProductDraft(Base):
     # 引き継げない（引き継ぐと別商品の名前が入る）
     series_name = Column(String)
 
+    # 商品仕様（ジャンルごとに項目が変わる）。
+    # {"ペットグッズの素材": "布", "多頭用": "いいえ"} の形
+    item_specs = Column(Text)
+
+    # 配送方法セット。ネコポス / 宅急便 / 宅急便コンパクト
+    shipping_set = Column(String)
+
     # 雛形にする既存商品の管理番号。送料・納期・属性・レイアウトなど
     # 項目が多く、手で埋めると漏れる。実績のある商品から引き継ぐ
     template_sku = Column(String)
@@ -139,3 +146,23 @@ class ProductDraftImage(Base):
     uploaded_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProductTemplateInfo(Base):
+    """雛形にする商品の中身を覚えておく。
+
+    商品仕様はジャンルごとに項目が変わるが、楽天にその定義を返すAPIは
+    無い（実測で404）。雛形の商品が持っている項目を借りるしかない。
+
+    雛形を読めるのはCompassにログインしたブラウザだけなので、手元の
+    スクリプトが読んだ結果をここへ預かり、画面はこれを見て入力欄を出す。
+    """
+    __tablename__ = "product_template_infos"
+
+    id            = Column(Integer, primary_key=True)
+    manage_number = Column(String, unique=True, index=True)
+    genre_id      = Column(String)
+    attribute_names = Column(Text)   # 商品仕様の項目名（JSON配列）
+    shipping      = Column(Text)     # 配送方法セットなど（JSON）
+    raw           = Column(Text)     # 全体。項目を増やすときに見る
+    updated_at    = Column(DateTime(timezone=True), server_default=func.now())

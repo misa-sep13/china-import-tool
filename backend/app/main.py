@@ -278,6 +278,10 @@ def _migrate():
          "ALTER TABLE product_drafts ADD COLUMN variant_axis2 VARCHAR"),
         ("product_drafts","series_name",
          "ALTER TABLE product_drafts ADD COLUMN series_name VARCHAR"),
+        ("product_drafts","item_specs",
+         "ALTER TABLE product_drafts ADD COLUMN item_specs TEXT"),
+        ("product_drafts","shipping_set",
+         "ALTER TABLE product_drafts ADD COLUMN shipping_set VARCHAR"),
     ]
 
     inspector = inspect(engine)

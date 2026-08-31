@@ -51,6 +51,8 @@ class DraftIn(BaseModel):
     variant_axis2:   Optional[str] = None
     template_sku:    Optional[str] = None
     series_name:     Optional[str] = None
+    item_specs:      Optional[dict] = None
+    shipping_set:    Optional[str] = None
     variants:        Optional[list[dict]] = None
     image_urls:      Optional[list[str]] = None
     features:        Optional[list[str]] = None
@@ -63,6 +65,13 @@ class AdoptIn(BaseModel):
     """ウォッチリストの行を「採用」してドラフト化する。"""
     watchlist_id: int
     sku: Optional[str] = None
+
+
+def _json_obj(raw):
+    try:
+        return json.loads(raw or "{}")
+    except Exception:
+        return {}
 
 
 def _json_list(raw):
@@ -101,6 +110,8 @@ def _dict(d: ProductDraft) -> dict:
         "variant_axis": d.variant_axis, "variant_axis2": d.variant_axis2,
         "variants": variants, "template_sku": d.template_sku,
         "series_name": d.series_name,
+        "item_specs": _json_obj(d.item_specs),
+        "shipping_set": d.shipping_set,
         "image_urls": images,
         "features": _json_list(d.features),
         "spec_rows": _json_list(d.spec_rows),
@@ -122,6 +133,8 @@ def _apply(d: ProductDraft, data: DraftIn):
             d.image_urls = json.dumps(v or [], ensure_ascii=False)
         elif k in ("features", "spec_rows"):
             setattr(d, k, json.dumps(v or [], ensure_ascii=False))
+        elif k == "item_specs":
+            d.item_specs = json.dumps(v or {}, ensure_ascii=False)
         else:
             setattr(d, k, v)
 
@@ -529,4 +542,60 @@ def rakuten_keys():
         "app_id": settings.RAKUTEN_APP_ID or "",
         "access_key": settings.RAKUTEN_ACCESS_KEY or "",
         "configured": bool(settings.RAKUTEN_APP_ID and settings.RAKUTEN_ACCESS_KEY),
+    }
+
+
+# ---------- 雛形の下読み ----------
+#
+# 商品仕様はジャンルごとに項目が変わるが、楽天にその定義を返すAPIは
+# 無かった（実測で404）。雛形にした商品が持っている項目を借りる。
+# 同じジャンルなら同じ項目になるので、実用上はこれで足りる。
+
+class TemplateInfoIn(BaseModel):
+    """手元のスクリプトが読んだ雛形の中身を、画面用に預かる。
+
+    雛形を読めるのはCompassにログインしたブラウザだけなので、
+    サーバーからは取りに行けない。読んだ結果をここへ入れてもらう。
+    """
+    manage_number: str
+    genre_id: Optional[str] = None
+    attribute_names: list[str] = []      # 商品仕様の項目名
+    shipping: Optional[dict] = None      # 配送方法セットなど
+    raw: Optional[dict] = None           # 全体（あとで項目を増やすとき用）
+
+
+@router.post("/meta/template-info")
+def save_template_info(data: TemplateInfoIn, db: Session = Depends(get_db)):
+    """雛形の中身を覚えておく。画面で項目を出すのに使う。"""
+    from app.models.product_draft import ProductTemplateInfo
+    row = (db.query(ProductTemplateInfo)
+           .filter(ProductTemplateInfo.manage_number == data.manage_number).first())
+    if row is None:
+        row = ProductTemplateInfo(manage_number=data.manage_number)
+        db.add(row)
+    row.genre_id = data.genre_id
+    row.attribute_names = json.dumps(data.attribute_names, ensure_ascii=False)
+    row.shipping = json.dumps(data.shipping or {}, ensure_ascii=False)
+    row.raw = json.dumps(data.raw or {}, ensure_ascii=False)
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"ok": True, "manage_number": row.manage_number,
+            "attribute_names": data.attribute_names}
+
+
+@router.get("/meta/template-info")
+def get_template_info(manage_number: str, db: Session = Depends(get_db)):
+    """覚えておいた雛形の中身。画面がこれを見て入力欄を出す。"""
+    from app.models.product_draft import ProductTemplateInfo
+    row = (db.query(ProductTemplateInfo)
+           .filter(ProductTemplateInfo.manage_number == manage_number).first())
+    if not row:
+        return {"found": False, "manage_number": manage_number,
+                "attribute_names": []}
+    return {
+        "found": True, "manage_number": row.manage_number,
+        "genre_id": row.genre_id,
+        "attribute_names": _json_list(row.attribute_names),
+        "shipping": json.loads(row.shipping or "{}"),
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
