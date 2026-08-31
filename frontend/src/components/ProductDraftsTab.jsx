@@ -118,12 +118,20 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
     setGenerating(kind)
     setGenError('')
     try {
+      // 入力したものを先に保存する。生成はサーバー側のドラフトを材料に
+      // するので、保存しないまま押すと空の状態で作られてしまう
+      await save()
+
       const res = await api.post(`/product-drafts/${draft.id}/generate`, { kind, apply: true })
       const g = res.data.generated || {}
       setForm(p => ({
         ...p,
         rakuten_title: g.title ?? p.rakuten_title,
         description_pc: g.description ?? p.description_pc,
+        description_sp: g.description ?? p.description_sp,
+        features: g.features ?? p.features,
+        spec_rows: g.spec_rows ?? p.spec_rows,
+        seo_words: g.seo_words ?? p.seo_words,
       }))
       await onChanged()
     } catch (e) {

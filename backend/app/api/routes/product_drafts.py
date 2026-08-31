@@ -271,6 +271,14 @@ async def generate_copy(draft_id: int, data: GenerateIn, db: Session = Depends(g
             d.description_sp = html
     else:
         parts = copywriter.split_output(data.kind, res["output"])
+        # 情報が足りないとAIが断ることがある。その文を商品名として
+        # 保存すると、断り文が商品名になってしまう
+        if copywriter.looks_like_refusal(parts.get("title") or ""):
+            raise HTTPException(
+                400,
+                "材料が足りず、AIが作成できませんでした。"
+                "「この商品について」に、サイズ・素材・特徴などを書いてから"
+                "もう一度お試しください。")
         if data.apply:
             if parts.get("title"):
                 d.rakuten_title = parts["title"]

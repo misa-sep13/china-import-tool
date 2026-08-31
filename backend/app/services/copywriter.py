@@ -140,6 +140,24 @@ async def generate(draft: dict, kind: str = "both") -> dict:
     return {"prompt": prompt, "output": text, "model": payload["model"]}
 
 
+# 情報が足りないとAIが断ることがある。その文をそのまま商品名として
+# 保存すると、断り文が商品名になってしまう（実際に起きた）
+_REFUSAL_SIGNS = ("申し訳ございません", "申し訳ありません", "できません",
+                  "情報が不足", "未設定のため")
+
+
+def looks_like_refusal(text: str) -> bool:
+    """AIが作らずに断ったかどうか。
+
+    商品名にしては長すぎ、かつ断りの言い回しが入っていれば断りとみなす。
+    商品名は普通100文字前後なので、200文字を超えていたら文章である。
+    """
+    t = (text or "").strip()
+    if not t:
+        return True
+    return len(t) > 200 and any(w in t for w in _REFUSAL_SIGNS)
+
+
 def split_output(kind: str, output: str) -> dict:
     """生成結果をタイトル／説明文に振り分ける。both のときはJSONを試す。"""
     if kind == "title":
