@@ -20,6 +20,8 @@ CONF = os.path.join(os.path.expanduser("~"), ".rakuten_register.json")
 # R-Cabinetの口として考えられるもの。楽天のCabinet APIを
 # Compassが中継しているなら、この辺りに生えているはず
 CANDIDATES = [
+    # まず商品API。これが通れば認証は効いている（比較用）
+    ("GET", "/api/rms/v1/es/2.0/ext/items/manage-numbers/y112"),
     ("GET", "/api/rms/v1/cabinet/usage/get"),
     ("GET", "/api/rms/v1/cabinet/folders/get"),
     ("GET", "/api/rms/v1/cabinet/folder/files/get?folderId=0"),
@@ -67,22 +69,44 @@ async def run():
             print("Compassにログインしてください。終わったらEnterを押します")
             input("  … ログインできたらEnter: ")
 
+        # CSRFトークンを先に用意する。無いまま叩くと全部401になり、
+        # 口が無いのか認証が通っていないのか区別できない
+        got = await page.evaluate(
+            """async () => {
+                 const m = document.querySelector('meta[name="csrf-token"]');
+                 if (m) return m.content;
+                 const r = await fetch(location.pathname, {credentials:'same-origin'});
+                 return r.headers.get('csrf-token') || '';
+               }""")
+        await page.evaluate("t => { window.__csrf = t }", got or "")
         print()
-        print("R-Cabinetの口を探しています（GETだけ。何も変更しません）")
+        print(f"いまのURL: {page.url}")
+        print(f"CSRFトークン: {'取れました' if got else '★取れませんでした'}")
         print()
-        found = []
+        print("口を探しています（GETだけ。何も変更しません）")
+        print()
+        found, status_by_path = [], []
         for method, path in CANDIDATES:
             r = await page.evaluate(JS_GET, [method, path])
+            status_by_path.append((path, r["status"]))
             mark = "○" if 200 <= r["status"] < 300 else " "
             print(f"  {mark} {r['status']:>3}  {path}")
             if 200 <= r["status"] < 300:
-                found.append((path, r["body"]))
+                if "items/manage-numbers" not in path:
+                    found.append((path, r["body"]))
                 print(f"        {r['body'][:200]}")
 
         print()
-        if found:
+        item_ok = any("items/manage-numbers" in p and 200 <= st < 300
+                      for p, st in status_by_path)
+        if not item_ok:
+            print("商品APIも通っていません。Compassにログインできていない可能性が")
+            print("高いです。開いたブラウザでログイン状態を確認してください。")
+        elif found:
             print("使えそうな口が見つかりました。この結果を貼ってください")
         else:
+            print("商品APIは通るのに画像の口だけ全滅なので、Compassは")
+            print("R-Cabinetを中継していないようです。")
             print("見つかりませんでした。Compassの画面で画像をアップロードするとき")
             print("どこへ送っているか、開発者ツールのNetworkタブで見ると分かります。")
             print("（F12 → Network → 画像をアップロード → 出てきたリクエストのURL）")
