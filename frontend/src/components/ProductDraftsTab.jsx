@@ -199,6 +199,8 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
           </div>
           {genError && <div style={{ color: '#dc2626', fontSize: 12, marginTop: 6 }}>{genError}</div>}
 
+          <ImageEditor draftId={draft.id} label={label} btnSmall={btnSmall} />
+
           <VariantEditor form={form} setForm={setForm} label={label}
             inputStyle={inputStyle} btnSmall={btnSmall} />
 
@@ -348,6 +350,117 @@ function VariantEditor({ form, setForm, label, inputStyle, btnSmall }) {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+
+/**
+ * 商品画像。
+ *
+ * R-Cabinetへの書き込みはCompassにログインしたブラウザからしかできず、
+ * ここからは直接送れない。画像はいったんサーバーへ預けておき、登録の
+ * ときに手元のPCがR-Cabinetへ上げる。
+ */
+function ImageEditor({ draftId, label, btnSmall }) {
+  const [images, setImages] = useState([])
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  const load = async () => {
+    try {
+      const r = await api.get(`/product-drafts/${draftId}/images`)
+      setImages(r.data)
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    }
+  }
+  useEffect(() => { load() }, [draftId])
+
+  const add = async (files) => {
+    setBusy(true); setErr('')
+    try {
+      for (const f of files) {
+        const b64 = await new Promise((resolve, reject) => {
+          const rd = new FileReader()
+          rd.onload = () => resolve(String(rd.result).split(',')[1])
+          rd.onerror = reject
+          rd.readAsDataURL(f)
+        })
+        await api.post(`/product-drafts/${draftId}/images`,
+          { file_name: f.name, mime: f.type || 'image/jpeg', data: b64 })
+      }
+      await load()
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  const remove = async (id) => {
+    setBusy(true)
+    try {
+      await api.delete(`/product-drafts/${draftId}/images/${id}`)
+      await load()
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ marginTop: 16, background: '#f8fafc', borderRadius: 6, padding: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 8 }}>
+        商品画像
+      </div>
+
+      <div
+        onDragOver={e => e.preventDefault()}
+        onDrop={e => { e.preventDefault(); add([...e.dataTransfer.files]) }}
+        style={{ border: '2px dashed #cbd5e1', borderRadius: 6, padding: 16,
+          textAlign: 'center', color: '#64748b', fontSize: 13, background: '#fff' }}>
+        ここに画像をドラッグ＆ドロップ、または
+        <label style={{ color: '#2563eb', cursor: 'pointer', marginLeft: 4 }}>
+          ファイルを選ぶ
+          <input type="file" accept="image/*" multiple style={{ display: 'none' }}
+            onChange={e => { add([...e.target.files]); e.target.value = '' }} />
+        </label>
+      </div>
+
+      {err && <div style={{ color: '#dc2626', fontSize: 12, marginTop: 6 }}>{err}</div>}
+      {busy && <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>処理中…</div>}
+
+      {images.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
+          {images.map(i => (
+            <div key={i.id} style={{ width: 110, fontSize: 11 }}>
+              <div style={{ position: 'relative' }}>
+                <img
+                  src={i.cabinet_url
+                    ? `https://image.rakuten.co.jp/misora-mart/cabinet${i.cabinet_url}`
+                    : `${api.defaults.baseURL}/product-drafts/${draftId}/images/${i.id}/preview`}
+                  alt={i.file_name}
+                  style={{ width: '100%', height: 110, objectFit: 'cover',
+                    borderRadius: 4, border: '1px solid #e2e8f0', background: '#fff' }} />
+                <button onClick={() => remove(i.id)} title="消す"
+                  style={{ position: 'absolute', top: 2, right: 2, border: 'none',
+                    background: 'rgba(0,0,0,.6)', color: '#fff', borderRadius: 3,
+                    cursor: 'pointer', lineHeight: 1, padding: '2px 5px' }}>×</button>
+              </div>
+              <div style={{ marginTop: 3, overflow: 'hidden',
+                textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={i.file_name}>
+                {i.file_name}
+              </div>
+              <div style={{ color: i.cabinet_url ? '#16a34a' : '#94a3b8' }}>
+                {i.cabinet_url ? '楽天へ登録済み' : `${Math.round((i.size || 0) / 1024)}KB`}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ fontSize: 11, color: '#64748b', marginTop: 8 }}>
+        登録するときに、SKU名のフォルダを作ってR-Cabinetへ上げます。
+        1枚2MBまでです。
+      </div>
     </div>
   )
 }

@@ -16,6 +16,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -185,9 +186,83 @@ async def send(page, method, path, body, label):
             "status": r["status"], "body": r["body"][:500], "ok": ok}
 
 
-async def register_one(page, d, shop_url, dry_run):
-    """1商品を登録する。手順書どおり3本を順に送る。"""
+async def upload_draft_images(page, base, token, d, parent_folder):
+    """預かっている画像をR-Cabinetへ上げて、URLを返す。
+
+    SKUごとにフォルダを分ける運用なので、SKU名のフォルダを作って
+    そこへ入れる。すでに上げてある画像はそのまま使う。
+    """
+    import upload_images as up
+
+    imgs = api(base, f"/product-drafts/{d['id']}/images", token)
+    if not imgs:
+        return []
+
+    done = [i for i in imgs if i.get("cabinet_url")]
+    todo = [i for i in imgs if not i.get("cabinet_url")]
+    urls = [i["cabinet_url"] for i in done]
+    if not todo:
+        return urls
+
+    # SKU名のフォルダを用意する
+    r = await page.evaluate(up.JS_GET, f"{up.CAB}/folders/get")
+    if r["status"] != 200:
+        raise RuntimeError(f"R-Cabinetのフォルダ一覧が取れません（{r['status']}）")
+    folders = up.parse_folders(r["body"])
+    same = [f for f in folders if f["name"] == d["sku"]]
+    if same:
+        folder_id = same[0]["id"]
+    else:
+        r = await page.evaluate(
+            up.JS_POST_XML,
+            [f"{up.CAB}/folder/insert", up.build_folder_xml(d["sku"], parent_folder)])
+        m = re.search(r"<FolderId>(\d+)</FolderId>", r["body"])
+        if r["status"] != 200 or not m:
+            raise RuntimeError(f"フォルダを作れません: {r['body'][:200]}")
+        folder_id = m.group(1)
+        print(f"    フォルダを作りました: {d['sku']} → {folder_id}")
+
+    for n, i in enumerate(todo):
+        if n:
+            time.sleep(1.5)
+        full = api(base, f"/product-drafts/{d['id']}/images/{i['id']}/data", token)
+        xml = up.build_xml(folder_id, os.path.splitext(i["file_name"])[0],
+                           i["file_name"])
+        r = await page.evaluate(
+            up.JS_UPLOAD,
+            [f"{up.CAB}/file/insert", xml, i["file_name"],
+             full["data"], i.get("mime") or "image/jpeg"])
+        info = up.parse_result(r["body"])
+        if r["status"] != 200 or not info.get("url"):
+            raise RuntimeError(
+                f"画像 {i['file_name']} を上げられません: "
+                f"{info.get('message') or r['body'][:200]}")
+        print(f"    画像OK {i['file_name']} → {info['url']}")
+        urls.append(info["url"])
+        # サーバー側にも記録する。次回上げ直さないように
+        api(base, f"/product-drafts/{d['id']}/images/{i['id']}/uploaded",
+            token, "POST", {"cabinet_url": info["url"]})
+
+    return urls
+
+
+async def register_one(page, d, shop_url, dry_run, base=None, token=None,
+                       parent_folder=""):
+    """1商品を登録する。手順書どおり3本を順に送る。
+
+    画面から預かった画像があれば、先にR-Cabinetへ上げる。商品より
+    先に上げないと、商品側から参照できないため。
+    """
     mn = d["sku"]
+
+    if not dry_run and base and token:
+        try:
+            urls = await upload_draft_images(page, base, token, d, parent_folder)
+            if urls:
+                d = {**d, "image_urls": (d.get("image_urls") or []) + urls}
+        except Exception as e:
+            return {"ok": False, "log": [], "error": f"画像の登録で失敗: {e}"}
+
     item_body = build_item_body(d, shop_url)
     n_var = len(item_body["variants"])
     suffix = f"（{n_var}バリエーション）" if n_var > 1 else ""
@@ -265,7 +340,9 @@ async def run(args):
             if n:
                 time.sleep(WAIT_BETWEEN_ITEMS)
             try:
-                r = await register_one(page, d, shop_url, args.dry_run)
+                r = await register_one(page, d, shop_url, args.dry_run,
+                                       base, token,
+                                       conf.get('cabinet_parent', '0'))
             except Exception as e:
                 r = {"ok": False, "log": [], "error": f"{type(e).__name__}: {e}"}
                 print(f"    ★NG {e}")

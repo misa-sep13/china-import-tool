@@ -88,3 +88,30 @@ class ProductDraftGeneration(Base):
     output     = Column(Text)
     model      = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProductDraftImage(Base):
+    """登録前に預かる商品画像。
+
+    R-Cabinetへの書き込みはCompassにログインしたブラウザからしか
+    できず、サーバーからは送れない。そこで画面で選んだ画像をここへ
+    預けておき、登録するときに手元のPCがR-Cabinetへ上げる。
+
+    画像はそこそこ大きいので、ドラフト本体とは別の表にしている
+    （一覧を出すたびに画像まで読み込むと重くなるため）。
+    """
+    __tablename__ = "product_draft_images"
+
+    id       = Column(Integer, primary_key=True)
+    draft_id = Column(Integer, index=True)
+    file_name = Column(String)
+    mime      = Column(String)
+    size      = Column(Integer)
+    data      = Column(Text)        # base64
+    sort_order = Column(Integer, default=0)
+
+    # R-Cabinetへ上げたあとのURL。上げ終わるまでは空
+    cabinet_url = Column(Text)
+    uploaded_at = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

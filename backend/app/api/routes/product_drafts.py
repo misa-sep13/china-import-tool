@@ -3,6 +3,7 @@
 リサーチ→採用→情報を埋める→タイトル・説明文を生成→楽天へ登録、という
 流れの「採用」以降を受け持つ。生成した文章は履歴として残す。
 """
+import base64
 import json
 from datetime import datetime, timezone
 from typing import Optional
@@ -12,7 +13,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.product_draft import ProductDraft, ProductDraftGeneration
+from app.models.product_draft import (
+    ProductDraft, ProductDraftGeneration, ProductDraftImage,
+)
 from app.models.research import ResearchWatchlistItem
 from app.services import copywriter
 
@@ -310,3 +313,135 @@ def register_result(draft_id: int, data: RegisterResultIn,
         d.register_error = data.error or "理由が分かりません"
     db.commit()
     return _dict(d)
+
+
+# ---------- 商品画像 ----------
+#
+# R-Cabinetへの書き込みはCompassにログインしたブラウザからしかできない。
+# 画面で選んだ画像はここへ預かり、登録するときに手元のPCが上げる。
+
+# 1枚あたりの上限。楽天のR-Cabinetは2MBまでなので、それに合わせる
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
+
+
+class ImageIn(BaseModel):
+    file_name: str
+    mime: Optional[str] = None
+    data: str            # base64（data URLの接頭辞は付いていてもよい）
+
+
+def _image_dict(i, with_data=False):
+    d = {"id": i.id, "file_name": i.file_name, "mime": i.mime,
+         "size": i.size, "sort_order": i.sort_order,
+         "cabinet_url": i.cabinet_url,
+         "uploaded_at": i.uploaded_at.isoformat() if i.uploaded_at else None}
+    if with_data:
+        d["data"] = i.data
+    return d
+
+
+@router.get("/{draft_id:int}/images")
+def list_images(draft_id: int, db: Session = Depends(get_db)):
+    """預かっている画像の一覧。中身（base64）は返さない。
+
+    一覧に画像そのものを載せると重くなるので、表示用は別途取りに来る。
+    """
+    rows = (db.query(ProductDraftImage)
+            .filter(ProductDraftImage.draft_id == draft_id)
+            .order_by(ProductDraftImage.sort_order, ProductDraftImage.id).all())
+    return [_image_dict(i) for i in rows]
+
+
+@router.get("/{draft_id:int}/images/{image_id:int}/data")
+def get_image_data(draft_id: int, image_id: int, db: Session = Depends(get_db)):
+    """画像の中身。画面での表示と、登録スクリプトの取得に使う。"""
+    i = (db.query(ProductDraftImage)
+         .filter(ProductDraftImage.id == image_id,
+                 ProductDraftImage.draft_id == draft_id).first())
+    if not i:
+        raise HTTPException(404, "画像が見つかりません")
+    return _image_dict(i, with_data=True)
+
+
+@router.post("/{draft_id:int}/images")
+def add_image(draft_id: int, data: ImageIn, db: Session = Depends(get_db)):
+    """画像を預かる。"""
+    d = db.query(ProductDraft).filter(ProductDraft.id == draft_id).first()
+    if not d:
+        raise HTTPException(404, "ドラフトが見つかりません")
+
+    # data URL で来ることがあるので、接頭辞を落とす
+    raw = data.data or ""
+    if raw.startswith("data:"):
+        raw = raw.split(",", 1)[-1]
+
+    try:
+        size = len(base64.b64decode(raw, validate=True))
+    except Exception:
+        raise HTTPException(400, "画像を読み取れませんでした")
+    if size > MAX_IMAGE_BYTES:
+        raise HTTPException(
+            400, f"画像が大きすぎます（{size // 1024}KB）。"
+                 f"R-Cabinetは1枚{MAX_IMAGE_BYTES // 1024 // 1024}MBまでです")
+
+    last = (db.query(ProductDraftImage)
+            .filter(ProductDraftImage.draft_id == draft_id)
+            .order_by(ProductDraftImage.sort_order.desc()).first())
+    i = ProductDraftImage(
+        draft_id=draft_id, file_name=data.file_name,
+        mime=data.mime or "image/jpeg", size=size, data=raw,
+        sort_order=(last.sort_order + 1) if last else 0)
+    db.add(i)
+    db.commit()
+    db.refresh(i)
+    return _image_dict(i)
+
+
+@router.delete("/{draft_id:int}/images/{image_id:int}")
+def delete_image(draft_id: int, image_id: int, db: Session = Depends(get_db)):
+    i = (db.query(ProductDraftImage)
+         .filter(ProductDraftImage.id == image_id,
+                 ProductDraftImage.draft_id == draft_id).first())
+    if not i:
+        raise HTTPException(404, "画像が見つかりません")
+    db.delete(i)
+    db.commit()
+    return {"deleted": image_id}
+
+
+class ImageUploadedIn(BaseModel):
+    """R-Cabinetへ上げ終わったら、そのURLを記録する。"""
+    cabinet_url: str
+
+
+@router.post("/{draft_id:int}/images/{image_id:int}/uploaded")
+def mark_uploaded(draft_id: int, image_id: int, data: ImageUploadedIn,
+                  db: Session = Depends(get_db)):
+    i = (db.query(ProductDraftImage)
+         .filter(ProductDraftImage.id == image_id,
+                 ProductDraftImage.draft_id == draft_id).first())
+    if not i:
+        raise HTTPException(404, "画像が見つかりません")
+    i.cabinet_url = data.cabinet_url
+    i.uploaded_at = datetime.now(timezone.utc)
+    # 中身はもう要らない。上げ終わった画像を持ち続けるとDBが太る
+    i.data = None
+    db.commit()
+    return _image_dict(i)
+
+
+@router.get("/{draft_id:int}/images/{image_id:int}/preview")
+def preview_image(draft_id: int, image_id: int, db: Session = Depends(get_db)):
+    """画面に出すための画像そのもの。
+
+    base64のまま返すとimgタグで使えないので、画像として返す。
+    """
+    from fastapi import Response
+    i = (db.query(ProductDraftImage)
+         .filter(ProductDraftImage.id == image_id,
+                 ProductDraftImage.draft_id == draft_id).first())
+    if not i or not i.data:
+        raise HTTPException(404, "画像が見つかりません")
+    return Response(content=base64.b64decode(i.data),
+                    media_type=i.mime or "image/jpeg",
+                    headers={"Cache-Control": "private, max-age=3600"})
