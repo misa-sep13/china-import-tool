@@ -252,6 +252,12 @@ def _migrate():
          "ALTER TABLE wholesale_suppliers ADD COLUMN order_method VARCHAR DEFAULT 'excel_mail'"),
         ("wholesale_orders","message_text",
          "ALTER TABLE wholesale_orders ADD COLUMN message_text TEXT"),
+        ("product_drafts","registered_at",
+         "ALTER TABLE product_drafts ADD COLUMN registered_at TIMESTAMP"),
+        ("product_drafts","register_error",
+         "ALTER TABLE product_drafts ADD COLUMN register_error TEXT"),
+        ("product_drafts","register_log",
+         "ALTER TABLE product_drafts ADD COLUMN register_log TEXT"),
     ]
 
     inspector = inspect(engine)

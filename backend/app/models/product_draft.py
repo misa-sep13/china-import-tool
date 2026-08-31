@@ -49,6 +49,13 @@ class ProductDraft(Base):
     ref_image_urls = Column(Text)   # 参考画像URL（JSON配列）
     memo           = Column(Text)
 
+    # ---- RMSへの登録 ----
+    # 登録は手元のPCでCompass経由で行う（楽天の商品APIは書込みに
+    # 有料オプションが要り、未契約だと401になるため）
+    registered_at   = Column(DateTime(timezone=True), nullable=True)
+    register_error  = Column(Text)      # 失敗したときの理由
+    register_log    = Column(Text)      # 3本のリクエストの結果（JSON）
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -4,6 +4,7 @@
 流れの「採用」以降を受け持つ。生成した文章は履歴として残す。
 """
 import json
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -68,6 +69,8 @@ def _dict(d: ProductDraft) -> dict:
         "rival_price": d.rival_price, "rival_image_url": d.rival_image_url,
         "rival_shop_name": d.rival_shop_name,
         "ref_image_urls": refs, "memo": d.memo,
+        "registered_at": d.registered_at.isoformat() if d.registered_at else None,
+        "register_error": d.register_error,
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "updated_at": d.updated_at.isoformat() if d.updated_at else None,
     }
@@ -143,7 +146,7 @@ def adopt_from_watchlist(data: AdoptIn, db: Session = Depends(get_db)):
     return {**_dict(d), "already_exists": False}
 
 
-@router.put("/{draft_id}")
+@router.put("/{draft_id:int}")
 def update_draft(draft_id: int, data: DraftIn, db: Session = Depends(get_db)):
     d = db.query(ProductDraft).filter(ProductDraft.id == draft_id).first()
     if not d:
@@ -154,7 +157,7 @@ def update_draft(draft_id: int, data: DraftIn, db: Session = Depends(get_db)):
     return _dict(d)
 
 
-@router.delete("/{draft_id}")
+@router.delete("/{draft_id:int}")
 def delete_draft(draft_id: int, db: Session = Depends(get_db)):
     d = db.query(ProductDraft).filter(ProductDraft.id == draft_id).first()
     if not d:
@@ -172,7 +175,7 @@ class GenerateIn(BaseModel):
     apply: bool = False          # 生成結果をそのままドラフトへ反映するか
 
 
-@router.post("/{draft_id}/generate")
+@router.post("/{draft_id:int}/generate")
 async def generate_copy(draft_id: int, data: GenerateIn, db: Session = Depends(get_db)):
     d = db.query(ProductDraft).filter(ProductDraft.id == draft_id).first()
     if not d:
@@ -204,7 +207,7 @@ async def generate_copy(draft_id: int, data: GenerateIn, db: Session = Depends(g
             "applied": data.apply, "draft": _dict(d)}
 
 
-@router.get("/{draft_id}/generations")
+@router.get("/{draft_id:int}/generations")
 def list_generations(draft_id: int, db: Session = Depends(get_db)):
     rows = (
         db.query(ProductDraftGeneration)
@@ -223,3 +226,69 @@ def list_generations(draft_id: int, db: Session = Depends(get_db)):
 def generation_status():
     """画面側で生成ボタンを出してよいか判断するための状態。"""
     return {"generator_enabled": copywriter.is_enabled()}
+
+
+# ---------- RMSへの登録（手元のPCから実行する） ----------
+#
+# 楽天の商品APIは書込みに有料オプションが要り、未契約だと401（GA0001）に
+# なる。Compassにログインしたブラウザから内部APIへ送れば追加費用なしで
+# 登録できるが、ブラウザが要るのでサーバー（Render）では動かせない。
+# そのため、ここは「登録するものを渡す」「結果を受け取る」だけを担う。
+
+@router.get("/pending-register")
+def pending_register(limit: int = 20, db: Session = Depends(get_db)):
+    """登録待ちのドラフト。手元のスクリプトが取りに来る。
+
+    status が ready で、まだ登録していないものだけ返す。
+    登録に必要な項目が欠けているものは、理由を付けて分けて返す
+    （実行してから足りないと分かるより、先に知りたいため）。
+    """
+    rows = (db.query(ProductDraft)
+            .filter(ProductDraft.status == "ready",
+                    ProductDraft.registered_at.is_(None))
+            .order_by(ProductDraft.id).limit(limit).all())
+
+    ready, incomplete = [], []
+    for d in rows:
+        missing = [label for value, label in (
+            (d.sku, "SKU"),
+            (d.rakuten_title, "楽天商品名"),
+            (d.price, "販売価格"),
+        ) if not value]
+        item = _dict(d)
+        if missing:
+            item["missing"] = missing
+            incomplete.append(item)
+        else:
+            ready.append(item)
+    return {"ready": ready, "incomplete": incomplete,
+            "counts": {"ready": len(ready), "incomplete": len(incomplete)}}
+
+
+class RegisterResultIn(BaseModel):
+    """手元のスクリプトから送られてくる登録結果。"""
+    ok: bool
+    error: Optional[str] = None
+    log: Optional[list] = None       # 3本のリクエストの結果
+
+
+@router.post("/{draft_id:int}/register-result")
+def register_result(draft_id: int, data: RegisterResultIn,
+                    db: Session = Depends(get_db)):
+    """登録の結果を記録する。
+
+    失敗も残す。何度やっても通らない商品を後から探せるようにするため。
+    """
+    d = db.query(ProductDraft).filter(ProductDraft.id == draft_id).first()
+    if not d:
+        raise HTTPException(404, "ドラフトが見つかりません")
+
+    d.register_log = json.dumps(data.log or [], ensure_ascii=False)
+    if data.ok:
+        d.status = "registered"
+        d.registered_at = datetime.now(timezone.utc)
+        d.register_error = None
+    else:
+        d.register_error = data.error or "理由が分かりません"
+    db.commit()
+    return _dict(d)
