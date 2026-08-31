@@ -20,6 +20,7 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -186,6 +187,43 @@ async def send(page, method, path, body, label):
             "status": r["status"], "body": r["body"][:500], "ok": ok}
 
 
+SEARCH_API = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701"
+
+
+def fetch_genre_id(conf, item_code):
+    """ライバル商品からジャンルIDを引く。
+
+    楽天のジャンルIDは自分で調べると手間だが、参考にした商品から
+    取れる。同じ商品を売るなら同じジャンルになるはずで、実際に
+    売れている商品のジャンルなら間違いが少ない。
+
+    楽天APIはIP制限がかかっていてサーバーからは呼べない（403
+    CLIENT_IP_NOT_ALLOWED）。手元のPCからなら通るので、ここで引く。
+    """
+    app_id = conf.get("rakuten_app_id", "")
+    access_key = conf.get("rakuten_access_key", "")
+    if not app_id or not access_key:
+        return None, "楽天APIのキーが設定されていません（setup.pyで登録）"
+
+    q = urllib.parse.urlencode({
+        "applicationId": app_id, "accessKey": access_key,
+        "itemCode": item_code, "hits": 1, "format": "json"})
+    try:
+        with urllib.request.urlopen(f"{SEARCH_API}?{q}", timeout=30) as r:
+            j = json.load(r)
+    except urllib.error.HTTPError as e:
+        return None, f"楽天から取れません（{e.code}）: {e.read().decode()[:150]}"
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+
+    items = j.get("Items") or []
+    if not items:
+        return None, "その商品が見つかりません（削除された可能性）"
+    item = items[0].get("Item") or items[0]
+    gid = str(item.get("genreId") or "")
+    return (gid, None) if gid else (None, "ジャンルIDが入っていません")
+
+
 async def upload_draft_images(page, base, token, d, parent_folder):
     """預かっている画像をR-Cabinetへ上げて、URLを返す。
 
@@ -247,13 +285,23 @@ async def upload_draft_images(page, base, token, d, parent_folder):
 
 
 async def register_one(page, d, shop_url, dry_run, base=None, token=None,
-                       parent_folder=""):
+                       parent_folder="", conf=None):
     """1商品を登録する。手順書どおり3本を順に送る。
 
     画面から預かった画像があれば、先にR-Cabinetへ上げる。商品より
     先に上げないと、商品側から参照できないため。
     """
     mn = d["sku"]
+
+    # ジャンルIDが空なら、参考にした商品から引く。楽天APIはIP制限が
+    # あってサーバーからは呼べないので、ここで取る
+    if not d.get("genre_id") and d.get("rival_item_code") and conf:
+        gid, err = fetch_genre_id(conf, d["rival_item_code"])
+        if gid:
+            d = {**d, "genre_id": gid}
+            print(f"    ジャンルID {gid}（ライバル商品から）")
+        else:
+            print(f"    ジャンルIDは取れませんでした: {err}")
 
     if not dry_run and base and token:
         try:
@@ -321,6 +369,18 @@ async def run(args):
     if not shop_url:
         raise SystemExit("店舗URL名がありません。setup.py を実行してください")
 
+    # 楽天APIのキーはサーバーが持っているので、そこから借りる。
+    # 手元にも持たせると、変わったときに入れ直しが要るため
+    if not conf.get("rakuten_app_id"):
+        try:
+            k = api(base, "/product-drafts/meta/rakuten-keys", token)
+            conf["rakuten_app_id"] = k.get("app_id", "")
+            conf["rakuten_access_key"] = k.get("access_key", "")
+        except SystemExit:
+            raise
+        except Exception:
+            pass
+
     print("登録待ちを取りに行きます…")
     j = api(base, f"/product-drafts/pending-register?limit={args.limit or 20}", token)
     ready, incomplete = j["ready"], j["incomplete"]
@@ -342,7 +402,7 @@ async def run(args):
             try:
                 r = await register_one(page, d, shop_url, args.dry_run,
                                        base, token,
-                                       conf.get('cabinet_parent', '0'))
+                                       conf.get('cabinet_parent', '0'), conf)
             except Exception as e:
                 r = {"ok": False, "log": [], "error": f"{type(e).__name__}: {e}"}
                 print(f"    ★NG {e}")

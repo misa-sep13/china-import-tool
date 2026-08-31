@@ -114,25 +114,6 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
     }
   }
 
-  // ジャンルIDは自分で調べると手間なので、参考にした商品から引く。
-  // 実際に売れている商品のジャンルなら間違いが少ない
-  const fetchGenre = async () => {
-    setGenerating('genre'); setGenError('')
-    try {
-      const r = await api.post(`/product-drafts/${draft.id}/fetch-genre`)
-      setForm(f => ({ ...f, genre_id: r.data.genre_id }))
-      if (r.data.genre_name) {
-        setGenError('')
-        alert(`ジャンルID ${r.data.genre_id}
-${r.data.genre_name}`)
-      }
-    } catch (e) {
-      setGenError(e.response?.data?.detail || e.message)
-    } finally {
-      setGenerating(null)
-    }
-  }
-
   const generate = async (kind) => {
     setGenerating(kind)
     setGenError('')
@@ -195,13 +176,8 @@ ${r.data.genre_name}`)
             <div><span style={label}>販売価格（円）</span><input style={inputStyle} type="number" value={form.price ?? ''} onChange={set('price')} /></div>
             <div>
               <span style={label}>楽天ジャンルID</span>
-              <input style={inputStyle} value={form.genre_id || ''} onChange={set('genre_id')} />
-              {draft.rival_item_code && (
-                <button style={{ ...btnSmall, marginTop: 4 }} disabled={!!generating}
-                  onClick={fetchGenre}>
-                  {generating === 'genre' ? '取得中...' : '↓ ライバル商品から取る'}
-                </button>
-              )}
+              <input style={inputStyle} value={form.genre_id || ''} onChange={set('genre_id')}
+                placeholder="空なら登録時にライバル商品から取ります" />
             </div>
             <div><span style={label}>説明担当者</span><input style={inputStyle} value={form.assignee || ''} onChange={set('assignee')} /></div>
           </div>

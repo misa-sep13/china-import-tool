@@ -16,7 +16,7 @@ from app.core.database import get_db
 from app.models.product_draft import (
     ProductDraft, ProductDraftGeneration, ProductDraftImage,
 )
-from app.models.research import ResearchWatchlistItem, RakutenGenre
+from app.models.research import ResearchWatchlistItem
 from app.services import copywriter
 
 router = APIRouter(prefix="/product-drafts", tags=["商品ドラフト"])
@@ -447,60 +447,19 @@ def preview_image(draft_id: int, image_id: int, db: Session = Depends(get_db)):
                     headers={"Cache-Control": "private, max-age=3600"})
 
 
-# ---------- ジャンルID ----------
+@router.get("/meta/rakuten-keys")
+def rakuten_keys():
+    """楽天APIのキーを、登録スクリプトへ渡す。
 
-@router.post("/{draft_id:int}/fetch-genre")
-async def fetch_genre(draft_id: int, db: Session = Depends(get_db)):
-    """ライバル商品からジャンルIDを取る。
+    楽天APIはIP制限がかかっていてサーバーからは呼べない（403
+    CLIENT_IP_NOT_ALLOWED）。ジャンルIDの取得は手元のPCで行うため、
+    サーバーが持っているキーをそこへ渡す必要がある。
 
-    楽天のジャンルIDは自分で調べると手間なので、参考にした商品から
-    引く。同じ商品を売るなら同じジャンルになるはずで、実際に売れて
-    いる商品のジャンルなら間違いが少ない。
+    ログイン済みの本人しか叩けないので、キーが外に出ることはない。
     """
-    import httpx
     from app.core.config import settings
-
-    d = db.query(ProductDraft).filter(ProductDraft.id == draft_id).first()
-    if not d:
-        raise HTTPException(404, "ドラフトが見つかりません")
-    if not d.rival_item_code:
-        raise HTTPException(400, "参考にした商品がありません")
-    if not settings.RAKUTEN_APP_ID or not settings.RAKUTEN_ACCESS_KEY:
-        raise HTTPException(400, "RAKUTEN_APP_ID/RAKUTEN_ACCESS_KEYが未設定です")
-
-    # accessKey も要る。applicationId だけだと400になる
-    params = {
-        "applicationId": settings.RAKUTEN_APP_ID,
-        "accessKey": settings.RAKUTEN_ACCESS_KEY,
-        "itemCode": d.rival_item_code,
-        "hits": 1,
-        "format": "json",
+    return {
+        "app_id": settings.RAKUTEN_APP_ID or "",
+        "access_key": settings.RAKUTEN_ACCESS_KEY or "",
+        "configured": bool(settings.RAKUTEN_APP_ID and settings.RAKUTEN_ACCESS_KEY),
     }
-
-    from app.services.rakuten_seo import SEARCH_API_URL as url
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.get(url, params=params)
-    if r.status_code != 200:
-        raise HTTPException(
-            502, f"楽天から取れませんでした（{r.status_code}）: {r.text[:300]}")
-
-    items = (r.json() or {}).get("Items") or []
-    if not items:
-        raise HTTPException(404, "その商品が見つかりませんでした（削除された可能性）")
-    item = items[0].get("Item") or items[0]
-    genre_id = str(item.get("genreId") or "")
-    if not genre_id:
-        raise HTTPException(404, "ジャンルIDが取れませんでした")
-
-    # ジャンル名も分かれば出す。IDだけだと合っているか判断できない
-    name = ""
-    row = (db.query(RakutenGenre)
-           .filter(RakutenGenre.genre_id == int(genre_id)).first()) \
-        if genre_id.isdigit() else None
-    if row:
-        name = row.path or row.name or ""
-
-    d.genre_id = genre_id
-    db.commit()
-    return {"genre_id": genre_id, "genre_name": name,
-            "from_item": d.rival_item_code}
