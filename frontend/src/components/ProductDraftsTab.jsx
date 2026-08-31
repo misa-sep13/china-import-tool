@@ -192,15 +192,10 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
             )}
           </div>
 
-          <div style={{ marginTop: 12 }}>
-            <span style={label}>商品説明（PC）</span>
-            <textarea style={{ ...inputStyle, minHeight: 120, fontFamily: 'monospace', fontSize: 12 }} value={form.description_pc || ''} onChange={set('description_pc')} />
-            {genEnabled && (
-              <button style={{ ...btnSmall, marginTop: 4 }} disabled={!!generating} onClick={() => generate('description')}>
-                {generating === 'description' ? '生成中...' : '✨ 説明文を生成'}
-              </button>
-            )}
-          </div>
+          <DescriptionEditor form={form} setForm={setForm} label={label}
+            inputStyle={inputStyle} btnSmall={btnSmall}
+            genEnabled={genEnabled} generating={generating}
+            onGenerate={() => generate('material')} />
           {genError && <div style={{ color: '#dc2626', fontSize: 12, marginTop: 6 }}>{genError}</div>}
 
           <ImageEditor draftId={draft.id} label={label} btnSmall={btnSmall} />
@@ -465,6 +460,105 @@ function ImageEditor({ draftId, label, btnSmall }) {
         登録するときに、SKU名のフォルダを作ってR-Cabinetへ上げます。
         1枚2MBまでです。
       </div>
+    </div>
+  )
+}
+
+/**
+ * 商品説明。
+ *
+ * 実際に登録している説明文は「特徴の箇条書き ＋ 仕様表 ＋ 検索キーワード」
+ * という決まった形をしている。自由文で持つと形が崩れるので、材料を
+ * 編集してもらい、HTMLはサーバー側で組み立てる。
+ */
+function DescriptionEditor({ form, setForm, label, inputStyle, btnSmall,
+                             genEnabled, generating, onGenerate }) {
+  const [showHtml, setShowHtml] = useState(false)
+  const features = form.features || []
+  const rows = form.spec_rows || []
+
+  const setFeatures = v => setForm(f => ({ ...f, features: v }))
+  const setRows = v => setForm(f => ({ ...f, spec_rows: v }))
+
+  return (
+    <div style={{ marginTop: 16, background: '#f8fafc', borderRadius: 6, padding: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>商品説明</div>
+        {genEnabled && (
+          <button style={btnSmall} disabled={!!generating} onClick={onGenerate}>
+            {generating === 'material' ? '生成中...' : '✨ 材料を生成'}
+          </button>
+        )}
+        <button style={{ ...btnSmall, marginLeft: 'auto' }}
+          onClick={() => setShowHtml(v => !v)}>
+          {showHtml ? '材料を編集' : 'HTMLを見る'}
+        </button>
+      </div>
+
+      {showHtml ? (
+        <>
+          <textarea style={{ ...inputStyle, minHeight: 200, fontFamily: 'monospace',
+            fontSize: 11 }} value={form.description_pc || ''}
+            onChange={e => setForm(f => ({ ...f, description_pc: e.target.value,
+                                           description_sp: e.target.value }))} />
+          <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+            ここを直すとPC・スマホの両方に反映されます。
+          </div>
+        </>
+      ) : (
+        <>
+          <span style={label}>特徴（1行に1つ）</span>
+          <textarea
+            style={{ ...inputStyle, minHeight: 100 }}
+            value={features.join('\n')}
+            placeholder={'マウスピースや入れ歯の持ち運びに！\nシンプルながら高級感あふれるケースです。'}
+            onChange={e => setFeatures(e.target.value.split('\n'))} />
+
+          <div style={{ marginTop: 12 }}>
+            <span style={label}>仕様表</span>
+            <table style={{ width: '100%', fontSize: 13 }}>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i}>
+                    <td style={{ width: 120, paddingRight: 6 }}>
+                      <input style={inputStyle} value={r.label || ''} placeholder="カラー"
+                        onChange={e => setRows(rows.map((x, n) =>
+                          n === i ? { ...x, label: e.target.value } : x))} />
+                    </td>
+                    <td style={{ paddingRight: 6 }}>
+                      <input style={inputStyle} value={r.value || ''}
+                        placeholder="ホワイト、ネイビー"
+                        onChange={e => setRows(rows.map((x, n) =>
+                          n === i ? { ...x, value: e.target.value } : x))} />
+                    </td>
+                    <td style={{ width: 32 }}>
+                      <button style={btnSmall}
+                        onClick={() => setRows(rows.filter((_, n) => n !== i))}>×</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button style={{ ...btnSmall, marginTop: 6 }}
+              onClick={() => setRows([...rows, { label: '', value: '' }])}>
+              ＋ 行を追加
+            </button>
+          </div>
+
+          <div style={{ marginTop: 12 }}>
+            <span style={label}>検索キーワード（末尾に入ります）</span>
+            <textarea style={{ ...inputStyle, minHeight: 60, fontSize: 12 }}
+              value={form.seo_words || ''}
+              placeholder="マウスピースケース リテーナー おしゃれ 鏡付き …"
+              onChange={e => setForm(f => ({ ...f, seo_words: e.target.value }))} />
+          </div>
+
+          <div style={{ fontSize: 11, color: '#64748b', marginTop: 8 }}>
+            「材料を生成」を押すと、ライバルの情報と自社の情報から案を作って
+            この欄に入れます。直したあと「HTMLを見る」で仕上がりを確認できます。
+          </div>
+        </>
+      )}
     </div>
   )
 }

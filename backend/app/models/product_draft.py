@@ -49,6 +49,13 @@ class ProductDraft(Base):
     ref_image_urls = Column(Text)   # 参考画像URL（JSON配列）
     memo           = Column(Text)
 
+    # ---- 商品説明の材料 ----
+    # 説明文は「特徴の箇条書き＋仕様表＋検索キーワード」という決まった
+    # 形で作っている。自由文で持つと形が崩れるので、材料として分けて持つ
+    features   = Column(Text)     # 特徴の箇条書き（1行1つ）
+    spec_rows  = Column(Text)     # 仕様表 [{"label":"カラー","value":"白/紺"}]
+    seo_words  = Column(Text)     # 末尾に置く検索キーワード
+
     # ---- 商品画像 ----
     # R-Cabinetに上げた画像のURL（JSON配列）。楽天は images に
     # [{"location": "/パス/ファイル名.jpg"}] の形で持つ

@@ -50,12 +50,22 @@ class DraftIn(BaseModel):
     variant_axis:    Optional[str] = None
     variants:        Optional[list[dict]] = None
     image_urls:      Optional[list[str]] = None
+    features:        Optional[list[str]] = None
+    spec_rows:       Optional[list[dict]] = None
+    seo_words:       Optional[str] = None
 
 
 class AdoptIn(BaseModel):
     """ウォッチリストの行を「採用」してドラフト化する。"""
     watchlist_id: int
     sku: Optional[str] = None
+
+
+def _json_list(raw):
+    try:
+        return json.loads(raw or "[]")
+    except Exception:
+        return []
 
 
 def _dict(d: ProductDraft) -> dict:
@@ -86,6 +96,9 @@ def _dict(d: ProductDraft) -> dict:
         "ref_image_urls": refs, "memo": d.memo,
         "variant_axis": d.variant_axis, "variants": variants,
         "image_urls": images,
+        "features": _json_list(d.features),
+        "spec_rows": _json_list(d.spec_rows),
+        "seo_words": d.seo_words,
         "registered_at": d.registered_at.isoformat() if d.registered_at else None,
         "register_error": d.register_error,
         "created_at": d.created_at.isoformat() if d.created_at else None,
@@ -101,6 +114,8 @@ def _apply(d: ProductDraft, data: DraftIn):
             d.variants = json.dumps(v or [], ensure_ascii=False)
         elif k == "image_urls":
             d.image_urls = json.dumps(v or [], ensure_ascii=False)
+        elif k in ("features", "spec_rows"):
+            setattr(d, k, json.dumps(v or [], ensure_ascii=False))
         else:
             setattr(d, k, v)
 
@@ -173,6 +188,16 @@ def update_draft(draft_id: int, data: DraftIn, db: Session = Depends(get_db)):
     if not d:
         raise HTTPException(404, "ドラフトが見つかりません")
     _apply(d, data)
+
+    # 材料を直したらHTMLも作り直す。手で直したHTMLがある場合を考えて、
+    # 材料が送られてきたときだけ組み立てる
+    sent = data.model_dump(exclude_unset=True)
+    if any(k in sent for k in ("features", "spec_rows", "seo_words")):
+        html = copywriter.build_description(
+            _json_list(d.features), _json_list(d.spec_rows), d.seo_words or "")
+        d.description_pc = html
+        d.description_sp = html
+
     db.commit()
     db.refresh(d)
     return _dict(d)
@@ -203,8 +228,9 @@ async def generate_copy(draft_id: int, data: GenerateIn, db: Session = Depends(g
         raise HTTPException(404, "ドラフトが見つかりません")
     if not copywriter.is_enabled():
         raise HTTPException(400, "ANTHROPIC_API_KEY が未設定のため生成できません。")
-    if data.kind not in ("title", "description", "both"):
-        raise HTTPException(400, "kind は title / description / both のいずれかです")
+    if data.kind not in ("title", "description", "both", "material"):
+        raise HTTPException(
+            400, "kind は title / description / both / material のいずれかです")
 
     try:
         res = await copywriter.generate(_dict(d), data.kind)
@@ -216,12 +242,39 @@ async def generate_copy(draft_id: int, data: GenerateIn, db: Session = Depends(g
         prompt=res["prompt"], output=res["output"], model=res["model"],
     ))
 
-    parts = copywriter.split_output(data.kind, res["output"])
-    if data.apply:
-        if parts.get("title"):
-            d.rakuten_title = parts["title"]
-        if parts.get("description"):
-            d.description_pc = parts["description"]
+    if data.kind == "material":
+        # 材料をもらって、決まった形のHTMLはこちらで組み立てる。
+        # HTMLごと書かせると形が崩れるため
+        raw = (res["output"] or "").strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1] if "```" in raw[3:] else raw
+            raw = raw.lstrip("json").strip()
+        try:
+            m = json.loads(raw)
+        except Exception:
+            raise HTTPException(502, f"材料を読み取れませんでした: {raw[:200]}")
+
+        features = [str(x).strip() for x in (m.get("features") or []) if str(x).strip()]
+        spec_rows = [r for r in (m.get("spec_rows") or [])
+                     if isinstance(r, dict) and r.get("label")]
+        seo_words = str(m.get("seo_words") or "").strip()
+        html = copywriter.build_description(features, spec_rows, seo_words)
+        parts = {"features": features, "spec_rows": spec_rows,
+                 "seo_words": seo_words, "description": html}
+        if data.apply:
+            d.features = json.dumps(features, ensure_ascii=False)
+            d.spec_rows = json.dumps(spec_rows, ensure_ascii=False)
+            d.seo_words = seo_words
+            # PC・スマホとも同じものを入れる（今までそうしていた）
+            d.description_pc = html
+            d.description_sp = html
+    else:
+        parts = copywriter.split_output(data.kind, res["output"])
+        if data.apply:
+            if parts.get("title"):
+                d.rakuten_title = parts["title"]
+            if parts.get("description"):
+                d.description_pc = parts["description"]
     db.commit()
     db.refresh(d)
     return {"generated": parts, "raw": res["output"], "model": res["model"],

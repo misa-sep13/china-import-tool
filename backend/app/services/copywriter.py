@@ -27,6 +27,17 @@ def _model() -> str:
     return os.environ.get("ANTHROPIC_MODEL") or DEFAULT_MODEL
 
 
+def _variant_text(draft: dict) -> str:
+    """バリエーションを読める形にする。仕様表のカラー欄の材料になる。"""
+    axis = (draft.get("variant_axis") or "").strip()
+    rows = draft.get("variants") or []
+    labels = [str(r.get("label") or "").strip() for r in rows]
+    labels = [x for x in labels if x]
+    if not axis or not labels:
+        return "(なし・単品)"
+    return f"{axis}: " + "、".join(labels)
+
+
 def build_prompt(draft: dict, kind: str) -> str:
     """生成用のプロンプトを組み立てる。履歴に残すので関数として分けている。"""
     own = [
@@ -34,6 +45,7 @@ def build_prompt(draft: dict, kind: str) -> str:
         f"自社で付けたい商品名の案: {draft.get('rakuten_title') or '(未設定)'}",
         f"仕入れ元の中国語商品名: {draft.get('supplier_name_cn') or '(なし)'}",
         f"色・サイズなどの仕様: {draft.get('supplier_spec') or '(なし)'}",
+        f"バリエーション: {_variant_text(draft)}",
         f"販売価格: {draft.get('price') or '(未設定)'}円",
         f"社内メモ: {draft.get('memo') or '(なし)'}",
     ]
@@ -58,6 +70,24 @@ def build_prompt(draft: dict, kind: str) -> str:
             "- 改行は <br> を使ったHTMLで出力\n"
             "- サイズや素材など、与えられていない情報は創作しない\n"
             "出力は説明文本文のみ。前置きは不要です。"
+        )
+    elif kind == "material":
+        # 説明文は決まった形（特徴＋仕様表＋検索キーワード）で組み立てる。
+        # HTMLごと書かせると形が崩れるので、材料だけ作らせる
+        task = (
+            "商品説明を作るための材料を出してください。\n\n"
+            "features: 商品の特徴。4〜7個。1つ40文字くらいまで。"
+            "「・」などの記号は付けず、文だけ書いてください。\n"
+            "spec_rows: 仕様表の行。カラー・サイズ・素材・個数など、"
+            "分かるものだけ。分からない項目は入れないでください。\n"
+            "seo_words: 検索用のキーワードを空白区切りで20〜30語。\n\n"
+            "サイズや素材など、与えられていない情報は創作しないでください。"
+            "ライバルの説明にあっても、自社の仕様として確認できないものは"
+            "spec_rows に入れないこと。\n\n"
+            "JSONだけを出力してください。形式:\n"
+            '{"features": ["...", "..."], '
+            '"spec_rows": [{"label": "カラー", "value": "..."}], '
+            '"seo_words": "..."}'
         )
     else:
         task = (
@@ -123,3 +153,51 @@ def split_output(kind: str, output: str) -> dict:
     except Exception:
         # JSONで返らなかった場合は説明文として扱う（捨てない）
         return {"description": output.strip()}
+
+
+# ---------- 商品説明のHTML ----------
+#
+# 実際に登録している商品説明は「特徴の箇条書き ＋ 仕様表 ＋ 検索キーワード」
+# という決まった形をしている。自由文をAIに書かせると形が崩れるので、
+# 材料だけAIに作らせて、組み立てはこちらで行う。
+# 色や罫線は既存の商品ページに合わせてある（変えると見た目が揃わない）。
+
+_TABLE_HEAD = ('<table width="100%" border="0" cellpadding="5" cellspacing="1" '
+               'bgcolor="#555545"  bordercolor="#999">')
+_TD_LABEL = ('<td width="20%" align="center" valign="middle" bgcolor="#F5F5F5">\n'
+             '<font color="#333333" size="2">{label}</font>\n</td>')
+_TD_VALUE = ('<td align="left" valign="top" bgcolor="#FFFFFF">\n'
+             '<font color="#555545" size="2">\n{value}\n</font>\n</td>')
+
+
+def build_description(features, spec_rows, seo_words):
+    """商品説明のHTMLを組み立てる。
+
+    features:  ["マウスピースや入れ歯の持ち運びに！", ...]
+    spec_rows: [{"label": "カラー", "value": "ホワイト、ネイビー"}, ...]
+    seo_words: "マウスピースケース リテーナー おしゃれ …"
+    """
+    parts = ["【商品紹介】<br> "]
+    for f in (features or []):
+        t = str(f).strip()
+        if t:
+            parts.append(f"・{t}<br> ")
+
+    rows = [r for r in (spec_rows or [])
+            if str(r.get("label") or "").strip() and str(r.get("value") or "").strip()]
+    if rows:
+        parts.append("\n<br><br> <br>")
+        parts.append(_TABLE_HEAD)
+        for r in rows:
+            parts.append("\n<tr>")
+            parts.append(_TD_LABEL.format(label=str(r["label"]).strip()))
+            parts.append(_TD_VALUE.format(value=str(r["value"]).strip()))
+            parts.append("</tr>\n")
+        parts.append("</table>")
+
+    words = (seo_words or "").strip()
+    if words:
+        parts.append("\n<br><br> <br> \n")
+        parts.append(words)
+
+    return "\n".join(parts)
