@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../api/client'
+import ProductDraftsTab from '../components/ProductDraftsTab'
 
 const TYPE_LABEL = { shop: 'セラー', keyword: 'キーワード', genre: 'ジャンル' }
 
@@ -18,7 +19,7 @@ const TYPE_INPUT_LABEL = {
 }
 
 export default function RakutenResearchPage() {
-  const [tab, setTab] = useState('candidates') // 'candidates' | 'watchlist'
+  const [tab, setTab] = useState('candidates') // 'candidates' | 'watchlist' | 'drafts'
 
   return (
     <div style={{ padding: 24 }}>
@@ -31,10 +32,15 @@ export default function RakutenResearchPage() {
           <button onClick={() => setTab('watchlist')} style={tab === 'watchlist' ? btnPrimary : btnSecondary}>
             ピックアップ済み
           </button>
+          <button onClick={() => setTab('drafts')} style={tab === 'drafts' ? btnPrimary : btnSecondary}>
+            採用（商品化）
+          </button>
         </div>
       </div>
 
-      {tab === 'candidates' ? <CandidatesTab /> : <WatchlistTab />}
+      {tab === 'candidates' && <CandidatesTab />}
+      {tab === 'watchlist' && <WatchlistTab />}
+      {tab === 'drafts' && <ProductDraftsTab />}
     </div>
   )
 }
@@ -790,6 +796,21 @@ function NintBadge({ nint }) {
 }
 
 function WatchlistCard({ item, onUpdate, onDelete }) {
+  const [adopting, setAdopting] = useState(false)
+  const onAdopt = async () => {
+    setAdopting(true)
+    try {
+      const res = await api.post('/product-drafts/adopt', { watchlist_id: item.id })
+      alert(res.data.already_exists
+        ? 'この商品はすでに「採用（商品化）」タブにあります。'
+        : '「採用（商品化）」タブに追加しました。')
+    } catch (e) {
+      alert('採用に失敗しました: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setAdopting(false)
+    }
+  }
+
   const [monthlySales, setMonthlySales] = useState(item.monthly_sales ?? '')
   const [folder, setFolder] = useState(item.folder ?? '')
   const [memo, setMemo] = useState(item.memo ?? '')
@@ -843,9 +864,14 @@ function WatchlistCard({ item, onUpdate, onDelete }) {
             style={{ ...inputStyle, minHeight: 50, resize: 'vertical' }}
           />
         </label>
-        <button onClick={onDelete} style={{ ...btnSecondary, color: '#dc2626', marginTop: 'auto' }}>
-          リストから外す
-        </button>
+        <div style={{ display: 'flex', gap: 6, marginTop: 'auto' }}>
+          <button onClick={onAdopt} disabled={adopting} style={{ ...btnPrimary, flex: 1, opacity: adopting ? 0.6 : 1 }}>
+            {adopting ? '採用中...' : '採用（商品化へ）'}
+          </button>
+          <button onClick={onDelete} style={{ ...btnSecondary, color: '#dc2626' }}>
+            外す
+          </button>
+        </div>
       </div>
     </div>
   )

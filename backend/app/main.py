@@ -17,6 +17,7 @@ from app.api.routes import seo as seo_routes
 from app.api.routes import auth as auth_routes
 from app.api.routes import activity_log as activity_log_routes
 from app.api.routes import research as research_routes
+from app.api.routes import product_drafts as product_draft_routes
 from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
 from app.models import price_log as price_log_models
@@ -43,6 +44,7 @@ from app.models import scout as scout_models
 from app.models import activity_log as activity_log_models
 from app.models import research as research_models
 from app.models import wholesale as wholesale_models
+from app.models import product_draft as product_draft_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -1318,6 +1320,7 @@ app.include_router(amazon_research.router, prefix="/api")
 app.include_router(scout.router, prefix="/api")
 app.include_router(research_routes.router, prefix="/api")
 app.include_router(wholesale.router, prefix="/api")
+app.include_router(product_draft_routes.router, prefix="/api")
 
 @app.get("/")
 def root():
