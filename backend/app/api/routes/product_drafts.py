@@ -481,7 +481,8 @@ async def fetch_genre(draft_id: int, db: Session = Depends(get_db)):
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(url, params=params)
     if r.status_code != 200:
-        raise HTTPException(502, f"楽天から取れませんでした（{r.status_code}）")
+        raise HTTPException(
+            502, f"楽天から取れませんでした（{r.status_code}）: {r.text[:300]}")
 
     items = (r.json() or {}).get("Items") or []
     if not items:
