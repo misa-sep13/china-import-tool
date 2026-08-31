@@ -16,7 +16,7 @@ from app.core.database import get_db
 from app.models.product_draft import (
     ProductDraft, ProductDraftGeneration, ProductDraftImage,
 )
-from app.models.research import ResearchWatchlistItem
+from app.models.research import ResearchWatchlistItem, RakutenGenre
 from app.services import copywriter
 
 router = APIRouter(prefix="/product-drafts", tags=["商品ドラフト"])
@@ -445,3 +445,61 @@ def preview_image(draft_id: int, image_id: int, db: Session = Depends(get_db)):
     return Response(content=base64.b64decode(i.data),
                     media_type=i.mime or "image/jpeg",
                     headers={"Cache-Control": "private, max-age=3600"})
+
+
+# ---------- ジャンルID ----------
+
+@router.post("/{draft_id:int}/fetch-genre")
+async def fetch_genre(draft_id: int, db: Session = Depends(get_db)):
+    """ライバル商品からジャンルIDを取る。
+
+    楽天のジャンルIDは自分で調べると手間なので、参考にした商品から
+    引く。同じ商品を売るなら同じジャンルになるはずで、実際に売れて
+    いる商品のジャンルなら間違いが少ない。
+    """
+    import httpx
+    from app.core.config import settings
+
+    d = db.query(ProductDraft).filter(ProductDraft.id == draft_id).first()
+    if not d:
+        raise HTTPException(404, "ドラフトが見つかりません")
+    if not d.rival_item_code:
+        raise HTTPException(400, "参考にした商品がありません")
+    if not settings.RAKUTEN_APP_ID:
+        raise HTTPException(400, "RAKUTEN_APP_IDが設定されていません")
+
+    params = {
+        "applicationId": settings.RAKUTEN_APP_ID,
+        "itemCode": d.rival_item_code,
+        "hits": 1,
+        "format": "json",
+    }
+    if getattr(settings, "RAKUTEN_AFFILIATE_ID", None):
+        params["affiliateId"] = settings.RAKUTEN_AFFILIATE_ID
+
+    url = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701"
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(url, params=params)
+    if r.status_code != 200:
+        raise HTTPException(502, f"楽天から取れませんでした（{r.status_code}）")
+
+    items = (r.json() or {}).get("Items") or []
+    if not items:
+        raise HTTPException(404, "その商品が見つかりませんでした（削除された可能性）")
+    item = items[0].get("Item") or items[0]
+    genre_id = str(item.get("genreId") or "")
+    if not genre_id:
+        raise HTTPException(404, "ジャンルIDが取れませんでした")
+
+    # ジャンル名も分かれば出す。IDだけだと合っているか判断できない
+    name = ""
+    row = (db.query(RakutenGenre)
+           .filter(RakutenGenre.genre_id == int(genre_id)).first()) \
+        if genre_id.isdigit() else None
+    if row:
+        name = row.path or row.name or ""
+
+    d.genre_id = genre_id
+    db.commit()
+    return {"genre_id": genre_id, "genre_name": name,
+            "from_item": d.rival_item_code}
