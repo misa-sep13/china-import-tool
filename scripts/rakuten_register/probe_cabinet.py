@@ -19,22 +19,20 @@ CONF = os.path.join(os.path.expanduser("~"), ".rakuten_register.json")
 
 # R-Cabinetの口として考えられるもの。楽天のCabinet APIを
 # Compassが中継しているなら、この辺りに生えているはず
+# es/1.0/cabinet/usage/get が200でXMLを返したので、Compassは
+# 楽天の旧Cabinet APIをそのまま中継している。旧APIの口の名前で探す
+CAB = "/api/rms/v1/es/1.0/cabinet"
 CANDIDATES = [
     # まず商品API。これが通れば認証は効いている（比較用）
     ("GET", "/api/rms/v1/es/2.0/ext/items/manage-numbers/y112"),
-    ("GET", "/api/rms/v1/cabinet/usage/get"),
-    ("GET", "/api/rms/v1/cabinet/folders/get"),
-    ("GET", "/api/rms/v1/cabinet/folder/files/get?folderId=0"),
-    ("GET", "/api/rms/v1/es/1.0/cabinet/usage/get"),
-    ("GET", "/api/rms/v1/es/2.0/cabinet/folders"),
-    # 商品APIと同じ es/2.0 の下にある可能性
-    ("GET", "/api/rms/v1/es/2.0/ext/cabinet/folders"),
-    # Compassの画面に「画像の登録・編集」があるので、Compass独自の
-    # 口を持っている可能性が高い。rms中継とは別の場所を探す
-    ("GET", "/api/images"),
-    ("GET", "/api/cabinet/folders"),
-    ("GET", "/api/cabinet/files"),
-    ("GET", "/api/rms/v1/cabinet/folders"),
+    ("GET", f"{CAB}/usage/get"),
+    ("GET", f"{CAB}/folders/get"),
+    ("GET", f"{CAB}/folder/files/get?folderId=0"),
+    ("GET", f"{CAB}/files/search?fileName=&limit=5"),
+    # アップロード先。GETでは405（=あるがPOST専用）が返るはず。
+    # 405なら「口はある」と分かる
+    ("GET", f"{CAB}/file/insert"),
+    ("GET", f"{CAB}/images/insert"),
 ]
 
 JS_GET = r"""
@@ -104,12 +102,15 @@ async def run():
         for method, path in CANDIDATES:
             r = await page.evaluate(JS_GET, [method, path])
             status_by_path.append((path, r["status"]))
-            mark = "○" if 200 <= r["status"] < 300 else " "
+            # 405は「その口はあるが、このメソッドでは呼べない」という意味。
+            # アップロード先はPOST専用なので、405なら見つかったのと同じ
+            ok = 200 <= r["status"] < 300
+            mark = "○" if ok else ("△" if r["status"] == 405 else " ")
             print(f"  {mark} {r['status']:>3}  {path}")
-            if 200 <= r["status"] < 300:
-                if "items/manage-numbers" not in path:
-                    found.append((path, r["body"]))
-                print(f"        {r['body'][:200]}")
+            if (ok or r["status"] == 405) and "items/manage-numbers" not in path:
+                found.append((path, r["body"]))
+            if ok or r["status"] == 405:
+                print(f"        {r['body'][:220]}")
 
         print()
         item_ok = any("items/manage-numbers" in p and 200 <= st < 300
