@@ -116,6 +116,10 @@ def build_item_body(d, shop_url):
     }
     if selectors:
         body["variantSelectors"] = selectors
+    # 画像。R-Cabinetに上げたURLを渡す。楽天は location で持つ
+    imgs = [u for u in (d.get("image_urls") or []) if u]
+    if imgs:
+        body["images"] = [{"location": u} for u in imgs]
     if d.get("catchcopy"):
         body["tagline"] = d["catchcopy"]
     if d.get("description_sp"):

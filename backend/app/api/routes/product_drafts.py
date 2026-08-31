@@ -46,6 +46,7 @@ class DraftIn(BaseModel):
     # バリエーション。軸が空なら単品として登録する
     variant_axis:    Optional[str] = None
     variants:        Optional[list[dict]] = None
+    image_urls:      Optional[list[str]] = None
 
 
 class AdoptIn(BaseModel):
@@ -63,6 +64,10 @@ def _dict(d: ProductDraft) -> dict:
         variants = json.loads(d.variants or "[]")
     except Exception:
         variants = []
+    try:
+        images = json.loads(d.image_urls or "[]")
+    except Exception:
+        images = []
     return {
         "id": d.id, "sku": d.sku, "status": d.status or "draft",
         "rakuten_title": d.rakuten_title, "catchcopy": d.catchcopy,
@@ -77,6 +82,7 @@ def _dict(d: ProductDraft) -> dict:
         "rival_shop_name": d.rival_shop_name,
         "ref_image_urls": refs, "memo": d.memo,
         "variant_axis": d.variant_axis, "variants": variants,
+        "image_urls": images,
         "registered_at": d.registered_at.isoformat() if d.registered_at else None,
         "register_error": d.register_error,
         "created_at": d.created_at.isoformat() if d.created_at else None,
@@ -90,6 +96,8 @@ def _apply(d: ProductDraft, data: DraftIn):
             d.ref_image_urls = json.dumps(v or [], ensure_ascii=False)
         elif k == "variants":
             d.variants = json.dumps(v or [], ensure_ascii=False)
+        elif k == "image_urls":
+            d.image_urls = json.dumps(v or [], ensure_ascii=False)
         else:
             setattr(d, k, v)
 

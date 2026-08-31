@@ -49,6 +49,11 @@ class ProductDraft(Base):
     ref_image_urls = Column(Text)   # 参考画像URL（JSON配列）
     memo           = Column(Text)
 
+    # ---- 商品画像 ----
+    # R-Cabinetに上げた画像のURL（JSON配列）。楽天は images に
+    # [{"location": "/パス/ファイル名.jpg"}] の形で持つ
+    image_urls = Column(Text)
+
     # ---- バリエーション ----
     # 楽天は variantSelectors（選択肢の定義）と variants（各枝）で持つ。
     # ここでは作業しやすい形で置いて、登録時に楽天の形へ組み替える。
