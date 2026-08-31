@@ -24,15 +24,19 @@ CONF = os.path.join(os.path.expanduser("~"), ".rakuten_register.json")
 CAB = "/api/rms/v1/es/1.0/cabinet"
 CANDIDATES = [
     # まず商品API。これが通れば認証は効いている（比較用）
-    ("GET", "/api/rms/v1/es/2.0/ext/items/manage-numbers/y112"),
-    ("GET", f"{CAB}/usage/get"),
-    ("GET", f"{CAB}/folders/get"),
-    ("GET", f"{CAB}/folder/files/get?folderId=0"),
-    ("GET", f"{CAB}/files/search?fileName=&limit=5"),
-    # アップロード先。GETでは405（=あるがPOST専用）が返るはず。
-    # 405なら「口はある」と分かる
-    ("GET", f"{CAB}/file/insert"),
-    ("GET", f"{CAB}/images/insert"),
+    ("GET", "/api/rms/v1/es/2.0/ext/items/manage-numbers/y96"),
+    # ジャンルごとの商品仕様（属性）の定義。ジャンルで項目が変わるので、
+    # 固定の入力欄では作れない。定義を取れるかどうかが分かれ目
+    ("GET", "/api/rms/v1/es/2.0/genres/201887"),
+    ("GET", "/api/rms/v1/es/2.0/genres/201887/attributes"),
+    ("GET", "/api/rms/v1/es/2.0/product-attributes/genres/201887"),
+    ("GET", "/api/rms/v1/es/2.0/item-attributes/genres/201887"),
+    ("GET", "/api/rms/v1/es/1.0/genre/201887/attributes"),
+    # 配送方法セット（ネコポス・宅急便など）の一覧
+    ("GET", "/api/rms/v1/es/2.0/shipping-method-sets"),
+    ("GET", "/api/rms/v1/es/2.0/navigation/shipping-methods"),
+    # 納期情報・出荷リードタイムの選択肢
+    ("GET", "/api/rms/v1/es/2.0/delivery-dates"),
 ]
 
 JS_GET = r"""
