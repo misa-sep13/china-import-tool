@@ -65,9 +65,14 @@ async def run():
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
         await page.goto("https://www.compass-next.com/")
 
+        # SPAはセッション切れでも古いURLのまま白画面になることがあるので、
+        # パスワード欄の有無で見る。念のため描画を少し待つ
+        await page.wait_for_timeout(2500)
         if await page.locator("#user_password").count():
-            print("Compassにログインしてください。終わったらEnterを押します")
+            print()
+            print("Compassのログイン画面が出ています。ログインしてください。")
             input("  … ログインできたらEnter: ")
+            await page.wait_for_timeout(2000)
 
         # CSRFトークンを先に用意する。無いまま叩くと全部401になり、
         # 口が無いのか認証が通っていないのか区別できない
@@ -110,6 +115,21 @@ async def run():
             print("見つかりませんでした。Compassの画面で画像をアップロードするとき")
             print("どこへ送っているか、開発者ツールのNetworkタブで見ると分かります。")
             print("（F12 → Network → 画像をアップロード → 出てきたリクエストのURL）")
+
+        # 結果をファイルにも残す。画面が流れても後から見られるように
+        out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "probe_result.txt")
+        lines = [f"URL: {page.url}",
+                 f"CSRF: {'取れた' if got else '取れなかった'}", ""]
+        lines += [f"{st:>3}  {path}" for path, st in status_by_path]
+        with open(out, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        print()
+        print(f"結果を保存しました: {out}")
+        print()
+        print("ブラウザは開いたままにしています。ログインできているか")
+        print("画面で確かめてください。確認したらEnterで閉じます。")
+        input("  … Enterで終了: ")
 
         await ctx.close()
     return 0
