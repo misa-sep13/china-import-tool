@@ -465,19 +465,19 @@ async def fetch_genre(draft_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "ドラフトが見つかりません")
     if not d.rival_item_code:
         raise HTTPException(400, "参考にした商品がありません")
-    if not settings.RAKUTEN_APP_ID:
-        raise HTTPException(400, "RAKUTEN_APP_IDが設定されていません")
+    if not settings.RAKUTEN_APP_ID or not settings.RAKUTEN_ACCESS_KEY:
+        raise HTTPException(400, "RAKUTEN_APP_ID/RAKUTEN_ACCESS_KEYが未設定です")
 
+    # accessKey も要る。applicationId だけだと400になる
     params = {
         "applicationId": settings.RAKUTEN_APP_ID,
+        "accessKey": settings.RAKUTEN_ACCESS_KEY,
         "itemCode": d.rival_item_code,
         "hits": 1,
         "format": "json",
     }
-    if getattr(settings, "RAKUTEN_AFFILIATE_ID", None):
-        params["affiliateId"] = settings.RAKUTEN_AFFILIATE_ID
 
-    url = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701"
+    from app.services.rakuten_seo import SEARCH_API_URL as url
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(url, params=params)
     if r.status_code != 200:
