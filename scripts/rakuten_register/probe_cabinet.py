@@ -53,37 +53,10 @@ async ([method, path]) => {
 
 async def run():
     from playwright.async_api import async_playwright
-
-    conf = {}
-    if os.path.exists(CONF):
-        try:
-            conf = json.load(open(CONF, encoding="utf-8"))
-        except Exception:
-            pass
-    profile = conf.get("profile_dir") or os.path.join(
-        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
-        "rakuten_register_profile")
+    import compass
 
     async with async_playwright() as pw:
-        ctx = await pw.chromium.launch_persistent_context(profile, headless=False)
-        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-        await page.goto("https://www.compass-next.com/")
-
-        # ログイン画面かどうかの自動判定は当てにしない。
-        # 判定が外れると「ログイン済み」と思い込んで全部401になり、
-        # 口が無いのか認証が無いのか分からなくなる（実際にそうなった）。
-        # 必ず一度止まって、人に画面を見てもらう
-        await page.wait_for_timeout(2500)
-        print()
-        print("ブラウザを開きました。Compassの管理画面が見えていますか？")
-        print("  ログイン画面なら、ログインしてください")
-        print("  すでに管理画面ならそのままで大丈夫です")
-        input("  … 準備できたらEnter: ")
-        await page.wait_for_timeout(1500)
-
-        # CSRFトークンを先に用意する。無いまま叩くと全部401になり、
-        # 口が無いのか認証が通っていないのか区別できない
-        # ログイン後のページで取り直す。ログイン画面のトークンでは通らない
+        ctx, page = await compass.open_compass(pw)
         got = await page.evaluate(
             """async () => {
                  const m = document.querySelector('meta[name="csrf-token"]');
@@ -146,7 +119,7 @@ async def run():
         print("画面で確かめてください。確認したらEnterで閉じます。")
         input("  … Enterで終了: ")
 
-        await ctx.close()
+        await compass.close(ctx)
     return 0
 
 

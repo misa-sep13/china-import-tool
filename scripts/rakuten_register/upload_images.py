@@ -114,16 +114,7 @@ def build_xml(folder_id, name, file_name):
 
 async def run(args):
     from playwright.async_api import async_playwright
-
-    conf = {}
-    if os.path.exists(CONF):
-        try:
-            conf = json.load(open(CONF, encoding="utf-8"))
-        except Exception:
-            pass
-    profile = conf.get("profile_dir") or os.path.join(
-        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
-        "rakuten_register_profile")
+    import compass
 
     # 送る画像を集める
     files = []
@@ -140,20 +131,13 @@ async def run(args):
         raise SystemExit("送る画像がありません。ファイル名か --dir を指定してください")
 
     async with async_playwright() as pw:
-        ctx = await pw.chromium.launch_persistent_context(profile, headless=False)
-        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-        await page.goto("https://www.compass-next.com/menu")
-        await page.wait_for_timeout(2500)
-
-        print()
-        print("Compassの管理画面が見えていますか？")
-        print("  ログイン画面ならログインしてください")
-        input("  … 準備できたらEnter: ")
+        ctx, page = await compass.open_compass(pw)
+        await compass.csrf_token(page)
 
         # フォルダ一覧
         r = await page.evaluate(JS_GET, f"{CAB}/folders/get")
         if r["status"] != 200:
-            await ctx.close()
+            await compass.close(ctx)
             raise SystemExit(f"フォルダ一覧が取れませんでした（{r['status']}）")
         folders = parse_folders(r["body"])
 
@@ -165,11 +149,11 @@ async def run(args):
             print()
             if args.list:
                 input("  … Enterで終了: ")
-                await ctx.close()
+                await compass.close(ctx)
                 return 0
             print("--folder にフォルダIDを指定して、もう一度実行してください")
             input("  … Enterで終了: ")
-            await ctx.close()
+            await compass.close(ctx)
             return 1
 
         print()
@@ -200,7 +184,7 @@ async def run(args):
                   f"  {info.get('url') or info.get('message') or r['body'][:120]}")
             results.append({"file": name, "ok": ok, **info})
 
-        await ctx.close()
+        await compass.close(ctx)
 
     if args.dry_run:
         print()

@@ -235,15 +235,12 @@ async def register_one(page, d, shop_url, dry_run):
 
 async def run(args):
     from playwright.async_api import async_playwright
+    import compass
 
     conf = load_conf()
     base = args.base or conf.get("base") or DEFAULT_BASE
     token = args.token or conf.get("token", "")
     shop_url = args.shop_url or conf.get("shop_url", "")
-    profile = conf.get("profile_dir") or os.path.join(
-        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
-        "rakuten_register_profile")
-
     if not token:
         raise SystemExit("トークンがありません。setup.py を実行してください")
     if not shop_url:
@@ -260,19 +257,7 @@ async def run(args):
         return 0
 
     async with async_playwright() as pw:
-        # 永続プロファイルでCookieを保つ。OneDrive配下は避ける
-        # （キャッシュが同期されて大量削除の確認が出るため）
-        ctx = await pw.chromium.launch_persistent_context(
-            profile, headless=False, args=["--start-maximized"])
-        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-
-        await page.goto("https://www.compass-next.com/")
-        # ログイン判定はURLではなくパスワード欄の有無で見る。
-        # SPAはセッション切れでも古いURLのまま白画面になることがある
-        if await page.locator("#user_password").count():
-            print()
-            print("Compassにログインしてください。ログインが終わったらEnterを押します")
-            input("  … ログインできたらEnter: ")
+        ctx, page = await compass.open_compass(pw)
         await fetch_csrf(page)
 
         done = failed = 0
@@ -291,7 +276,7 @@ async def run(args):
             done += r["ok"]
             failed += (not r["ok"])
 
-        await ctx.close()
+        await compass.close(ctx)
 
     if args.dry_run:
         print()
