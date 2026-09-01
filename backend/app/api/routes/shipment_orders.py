@@ -586,9 +586,14 @@ async def _apply_receive(db: Session, order: ShipmentOrder, items, mark_received
         # 結局同じ便で届いた場合など、正当に同じ商品が複数行に分かれるケースがある）。
         # 色/サイズが違うのに同じ商品IDに解決された場合は紐づけ間違いの疑いが強いため、
         # 黙って捨てずに画面へ出して確認を促す（在庫が入らず気付けなくなるのを防ぐ）。
+        # ただし「4色セット」のような詰め合わせ商品は、色違いの複数行が
+        # 1つの商品に集まるのが正しい姿。こうした商品は特定の色を持たないので
+        # 仕様（supplier_spec）が空になっている。これを紐づけ間違いとして弾くと
+        # 詰め合わせの在庫が永久に入らないため、その場合は合算を許可する。
+        is_assorted = not (product.supplier_spec or "").strip()
         variant_key = ((item.color or "").strip(), (item.size or "").strip())
         seen_variants = processed_variants.setdefault(item.product_id, set())
-        if seen_variants and variant_key not in seen_variants:
+        if not is_assorted and seen_variants and variant_key not in seen_variants:
             duplicate_skipped += 1
             _skip(item, f"同じ商品（{product.sku}）に色/サイズが異なる複数行が紐づいているため未反映。紐づけ先を確認してください",
                   product.sku or "")
