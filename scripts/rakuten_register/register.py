@@ -70,49 +70,78 @@ PER_ITEM_ATTRS = ("メーカー型番", "シリーズ名")
 PER_VARIANT_ATTRS = ("カラー", "代表カラー", "サイズ")
 
 
-def build_attributes(d, tmpl_variant, label1, label2, axis1, axis2):
+def build_attributes(d, tmpl_variant, label1, label2, axis1, axis2,
+                     allowed_names=None):
     """バリエーション1枝ぶんの属性を組み立てる。
 
     ブランド名や原産国はどの商品でも同じなので雛形から引き継ぐ。
     型番・シリーズ名・カラーは商品や枝ごとに変わるので作り直す。
     引き継いだ値をそのまま残すと、別商品の型番やカラーが入ってしまう。
+
+    allowed_names を渡すと、そのジャンルに存在する属性だけに絞る。
+    存在しない属性名を送ると 400 IE1002 で落ちるため
+    （「良かれと思って代表カラーを全商品に入れる」が事故のもと）。
     """
     attrs = []
+
+    def put(name, value):
+        v = str(value or "").strip()
+        if not v:
+            return
+        if allowed_names is not None and name not in allowed_names:
+            return          # そのジャンルに無い属性は送らない
+        attrs.append({"name": name, "values": [v]})
 
     # 共通のものを雛形から
     for a in (tmpl_variant or {}).get("attributes", []):
         if a.get("name") in COMMON_ATTRS:
-            attrs.append({"name": a["name"], "values": list(a.get("values") or [])})
+            for v in (a.get("values") or []):
+                put(a["name"], v)
 
     # 商品ごとのもの
-    attrs.append({"name": "メーカー型番", "values": [d["sku"]]})
-    series = (d.get("series_name") or "").strip()
-    if series:
-        attrs.append({"name": "シリーズ名", "values": [series]})
+    put("メーカー型番", d["sku"])
+    put("シリーズ名", d.get("series_name"))
 
-    # ジャンルごとの商品仕様（ペットグッズの素材・多頭用 など）。
-    # 画面で入れてもらったものをそのまま属性にする
+    # ジャンルごとの商品仕様（ペットグッズの素材・本体横幅 など）
     for name, value in (d.get("item_specs") or {}).items():
-        v = str(value or "").strip()
-        if v and name not in ("メーカー型番", "シリーズ名"):
-            attrs.append({"name": name, "values": [v]})
+        if name not in ("メーカー型番", "シリーズ名"):
+            put(name, value)
 
-    # 枝ごとのもの。軸の名前が「カラー」なら色として入れる
+    # 枝ごとのもの。軸の名前がそのまま属性名になる
     def add_axis(axis, label):
         if not axis or not label:
             return
         name = axis.strip()
-        attrs.append({"name": name, "values": [label]})
-        # 楽天は色の絞り込みに「代表カラー」を使う
+        put(name, label)
+        # 色の絞り込みに使う「代表カラー」。ただし持っているジャンルだけ。
+        # 無いジャンルに送ると 400 IE1002 になる
         if name in ("カラー", "色"):
-            attrs.append({"name": "代表カラー", "values": [label]})
+            put("代表カラー", label)
 
     add_axis(axis1, label1)
     add_axis(axis2, label2)
     return attrs
 
 
-def build_variants(d, tmpl_variant=None):
+def collect_allowed_attrs(tmpl):
+    """そのジャンルに存在する属性名を集める。
+
+    楽天にジャンル定義を返すAPIが無いので、雛形の商品が持っている
+    属性を「存在する属性」とみなす。無い属性名を送ると 400 IE1002。
+
+    枝によって持っている属性が違うことがあるので、全部の枝から集める。
+    """
+    if not tmpl:
+        return None          # 雛形が無ければ絞らない（今までどおり）
+    names = set()
+    for v in (tmpl.get("variants") or {}).values():
+        for a in (v.get("attributes") or []):
+            if a.get("name"):
+                names.add(a["name"])
+    return names or None
+
+
+def build_variants(d, tmpl_variant=None, allowed_names=None):
     """バリエーションを楽天の形に組み立てる。
 
     楽天は variantSelectors（選択肢の定義）と variants（各枝）で持つ。
@@ -149,7 +178,8 @@ def build_variants(d, tmpl_variant=None):
             "standardPrice": int(price or base_price),
             "merchantDefinedSkuId": label_for_sku,
             "hidden": False,
-            "attributes": build_attributes(d, tmpl_variant, l1, l2, axis1, axis2),
+            "attributes": build_attributes(d, tmpl_variant, l1, l2,
+                                           axis1, axis2, allowed_names),
         })
         if selector_values:
             v["selectorValues"] = selector_values
@@ -232,7 +262,8 @@ def build_item_body(d, shop_url, tmpl=None):
         # どの枝でも共通の設定は同じなので、先頭を見本にする
         tmpl_variant = next(iter(vs.values()), None)
 
-    selectors, variants = build_variants(d, tmpl_variant)
+    selectors, variants = build_variants(d, tmpl_variant,
+                                         collect_allowed_attrs(tmpl))
 
     body = {}
     if tmpl:
@@ -309,6 +340,32 @@ async def fetch_csrf(page):
     return got
 
 
+def explain_error(body):
+    """楽天のエラー本文から、何をすればよいかを読み取る。
+
+    コードだけ見ても分からないので、実際に踏んだものを訳す。
+    """
+    if not body:
+        return ""
+    if "IE0418" in body or "invalidAllMandatoryAttributes" in body:
+        # 応答に足りない属性名が入っている
+        m = re.findall(r'"([^"]+)"', body)
+        names = [x for x in m if not x.isascii()]
+        s = "、".join(dict.fromkeys(names)) if names else ""
+        return (f"このジャンルの必須項目が足りません{('：' + s) if s else ''}。"
+                "画面の「商品仕様」に入れてください")
+    if "IE1002" in body or "Could not find the attribute" in body:
+        return ("このジャンルに無い属性を送っています。"
+                "雛形のSKUが同じジャンルのものか確認してください")
+    if "IE0002" in body or "Unrecognized field" in body:
+        return "送ってはいけない項目が入っています（読み取り専用の項目）"
+    if "GA0001" in body or "Un-Authorised" in body:
+        return "Compassのログインが切れています"
+    if "GA0003" in body:
+        return "呼びすぎです。少し時間を空けてください"
+    return ""
+
+
 async def send(page, method, path, body, label):
     """1本送る。429なら1回だけ待って再試行する。"""
     for attempt in (1, 2):
@@ -322,6 +379,10 @@ async def send(page, method, path, body, label):
     print(f"    {mark} {label}: {r['status']}")
     if not ok:
         print(f"        {r['body'][:300]}")
+        # 楽天のエラーは原因が本文に入っている。読み解いて次の手を示す
+        hint = explain_error(r["body"])
+        if hint:
+            print(f"        → {hint}")
     return {"label": label, "method": method, "path": path,
             "status": r["status"], "body": r["body"][:500], "ok": ok}
 
@@ -504,6 +565,28 @@ async def register_one(page, d, shop_url, dry_run, base=None, token=None,
     return {"ok": True, "log": log}
 
 
+def preflight(ready):
+    """登録を始める前に、全部そろっているか確かめる。
+
+    途中まで登録して失敗するのが一番後始末が大変なので、1件でも
+    足りなければ1件も登録しない。
+    """
+    problems = []
+    for d in ready:
+        miss = []
+        if not d.get("template_sku"):
+            miss.append("雛形SKU（送料・納期・属性が入りません）")
+        if not d.get("genre_id") and not d.get("template_sku"):
+            miss.append("ジャンルID")
+        if not (d.get("description_pc") or "").strip():
+            miss.append("商品説明")
+        if not (d.get("image_urls") or []) and not d.get("_has_images"):
+            miss.append("画像")
+        if miss:
+            problems.append((d.get("sku") or f"id={d.get('id')}", miss))
+    return problems
+
+
 async def run(args):
     from playwright.async_api import async_playwright
     import compass
@@ -538,6 +621,25 @@ async def run(args):
     if not ready:
         print("登録するものがありません")
         return 0
+
+    # 画像を預けているかどうかも見る（サーバーに預けた分は image_urls に入らない）
+    for d in ready:
+        try:
+            d["_has_images"] = bool(
+                api(base, f"/product-drafts/{d['id']}/images", token))
+        except Exception:
+            d["_has_images"] = False
+
+    problems = preflight(ready)
+    if problems and not args.force:
+        print()
+        print("足りないものがあるので、登録を始めません:")
+        for sku, miss in problems:
+            print(f"  {sku}: {'・'.join(miss)}")
+        print()
+        print("直してから、もう一度実行してください。")
+        print("（承知のうえで進めるなら --force を付けます）")
+        return 1
 
     async with async_playwright() as pw:
         ctx, page = await compass.open_compass(pw)
@@ -583,6 +685,8 @@ def main():
     ap.add_argument("--shop-url", default="", help="店舗URL名")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--force", action="store_true",
+                    help="足りないものがあっても進める")
     args = ap.parse_args()
 
     import asyncio
