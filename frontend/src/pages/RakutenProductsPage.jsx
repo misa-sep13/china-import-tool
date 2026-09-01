@@ -40,6 +40,34 @@ export default function RakutenProductsPage() {
   })
   const commissionRate = settings?.commission_rate ?? 0.09
 
+  // 配送依頼の取込は「同じ仕入URLの中でどの商品か」を色や仕様で見分ける。
+  // 「4色セット」のような詰め合わせは特定の色を持たないため仕様が空になり、
+  // 色を持つ単色SKUに必ず負けて在庫が誤って振り分けられる（実際に起きた）。
+  // これを防ぐ唯一の目印が「お客様専用メモ」なので、危険な組み合わせを画面で警告する。
+  const urlKeyOf = (u) => {
+    const t = (u || '').trim()
+    if (!t) return ''
+    const offer = t.match(/\/offer\/(\d+)\.html/)
+    if (offer) return `1688:${offer[1]}`
+    const id = t.match(/[?&]id=(\d+)/)
+    if (id) return `id:${id[1]}`
+    return t.split('#')[0].replace(/\/$/, '')
+  }
+  const urlCounts = {}
+  products.forEach(p => {
+    const k = urlKeyOf(p.buy_url)
+    if (k) urlCounts[k] = (urlCounts[k] || 0) + 1
+  })
+  // 新規追加中の商品はまだ一覧に無いので、同じURLが1件でもあれば保存後に共有状態になる
+  const sharesUrl = (p, isNew = false) => {
+    const n = urlCounts[urlKeyOf(p.buy_url)] || 0
+    return isNew ? n >= 1 : n > 1
+  }
+  // 詰め合わせ（仕様が空）なのに目印が無い＝取込で必ず別商品に吸われる
+  const memoMissing = (p, isNew = false) =>
+    sharesUrl(p, isNew) && !(p.supplier_spec || '').trim() && !(p.customer_memo || '').trim()
+  const riskyProducts = products.filter(p => !p.is_component && !p.is_material && memoMissing(p))
+
   // タオタロウ取り込みで読めない仕様形式を検出する。
   // 正しい形式: 1688の選択肢の「値」を属性の表示順に「、」で区切る（例: 燕麦色、S 建议75-95斤）
   const specFormatWarning = (spec) => {
@@ -248,6 +276,34 @@ export default function RakutenProductsPage() {
 
   return (
     <div>
+      {riskyProducts.length > 0 && (
+        <div style={{
+          marginBottom: 16, padding: '12px 16px', borderRadius: 8,
+          background: '#fef2f2', border: '2px solid #dc2626', color: '#991b1b', fontSize: 13, lineHeight: 1.8,
+        }}>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>
+            🚨 在庫が別の商品に入ってしまう商品が {riskyProducts.length} 件あります
+          </div>
+          下の商品は<b>仕様（中国語）が空</b>なのに<b>同じ仕入URLの商品が他にもある</b>ため、
+          配送依頼を取り込むと在庫が単色の商品へ誤って加算されます。
+          各商品を開いて「<b>お客様専用メモ</b>」に、発注Excelの
+          「<b>お客様管理番号</b>」欄と<b>同じ文字列</b>を入れてください。
+          <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {riskyProducts.map(p => (
+              <button
+                key={p.id}
+                onClick={() => openEdit(p)}
+                style={{
+                  fontFamily: 'monospace', fontSize: 12, padding: '3px 10px', borderRadius: 4,
+                  border: '1px solid #dc2626', background: '#fff', color: '#991b1b', cursor: 'pointer',
+                }}
+              >
+                {p.sku} を直す
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
         <h1>🛒 楽天 商品マスタ</h1>
         <button className="btn btn-primary" onClick={openNew}>+ 商品追加</button>
@@ -478,6 +534,22 @@ export default function RakutenProductsPage() {
                   <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 6 }}>インボイス振り分け確認用・TAO太郎E列に出力</span>
                 </label>
                 <textarea value={form.customer_memo || ''} onChange={e => setForm(p => ({ ...p, customer_memo: e.target.value }))} rows={2} placeholder="例：4色セット（咖啡色・乳白色・灰色・浅灰色 各1枚）" />
+                {memoMissing(form, editing === 'new') && (
+                  <div style={{
+                    marginTop: 8, padding: '10px 12px', borderRadius: 6,
+                    background: '#fef2f2', border: '2px solid #dc2626', color: '#991b1b', fontSize: 12, lineHeight: 1.7,
+                  }}>
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>🚨 このままだと在庫が別の商品に入ってしまいます</div>
+                    この商品は<b>仕様（中国語）が空</b>で、<b>同じ仕入URLの商品が他にもあります</b>。
+                    配送依頼の取込は色や仕様で商品を見分けるため、色を持たないこの商品は
+                    必ず単色の商品に負けて、在庫がそちらへ加算されます。
+                    <div style={{ marginTop: 6 }}>
+                      <b>対処：</b>上の「お客様専用メモ」に、
+                      発注Excelの<b>「お客様管理番号」欄に書くのと同じ文字列</b>を入れてください
+                      （例：<code>4色セット</code>）。両方が一致していれば確実に見分けられます。
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="form-group">
                 <label>備考（タオタロウH列）</label>
