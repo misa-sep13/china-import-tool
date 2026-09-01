@@ -785,7 +785,7 @@
         <td><b>為替の話だけ</b>で、費用は一切含みません。ネットの市場為替（1元＝23.39円など）はラクマートの決済レートより安いので、実決済レートに合わせるための補正です。市場為替23.39×1.06＝24.79円/元。2026年7月の配送依頼書レート実績は24.71〜25.11（中央値24.85）。</td>
         <td>配送依頼書の実際のレートと2%以上ずれたら見直す。<b>ラクマートの実レートを市場為替欄に直接入れる場合は0%にする。</b></td></tr>
       <tr><td>中国側 中国国内送料</td><td>0.50元/点</td>
-        <td>1販売単位あたり定額でかかる中国側費用のうち、<b>ラベル代以外</b>（中国国内送料・箱袋代）。<b>為替補正とは無関係の実費</b>です。ラベル代0.80元は<b>各行のオプション代</b>に移して既定でONにしてあるので、合計は従来どおり1.30元です。<br>
+        <td>1販売単位あたり定額でかかる中国側費用のうち、<b>ラベル代以外</b>（中国国内送料・箱袋代）。<b>為替補正とは無関係の実費</b>です。ラベル代0.50元は<b>各行のオプション代</b>に移して既定でONにしてあるので、合計は1.00元です。<br>
         <b>ここがモデルの肝。</b>これらは1点いくらの定額で1688単価に比例しないため、実測倍率は単価2元未満で2.10倍、25元超で1.05倍と激変します。<b>倍率だけのモデルでは安い商品の原価を必ず過小評価します。</b></td>
         <td>安全側に倒したいなら0.6〜0.8元へ。<b>1販売単位につき1回だけ加算</b>されます（部材ごとではありません）。</td></tr>
       <tr><td>輸入関連費実績係数<span class="tag">上部</span></td><td>13.8%</td>
@@ -841,7 +841,7 @@
     <tr><td rowspan="3"><b>商品ごとに必須</b></td><td>1688単価（単価 元 × 入数）</td><td>1販売単位の中身をすべて。セットは部材ごとに行を足す</td></tr>
     <tr><td>三辺（長・中・短 cm）</td><td>競合のAmazon商品ページの値をそのまま</td></tr>
     <tr><td>実重量（kg）</td><td>同上</td></tr>
-    <tr><td rowspan="3">商品ごとに任意</td><td>オプション代</td><td>一覧からチェック。ラベル貼付は既定でON</td></tr>
+    <tr><td rowspan="3">商品ごとに任意</td><td>オプション代</td><td>タオタロウの料金表から選ぶ。ラベル貼付は既定でON</td></tr>
     <tr><td>売価</td><td>粗利を出すときだけ</td></tr>
     <tr><td>手数料（FBA＋販売）</td><td>粗利を出すときだけ。Amazonに払う分のみ</td></tr>
     <tr><td rowspan="4">全体で共通（既定値のままでOK）</td><td>市場為替</td><td>自動取得（12時間ごと）</td></tr>
@@ -1623,24 +1623,29 @@ if(FIREBASE_CONFIG.databaseURL){
   ];
 
   // ラクマートのオプション。自社の2026年 配送依頼書5,256明細から、実際に使ったものだけを
-  // 使用品目数の多い順に厳選した。単価は最頻値。0元のもの(通常OPP袋入れ替え・made in China・
-  // 年齢シール等)は原価に効かないので載せていない。
-  const RAKUMART_OPTIONS = [
-    {label:'商品ラベル貼り付け',  price:0.80, desc:'FNSKUラベル。ほぼ全商品に発生（実績2,767品目）'},
-    {label:'商品セット化作業',    price:1.00, desc:'複数部材をまとめる（実績615品目・単価は1元が最頻。手間次第で2〜4元）'},
-    {label:'別注折りたたみパッケージへの入替', price:2.00, desc:'専用箱に入れ替える（実績268品目）'},
-    {label:'プチプチ梱包',       price:1.50, desc:'緩衝材で包む（実績135品目）'},
-    {label:'圧縮包装',          price:1.50, desc:'袋代は別途（実績53品目）'},
-    {label:'加熱封口',          price:1.50, desc:'袋の口を熱で閉じる（実績38品目）'},
-    {label:'詳細検品',          price:2.00, desc:'通常検品を超える検査（実績27品目・1.5〜2元）'},
-    {label:'シュリンク包装',      price:0.40, desc:'フィルムで包装（実績2品目）'},
-    {label:'チラシ・印刷物入れ',   price:0.30, desc:'1種類のみ（実績3品目）'},
+  // タオタロウの料金表どおり。単位が「点」「枚」「セット」で違うものが
+  // あるが、いずれも1販売単位あたりで数えている。
+  const TAOTARO_OPTIONS = [
+    {label:'商品ラベル貼り付け作業', price:0.50, desc:'FNSKUラベル。0.5元/枚'},
+    {label:'全量開封検品',          price:0.50, desc:'0.5元/個'},
+    {label:'アパレル検品・詳細検品',  price:2.00, desc:'オプション検品。2元/点'},
+    {label:'写真撮影',             price:3.00, desc:'1商品1回3元（最大3枚・商品により変動）'},
+    {label:'ネームタグ取り外し',      price:1.00, desc:'1元/枚'},
+    {label:'ネームタグ縫い付け',      price:2.00, desc:'2元/枚'},
+    {label:'品質表示タグ取り外し',    price:1.00, desc:'洗濯表示タグ。1元/枚'},
+    {label:'品質表示タグ取り付け',    price:2.00, desc:'洗濯表示タグ。2元/枚'},
+    {label:'OPP袋入替（タオタロウ支給）', price:0.50, desc:'0.5元/点'},
+    {label:'OPP袋入替（自社支給）',    price:0.30, desc:'0.3元/点'},
+    {label:'おもちゃ年齢表示シール',   price:0.20, desc:'0.2元/点'},
+    {label:'Made in Chinaシール',   price:0.20, desc:'0.2元/点'},
+    {label:'説明書・チラシのセット',   price:0.50, desc:'0.5元/セット'},
+    {label:'圧縮梱包',             price:4.00, desc:'4元/点'},
   ];
-  const DEFAULT_OPTIONS = ['商品ラベル貼り付け'];
+  const DEFAULT_OPTIONS = ['商品ラベル貼り付け作業'];
   // 選んだオプションの合計＋自由入力＝1販売単位あたりのオプション代(元)
   function optionsTotal(row){
     const sel = Array.isArray(row.optSel) ? row.optSel : [];
-    const picked = RAKUMART_OPTIONS.filter(o => sel.indexOf(o.label) >= 0)
+    const picked = TAOTARO_OPTIONS.filter(o => sel.indexOf(o.label) >= 0)
                                    .reduce((t, o) => t + o.price, 0);
     return picked + num(row.extra);
   }
@@ -2136,7 +2141,7 @@ if(FIREBASE_CONFIG.databaseURL){
       sel.forEach(n => btn.appendChild(el('span', 'chip', n.length > 8 ? n.slice(0, 8) + '…' : n)));
     }
 
-    RAKUMART_OPTIONS.forEach(o => {
+    TAOTARO_OPTIONS.forEach(o => {
       const lab = el('label');
       const cb = document.createElement('input');
       cb.type = 'checkbox';
@@ -2144,7 +2149,7 @@ if(FIREBASE_CONFIG.databaseURL){
       cb.addEventListener('change', () => {
         const set = new Set(row.optSel || []);
         cb.checked ? set.add(o.label) : set.delete(o.label);
-        row.optSel = RAKUMART_OPTIONS.filter(x => set.has(x.label)).map(x => x.label);
+        row.optSel = TAOTARO_OPTIONS.filter(x => set.has(x.label)).map(x => x.label);
         label(); onChange(); scheduleSave();
       });
       lab.appendChild(cb);
