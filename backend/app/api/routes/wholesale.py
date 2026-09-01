@@ -991,34 +991,52 @@ async def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
 
 
 @router.post("/orders/{oid:int}/undo-receive")
-def undo_receive(oid: int, db: Session = Depends(get_db)):
+async def undo_receive(oid: int, db: Session = Depends(get_db)):
     """入荷を取り消す。押し間違えたときのため。
 
     分納で複数回入荷していても、これまでに受け取った分をまとめて戻す。
     received_qty も0に戻さないと、次に入荷したとき二重に積み上がる。
+
+    単品の在庫を戻すだけでは足りない。入荷したときにセット商品（2本組など）の
+    在庫を構成品から計算し直しているので、取り消し側でも計算し直さないと
+    セット商品だけ入荷後の多い在庫が残る。実際にこれで在庫が過大なまま
+    9商品が残り、あとから手で直す事故になった。楽天へも送り直す。
     """
+    from app.api.routes.rakuten import _recalc_dependent_set_stock
+
     o, items, _ = _load(db, oid)
     received_total = sum(x.received_qty or 0 for x in items)
     if not o.received_at and received_total <= 0:
         raise HTTPException(400, "まだ入荷していません")
 
+    was_add_stock = o.received_mode == "add_stock"
     prods = _linked_products(db, items)
+    reverted = set()
     for x in items:
         p = prods.get(x.item_id)
         q = x.received_qty or 0
         if not p or not q:
             x.received_qty = 0
             continue
-        if o.received_mode == "add_stock":
+        if was_add_stock:
             p.stock = max(0, (p.stock or 0) - q)
+            reverted.add(p.sku)
         p.inbound = (p.inbound or 0) + q
         x.received_qty = 0
+
+    if reverted:
+        all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+        sku_stock = {pp.sku: (pp.stock or 0) for pp in all_products}
+        _recalc_dependent_set_stock(all_products, sku_stock, reverted)
 
     o.received_at = None
     o.received_mode = None
     db.commit()
+
+    push = await _push_rms(db, reverted) if reverted else {"items": 0}
+
     o, items, s = _load(db, oid)
-    return {"ok": True, "order": _order_dict(o, items, s)}
+    return {"ok": True, "order": _order_dict(o, items, s), "rms_push": push}
 
 
 # ---------- LINEで送る発注 ----------

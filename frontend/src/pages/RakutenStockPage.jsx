@@ -123,6 +123,28 @@ export default function RakutenStockPage() {
   })
   const failedPushes = pushFailures?.items || []
 
+  // セット商品の在庫が構成品と食い違っていないか。多い方向にずれると
+  // 楽天に実在庫以上の数が出て売り越しになるため、気づけるように出す。
+  const { data: setAudit } = useQuery({
+    queryKey: ['set-stock-audit'],
+    queryFn: () => api.get('/rakuten/set-stock/audit').then(r => r.data),
+  })
+  const setDiffs = setAudit?.diffs || []
+  const [repairing, setRepairing] = useState(false)
+  const [repairResult, setRepairResult] = useState(null)
+  const handleRepairSetStock = async () => {
+    if (!window.confirm('セット商品の在庫を、構成品から計算した正しい値に直します。楽天へも反映します。よろしいですか？')) return
+    setRepairing(true); setRepairResult(null)
+    try {
+      const res = await api.post('/rakuten/set-stock/repair')
+      setRepairResult(res.data)
+      qc.invalidateQueries(['set-stock-audit'])
+      qc.invalidateQueries(['rakuten-stock'])
+    } catch (err) {
+      setRepairResult({ error: err.response?.data?.detail || '修復でエラーが発生しました' })
+    } finally { setRepairing(false) }
+  }
+
   const [resyncing, setResyncing] = useState(false)
   const [resyncResult, setResyncResult] = useState(null)
 
@@ -316,6 +338,57 @@ export default function RakutenStockPage() {
           {saving ? '保存中...' : `💾 一括保存${dirtyCount > 0 ? `（${dirtyCount}件）` : ''}`}
         </button>
       </div>
+
+      {setDiffs.length > 0 && (
+        <div style={{ background: '#fef2f2', border: '2px solid #dc2626', borderRadius: 8,
+          padding: 14, marginBottom: 16 }}>
+          <div style={{ fontWeight: 700, color: '#991b1b', marginBottom: 6 }}>
+            🚨 セット商品の在庫が構成品と合っていません（{setDiffs.length}件）
+          </div>
+          <div style={{ fontSize: 12, color: '#991b1b', marginBottom: 8, lineHeight: 1.7 }}>
+            セット商品の在庫は構成品から自動計算されますが、下の商品はその値とずれています。
+            <b>多い方向にずれていると、楽天に実在庫以上の数が出て売り越しになります。</b>
+          </div>
+          <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 10 }}>
+            <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ textAlign: 'left', color: '#991b1b' }}>
+                  <th style={{ padding: '3px 6px' }}>SKU</th>
+                  <th style={{ padding: '3px 6px' }}>商品名</th>
+                  <th style={{ padding: '3px 6px', textAlign: 'right' }}>現在</th>
+                  <th style={{ padding: '3px 6px', textAlign: 'right' }}>正しい値</th>
+                  <th style={{ padding: '3px 6px', textAlign: 'right' }}>差</th>
+                </tr>
+              </thead>
+              <tbody>
+                {setDiffs.map(d => (
+                  <tr key={d.id} style={{ borderTop: '1px solid #fecaca' }}>
+                    <td style={{ padding: '3px 6px', fontFamily: 'monospace' }}>{d.sku}</td>
+                    <td style={{ padding: '3px 6px' }}>{d.name}</td>
+                    <td style={{ padding: '3px 6px', textAlign: 'right' }}>{d.current}</td>
+                    <td style={{ padding: '3px 6px', textAlign: 'right', fontWeight: 700 }}>{d.expected}</td>
+                    <td style={{ padding: '3px 6px', textAlign: 'right',
+                      color: d.diff > 0 ? '#dc2626' : '#2563eb', fontWeight: 700 }}>
+                      {d.diff > 0 ? `+${d.diff}` : d.diff}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" style={{ fontSize: 13 }}
+              onClick={handleRepairSetStock} disabled={repairing}>
+              {repairing ? '修復中...' : '🔧 正しい値に直して楽天へ反映'}
+            </button>
+            {repairResult && (
+              <span style={{ fontSize: 12, color: repairResult.error ? '#dc2626' : '#16a34a' }}>
+                {repairResult.error || `${repairResult.fixed}件を修正しました`}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {failedPushes.length > 0 && (
         <div style={{ border: '1px solid #fca5a5', background: '#fef2f2', borderRadius: 8, padding: 12, marginBottom: 16 }}>

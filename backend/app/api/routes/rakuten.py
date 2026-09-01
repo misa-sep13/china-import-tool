@@ -3599,6 +3599,91 @@ def _resolve_push_group(component_sku: str, db: Session) -> dict:
     }
 
 
+def _set_stock_diffs(db: Session):
+    """セット商品の在庫が、構成品から計算した値とずれていないか調べる。
+
+    セット商品の在庫は構成品から自動計算される。ところが在庫を戻す処理で
+    計算し直しを忘れると、構成品だけ戻ってセット商品に古い（多い）在庫が
+    残る。多い方向にずれると売り越しになるため、気づけるようにしておく。
+    """
+    products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    sku_stock = {p.sku: (p.stock or 0) for p in products}
+    share_counts = build_component_share_counts(products)
+    diffs = []
+    for p in products:
+        comps = _parse_components_for_stock(p)
+        if not comps:
+            continue
+        req: dict[str, int] = {}
+        for c in comps:
+            if c.get("sku"):
+                req[c["sku"]] = req.get(c["sku"], 0) + (c.get("qty") or 1)
+        expected = None
+        for c_sku, c_qty in req.items():
+            avail = calc_set_avail(sku_stock.get(c_sku, 0), c_qty, share_counts.get(c_sku, 0))
+            expected = avail if expected is None else min(expected, avail)
+        if expected is None:
+            continue
+        current = p.stock or 0
+        if current != expected:
+            diffs.append({
+                "id": p.id, "sku": p.sku, "name": p.name,
+                "current": current, "expected": expected,
+                "diff": current - expected,
+                "components": req,
+            })
+    return diffs
+
+
+@router.get("/set-stock/audit")
+def audit_set_stock(db: Session = Depends(get_db)):
+    """セット商品の在庫ズレを一覧で返す（変更はしない）。"""
+    diffs = _set_stock_diffs(db)
+    over = [d for d in diffs if d["diff"] > 0]
+    return {
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "diff_count": len(diffs),
+        "oversell_risk_count": len(over),   # 多い方向のずれ＝売り越しになりうる
+        "diffs": diffs,
+    }
+
+
+@router.post("/set-stock/repair")
+async def repair_set_stock(db: Session = Depends(get_db)):
+    """ずれているセット商品を構成品から計算した値に直し、楽天へ送る。"""
+    diffs = _set_stock_diffs(db)
+    if not diffs:
+        return {"ok": True, "fixed": 0, "diffs": [], "message": "ずれはありません"}
+
+    by_id = {p.id: p for p in db.query(RakutenProduct)
+             .filter(RakutenProduct.id.in_([d["id"] for d in diffs])).all()}
+    fixed = []
+    for d in diffs:
+        p = by_id.get(d["id"])
+        if not p:
+            continue
+        p.stock = d["expected"]
+        fixed.append({"sku": p.sku, "before": d["current"], "after": d["expected"]})
+    db.commit()
+
+    push = {"items": 0, "ok": 0, "fail": 0}
+    settings = _get_or_create_settings(db)
+    if fixed and settings and settings.rms_service_secret and settings.rms_license_key:
+        from app.services.rakuten_rms import push_inventory_and_record
+        all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+        sku_stock = {p.sku: (p.stock or 0) for p in all_products}
+        target = {f["sku"] for f in fixed}
+        items = _build_rms_stock_items(all_products, sku_stock, target)
+        if items:
+            res = await push_inventory_and_record(
+                settings.rms_service_secret, settings.rms_license_key, items,
+                source="set_stock_repair", source_label="セット在庫の修復",
+            )
+            push = {"items": len(items), "ok": res.get("ok", 0), "fail": res.get("fail", 0)}
+
+    return {"ok": True, "fixed": len(fixed), "diffs": fixed, "rms_push": push}
+
+
 @router.get("/rms/debug-push-preview")
 async def debug_push_preview(
     component_sku: str = "",
