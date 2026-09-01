@@ -616,7 +616,7 @@ class ReceiveIn(BaseModel):
 
 
 @router.post("/orders/{oid:int}/receive")
-def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)):
+async def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)):
     """入荷処理。実在庫と発注済を動かす。
 
     在庫を先に入れてしまっていることがあるので、足すかどうかを
@@ -698,9 +698,52 @@ def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)):
         o.memo = ((o.memo or "") + "\n" + data.note).strip()
     db.commit()
 
+    # 在庫が増えた分を楽天へ送る。commit後に送るので、送信に失敗しても
+    # 入荷そのものは残る（失敗は記録され、補正pushで送り直せる）
+    push = await _push_rms(db, updated) if data.mode == "add_stock" else {"items": 0}
+
     o, items, s = _load(db, oid)
     return {"ok": True, "order": _order_dict(o, items, s),
-            "changed": changed, "unlinked": unlinked, "promoted": promoted}
+            "changed": changed, "unlinked": unlinked, "promoted": promoted,
+            "rms_push": push}
+
+
+async def _push_rms(db, updated_skus):
+    """入荷で増えた在庫を楽天RMSへ送る。
+
+    配送依頼の入荷や在庫の手動編集では以前から送っているが、卸発注の入荷
+    だけ送っていなかった。メーカー品も楽天で売っているので、送らないと
+    店頭の在庫が増えないまま＝売り逃しになる。
+
+    失敗しても入荷そのものは取り消さない（在庫は正しく入っている）。
+    失敗はrms_push_failuresに残り、画面の補正pushで送り直せる。
+    """
+    if not updated_skus:
+        return {"items": 0, "ok": 0, "fail": 0}
+    from app.api.routes.rakuten import (
+        _get_or_create_settings, _build_rms_stock_items,
+        _recalc_dependent_set_stock,
+    )
+    from app.services.rakuten_rms import push_inventory_and_record
+
+    settings = _get_or_create_settings(db)
+    if not settings or not settings.rms_service_secret or not settings.rms_license_key:
+        return {"items": 0, "ok": 0, "fail": 0, "skipped": "RMS未設定"}
+
+    all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    sku_stock = {p.sku: (p.stock or 0) for p in all_products}
+    # セット商品の在庫を構成品から計算し直す（同じ値になるだけだが、
+    # セッションに未確定の変更を残さないよう確定させておく）
+    _recalc_dependent_set_stock(all_products, sku_stock, set(updated_skus))
+    db.commit()
+    items = _build_rms_stock_items(all_products, sku_stock, set(updated_skus))
+    if not items:
+        return {"items": 0, "ok": 0, "fail": 0}
+    res = await push_inventory_and_record(
+        settings.rms_service_secret, settings.rms_license_key, items,
+        source="wholesale_receive", source_label="卸入荷",
+    )
+    return {"items": len(items), "ok": res.get("ok", 0), "fail": res.get("fail", 0)}
 
 
 def _promote_stage(p) -> bool:
@@ -827,7 +870,7 @@ class ReceiveItemsIn(BaseModel):
 
 
 @router.post("/receive-items")
-def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
+async def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
     """入荷待ち一覧から、発注をまたいでまとめて入荷する。"""
     if data.mode not in ("add_stock", "clear_only"):
         raise HTTPException(400, "mode は add_stock か clear_only です")
@@ -939,8 +982,12 @@ def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
             o.memo = (chr(10).join(x for x in [(o.memo or ''), data.note] if x)).strip()
 
     db.commit()
+
+    push = await _push_rms(db, updated) if data.mode == "add_stock" else {"items": 0}
+
     return {"ok": True, "changed": changed, "unlinked": unlinked,
-            "completed_orders": completed, "promoted": promoted}
+            "completed_orders": completed, "promoted": promoted,
+            "rms_push": push}
 
 
 @router.post("/orders/{oid:int}/undo-receive")

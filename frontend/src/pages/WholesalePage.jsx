@@ -675,7 +675,12 @@ function PendingReceive({ supplierId, onDone }) {
       const proText = pro.length
         ? `／発注済1が空になった${pro.length}件は発注済2を繰り上げました（${pro.map(x => x.sku).join(', ')}）`
         : ''
-      setMsg(`${n}件を入荷しました${done ? `（${done}件の発注が完了）` : ''}${proText}`)
+      const push = r.data.rms_push || {}
+      const pushText = push.items
+        ? (push.fail ? `／楽天へ反映 ${push.ok}件成功・${push.fail}件失敗（在庫・損益ページの補正pushで送り直せます）`
+                     : `／楽天へ ${push.ok}件反映しました`)
+        : ''
+      setMsg(`${n}件を入荷しました${done ? `（${done}件の発注が完了）` : ''}${proText}${pushText}`)
       await load()
       onDone?.()
     } catch (e) {
