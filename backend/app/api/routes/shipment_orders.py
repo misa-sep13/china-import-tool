@@ -185,6 +185,10 @@ async def parse_excel(file: UploadFile = File(...)):
     col_url = col_map.get("商品URL", -1)
     col_price = col_map.get("単価", -1)
     col_qty = col_map.get("数量", -1)
+    # 「お客様管理番号」は商品マスタの customer_memo（お客様専用メモ）と同じ値を
+    # 仕入先が返してくる欄。同じURL・同じ色でも「4色セット」と「オフホワイト4枚」の
+    # ように中身が全く違う商品を区別できる唯一の手掛かりなので必ず読む。
+    col_memo = col_map.get("お客様管理番号", -1)
 
     items_raw = []
     for row in ws.iter_rows(min_row=header_row_idx + 1, values_only=True):
@@ -201,6 +205,7 @@ async def parse_excel(file: UploadFile = File(...)):
             "buy_url": buy_url,
             "unit_price_cny": float(row[col_price] or 0) if col_price >= 0 else 0,
             "qty": int(row[col_qty] or 0) if col_qty >= 0 else 0,
+            "customer_memo": str(row[col_memo] or "").strip() if col_memo >= 0 else "",
         })
 
     return {
@@ -241,6 +246,20 @@ def match_products(items: List[dict], db: Session = Depends(get_db)):
             score += 45
             if url_key_counts.get(product_key, 0) == 1:
                 score += 10
+
+        # 「お客様管理番号」(=商品マスタのお客様専用メモ)は、同じURL・同じ色でも
+        # 中身が違う商品を区別するためにこちらが指定している値なので、
+        # 一致したら色や単価より強く効かせる。
+        # 例: 同じURL・色「乳白色」でも「4色セット」(y47)と「オフホワイト4枚」(y47_white)は別物。
+        # これを見ないと色だけで単色SKUに吸われ、在庫が誤って振り分けられる。
+        item_memo = _norm_text(item.get("customer_memo", ""))
+        product_memo = _norm_text(getattr(product, "customer_memo", "") or "")
+        if item_memo and product_memo:
+            if item_memo == product_memo:
+                score += 80
+            else:
+                # 明示的に別の商品を指しているので、この候補ではない
+                score -= 40
 
         color = _norm_text(item.get("color", ""))
         size = _norm_text(item.get("size", ""))
