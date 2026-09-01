@@ -631,12 +631,17 @@ def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)):
 
     # 分納。1回の入荷で届いた数だけを受け取り、明細には積み上げていく。
     # 指定が無い明細は「残り全部が届いた」とみなす（今までの動きと同じ）。
+    # 明細を1つでも指定してきたら、指定が無いものは0とする。
+    # 「書いていない＝届いていない」が自然だし、一部だけ指定したつもりが
+    # 残り全部を入荷してしまう事故を防ぐ（実際にテストで踏んだ）。
+    # 明細をまったく渡さない場合だけ、残り全部が届いたとみなす。
     recv = {r.item_id: r.received_qty for r in data.items}
+    specified = bool(data.items)
     arrived = {}
     for x in items:
         already = x.received_qty or 0
         remaining = max(0, (x.qty or 0) - already)
-        q = recv.get(x.id, remaining)
+        q = recv.get(x.id, 0 if specified else remaining)
         q = max(0, int(q or 0))
         arrived[x.id] = q
         x.received_qty = already + q
