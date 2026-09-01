@@ -645,10 +645,17 @@ function TemplateEditor({ form, setForm, label, inputStyle, btnSmall, set }) {
   const setSpec = (name, v) =>
     setForm(f => ({ ...f, item_specs: { ...(f.item_specs || {}), [name]: v } }))
 
-  // 型番とシリーズ名は別の欄で入れるので、ここには出さない
+  // ほかで入る項目はここに出さない。二重に入力させないため。
+  //   型番・カラー・サイズ … SKUやバリエーションから自動で入る
+  //   シリーズ名           … 専用の欄がある
+  //   ブランド名・原産国    … 雛形から引き継ぐ
+  // 「原産国／製造国」はスラッシュが全角のことも半角のこともあるので、
+  // 記号を落として比べる
+  const AUTO_FILLED = ['メーカー型番', 'シリーズ名', 'カラー', '代表カラー',
+                       'サイズ', 'ブランド名', '原産国製造国']
+  const norm = t => String(t || '').replace(/[／/・\s]/g, '')
   const names = (info?.attribute_names || [])
-    .filter(n => !['メーカー型番', 'シリーズ名', 'カラー', '代表カラー',
-                   'サイズ', 'ブランド名', '原産国／製造国', '原産国/製造国'].includes(n))
+    .filter(n => !AUTO_FILLED.some(a => norm(a) === norm(n)))
 
   return (
     <div style={{ marginTop: 16, background: '#f8fafc', borderRadius: 6, padding: 12 }}>
