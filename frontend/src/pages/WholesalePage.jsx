@@ -652,15 +652,18 @@ function PendingReceive({ supplierId, onDone }) {
   }
   useEffect(() => { load() }, [supplierId])
 
-  const entered = rows.reduce((a, r) => a + (qty[r.row_id] || 0), 0)
+  const keyOf = (r) => (r.source === 'manual' ? `p${r.product_id}` : `r${r.row_id}`)
+  const entered = rows.reduce((a, r) => a + (qty[keyOf(r)] || 0), 0)
 
   const receive = async () => {
     const items = rows
-      .filter(r => (qty[r.row_id] || 0) > 0)
-      .map(r => ({ row_id: r.row_id, received_qty: qty[r.row_id] }))
+      .filter(r => (qty[keyOf(r)] || 0) > 0)
+      .map(r => (r.source === 'manual'
+        ? { product_id: r.product_id, received_qty: qty[keyOf(r)] }
+        : { row_id: r.row_id, received_qty: qty[keyOf(r)] }))
     if (!items.length) return
-    const lines = rows.filter(r => (qty[r.row_id] || 0) > 0)
-      .map(r => `・${r.name} ${qty[r.row_id]}個`).join('\n')
+    const lines = rows.filter(r => (qty[keyOf(r)] || 0) > 0)
+      .map(r => `・${r.name} ${qty[keyOf(r)]}個`).join('\n')
     const body = '\n' + lines + '\n';
     if (!window.confirm('次の内容で入荷します。' + body + 'よろしいですか？')) return
     setBusy(true); setErr(''); setMsg('')
@@ -676,7 +679,7 @@ function PendingReceive({ supplierId, onDone }) {
     } finally { setBusy(false) }
   }
 
-  const fillAll = () => setQty(Object.fromEntries(rows.map(r => [r.row_id, r.remaining_qty])))
+  const fillAll = () => setQty(Object.fromEntries(rows.map(r => [keyOf(r), r.remaining_qty])))
 
   return (
     <div>
@@ -713,18 +716,22 @@ function PendingReceive({ supplierId, onDone }) {
             </thead>
             <tbody>
               {rows.map(r => (
-                <tr key={r.row_id} style={{ borderTop: '1px solid #f1f5f9' }}>
-                  <td style={{ padding: 8, whiteSpace: 'nowrap', color: '#64748b', fontSize: 12 }}>{r.order_date}</td>
+                <tr key={keyOf(r)} style={{ borderTop: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: 8, whiteSpace: 'nowrap', color: '#64748b', fontSize: 12 }}>
+                    {r.source === 'manual'
+                      ? <span style={{ padding: '1px 6px', borderRadius: 3, background: '#f1f5f9', color: '#475569' }}>手動発注</span>
+                      : r.order_date}
+                  </td>
                   <td style={{ padding: 8 }}>{r.name}</td>
-                  <td style={{ padding: 8, textAlign: 'right', color: '#64748b' }}>{r.qty}</td>
-                  <td style={{ padding: 8, textAlign: 'right', color: '#64748b' }}>{r.received_qty}</td>
+                  <td style={{ padding: 8, textAlign: 'right', color: '#64748b' }}>{r.source === 'manual' ? '—' : r.qty}</td>
+                  <td style={{ padding: 8, textAlign: 'right', color: '#64748b' }}>{r.source === 'manual' ? '—' : r.received_qty}</td>
                   <td style={{ padding: 8, textAlign: 'right', fontWeight: 700, color: '#b45309' }}>{r.remaining_qty}</td>
                   <td style={{ padding: 8, textAlign: 'right' }}>
                     <input type="number" min="0" max={r.remaining_qty}
-                      value={qty[r.row_id] ?? ''} placeholder="0"
+                      value={qty[keyOf(r)] ?? ''} placeholder="0"
                       onChange={e => {
                         const v = Math.max(0, Math.min(r.remaining_qty, Number(e.target.value) || 0))
-                        setQty(q => ({ ...q, [r.row_id]: v }))
+                        setQty(q => ({ ...q, [keyOf(r)]: v }))
                       }}
                       style={{ width: 110, padding: '5px 6px', textAlign: 'right' }} />
                   </td>

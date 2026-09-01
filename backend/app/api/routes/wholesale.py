@@ -695,13 +695,19 @@ def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)):
 
 
 def _log_reflection(db, o, p, qty, before_stock, before_inbound, mode):
-    """在庫反映履歴に残す。どこから動いた在庫かを後で辿れるように。"""
+    """在庫反映履歴に残す。どこから動いた在庫かを後で辿れるように。
+
+    o が None のときは、卸発注を通さず発注済へ手で入れていた分の入荷。
+    どこから来た在庫か後で分かるよう、表示を分けておく。
+    """
     label = "卸入荷" if mode == "add_stock" else "卸入荷(発注済のみ)"
+    if o is None:
+        label = "手動発注の入荷" if mode == "add_stock" else "手動発注の入荷(発注済のみ)"
     db.add(InventoryReflectionLog(
         source="wholesale_receive",
         source_label=label,
-        source_id=o.id,
-        source_ref="卸発注",
+        source_id=o.id if o else None,
+        source_ref="卸発注" if o else "手動発注",
         sku=p.sku,
         name=p.name,
         supplier=p.supplier,
@@ -711,7 +717,8 @@ def _log_reflection(db, o, p, qty, before_stock, before_inbound, mode):
         inbound_before=before_inbound,
         inbound_after=p.inbound or 0,
         rms_push_items=0,
-        note=f"卸発注 {o.order_date} から反映",
+        note=(f"卸発注 {o.order_date} から反映" if o
+              else "発注済へ手で入れていた分を入荷"),
     ))
 
 
@@ -735,11 +742,13 @@ def list_pending_items(supplier_id: Optional[int] = None, db: Session = Depends(
 
     sup = {x.id: x.name for x in db.query(WholesaleSupplier).all()}
     out = []
+    pending_by_product = {}   # 卸発注として残っている数（商品ごと）
     for x, o in rows:
         remaining = max(0, (x.qty or 0) - (x.received_qty or 0))
         if remaining <= 0:
             continue
         out.append({
+            "source": "order",
             "row_id": x.id, "order_id": o.id, "order_date": o.order_date,
             "supplier_id": o.supplier_id, "supplier_name": sup.get(o.supplier_id),
             "item_id": x.item_id, "name": x.name, "item_code": x.item_code,
@@ -747,11 +756,44 @@ def list_pending_items(supplier_id: Optional[int] = None, db: Session = Depends(
             "qty": x.qty or 0, "received_qty": x.received_qty or 0,
             "remaining_qty": remaining,
         })
+        if x.item_id:
+            pending_by_product[x.item_id] = pending_by_product.get(x.item_id, 0) + remaining
+
+    # 卸発注を通さず、発注済へ手で入れた分も入荷できるようにする。
+    # 商品の発注済(inbound)から、卸発注として残っている数を引いた残りが
+    # 「手動で入れた分」。ここを出さないと、手動発注の入荷だけ画面から
+    # できず在庫・損益ページで手作業になってしまう。
+    wq = db.query(WholesaleItem).filter(WholesaleItem.rakuten_product_id.isnot(None))
+    if supplier_id:
+        wq = wq.filter(WholesaleItem.supplier_id == supplier_id)
+    witems = wq.all()
+    pids = {w.rakuten_product_id for w in witems}
+    prods = {p_.id: p_ for p_ in db.query(RakutenProduct)
+             .filter(RakutenProduct.id.in_(pids)).all()} if pids else {}
+    for w in witems:
+        p_ = prods.get(w.rakuten_product_id)
+        if not p_:
+            continue
+        manual = (p_.inbound or 0) - pending_by_product.get(w.id, 0)
+        if manual <= 0:
+            continue
+        out.append({
+            "source": "manual",
+            "row_id": None, "order_id": None, "order_date": None,
+            "product_id": p_.id, "sku": p_.sku,
+            "supplier_id": w.supplier_id, "supplier_name": sup.get(w.supplier_id),
+            "item_id": w.id, "name": p_.name or w.name, "item_code": None,
+            "unit_price": None,
+            "qty": manual, "received_qty": 0, "remaining_qty": manual,
+        })
     return out
 
 
 class ReceiveRowIn(BaseModel):
-    row_id: int              # WholesaleOrderItem の id
+    # 卸発注の明細を入荷するときは row_id、
+    # 発注済へ手で入れていた分を入荷するときは product_id を渡す
+    row_id: Optional[int] = None
+    product_id: Optional[int] = None
     received_qty: int = 0
 
 
@@ -766,13 +808,19 @@ def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
     """入荷待ち一覧から、発注をまたいでまとめて入荷する。"""
     if data.mode not in ("add_stock", "clear_only"):
         raise HTTPException(400, "mode は add_stock か clear_only です")
-    want = {r.row_id: max(0, int(r.received_qty or 0)) for r in data.items if (r.received_qty or 0) > 0}
-    if not want:
+    want = {r.row_id: max(0, int(r.received_qty or 0))
+            for r in data.items if r.row_id and (r.received_qty or 0) > 0}
+    manual = {}
+    for r in data.items:
+        if r.row_id or not r.product_id or (r.received_qty or 0) <= 0:
+            continue
+        manual[r.product_id] = manual.get(r.product_id, 0) + max(0, int(r.received_qty))
+    if not want and not manual:
         raise HTTPException(400, "入荷する数量が入力されていません")
 
     rows = (db.query(WholesaleOrderItem)
-            .filter(WholesaleOrderItem.id.in_(list(want.keys()))).all())
-    if not rows:
+            .filter(WholesaleOrderItem.id.in_(list(want.keys()))).all()) if want else []
+    if not rows and not manual:
         raise HTTPException(404, "対象の明細が見つかりません")
 
     orders = {o.id: o for o in db.query(WholesaleOrder)
@@ -817,6 +865,28 @@ def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
             "inbound_before": before_inbound, "inbound_after": p.inbound or 0,
         })
         _log_reflection(db, orders[r.order_id], p, q, before_stock, before_inbound, data.mode)
+
+    # 卸発注を通さず発注済へ手で入れていた分。発注明細が無いので
+    # 商品の発注済を直接減らし、届いた分を在庫へ入れる。
+    for pid, q in manual.items():
+        p = prod_by_id.get(pid)
+        if not p or q <= 0:
+            continue
+        q = min(q, p.inbound or 0)   # 発注済を超えて入荷はできない
+        if q <= 0:
+            continue
+        before_stock, before_inbound = p.stock or 0, p.inbound or 0
+        if data.mode == "add_stock":
+            p.stock = before_stock + q
+            sku_stock[p.sku] = p.stock
+            updated.add(p.sku)
+        p.inbound = max(0, before_inbound - q)
+        changed.append({
+            "sku": p.sku, "name": p.name, "qty": q, "order_id": None,
+            "stock_before": before_stock, "stock_after": p.stock or 0,
+            "inbound_before": before_inbound, "inbound_after": p.inbound or 0,
+        })
+        _log_reflection(db, None, p, q, before_stock, before_inbound, data.mode)
 
     if updated:
         _recalc_dependent_set_stock(all_products, sku_stock, updated)
