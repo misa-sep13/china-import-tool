@@ -26,7 +26,7 @@ def main():
             pass
 
     print("=" * 54)
-    print(" 楽天への商品登録  初回設定")
+    print(" 楽天の画像アップロード  初回設定")
     print("=" * 54)
     print()
     print("一元管理にログインした状態で F12 → Console に貼り、")
@@ -50,13 +50,12 @@ def main():
     print()
     print("確認しています…")
     req = urllib.request.Request(
-        f"{base.rstrip('/')}/product-drafts/pending-register?limit=1",
+        f"{base.rstrip('/')}/product-drafts?limit=1",
         headers={"Authorization": f"Bearer {token}"})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
-            j = json.load(r)
-        c = j.get("counts", {})
-        print(f"  OK。登録待ち {c.get('ready', 0)}件 / 項目不足 {c.get('incomplete', 0)}件")
+            json.load(r)
+        print("  OK。サーバーに繋がりました")
     except urllib.error.HTTPError as e:
         if e.code == 401:
             raise SystemExit("このトークンでは通りませんでした。取り直してください")
@@ -79,7 +78,7 @@ def main():
     print()
     print(f"保存しました: {CONF}")
     print(f"ブラウザの置き場: {profile}")
-    print("以後は register.py を実行するだけです。")
+    print("以後は upload_images.py を実行するだけです。")
 
 
 if __name__ == "__main__":

@@ -183,11 +183,6 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
             <div><span style={label}>SKU</span><input style={inputStyle} value={form.sku || ''} onChange={set('sku')} /></div>
             <div><span style={label}>販売価格（円）</span><input style={inputStyle} type="number" value={form.price ?? ''} onChange={set('price')} /></div>
             <div>
-              <span style={label}>シリーズ名（商品属性）</span>
-              <input style={inputStyle} value={form.series_name || ''}
-                placeholder="ミラー付きマウスピースケース" onChange={set('series_name')} />
-            </div>
-            <div>
               <span style={label}>楽天ジャンルID</span>
               <input style={inputStyle} value={form.genre_id || ''} onChange={set('genre_id')}
                 placeholder="空なら登録時にライバル商品から取ります" />
@@ -204,9 +199,6 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
               </button>
             )}
           </div>
-
-          <TemplateEditor form={form} setForm={setForm} label={label}
-            inputStyle={inputStyle} btnSmall={btnSmall} set={set} />
 
           <div style={{ marginTop: 12 }}>
             <span style={label}>この商品について（生成の材料）</span>
@@ -228,9 +220,6 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
           {genError && <div style={{ color: '#dc2626', fontSize: 12, marginTop: 6 }}>{genError}</div>}
 
           <ImageEditor draftId={draft.id} label={label} btnSmall={btnSmall} />
-
-          <VariantEditor form={form} setForm={setForm} label={label}
-            inputStyle={inputStyle} btnSmall={btnSmall} />
 
           <div style={{ marginTop: 16, background: '#f8fafc', borderRadius: 6, padding: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 8 }}>仕入れ情報（1688）</div>
@@ -290,110 +279,6 @@ function DraftRow({ draft, open, onToggle, onChanged, genEnabled }) {
             </div>
           )}
         </div>
-      )}
-    </div>
-  )
-}
-
-
-/**
- * バリエーション（色違いなど）の入力。
- *
- * 楽天は「軸（カラー）」と「枝（ホワイト・ネイビー）」で持つので、
- * その形のまま入れてもらう。軸が空なら単品として登録する。
- */
-function VariantEditor({ form, setForm, label, inputStyle, btnSmall }) {
-  const rows = form.variants || []
-  const axis = form.variant_axis || ''
-  const axis2 = form.variant_axis2 || ''
-
-  const setRows = next => setForm(f => ({ ...f, variants: next }))
-  const setRow = (i, key, v) =>
-    setRows(rows.map((r, n) => (n === i ? { ...r, [key]: v } : r)))
-
-  return (
-    <div style={{ marginTop: 16, background: '#f8fafc', borderRadius: 6, padding: 12 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 8 }}>
-        バリエーション（色違い・サイズ違い）
-      </div>
-
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ maxWidth: 220 }}>
-          <span style={label}>軸1の名前</span>
-          <input style={inputStyle} value={axis} placeholder="サイズ / カラー など"
-            onChange={e => setForm(f => ({ ...f, variant_axis: e.target.value }))} />
-        </div>
-        <div style={{ maxWidth: 220 }}>
-          <span style={label}>軸2の名前（無ければ空）</span>
-          <input style={inputStyle} value={axis2} placeholder="種類 / 柄 など"
-            onChange={e => setForm(f => ({ ...f, variant_axis2: e.target.value }))} />
-        </div>
-      </div>
-      <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
-        軸1を空にすると単品として登録します。軸は2つまでです。
-      </div>
-
-      {axis && (
-        <>
-          <table style={{ width: '100%', marginTop: 10, fontSize: 13 }}>
-            <thead>
-              <tr style={{ color: '#64748b', fontSize: 11 }}>
-                <th style={{ textAlign: 'left' }}>{axis || '軸1'}</th>
-                {axis2 && <th style={{ textAlign: 'left' }}>{axis2}</th>}
-                <th style={{ textAlign: 'left', width: 140 }}>枝のID（英数字）</th>
-                <th style={{ textAlign: 'left', width: 110 }}>価格（空=共通）</th>
-                <th style={{ width: 40 }} />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i}>
-                  <td style={{ paddingRight: 6 }}>
-                    <input style={inputStyle} value={r.label || ''} placeholder="M"
-                      onChange={e => setRow(i, 'label', e.target.value)} />
-                  </td>
-                  {axis2 && (
-                    <td style={{ paddingRight: 6 }}>
-                      <input style={inputStyle} value={r.label2 || ''} placeholder="キャット"
-                        onChange={e => setRow(i, 'label2', e.target.value)} />
-                    </td>
-                  )}
-                  <td style={{ paddingRight: 6 }}>
-                    <input style={inputStyle} value={r.suffix || ''} placeholder="m_cat"
-                      onChange={e => setRow(i, 'suffix', e.target.value)} />
-                  </td>
-                  <td style={{ paddingRight: 6 }}>
-                    <input style={inputStyle} type="number" value={r.price ?? ''}
-                      onChange={e => setRow(i, 'price',
-                        e.target.value === '' ? null : Number(e.target.value))} />
-                  </td>
-                  <td>
-                    <button style={btnSmall}
-                      onClick={() => setRows(rows.filter((_, n) => n !== i))}>×</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <button style={{ ...btnSmall, marginTop: 8 }}
-            onClick={() => setRows([...rows, { label: '', label2: '', suffix: '', price: null }])}>
-            ＋ 行を追加
-          </button>
-
-          {form.sku && rows.some(r => r.label) && (
-            <div style={{ fontSize: 11, color: '#64748b', marginTop: 8 }}>
-              楽天にはこの形で登録されます：
-              {rows.filter(r => r.label).slice(0, 4).map((r, i) => (
-                <span key={i} style={{ marginLeft: 6, fontFamily: 'monospace' }}>
-                  {form.sku}_{r.suffix || `v${i + 1}`}
-                  （{axis2 ? `${r.label}-${r.label2 || ''}` : r.label}）
-                </span>
-              ))}
-              {rows.length > 4 && ` …他${rows.length - 4}件`}
-            </div>
-          )}
-        </>
       )}
     </div>
   )
@@ -609,116 +494,4 @@ function DescriptionEditor({ form, setForm, label, inputStyle, btnSmall,
   )
 }
 
-// 配送方法セット。店舗で使っているもの
-const SHIPPING_SETS = [
-  { value: '', label: '雛形のまま' },
-  { value: '4', label: 'ネコポス' },
-  { value: '1', label: '宅急便' },
-  { value: '2', label: '宅急便コンパクト' },
-]
 
-/**
- * 雛形と、ジャンルごとの商品仕様。
- *
- * 商品仕様はジャンルで項目が変わるが、楽天に定義を返すAPIが無い。
- * 雛形にした商品が持っている項目を借りて、入力欄を出す。
- */
-function TemplateEditor({ form, setForm, label, inputStyle, btnSmall, set }) {
-  const [info, setInfo] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const tmpl = (form.template_sku || '').trim()
-  const specs = form.item_specs || {}
-
-  const load = async () => {
-    if (!tmpl) { setInfo(null); return }
-    setLoading(true)
-    try {
-      const r = await api.get('/product-drafts/meta/template-info',
-        { params: { manage_number: tmpl } })
-      setInfo(r.data)
-    } catch {
-      setInfo(null)
-    } finally { setLoading(false) }
-  }
-  useEffect(() => { load() }, [tmpl])
-
-  const setSpec = (name, v) =>
-    setForm(f => ({ ...f, item_specs: { ...(f.item_specs || {}), [name]: v } }))
-
-  // ほかで入る項目はここに出さない。二重に入力させないため。
-  //   型番・カラー・サイズ … SKUやバリエーションから自動で入る
-  //   シリーズ名           … 専用の欄がある
-  //   ブランド名・原産国    … 雛形から引き継ぐ
-  // 「原産国／製造国」はスラッシュが全角のことも半角のこともあるので、
-  // 記号を落として比べる
-  const AUTO_FILLED = ['メーカー型番', 'シリーズ名', 'カラー', '代表カラー',
-                       'サイズ', 'ブランド名', '原産国製造国']
-  const norm = t => String(t || '').replace(/[／/・\s]/g, '')
-  const names = (info?.attribute_names || [])
-    .filter(n => !AUTO_FILLED.some(a => norm(a) === norm(n)))
-
-  return (
-    <div style={{ marginTop: 16, background: '#f8fafc', borderRadius: 6, padding: 12 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 8 }}>
-        雛形・配送・商品仕様
-      </div>
-
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ maxWidth: 220 }}>
-          <span style={label}>雛形にする商品のSKU</span>
-          <input style={inputStyle} value={form.template_sku || ''}
-            placeholder="y96 など" onChange={set('template_sku')} />
-        </div>
-        <div style={{ maxWidth: 220 }}>
-          <span style={label}>配送方法</span>
-          <select style={inputStyle} value={form.shipping_set || ''}
-            onChange={set('shipping_set')}>
-            {SHIPPING_SETS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {loading && <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>読込中…</div>}
-
-      {tmpl && info && !info.found && (
-        <div style={{ fontSize: 11, color: '#b45309', marginTop: 6 }}>
-          {tmpl} をまだ読み込んでいません。手元のPCで次を実行すると、
-          この商品のジャンルの入力欄が出るようになります：
-          <div style={{ fontFamily: 'monospace', marginTop: 2 }}>
-            python read_template.py {tmpl}
-          </div>
-        </div>
-      )}
-
-      {info?.found && (
-        <>
-          <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>
-            ジャンル {info.genre_id}　/　送料・納期・ブランド名・原産国は
-            {tmpl} から引き継ぎます
-          </div>
-
-          {names.length > 0 && (
-            <div style={{ marginTop: 10 }}>
-              <span style={label}>商品仕様（このジャンルの項目）</span>
-              <table style={{ width: '100%', fontSize: 13 }}>
-                <tbody>
-                  {names.map(n => (
-                    <tr key={n}>
-                      <td style={{ width: 160, color: '#475569', paddingRight: 8 }}>{n}</td>
-                      <td>
-                        <input style={inputStyle} value={specs[n] || ''}
-                          onChange={e => setSpec(n, e.target.value)} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
