@@ -658,6 +658,7 @@ def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)):
     sku_stock = {p.sku: (p.stock or 0) for p in all_products}
     updated = set()
     changed = []
+    touched = []          # 発注済2の繰り上げ判定に使う
 
     for x in items:
         p = prods.get(x.item_id)
@@ -677,6 +678,14 @@ def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)):
             "inbound_before": before_inbound, "inbound_after": p.inbound or 0,
         })
         _log_reflection(db, o, p, q, before_stock, before_inbound, data.mode)
+        if p not in touched:
+            touched.append(p)
+
+    # 発注済1を消化しきった商品は発注済2を繰り上げる（入荷待ち一覧と同じ挙動）
+    promoted = []
+    for p_ in touched:
+        if _promote_stage(p_):
+            promoted.append({"sku": p_.sku, "name": p_.name, "inbound": p_.inbound})
 
     if updated:
         _recalc_dependent_set_stock(all_products, sku_stock, updated)
@@ -691,7 +700,21 @@ def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)):
 
     o, items, s = _load(db, oid)
     return {"ok": True, "order": _order_dict(o, items, s),
-            "changed": changed, "unlinked": unlinked}
+            "changed": changed, "unlinked": unlinked, "promoted": promoted}
+
+
+def _promote_stage(p) -> bool:
+    """発注済1が空になったら、発注済2を発注済1へ繰り上げる。
+
+    配送依頼の入荷やメーカー入荷では以前からこうしている。卸発注だけ
+    繰り上げていなかったため、発注済1を入荷しきると発注済2が取り残され、
+    次のロットが入荷待ちに出てこなくなっていた。
+    """
+    if (p.inbound or 0) <= 0 and (p.standard_stock or 0) > 0:
+        p.inbound = p.standard_stock
+        p.standard_stock = 0
+        return True
+    return False
 
 
 def _log_reflection(db, o, p, qty, before_stock, before_inbound, mode):
@@ -840,6 +863,7 @@ def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
 
     sku_stock = {p.sku: (p.stock or 0) for p in all_products}
     updated, changed, unlinked = set(), [], []
+    touched = []          # 発注済2の繰り上げ判定に使う（重複しないよう後で一意化）
 
     for r in rows:
         already = r.received_qty or 0
@@ -865,6 +889,8 @@ def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
             "inbound_before": before_inbound, "inbound_after": p.inbound or 0,
         })
         _log_reflection(db, orders[r.order_id], p, q, before_stock, before_inbound, data.mode)
+        if p not in touched:
+            touched.append(p)
 
     # 卸発注を通さず発注済へ手で入れていた分。発注明細が無いので
     # 商品の発注済を直接減らし、届いた分を在庫へ入れる。
@@ -887,6 +913,16 @@ def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
             "inbound_before": before_inbound, "inbound_after": p.inbound or 0,
         })
         _log_reflection(db, None, p, q, before_stock, before_inbound, data.mode)
+        if p not in touched:
+            touched.append(p)
+
+    # 発注済1を消化しきった商品は、発注済2を繰り上げる。
+    # 行ごとに繰り上げると、同じ商品の次の行が繰り上げ後の数から
+    # 引かれてしまうので、全部処理し終えてからまとめて行う。
+    promoted = []
+    for p_ in touched:
+        if _promote_stage(p_):
+            promoted.append({"sku": p_.sku, "name": p_.name, "inbound": p_.inbound})
 
     if updated:
         _recalc_dependent_set_stock(all_products, sku_stock, updated)
@@ -904,7 +940,7 @@ def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
 
     db.commit()
     return {"ok": True, "changed": changed, "unlinked": unlinked,
-            "completed_orders": completed}
+            "completed_orders": completed, "promoted": promoted}
 
 
 @router.post("/orders/{oid:int}/undo-receive")

@@ -671,7 +671,11 @@ function PendingReceive({ supplierId, onDone }) {
       const r = await api.post('/wholesale/receive-items', { mode, items })
       const n = (r.data.changed || []).length
       const done = (r.data.completed_orders || []).length
-      setMsg(`${n}件を入荷しました${done ? `（${done}件の発注が完了）` : ''}`)
+      const pro = r.data.promoted || []
+      const proText = pro.length
+        ? `／発注済1が空になった${pro.length}件は発注済2を繰り上げました（${pro.map(x => x.sku).join(', ')}）`
+        : ''
+      setMsg(`${n}件を入荷しました${done ? `（${done}件の発注が完了）` : ''}${proText}`)
       await load()
       onDone?.()
     } catch (e) {
