@@ -186,8 +186,10 @@ export default function WholesalePage() {
       setReceiving({
         order: r.data,
         mode: 'add_stock',
-        // 届いた数は発注数から始める。欠品や分納なら画面で直す
-        qty: Object.fromEntries(r.data.items.map(i => [i.id, i.qty])),
+        // 届いた数は「残り」から始める。分納の2回目以降は、まだ来ていない
+        // 数が既定になるので、届いた分だけ減らせばよい
+        qty: Object.fromEntries(r.data.items.map(
+          i => [i.id, Math.max(0, (i.qty || 0) - (i.received_qty || 0))])),
       })
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
@@ -387,7 +389,11 @@ export default function WholesalePage() {
                     ? <span style={{ color: '#16a34a' }}>
                         入荷済{o.received_mode === 'clear_only' ? '（発注済のみ）' : ''}
                       </span>
-                    : <span style={{ color: '#94a3b8' }}>—</span>}
+                    : o.receive_status === 'partial'
+                      ? <span style={{ color: '#b45309', fontWeight: 700 }}>
+                          一部入荷（残り{o.remaining_qty}個）
+                        </span>
+                      : <span style={{ color: '#94a3b8' }}>—</span>}
                 </td>
                 <td style={{ fontSize: 12 }}>{o.sent_to || '—'}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
@@ -397,9 +403,11 @@ export default function WholesalePage() {
                   </button>
                   {!o.received_at && (
                     <button className="btn btn-primary" style={{ marginLeft: 6 }}
-                      onClick={() => openReceive(o.id)}>入荷</button>
+                      onClick={() => openReceive(o.id)}>
+                      {o.receive_status === 'partial' ? '続けて入荷' : '入荷'}
+                    </button>
                   )}
-                  {o.received_at && (
+                  {(o.received_at || o.receive_status === 'partial') && (
                     <button className="btn btn-secondary" style={{ marginLeft: 6 }}
                       onClick={() => undoReceive(o.id)}>入荷を取消</button>
                   )}
@@ -639,7 +647,9 @@ function ReceiveDialog({ r, busy, onChange, onReceive, onClose }) {
             <tr style={{ background: '#f8fafc' }}>
               <th style={{ textAlign: 'left', padding: 6 }}>商品名</th>
               <th style={{ textAlign: 'right', padding: 6 }}>発注数</th>
-              <th style={{ textAlign: 'right', padding: 6, width: 120 }}>届いた数</th>
+              <th style={{ textAlign: 'right', padding: 6 }}>入荷済</th>
+              <th style={{ textAlign: 'right', padding: 6 }}>残り</th>
+              <th style={{ textAlign: 'right', padding: 6, width: 120 }}>今回届いた数</th>
             </tr>
           </thead>
           <tbody>
@@ -647,6 +657,11 @@ function ReceiveDialog({ r, busy, onChange, onReceive, onClose }) {
               <tr key={i.id}>
                 <td style={{ padding: 6 }}>{i.name}</td>
                 <td style={{ textAlign: 'right', padding: 6, color: '#64748b' }}>{i.qty}</td>
+                <td style={{ textAlign: 'right', padding: 6, color: '#64748b' }}>{i.received_qty || 0}</td>
+                <td style={{ textAlign: 'right', padding: 6, fontWeight: 600,
+                  color: (i.qty || 0) - (i.received_qty || 0) > 0 ? '#b45309' : '#16a34a' }}>
+                  {Math.max(0, (i.qty || 0) - (i.received_qty || 0))}
+                </td>
                 <td style={{ textAlign: 'right', padding: 6 }}>
                   <input type="number" min="0" value={r.qty[i.id] ?? 0}
                     onChange={e => onChange({ ...r,
@@ -681,6 +696,10 @@ function ReceiveDialog({ r, busy, onChange, onReceive, onClose }) {
 
         <div style={{ fontSize: 13, color: '#64748b' }}>
           合計 {totalQty} 個を入荷します
+        </div>
+        <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>
+          分納のときは、今回届いた数だけ入れてください。残りがある間は
+          「一部入荷」として残るので、次に届いたらまた入荷できます。
         </div>
 
         <div style={{ display: 'flex', gap: 10, marginTop: 20, justifyContent: 'flex-end' }}>

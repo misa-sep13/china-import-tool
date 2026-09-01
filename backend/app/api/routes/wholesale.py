@@ -233,7 +233,18 @@ def _order_dict(o, items=None, supplier=None):
             "jan_code": x.jan_code, "name": x.name, "unit_price": x.unit_price,
             "qty": x.qty, "amount": x.amount, "note": x.note,
             "received_qty": x.received_qty or 0,
+            "remaining_qty": max(0, (x.qty or 0) - (x.received_qty or 0)),
         } for x in items]
+        # 分納があるので「まだ来ていない数」を持たせる。
+        # 全部届いて初めて received_at が入る（＝入荷済み）。
+        d["remaining_qty"] = sum(i["remaining_qty"] for i in d["items"])
+        d["received_total"] = sum(i["received_qty"] for i in d["items"])
+        if o.received_at:
+            d["receive_status"] = "received"
+        elif d["received_total"] > 0:
+            d["receive_status"] = "partial"
+        else:
+            d["receive_status"] = "none"
     return d
 
 
@@ -257,7 +268,34 @@ def list_orders(supplier_id: Optional[int] = None, limit: int = 100,
         q = q.filter(WholesaleOrder.supplier_id == supplier_id)
     rows = q.order_by(WholesaleOrder.id.desc()).limit(limit).all()
     sup = {s.id: s for s in db.query(WholesaleSupplier).all()}
-    return [_order_dict(o, supplier=sup.get(o.supplier_id)) for o in rows]
+
+    # 分納の途中かどうかを一覧でも出す。明細を全部返すと重いので、
+    # 発注ごとの合計だけを1クエリでまとめて取る。
+    from sqlalchemy import func as sqlfunc
+    ids = [o.id for o in rows]
+    totals = {}
+    if ids:
+        for oid_, ordered, received in (
+            db.query(WholesaleOrderItem.order_id,
+                     sqlfunc.sum(WholesaleOrderItem.qty),
+                     sqlfunc.sum(WholesaleOrderItem.received_qty))
+            .filter(WholesaleOrderItem.order_id.in_(ids))
+            .group_by(WholesaleOrderItem.order_id).all()
+        ):
+            totals[oid_] = (int(ordered or 0), int(received or 0))
+
+    out = []
+    for o in rows:
+        d = _order_dict(o, supplier=sup.get(o.supplier_id))
+        ordered, received = totals.get(o.id, (0, 0))
+        d["ordered_total"] = ordered
+        d["received_total"] = received
+        d["remaining_qty"] = max(0, ordered - received)
+        d["receive_status"] = (
+            "received" if o.received_at else ("partial" if received > 0 else "none")
+        )
+        out.append(d)
+    return out
 
 
 @router.get("/orders/{oid:int}")
@@ -591,10 +629,19 @@ def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)):
     if data.mode not in ("add_stock", "clear_only"):
         raise HTTPException(400, "mode は add_stock か clear_only です")
 
-    # 画面から届いた数が来ていればそれを使う。無ければ発注数どおり
+    # 分納。1回の入荷で届いた数だけを受け取り、明細には積み上げていく。
+    # 指定が無い明細は「残り全部が届いた」とみなす（今までの動きと同じ）。
     recv = {r.item_id: r.received_qty for r in data.items}
+    arrived = {}
     for x in items:
-        x.received_qty = recv.get(x.id, x.qty) or 0
+        already = x.received_qty or 0
+        remaining = max(0, (x.qty or 0) - already)
+        q = recv.get(x.id, remaining)
+        q = max(0, int(q or 0))
+        arrived[x.id] = q
+        x.received_qty = already + q
+    if not any(arrived.values()):
+        raise HTTPException(400, "入荷する数量が入力されていません")
 
     prods = _linked_products(db, items)
     unlinked = [x.name for x in items if x.item_id not in prods]
@@ -609,7 +656,7 @@ def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)):
 
     for x in items:
         p = prods.get(x.item_id)
-        q = x.received_qty or 0
+        q = arrived.get(x.id, 0)   # 累計ではなく今回届いた分だけ動かす
         if not p or not q:
             continue
         before_stock, before_inbound = p.stock or 0, p.inbound or 0
@@ -629,7 +676,9 @@ def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)):
     if updated:
         _recalc_dependent_set_stock(all_products, sku_stock, updated)
 
-    o.received_at = datetime.now(timezone.utc)
+    # まだ残りがあるうちは入荷済みにしない（また入荷できるようにするため）
+    fully_received = all((x.received_qty or 0) >= (x.qty or 0) for x in items)
+    o.received_at = datetime.now(timezone.utc) if fully_received else None
     o.received_mode = data.mode
     if data.note:
         o.memo = ((o.memo or "") + "\n" + data.note).strip()
@@ -663,9 +712,14 @@ def _log_reflection(db, o, p, qty, before_stock, before_inbound, mode):
 
 @router.post("/orders/{oid:int}/undo-receive")
 def undo_receive(oid: int, db: Session = Depends(get_db)):
-    """入荷を取り消す。押し間違えたときのため。"""
+    """入荷を取り消す。押し間違えたときのため。
+
+    分納で複数回入荷していても、これまでに受け取った分をまとめて戻す。
+    received_qty も0に戻さないと、次に入荷したとき二重に積み上がる。
+    """
     o, items, _ = _load(db, oid)
-    if not o.received_at:
+    received_total = sum(x.received_qty or 0 for x in items)
+    if not o.received_at and received_total <= 0:
         raise HTTPException(400, "まだ入荷していません")
 
     prods = _linked_products(db, items)
@@ -673,10 +727,12 @@ def undo_receive(oid: int, db: Session = Depends(get_db)):
         p = prods.get(x.item_id)
         q = x.received_qty or 0
         if not p or not q:
+            x.received_qty = 0
             continue
         if o.received_mode == "add_stock":
             p.stock = max(0, (p.stock or 0) - q)
         p.inbound = (p.inbound or 0) + q
+        x.received_qty = 0
 
     o.received_at = None
     o.received_mode = None
