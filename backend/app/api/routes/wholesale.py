@@ -715,6 +715,128 @@ def _log_reflection(db, o, p, qty, before_stock, before_inbound, mode):
     ))
 
 
+# ---------- 入荷待ち一覧（分納をまとめて処理する） ----------
+#
+# 発注どおりに一度で届くことは少なく、何回かに分かれて届く。
+# 発注を1件ずつ開いて入荷するのは分納が続くと手間なので、
+# まだ届いていない明細を発注をまたいで1画面に並べ、届いた分だけ
+# 入力してまとめて処理できるようにする。
+
+@router.get("/pending-items")
+def list_pending_items(supplier_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """まだ届いていない明細を、発注をまたいで返す。"""
+    q = (db.query(WholesaleOrderItem, WholesaleOrder)
+         .join(WholesaleOrder, WholesaleOrderItem.order_id == WholesaleOrder.id)
+         .filter(WholesaleOrder.received_at.is_(None)))
+    if supplier_id:
+        q = q.filter(WholesaleOrder.supplier_id == supplier_id)
+    rows = q.order_by(WholesaleOrder.order_date.asc(), WholesaleOrder.id.asc(),
+                      WholesaleOrderItem.sort_order, WholesaleOrderItem.id).all()
+
+    sup = {x.id: x.name for x in db.query(WholesaleSupplier).all()}
+    out = []
+    for x, o in rows:
+        remaining = max(0, (x.qty or 0) - (x.received_qty or 0))
+        if remaining <= 0:
+            continue
+        out.append({
+            "row_id": x.id, "order_id": o.id, "order_date": o.order_date,
+            "supplier_id": o.supplier_id, "supplier_name": sup.get(o.supplier_id),
+            "item_id": x.item_id, "name": x.name, "item_code": x.item_code,
+            "unit_price": x.unit_price,
+            "qty": x.qty or 0, "received_qty": x.received_qty or 0,
+            "remaining_qty": remaining,
+        })
+    return out
+
+
+class ReceiveRowIn(BaseModel):
+    row_id: int              # WholesaleOrderItem の id
+    received_qty: int = 0
+
+
+class ReceiveItemsIn(BaseModel):
+    mode: str = "add_stock"
+    items: List[ReceiveRowIn] = []
+    note: Optional[str] = None
+
+
+@router.post("/receive-items")
+def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
+    """入荷待ち一覧から、発注をまたいでまとめて入荷する。"""
+    if data.mode not in ("add_stock", "clear_only"):
+        raise HTTPException(400, "mode は add_stock か clear_only です")
+    want = {r.row_id: max(0, int(r.received_qty or 0)) for r in data.items if (r.received_qty or 0) > 0}
+    if not want:
+        raise HTTPException(400, "入荷する数量が入力されていません")
+
+    rows = (db.query(WholesaleOrderItem)
+            .filter(WholesaleOrderItem.id.in_(list(want.keys()))).all())
+    if not rows:
+        raise HTTPException(404, "対象の明細が見つかりません")
+
+    orders = {o.id: o for o in db.query(WholesaleOrder)
+              .filter(WholesaleOrder.id.in_({r.order_id for r in rows})).all()}
+
+    from app.api.routes.rakuten import _recalc_dependent_set_stock
+    all_products = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    by_item = {}
+    links = {w.id: w.rakuten_product_id for w in db.query(WholesaleItem)
+             .filter(WholesaleItem.id.in_({r.item_id for r in rows if r.item_id})).all()
+             if w.rakuten_product_id}
+    prod_by_id = {p.id: p for p in all_products}
+    for r in rows:
+        pid = links.get(r.item_id)
+        if pid and pid in prod_by_id:
+            by_item[r.id] = prod_by_id[pid]
+
+    sku_stock = {p.sku: (p.stock or 0) for p in all_products}
+    updated, changed, unlinked = set(), [], []
+
+    for r in rows:
+        already = r.received_qty or 0
+        remaining = max(0, (r.qty or 0) - already)
+        q = min(want[r.id], remaining) if remaining > 0 else 0
+        if q <= 0:
+            continue
+        r.received_qty = already + q
+        p = by_item.get(r.id)
+        if not p:
+            unlinked.append(r.name)
+            continue
+        before_stock, before_inbound = p.stock or 0, p.inbound or 0
+        if data.mode == "add_stock":
+            p.stock = before_stock + q
+            sku_stock[p.sku] = p.stock
+            updated.add(p.sku)
+        p.inbound = max(0, before_inbound - q)
+        changed.append({
+            "sku": p.sku, "name": p.name, "qty": q,
+            "order_id": r.order_id,
+            "stock_before": before_stock, "stock_after": p.stock or 0,
+            "inbound_before": before_inbound, "inbound_after": p.inbound or 0,
+        })
+        _log_reflection(db, orders[r.order_id], p, q, before_stock, before_inbound, data.mode)
+
+    if updated:
+        _recalc_dependent_set_stock(all_products, sku_stock, updated)
+
+    # 発注ごとに、全部届いたかを見て入荷済みにする
+    completed = []
+    for oid_, o in orders.items():
+        its = db.query(WholesaleOrderItem).filter(WholesaleOrderItem.order_id == oid_).all()
+        if its and all((x.received_qty or 0) >= (x.qty or 0) for x in its):
+            o.received_at = datetime.now(timezone.utc)
+            o.received_mode = data.mode
+            completed.append(oid_)
+        if data.note:
+            o.memo = (chr(10).join(x for x in [(o.memo or ''), data.note] if x)).strip()
+
+    db.commit()
+    return {"ok": True, "changed": changed, "unlinked": unlinked,
+            "completed_orders": completed}
+
+
 @router.post("/orders/{oid:int}/undo-receive")
 def undo_receive(oid: int, db: Session = Depends(get_db)):
     """入荷を取り消す。押し間違えたときのため。

@@ -252,7 +252,7 @@ export default function WholesalePage() {
       )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        {[['order', '📝 発注する'], ['history', '📋 発注履歴'], ['master', '⚙️ 商品・取引先']].map(([k, l]) => (
+        {[['order', '📝 発注する'], ['pending', '📥 入荷待ち'], ['history', '📋 発注履歴'], ['master', '⚙️ 商品・取引先']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`btn ${tab === k ? 'btn-primary' : 'btn-secondary'}`}>{l}</button>
         ))}
@@ -364,6 +364,10 @@ export default function WholesalePage() {
             </button>
           </div>
         </>
+      )}
+
+      {tab === 'pending' && (
+        <PendingReceive supplierId={supplierId} onDone={() => { load(); setTab('pending') }} />
       )}
 
       {tab === 'history' && (
@@ -616,6 +620,148 @@ function WholesaleMaster({ suppliers, supplierId, items, onChanged }) {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 入荷待ち一覧。
+ *
+ * 分納が続くと発注を1件ずつ開くのが手間なので、まだ届いていない明細を
+ * 発注をまたいで並べ、届いた分だけ入力してまとめて処理する。
+ */
+function PendingReceive({ supplierId, onDone }) {
+  const [rows, setRows] = useState([])
+  const [qty, setQty] = useState({})
+  const [mode, setMode] = useState('add_stock')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [msg, setMsg] = useState('')
+
+  const load = async () => {
+    setBusy(true); setErr('')
+    try {
+      const q = supplierId ? `?supplier_id=${supplierId}` : ''
+      const r = await api.get(`/wholesale/pending-items${q}`)
+      setRows(r.data || [])
+      setQty({})
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+  useEffect(() => { load() }, [supplierId])
+
+  const entered = rows.reduce((a, r) => a + (qty[r.row_id] || 0), 0)
+
+  const receive = async () => {
+    const items = rows
+      .filter(r => (qty[r.row_id] || 0) > 0)
+      .map(r => ({ row_id: r.row_id, received_qty: qty[r.row_id] }))
+    if (!items.length) return
+    const lines = rows.filter(r => (qty[r.row_id] || 0) > 0)
+      .map(r => `・${r.name} ${qty[r.row_id]}個`).join('\n')
+    const body = '\n' + lines + '\n';
+    if (!window.confirm('次の内容で入荷します。' + body + 'よろしいですか？')) return
+    setBusy(true); setErr(''); setMsg('')
+    try {
+      const r = await api.post('/wholesale/receive-items', { mode, items })
+      const n = (r.data.changed || []).length
+      const done = (r.data.completed_orders || []).length
+      setMsg(`${n}件を入荷しました${done ? `（${done}件の発注が完了）` : ''}`)
+      await load()
+      onDone?.()
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  const fillAll = () => setQty(Object.fromEntries(rows.map(r => [r.row_id, r.remaining_qty])))
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+        <button className="btn btn-secondary" onClick={load} disabled={busy}>更新</button>
+        <button className="btn btn-secondary" onClick={fillAll} disabled={busy || !rows.length}>
+          全部「残り」を入れる
+        </button>
+        <button className="btn btn-secondary" onClick={() => setQty({})} disabled={busy}>入力をクリア</button>
+        <span style={{ fontSize: 13, color: '#64748b' }}>未入荷 {rows.length} 明細</span>
+      </div>
+
+      {err && <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 10 }}>{err}</div>}
+      {msg && <div style={{ color: '#16a34a', fontSize: 13, marginBottom: 10 }}>{msg}</div>}
+
+      {!rows.length && !busy && (
+        <div style={{ padding: 20, background: '#f8fafc', borderRadius: 8, color: '#64748b', fontSize: 13 }}>
+          入荷待ちの明細はありません。
+        </div>
+      )}
+
+      {!!rows.length && (
+        <>
+          <table style={{ width: '100%', fontSize: 14, marginBottom: 16 }}>
+            <thead>
+              <tr style={{ background: '#f8fafc' }}>
+                <th style={{ textAlign: 'left', padding: 8 }}>発注日</th>
+                <th style={{ textAlign: 'left', padding: 8 }}>商品名</th>
+                <th style={{ textAlign: 'right', padding: 8 }}>発注数</th>
+                <th style={{ textAlign: 'right', padding: 8 }}>入荷済</th>
+                <th style={{ textAlign: 'right', padding: 8 }}>残り</th>
+                <th style={{ textAlign: 'right', padding: 8, width: 130 }}>今回届いた数</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.row_id} style={{ borderTop: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: 8, whiteSpace: 'nowrap', color: '#64748b', fontSize: 12 }}>{r.order_date}</td>
+                  <td style={{ padding: 8 }}>{r.name}</td>
+                  <td style={{ padding: 8, textAlign: 'right', color: '#64748b' }}>{r.qty}</td>
+                  <td style={{ padding: 8, textAlign: 'right', color: '#64748b' }}>{r.received_qty}</td>
+                  <td style={{ padding: 8, textAlign: 'right', fontWeight: 700, color: '#b45309' }}>{r.remaining_qty}</td>
+                  <td style={{ padding: 8, textAlign: 'right' }}>
+                    <input type="number" min="0" max={r.remaining_qty}
+                      value={qty[r.row_id] ?? ''} placeholder="0"
+                      onChange={e => {
+                        const v = Math.max(0, Math.min(r.remaining_qty, Number(e.target.value) || 0))
+                        setQty(q => ({ ...q, [r.row_id]: v }))
+                      }}
+                      style={{ width: 110, padding: '5px 6px', textAlign: 'right' }} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div style={{ display: 'grid', gap: 10, marginBottom: 16 }}>
+            {[
+              ['add_stock', '実在庫に足す', 'ふつうの入荷。届いた数を在庫へ加算し、発注済から減らします'],
+              ['clear_only', '発注済を消すだけ', 'すでに在庫へ入れてある場合。在庫は動かさず、発注済だけ減らします'],
+            ].map(([k, label, desc]) => (
+              <label key={k} style={{ display: 'flex', gap: 10, alignItems: 'flex-start',
+                padding: 12, borderRadius: 6, cursor: 'pointer',
+                border: mode === k ? '2px solid #2563eb' : '1px solid #e5e7eb',
+                background: mode === k ? '#eff6ff' : '#fff' }}>
+                <input type="radio" checked={mode === k} style={{ marginTop: 3 }}
+                  onChange={() => setMode(k)} />
+                <div>
+                  <div style={{ fontWeight: 600 }}>{label}</div>
+                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{desc}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <button className="btn btn-primary" disabled={busy || !entered}
+              onClick={receive} style={{ padding: '10px 28px' }}>
+              {busy ? '処理中…' : `入荷する（計 ${entered} 個）`}
+            </button>
+            <span style={{ fontSize: 12, color: '#64748b' }}>
+              入力した明細だけを処理します。全部届いた発注は自動で「入荷済」になります。
+            </span>
+          </div>
+        </>
       )}
     </div>
   )
