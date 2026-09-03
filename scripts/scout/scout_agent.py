@@ -120,6 +120,8 @@ def main():
     ap.add_argument("--interval", type=int, default=DEFAULT_INTERVAL,
                     help="依頼を確認する間隔（秒）")
     ap.add_argument("--once", action="store_true", help="1件処理したら終わる")
+    ap.add_argument("--timeout", type=int, default=0,
+                    help="依頼が来なければ何秒であきらめるか（0なら待ち続ける）")
     args = ap.parse_args()
 
     conf = load_conf()
@@ -129,12 +131,21 @@ def main():
     if not token:
         raise SystemExit("トークンがありません。【初回設定】.bat を実行してください")
 
-    log(f"常駐を開始しました（{run_by} / {args.interval}秒ごとに確認）")
-    log("一元管理の「競合リサーチ」で『更新する』を押すと、ここで巡回が始まります")
-    log("止めるときはこのウィンドウを閉じてください")
+    if args.timeout:
+        log(f"巡回の依頼を確認しています（{run_by}）")
+    else:
+        log(f"常駐を開始しました（{run_by} / {args.interval}秒ごとに確認）")
+        log("一元管理の「競合リサーチ」で『更新する』を押すと、ここで巡回が始まります")
+        log("止めるときはこのウィンドウを閉じてください")
 
     quiet_errors = 0
+    started = time.time()
     while True:
+        # ボタンから呼ばれたときは、依頼が無ければすぐ引き下がる。
+        # 常駐と同時に動いていると、先に取ったほうだけが回ることになる
+        if args.timeout and time.time() - started > args.timeout:
+            log("依頼が見つかりませんでした。常駐が先に受け取ったのかもしれません")
+            return
         try:
             r = api(base, f"/scout/crawl-request?run_by={urllib.parse.quote(run_by)}",
                     token)
