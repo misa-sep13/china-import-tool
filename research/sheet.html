@@ -6492,20 +6492,22 @@ if(FIREBASE_CONFIG.databaseURL){
       const j = await (await fetch(API + '/basket', {cache:'no-store', headers: apiHeaders()})).json();
       const rows = j.rows || [];
       if(!rows.length) return 0;
-      // リサーチ名は、拾ってきた商品のライバル商品名をそのまま入れる。
-      // 何を調べているのか一目で分かるようにするため（あとで自由に直せる）。
-      // 複数まとめて取り込んだときは、先頭の商品名＋残りの件数にする。
-      const first = (rows[0].competitor || '').trim() || 'セラースカウトから取り込み';
-      const res = defaultResearch();
-      res.title = rows.length > 1 ? `${first} 他${rows.length - 1}件` : first;
+      // 1商品につき1リサーチを作る。まとめて拾っても中身は別々の商品なので、
+      // ひとつのリサーチに入れると何を調べていたのか分からなくなる。
+      // リサーチ名はその商品のライバル商品名をそのまま入れる
+      // （何を調べているのか一目で分かるように。あとで自由に直せる）。
       // 「管理者からのコメント」は人が書く欄なので、こちらでは埋めない
-      res.rows = rows.map(src => {
+      const made = rows.map(src => {
         const dst = defaultRow();
         ['asin','image','competitor','monthlySales','reviewCount','reviewRate','price','note']
           .forEach(k => { if(src[k] !== '' && src[k] != null) dst[k] = src[k]; });
-        return dst;
+        const res = defaultResearch();
+        res.title = (src.competitor || '').trim() || 'セラースカウトから取り込み';
+        res.rows = [dst];
+        return res;
       });
-      state.researches.unshift(res);
+      // 拾った順に上から並ぶよう、後ろから積む
+      made.slice().reverse().forEach(r => state.researches.unshift(r));
       // リサーチ中以外で絞り込んでいると取り込んだ枠が見えないので、リサーチ中の表示に切り替える
       if(statusFilter !== 'all' && statusFilter !== 'active'){
         statusFilter = 'active';
@@ -6517,7 +6519,9 @@ if(FIREBASE_CONFIG.databaseURL){
       render(); scheduleSave();
       try{ window.scrollTo({top: 0, behavior:'smooth'}); }catch(e){}
       alert(`セラースカウトから ${rows.length} 件を取り込みました。\n`
-          + `「${res.title}」として新しいリサーチを作りました。`
+          + (made.length > 1
+             ? `それぞれ別のリサーチとして ${made.length} 件作りました。`
+             : `「${made[0].title}」として新しいリサーチを作りました。`)
           + (document.body.classList.contains('sp-ready')
              ? '\n続けてSP-APIから寸法・重量・手数料を取り込みます。' : ''));
 
@@ -6525,7 +6529,7 @@ if(FIREBASE_CONFIG.databaseURL){
       // 打鍵が無いので走らない。取り込んだ直後にこちらから呼んでおく。
       // (寸法・重量・手数料・商品仕様はSP-APIでしか埋まらないため)
       if(document.body.classList.contains('sp-ready')){
-        for(const r of res.rows){
+        for(const r of made.map(x => x.rows[0])){
           try{
             await spFetchRow(r, false);        // 既に入っている値は上書きしない
             r.spAutoAsin = (r.asin || '').trim().toUpperCase();
