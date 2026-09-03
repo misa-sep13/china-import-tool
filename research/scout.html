@@ -711,13 +711,23 @@ $("#btnCapped").addEventListener("click", async ()=>{
       body:JSON.stringify({ sellers: CAPPED.map(c=>c.seller_id), pages: 30,
                             early_stop:true, fast: pace==="fast",
                             slow: pace==="slow", hidden:true })})).json();
-  toast(r.message); lastRunning = true; poll();
+  toast(r.message);
+  if(r.ok) kickLocal();
+  lastRunning = true; poll();
 });
 $("#btnResolve").addEventListener("click", async ()=>{
   const r = await (await fetch("/api/resolve",{method:"POST",
       headers:{"Content-Type":"application/json"}, body:"{}"})).json();
   toast(r.message); lastRunning = true; poll();
 });
+// 押した瞬間にこのPCで巡回を始めるための合図。
+// ブラウザからプログラムは直接は起動できないので、Windowsに登録しておいた
+// scout:// のリンクを開くことで起動する（【ボタンから起動できるようにする】.bat）。
+// 登録していないPCでは何も起きない。その場合は常駐が拾うので、どちらでも動く。
+function kickLocal(){
+  try { window.location.href = "scout://crawl"; } catch(e) { /* 未登録なら何も起きない */ }
+}
+
 $("#btnRun").addEventListener("click", async ()=>{
   const scope = $("#scope").value, pace = $("#pace").value;
   const [pg, es] = $("#pages").value.split(":");
@@ -732,6 +742,7 @@ $("#btnRun").addEventListener("click", async ()=>{
   const r = await (await fetch("/api/crawl",{method:"POST",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)})).json();
   toast(r.message);
+  if(r.ok) kickLocal();
   lastRunning = true; poll();
 });
 $("#btnStop").addEventListener("click", async ()=>{
