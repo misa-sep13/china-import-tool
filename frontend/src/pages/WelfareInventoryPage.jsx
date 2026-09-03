@@ -518,7 +518,17 @@ export default function WelfareInventoryPage() {
 
   return (
     <div>
-      <h1>就労支援在庫</h1>
+      {/* 自社宛の航空便は就労支援さんを経由しない。配送依頼には載るので、
+          そのまま入荷処理をすると実在庫とズレる（実際に起きた） */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <h1 style={{ margin: 0 }}>就労支援在庫</h1>
+        <span style={{
+          border: '1px solid #fca5a5', background: '#fef2f2', color: '#b91c1c',
+          borderRadius: 6, padding: '4px 10px', fontSize: 13, fontWeight: 700,
+        }}>
+          ⚠ 自社宛の航空便は入荷処理をしないでください
+        </span>
+      </div>
 
       <div className="top-actions">
         <input
