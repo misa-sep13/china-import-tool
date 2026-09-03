@@ -7,8 +7,8 @@ Chrome・Edge・Brave・Firefox の全プロファイルから
 `https://www.amazon.co.jp/sp?seller=XXXX` の形のブックマークを拾う。
 
 使い方:
-  python push_sellers.py --token <ログイン後のトークン>
-  python push_sellers.py --token <...> --dry-run     # 送らずに中身だけ見る
+  python push_sellers.py                            # 初回設定済みなら引数不要
+  python push_sellers.py --dry-run                   # 送らずに中身だけ見る
 """
 import argparse
 import json
@@ -19,6 +19,7 @@ import urllib.request
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -61,10 +62,29 @@ def collect_all():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base", default=os.environ.get("SCOUT_API", DEFAULT_BASE))
+    ap.add_argument("--base", default=os.environ.get("SCOUT_API", ""))
     ap.add_argument("--token", default=os.environ.get("APP_TOKEN", ""))
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+
+    # setup.py で保存した設定を使う。sync_server.py と同じ置き場所・同じ優先順。
+    # これが無いと、初回設定を済ませてもここだけトークンを手で貼ることになる。
+    conf = {}
+    conf_path = os.path.join(os.path.expanduser("~"), ".scout_config.json")
+    if os.path.exists(conf_path):
+        try:
+            with open(conf_path, encoding="utf-8") as f:
+                conf = json.load(f)
+        except Exception:
+            pass
+    base = (args.base or conf.get("base") or DEFAULT_BASE).rstrip("/")
+    args.token = args.token or conf.get("token", "")
+
+    # 送らない --dry-run はトークン無しでも動かせる（中身の確認用）
+    if not args.token and not args.dry_run:
+        raise SystemExit(
+            "トークンがありません。先に【初回設定】を実行してください"
+            "（コマンドなら python setup.py）")
 
     print("ブックマークを探しています…")
     sellers, asins = collect_all()
@@ -104,7 +124,7 @@ def main():
     if args.token:
         headers["Authorization"] = f"Bearer {args.token}"
     req = urllib.request.Request(
-        f"{args.base.rstrip('/')}/scout/sellers/bulk",
+        f"{base}/scout/sellers/bulk",
         data=json.dumps(payload, ensure_ascii=False).encode(),
         headers=headers, method="POST")
     try:
@@ -114,9 +134,15 @@ def main():
     except urllib.error.HTTPError as e:
         body = e.read().decode()[:300]
         if e.code == 401:
-            print("認証エラー: --token にログイン後のトークンを渡してください")
+            print("認証エラー: トークンが古いか間違っています。【初回設定】をやり直してください")
         else:
             print(f"エラー {e.code}: {body}")
+        return 1
+    except urllib.error.URLError as e:
+        # ネットが切れている・サーバーが起きていない場合。
+        # そのままだとPythonのトレースバックが出て、原因が分からなくなる
+        print(f"サーバーに繋がりませんでした（{e.reason}）")
+        print("ネット接続を確認して、もう一度実行してください")
         return 1
     return 0
 
