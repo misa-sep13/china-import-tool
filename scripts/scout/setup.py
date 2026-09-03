@@ -41,7 +41,10 @@ def check(base, token):
             return json.load(res).get("total", 0)
     except urllib.error.HTTPError as e:
         if e.code == 401:
-            raise SystemExit("このトークンでは通りませんでした。取り直してください")
+            raise SystemExit(
+                "このトークンでは通りませんでした。\n"
+                "  ・貼り付けが途中で切れていないか（上の文字数を確認）\n"
+                "  ・ログアウトして入り直し、取り直してみてください")
         raise SystemExit(f"サーバーに繋がりませんでした（{e.code}）")
     except Exception as e:
         raise SystemExit(f"サーバーに繋がりませんでした（{type(e).__name__}）")
@@ -59,11 +62,27 @@ def main():
         print()
 
     print("一元管理ツールにログインした状態で F12 を押し、")
-    print("Console に次を貼って出てきた文字列を貼り付けてください。")
+    print("Console に次を貼って Enter してください。")
+    print("（画面には何も出ませんが、トークンがコピーされます）")
     print()
-    print("  localStorage.getItem('auth_token')")
+    print("  copy(localStorage.getItem('auth_token'))")
     print()
-    token = getpass.getpass("トークン（貼り付けても表示されません）: ").strip().strip('"\'')
+    print("そのあと、この黒い画面で右クリックすると貼り付けられます。")
+    print()
+    try:
+        token = getpass.getpass("トークン（貼り付けても表示されません）: ")
+    except Exception:
+        # 環境によっては伏せ字入力が使えない。入力できないより見えるほうがよい
+        token = input("トークン: ")
+    token = token.strip().strip('"' + "'")
+
+    # 伏せ字なので、貼り付けが欠けても気づけない。
+    # 中身は見せずに、長さと前後だけ出して確かめられるようにする
+    if token:
+        shape = f"{token[:6]}...{token[-6:]}" if len(token) > 16 else "(短すぎます)"
+        print(f"  受け取った文字数: {len(token)}文字  {shape}")
+        if "." not in token or len(token) < 40:
+            print("  ※ 形が違うようです。コピーが途中で切れていないか確認してください")
     if not token:
         token = cur.get("token", "")
     if not token:
