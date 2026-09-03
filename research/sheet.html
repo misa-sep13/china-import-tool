@@ -1743,9 +1743,21 @@ if(FIREBASE_CONFIG.databaseURL){
   // サーバーへ移し、localStorage は「サーバーが落ちているときの控え」として残す。
   // ・読み込み: サーバー → 無ければ localStorage
   // ・保存    : localStorage に即時 → サーバーへ遅延送信（打鍵のたびに叩かない）
-  const API_BASE = (window.__ARS_API__ || '').replace(/\/$/, '');
+  //
+  // 埋め込み元が window.__ARS_API__ / __ARS_TOKEN__ を渡してくるが、
+  // iframeへ直接書いた値は src を入れた瞬間のナビゲーションで消える。
+  // 消えていたら親から読み直す（同じサイトから配信しているので参照できる）。
+  // これが無いと接続先が空になり、保存もセラースカウトからの取り込みも
+  // 黙って何もしない状態になる（実際に起きた）。
+  function arsCfg(k){
+    if(window[k]) return window[k];
+    try{ if(window.parent && window.parent !== window && window.parent[k])
+           return window.parent[k]; }catch(e){ /* 別オリジンなら諦める */ }
+    return '';
+  }
+  const API_BASE = arsCfg('__ARS_API__').replace(/\/$/, '');
   const SHEET_API = API_BASE ? API_BASE + '/amazon-research/sheet' : null;
-  const AUTH_TOKEN = window.__ARS_TOKEN__ || '';
+  const AUTH_TOKEN = arsCfg('__ARS_TOKEN__');
   function apiHeaders(){
     const h = {'Content-Type': 'application/json'};
     if(AUTH_TOKEN) h['Authorization'] = 'Bearer ' + AUTH_TOKEN;
