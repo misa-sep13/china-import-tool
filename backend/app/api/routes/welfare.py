@@ -75,6 +75,32 @@ def _sheet_images_by_row(ws) -> dict[int, str]:
     return {row_no: data for row_no, data in images.items() if data}
 
 
+def _shipment_no_of_sheet(ws) -> str:
+    """配送依頼No（便の番号）をシート上部のヘッダ部分から拾う。
+
+    商品一覧の表より上に「配送依赖No | 709482」のように入っている。
+    同じ発注を2便に分けて送ることがあり、便が分からないと2便目を
+    重複と誤判定してしまうため、重複判定のキーに使う。
+    表記ゆれ（依赖／依頼）と、追跡番号しか無いファイルに備えている。
+    """
+    labels = ("配送依赖no", "配送依頼no", "追跡番号")
+    found = {}
+    for row in ws.iter_rows(min_row=1, max_row=12, values_only=True):
+        vals = [str(c).strip() if c is not None else "" for c in row]
+        for i, v in enumerate(vals):
+            key = v.replace(" ", "").lower()
+            if key not in labels:
+                continue
+            for nxt in vals[i + 1:]:
+                if nxt:
+                    found.setdefault(key, nxt)
+                    break
+    for key in labels:
+        if found.get(key):
+            return found[key]
+    return ""
+
+
 def _parse_excel(content: bytes):
     try:
         import openpyxl
@@ -85,6 +111,7 @@ def _parse_excel(content: bytes):
     parsed = []
     for ws in wb.worksheets:
         image_by_row = _sheet_images_by_row(ws)
+        shipment_no = _shipment_no_of_sheet(ws)
         header_row_idx = None
         col_map = {}
         for i, row in enumerate(ws.iter_rows(values_only=True), 1):
@@ -127,6 +154,7 @@ def _parse_excel(content: bytes):
                 remaining_units = None
             parsed.append({
                 "sheet": ws.title,
+                "shipment_no": shipment_no,
                 "order_date": _cell_text(cell("発注時間"))[:10],
                 "order_no": _cell_text(cell("オーダー番号")),
                 "name_cn": name_cn,
@@ -194,6 +222,22 @@ def _import_key(product: RakutenProduct | None, row: dict):
         int(row.get("units") or 0),
         row.get("sheet") or "",
     )
+
+
+def _same_shipment(existing_no, existing_file, new_no, new_file) -> bool:
+    """既に取り込んだ行と、今回の行が同じ便かどうか。
+
+    同じ発注を2便に分けて送ることがある（航空便に一部だけ回した等）。
+    その場合はSKU・オーダー番号・個数まで全部同じ行が再び出てくるので、
+    便まで見ないと2便目を重複と誤判定して取りこぼす（実際に起きた）。
+
+    既存側に配送依頼Noがあれば、それだけで判断できる。
+    無いのは配送依頼Noを記録する前に取り込んだ古い行なので、
+    そのときだけファイル名で代用する（同じファイルの再取込は今までどおり弾く）。
+    """
+    if (existing_no or "").strip():
+        return (existing_no or "").strip() == (new_no or "").strip()
+    return (existing_file or "").strip() == (new_file or "").strip()
 
 
 def _out(item: WelfareInventoryItem):
@@ -368,26 +412,27 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
     imported = 0
     unmatched = 0
     work_imported = 0
-    existing_movement_keys = set()
+    # キー -> その内容で既に取り込んである便の一覧 [(配送依頼No, ファイル名), ...]
+    existing_movement_keys: dict[tuple, list] = {}
     for m in db.query(WelfareInventoryMovement).filter(WelfareInventoryMovement.movement_type == "import").all():
-        existing_movement_keys.add((
+        existing_movement_keys.setdefault((
             m.sku,
             _norm_url(m.buy_url),
             m.source_order_no or "",
             m.supplier_spec or "",
             int(m.units or 0),
             m.source_sheet or "",
-        ))
-    existing_work_keys = set()
+        ), []).append((m.shipment_no, m.source_file))
+    existing_work_keys: dict[tuple, list] = {}
     for w in db.query(WelfareWorkInstruction).all():
-        existing_work_keys.add((
+        existing_work_keys.setdefault((
             w.sku,
             _norm_url(w.buy_url),
             w.source_order_no or "",
             w.supplier_spec or "",
             int(w.units or 0),
             w.source_sheet or "",
-        ))
+        ), []).append((w.shipment_no, w.source_file))
 
     # 同じ商品は前回と同じ指示（保管／戻し等）である場合が多いので、
     # 過去（一番新しいもの）の指示をデフォルト値として引き継ぐ。
@@ -427,8 +472,15 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
         if product and qty <= 0:
             continue
         key = _import_key(product, row)
-        already_imported = key in existing_movement_keys
-        already_work = key in existing_work_keys
+        ship_no = row.get("shipment_no") or ""
+        already_imported = any(
+            _same_shipment(no, f, ship_no, source_file)
+            for no, f in existing_movement_keys.get(key, ())
+        )
+        already_work = any(
+            _same_shipment(no, f, ship_no, source_file)
+            for no, f in existing_work_keys.get(key, ())
+        )
 
         fallback_name = None
         if not product:
@@ -450,6 +502,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 source_file=source_file,
                 source_sheet=row.get("sheet"),
                 source_order_no=row.get("order_no"),
+                shipment_no=ship_no or None,
                 name_jp=product.name if product else fallback_name,
                 source_product_name=row.get("name_cn"),
                 color=row.get("supplier_spec"),
@@ -488,7 +541,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 "status": "既取込済",
             })
             continue
-        existing_movement_keys.add(key)
+        existing_movement_keys.setdefault(key, []).append((ship_no, source_file))
     db.commit()
     return {
         "imported": imported,
@@ -615,6 +668,7 @@ def reflect_work_instructions(data: WelfareReflectIn, db: Session = Depends(get_
             source_file=w.source_file,
             source_sheet=w.source_sheet,
             source_order_no=w.source_order_no,
+            shipment_no=w.shipment_no,
             name_cn=w.source_product_name,
             supplier_spec=w.supplier_spec,
             buy_url=w.buy_url,

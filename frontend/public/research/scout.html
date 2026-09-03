@@ -235,6 +235,10 @@
     </div>
 
     <h3>データ更新</h3>
+    <div class="fld">
+      <label>取り込むフォルダ（カンマ区切りで複数可）</label>
+      <input type="text" id="bmFolder" placeholder="例: Amazonセラー, Amazonパワーセラー">
+    </div>
     <button class="btn blue" id="btnImport">ブックマークを取り込む</button>
     <button class="btn ghost" id="btnResolve" style="display:none"></button>
     <div class="fld">
@@ -325,9 +329,12 @@
 const $ = s => document.querySelector(s);
 const SALES_STEPS = [0,10,20,30,40,50,100,200,300,400,500,1000];
 let SELLERS = [], picked = new Set(), timer = null, lastRunning = false, CAPPED = [];
+let lastPhase = "";                  // 直前に何をしていたか（終了の知らせを出し分ける）
 // 競合リサーチシートへ持っていく「かご」。中身はサーバ側(basket表)が本体で、
 // ここは画面のボタンの見た目をすぐ切り替えるための控え
 let BASKET = new Set();
+
+try { $("#bmFolder").value = localStorage.getItem("scout_bm_folder") || ""; } catch(e) {}
 
 function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show");
   setTimeout(()=>t.classList.remove("show"), 2600); }
@@ -524,7 +531,12 @@ async function poll(){
     $("#progLog").textContent = s.log||"";
     $("#progLog").scrollTop = 1e6;
   }
-  if(lastRunning && !on){ toast("巡回が終わりました"); load(); loadSellers(); }
+  if(lastRunning && !on){
+    toast(lastPhase.indexOf("ブックマーク") >= 0
+          ? "ブックマークの取り込みが終わりました" : "巡回が終わりました");
+    load(); loadSellers();
+  }
+  lastPhase = s.phase || "";
   lastRunning = on;
 }
 
@@ -699,25 +711,51 @@ $("#btnCsv").addEventListener("click", ()=>{
   else { location.href = "/api/csv?" + filters().toString(); }
 });
 $("#btnImport").addEventListener("click", async ()=>{
-  const r = await (await fetch("/api/import",{method:"POST"})).json();
+  kickLocal();                       // 押した直後でないとブラウザが起動を許さない
+  // フォルダは「ブックマーク バー / Ama / Amazonセラー」の一部でよい。
+  // 次回も同じフォルダを見ることが多いので覚えておく
+  const folder = $("#bmFolder").value.trim();
+  try { localStorage.setItem("scout_bm_folder", folder); } catch(e) {}
+  const r = await (await fetch("/api/import",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({folder})})).json();
   toast(r.message ? r.message.split("\n").pop() : "取り込みました");
-  loadSellers();
+  lastRunning = true; poll();        // 終わったら自動でセラー一覧を読み直す
 });
 $("#btnCapped").addEventListener("click", async ()=>{
   if(!CAPPED.length) return;
   const pace = $("#pace").value;
+  kickLocal();                       // 押した直後でないとブラウザが起動を許さない
   const r = await (await fetch("/api/crawl",{method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({ sellers: CAPPED.map(c=>c.seller_id), pages: 30,
                             early_stop:true, fast: pace==="fast",
                             slow: pace==="slow", hidden:true })})).json();
-  toast(r.message); lastRunning = true; poll();
+  toast(r.message);
+  lastRunning = true; poll();
 });
 $("#btnResolve").addEventListener("click", async ()=>{
   const r = await (await fetch("/api/resolve",{method:"POST",
       headers:{"Content-Type":"application/json"}, body:"{}"})).json();
   toast(r.message); lastRunning = true; poll();
 });
+// 押した瞬間にこのPCで巡回を始めるための合図。
+// ブラウザからプログラムは直接は起動できないので、Windowsに登録しておいた
+// scout:// のリンクを開くことで起動する（【ボタンから起動できるようにする】.bat）。
+// 登録していないPCでは何も起きない。その場合は常駐が拾うので、どちらでも動く。
+function kickLocal(){
+  // ブラウザは「押した直後」しか外部アプリの起動を許さない。
+  // fetch を await したあとに呼ぶと、その資格が切れていて黙って無視される
+  // （実際にこれで起動しなかった）。必ずクリック直後に、待たずに呼ぶこと。
+  // 埋め込みの中からだと弾かれることがあるので、外側の窓から開く。
+  try {
+    const w = (window.top && window.top !== window) ? window.top : window;
+    w.location.href = "scout://crawl";
+  } catch(e) {
+    try { window.location.href = "scout://crawl"; } catch(e2) { /* 未登録なら何も起きない */ }
+  }
+}
+
 $("#btnRun").addEventListener("click", async ()=>{
   const scope = $("#scope").value, pace = $("#pace").value;
   const [pg, es] = $("#pages").value.split(":");
@@ -729,6 +767,7 @@ $("#btnRun").addEventListener("click", async ()=>{
     if(!picked.size) return toast("左のセラー一覧から選んでください");
     body.sellers = [...picked];
   }
+  kickLocal();                       // 押した直後でないとブラウザが起動を許さない
   const r = await (await fetch("/api/crawl",{method:"POST",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)})).json();
   toast(r.message);

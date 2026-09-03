@@ -84,6 +84,9 @@ class ScoutBasket(Base):
     added_at = Column(DateTime(timezone=True), server_default=func.now())
     added_by = Column(String)
     taken_at = Column(DateTime(timezone=True), nullable=True)   # シートへ入れた時刻
+    # 「競合リサーチシートに登録」を押した合図。シート側は5秒ごとに見に来て、
+    # これが立っていたら取り込む。取り込んだら消す（次の見回りで二重に走らないため）
+    register_requested_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class ScoutRun(Base):
@@ -98,3 +101,27 @@ class ScoutRun(Base):
     product_count = Column(Integer, default=0)
     blocked_count = Column(Integer, default=0)
     note = Column(Text)
+
+
+class ScoutCrawlRequest(Base):
+    """画面の「更新する」から出された巡回の依頼。
+
+    巡回はブラウザ自動操縦なのでサーバーでは走らせられない（Amazonが
+    データセンターのipを弾く）。かといって毎回バッチを探して叩くのは
+    外注さんには続かないので、依頼だけをここに積み、手元のPCで常駐して
+    いる scout_agent.py が拾って実行する。
+
+    status: pending（未着手） / running（実行中） / done / failed / canceled
+    """
+    __tablename__ = "scout_crawl_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    requested_by = Column(String)          # 依頼した人の役割（owner / contractor）
+    kind = Column(String, default="crawl", index=True)   # crawl / bookmarks
+    params = Column(Text)                  # 巡回条件（JSON）。画面の指定をそのまま持つ
+    status = Column(String, default="pending", index=True)
+    taken_at = Column(DateTime(timezone=True), nullable=True)
+    taken_by = Column(String)              # 実際に走らせたPCの名前
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    message = Column(Text)

@@ -274,13 +274,17 @@ export default function WelfareInventoryPage() {
       }
       return combined
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       setImportResult(data)
-      qc.invalidateQueries(['welfare-inventory'])
-      qc.invalidateQueries(['welfare-movements'])
-      qc.invalidateQueries(['welfare-work-instructions'])
-      // 取り込み直後は常に最新日のタブを開く（前回選んでいた古いタブが
-      // まだ存在すると、そのまま居座ってしまうため明示的にリセットする）
+      // 取り込み直後は常に最新日のタブを開く。
+      // 選択を空にするのは「再取得が終わったあと」でなければならない。
+      // 先に空にすると、まだ古い一覧が入っている状態でタブ選択が走り、
+      // 前回と同じ日付が選び直されて居座ってしまう（実際に起きた）。
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['welfare-inventory'] }),
+        qc.invalidateQueries({ queryKey: ['welfare-movements'] }),
+        qc.invalidateQueries({ queryKey: ['welfare-work-instructions'] }),
+      ])
       setActiveWorkDate('')
     },
   })
@@ -514,7 +518,17 @@ export default function WelfareInventoryPage() {
 
   return (
     <div>
-      <h1>就労支援在庫</h1>
+      {/* 自社宛の航空便は就労支援さんを経由しない。配送依頼には載るので、
+          そのまま入荷処理をすると実在庫とズレる（実際に起きた） */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <h1 style={{ margin: 0 }}>就労支援在庫</h1>
+        <span style={{
+          border: '1px solid #fca5a5', background: '#fef2f2', color: '#b91c1c',
+          borderRadius: 6, padding: '4px 10px', fontSize: 13, fontWeight: 700,
+        }}>
+          ⚠ 自社宛の航空便は入荷処理をしないでください
+        </span>
+      </div>
 
       <div className="top-actions">
         <input

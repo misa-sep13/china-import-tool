@@ -10,16 +10,18 @@ Amazonはデータセンターのipからだと即ブロックするので、サ
 複数人で分担できる。分担の割り当てはせず、同じASINは新しい巡回で上書きする
 （誰が回しても結果は同じなので、重複しても新しい情報になるだけ）。
 """
+import json
 from datetime import datetime, timezone, date
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.scout import (
     ScoutSeller, ScoutProduct, ScoutHistory, ScoutBasket, ScoutRun,
+    ScoutCrawlRequest,
 )
 
 router = APIRouter(prefix="/scout", tags=["scout"])
@@ -298,15 +300,23 @@ def list_products(
 def scout_status(db: Session = Depends(get_db)):
     """画面が定期的に見に来る状態。
 
-    配布版はローカルサーバーが巡回を実行していたので進捗を返していたが、
-    ここでは巡回は手元のPCで走るため「実行中」は常にfalse。
-    画面側は running=false なら操作を受け付ける作りになっている。
+    巡回自体は手元のPCで走るが、依頼が出ているかどうかはここで分かる。
+    画面側は running=false のときだけ操作を受け付ける作りなので、
+    依頼中・実行中は running=true にして二重に押せないようにする。
     """
     sellers = db.query(ScoutSeller).all()
     latest = max((s.last_run_at for s in sellers if s.last_run_at), default=None)
+    cur = _active_request(db)
+    label = _KIND_LABEL.get(cur.kind if cur else "", "巡回")
+    if cur and cur.status == "running":
+        phase = f"手元のPCで{label}を実行中（{cur.taken_by or '実行中'}）"
+    elif cur:
+        phase = f"{label}を依頼しました。手元のPCが拾うのを待っています"
+    else:
+        phase = ""
     return {
-        "running": False,
-        "phase": "",
+        "running": bool(cur),
+        "phase": phase,
         "done": 0,
         "total": 0,
         "current": "",
@@ -315,7 +325,7 @@ def scout_status(db: Session = Depends(get_db)):
         # 画面上部の「セラー〇件 / 商品〇件」がここを見ている
         "seller_total": len(sellers),
         "product_total": db.query(ScoutProduct).count(),
-        "message": "巡回は手元のPCで実行します（scripts/scout/sync_server.py）",
+        "message": phase or "巡回・ブックマーク取り込みは手元のPCで実行します",
     }
 
 
@@ -392,6 +402,12 @@ def list_basket(db: Session = Depends(get_db)):
             "reviews": p.reviews if p else None,
             "rating": p.rating if p else None,
             "added_at": b.added_at.isoformat() if b.added_at else None,
+            # シート側は自分の列名で読む。名前が違うと値が入らないので両方返す
+            "competitor": p.title if p else None,
+            "monthlySales": p.sales_min if p else None,
+            "reviewCount": p.reviews if p else None,
+            "reviewRate": p.rating if p else None,
+            "note": "",
         })
     # 配布版の画面は rows で読む
     return {"rows": out, "items": out, "count": len(out)}
@@ -399,8 +415,15 @@ def list_basket(db: Session = Depends(get_db)):
 
 @router.get("/basket/count")
 def basket_count(db: Session = Depends(get_db)):
-    n = db.query(ScoutBasket).filter(ScoutBasket.taken_at.is_(None)).count()
-    return {"count": n}
+    """かごの件数と、シートへ渡す合図が立っているか。
+
+    シート側が5秒ごとにここを見て、register が立っていたら取り込みに来る。
+    """
+    # シートが開いている間ずっと数秒おきに呼ばれる。行は読まず件数だけ数える
+    base = db.query(ScoutBasket).filter(ScoutBasket.taken_at.is_(None))
+    return {"count": base.count(),
+            "register": base.filter(
+                ScoutBasket.register_requested_at.isnot(None)).count() > 0}
 
 
 @router.post("/basket/add")
@@ -515,26 +538,151 @@ def summary(db: Session = Depends(get_db)):
 
 _LOCAL_ONLY = (
     "この操作は手元のPCで実行します。"
-    "scripts/scout/sync_server.py を動かしてください"
+    "scripts/scout フォルダの【巡回する】.bat をダブルクリックしてください"
+    "（初めてのときは先に【初回設定】.bat）"
 )
 
 
+class CrawlIn(BaseModel):
+    """画面から来る巡回条件。そのまま手元のPCへ渡す。"""
+    pages: Optional[int] = None
+    early_stop: Optional[bool] = None
+    fast: Optional[bool] = None
+    slow: Optional[bool] = None
+    resume: Optional[bool] = None
+    stale_days: Optional[int] = None
+    sellers: Optional[List[str]] = None
+    hidden: Optional[bool] = None
+
+
+_KIND_LABEL = {"crawl": "巡回", "bookmarks": "ブックマークの取り込み"}
+
+
+def _active_request(db: Session, kind: Optional[str] = None):
+    """まだ終わっていない依頼。二重に積まないために使う。
+
+    kind を渡すとその種類だけを見る。巡回とブックマーク取り込みは
+    別々の作業なので、片方が動いていても、もう片方は依頼できてよい。
+    """
+    q = db.query(ScoutCrawlRequest).filter(
+        ScoutCrawlRequest.status.in_(["pending", "running"]))
+    if kind:
+        q = q.filter(ScoutCrawlRequest.kind == kind)
+    return q.order_by(ScoutCrawlRequest.id.desc()).first()
+
+
+def _queue(db: Session, request: Request, kind: str, params: dict):
+    """手元のPCへの依頼を積む。積めなければメッセージだけ返す。"""
+    cur = _active_request(db, kind)
+    label = _KIND_LABEL.get(kind, kind)
+    if cur:
+        waited = "実行中" if cur.status == "running" else "順番待ち"
+        return {"ok": False, "running": True,
+                "message": f"すでに{label}を依頼済みです（{waited}）"}
+    req = ScoutCrawlRequest(
+        requested_by=getattr(request.state, "actor_role", "") or "",
+        kind=kind,
+        params=json.dumps(params, ensure_ascii=False),
+        status="pending",
+    )
+    db.add(req)
+    db.commit()
+    return {"ok": True, "running": True, "request_id": req.id,
+            "message": f"手元のPCに{label}を依頼しました。まもなく始まります"}
+
+
 @router.post("/crawl")
-def crawl_not_here():
-    return {"ok": False, "running": False, "message": _LOCAL_ONLY}
+def request_crawl(data: CrawlIn, request: Request, db: Session = Depends(get_db)):
+    """巡回を手元のPCに依頼する。
+
+    ここでは走らせない（サーバーからのアクセスはAmazonに弾かれる）。
+    依頼を積んでおき、常駐している scout_agent.py が拾って実行する。
+    """
+    return _queue(db, request, "crawl", data.model_dump(exclude_none=True))
 
 
 @router.post("/stop")
-def stop_not_here():
-    return {"ok": False, "running": False, "message": "巡回は手元のPCで止めてください"}
+def stop_crawl(db: Session = Depends(get_db)):
+    cur = _active_request(db)
+    if not cur:
+        return {"ok": True, "running": False, "message": "動いている巡回はありません"}
+    was_running = cur.status == "running"
+    cur.status = "canceled"
+    cur.finished_at = datetime.now(timezone.utc)
+    db.commit()
+    if was_running:
+        return {"ok": True, "running": False,
+                "message": "中止を伝えました。実行中の分は区切りのよいところで止まります"}
+    return {"ok": True, "running": False, "message": "巡回の依頼を取り消しました"}
+
+
+# ---------- 手元のPCの常駐（scout_agent.py）が使う ----------
+
+@router.get("/crawl-request")
+def take_crawl_request(run_by: str = "", db: Session = Depends(get_db)):
+    """未着手の依頼を1件受け取る。無ければ null。
+
+    受け取った時点で running にして、他のPCが二重に走らせないようにする。
+    """
+    req = (db.query(ScoutCrawlRequest)
+           .filter(ScoutCrawlRequest.status == "pending")
+           .order_by(ScoutCrawlRequest.id).first())
+    if not req:
+        return {"request": None}
+    req.status = "running"
+    req.taken_at = datetime.now(timezone.utc)
+    req.taken_by = run_by or ""
+    db.commit()
+    return {"request": {"id": req.id,
+                        "kind": req.kind or "crawl",
+                        "params": json.loads(req.params or "{}"),
+                        "requested_by": req.requested_by or ""}}
+
+
+class CrawlDoneIn(BaseModel):
+    ok: bool = True
+    message: Optional[str] = None
+
+
+@router.post("/crawl-request/{req_id}/finish")
+def finish_crawl_request(req_id: int, data: CrawlDoneIn, db: Session = Depends(get_db)):
+    req = db.query(ScoutCrawlRequest).filter(ScoutCrawlRequest.id == req_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="依頼が見つかりません")
+    # 途中で中止された依頼は canceled のままにする（上書きすると理由が消える）
+    if req.status == "running":
+        req.status = "done" if data.ok else "failed"
+    req.finished_at = datetime.now(timezone.utc)
+    req.message = data.message
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/crawl-request/{req_id}")
+def check_crawl_request(req_id: int, db: Session = Depends(get_db)):
+    """常駐側が「中止されていないか」を確認するために見る。"""
+    req = db.query(ScoutCrawlRequest).filter(ScoutCrawlRequest.id == req_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="依頼が見つかりません")
+    return {"status": req.status}
+
+
+class ImportIn(BaseModel):
+    # 「ブックマーク バー / Ama / Amazonセラー」の一部でよい。
+    # 空なら全部のブックマークから拾う
+    folder: Optional[str] = None
 
 
 @router.post("/import")
-def import_not_here():
-    return {"ok": False, "message":
-            "ブックマークの取り込みは手元のPCで実行します。"
-            "配布版のセラースカウトで取り込んでから、"
-            "scripts/scout/sync_server.py を動かしてください"}
+def request_import(data: ImportIn | None = None, *, request: Request,
+                   db: Session = Depends(get_db)):
+    """ブックマークの取り込みを手元のPCに依頼する。
+
+    ブックマークはそのPCの中にしか無いので、サーバーでは読めない。
+    巡回と同じ仕組みで依頼を積み、手元で拾って実行する。
+    """
+    folder = (data.folder or "").strip() if data else ""
+    return _queue(db, request, "bookmarks", {"folder": folder} if folder else {})
 
 
 @router.post("/resolve")
@@ -544,15 +692,33 @@ def resolve_not_here():
 
 @router.post("/basket/register")
 def basket_register(db: Session = Depends(get_db)):
-    """かごの中身を競合リサーチシートへ渡す印を付ける。
+    """かごの中身を競合リサーチシートへ渡す合図を立てる。
 
-    シート側は /scout/basket を読んで行にするので、ここでは
-    「渡した」印だけ付ける（もう一度押しても二重に入らないように）。
+    シートとスカウトは別々の画面なので直接は渡せない。ここに合図を残し、
+    シート側が見に来て取り込む。取り込みが終わると合図は消える。
     """
     rows = db.query(ScoutBasket).filter(ScoutBasket.taken_at.is_(None)).all()
     if not rows:
-        return {"ok": False, "count": 0}
+        return {"ok": False, "count": 0, "message": "かごが空です"}
+    now = datetime.now(timezone.utc)
+    for b in rows:
+        b.register_requested_at = now
+    db.commit()
     return {"ok": True, "count": len(rows)}
+
+
+@router.post("/basket/registered")
+def basket_register_done(db: Session = Depends(get_db)):
+    """シート側が取り込み終わったので合図を消す。
+
+    成否によらず消す。残すと次の見回りでまた走ってしまう。
+    """
+    rows = (db.query(ScoutBasket)
+            .filter(ScoutBasket.register_requested_at.isnot(None)).all())
+    for b in rows:
+        b.register_requested_at = None
+    db.commit()
+    return {"ok": True, "cleared": len(rows)}
 
 
 @router.get("/basket/registered")

@@ -1743,9 +1743,21 @@ if(FIREBASE_CONFIG.databaseURL){
   // サーバーへ移し、localStorage は「サーバーが落ちているときの控え」として残す。
   // ・読み込み: サーバー → 無ければ localStorage
   // ・保存    : localStorage に即時 → サーバーへ遅延送信（打鍵のたびに叩かない）
-  const API_BASE = (window.__ARS_API__ || '').replace(/\/$/, '');
+  //
+  // 埋め込み元が window.__ARS_API__ / __ARS_TOKEN__ を渡してくるが、
+  // iframeへ直接書いた値は src を入れた瞬間のナビゲーションで消える。
+  // 消えていたら親から読み直す（同じサイトから配信しているので参照できる）。
+  // これが無いと接続先が空になり、保存もセラースカウトからの取り込みも
+  // 黙って何もしない状態になる（実際に起きた）。
+  function arsCfg(k){
+    if(window[k]) return window[k];
+    try{ if(window.parent && window.parent !== window && window.parent[k])
+           return window.parent[k]; }catch(e){ /* 別オリジンなら諦める */ }
+    return '';
+  }
+  const API_BASE = arsCfg('__ARS_API__').replace(/\/$/, '');
   const SHEET_API = API_BASE ? API_BASE + '/amazon-research/sheet' : null;
-  const AUTH_TOKEN = window.__ARS_TOKEN__ || '';
+  const AUTH_TOKEN = arsCfg('__ARS_TOKEN__');
   function apiHeaders(){
     const h = {'Content-Type': 'application/json'};
     if(AUTH_TOKEN) h['Authorization'] = 'Bearer ' + AUTH_TOKEN;
@@ -6464,44 +6476,52 @@ if(FIREBASE_CONFIG.databaseURL){
 
   // ---- セラースカウトからの取り込み ----------------------------------------
   // 操作はセラースカウト側の「📋 競合リサーチシートに登録」だけ。こちらにボタンは
-  // 出さない。セラースカウト(http://127.0.0.1:8791)とこの画面(file://)は別の
-  // 生い立ちなので直接は渡せず、向こうが置いた伝言をここが見に来て受け取る。
+  // 出さない。セラースカウトとこの画面は別々の画面なので直接は渡せず、
+  // 向こうが置いた伝言をここが見に来て受け取る。
   // 取り込んだぶんは「新しいリサーチ」を1件作ってそこへ入れる（進行中の
   // リサーチに混ぜると、何を調べていたのか分からなくなるため）。
+  //
+  // 配布版はローカルサーバー(127.0.0.1:8791)が伝言を持っていたが、
+  // 一元管理ではRenderのサーバーが持つ。呼び先を差し替えたうえで
+  // ログイン済みのトークンを付ける（付けないと401で黙って何も起きない）。
   {
-    const API = 'http://127.0.0.1:8791';
+    const API = API_BASE ? API_BASE + '/scout' : '';
     let busy = false;
 
     async function importFromScout(){
-      const j = await (await fetch(API + '/api/basket', {cache:'no-store'})).json();
+      const j = await (await fetch(API + '/basket', {cache:'no-store', headers: apiHeaders()})).json();
       const rows = j.rows || [];
       if(!rows.length) return 0;
-      // リサーチ名は、拾ってきた商品のライバル商品名をそのまま入れる。
-      // 何を調べているのか一目で分かるようにするため（あとで自由に直せる）。
-      // 複数まとめて取り込んだときは、先頭の商品名＋残りの件数にする。
-      const first = (rows[0].competitor || '').trim() || 'セラースカウトから取り込み';
-      const res = defaultResearch();
-      res.title = rows.length > 1 ? `${first} 他${rows.length - 1}件` : first;
+      // 1商品につき1リサーチを作る。まとめて拾っても中身は別々の商品なので、
+      // ひとつのリサーチに入れると何を調べていたのか分からなくなる。
+      // リサーチ名はその商品のライバル商品名をそのまま入れる
+      // （何を調べているのか一目で分かるように。あとで自由に直せる）。
       // 「管理者からのコメント」は人が書く欄なので、こちらでは埋めない
-      res.rows = rows.map(src => {
+      const made = rows.map(src => {
         const dst = defaultRow();
         ['asin','image','competitor','monthlySales','reviewCount','reviewRate','price','note']
           .forEach(k => { if(src[k] !== '' && src[k] != null) dst[k] = src[k]; });
-        return dst;
+        const res = defaultResearch();
+        res.title = (src.competitor || '').trim() || 'セラースカウトから取り込み';
+        res.rows = [dst];
+        return res;
       });
-      state.researches.unshift(res);
+      // 拾った順に上から並ぶよう、後ろから積む
+      made.slice().reverse().forEach(r => state.researches.unshift(r));
       // リサーチ中以外で絞り込んでいると取り込んだ枠が見えないので、リサーチ中の表示に切り替える
       if(statusFilter !== 'all' && statusFilter !== 'active'){
         statusFilter = 'active';
         try{ localStorage.setItem(FILTER_KEY, statusFilter); }catch(e){}
       }
-      await fetch(API + '/api/basket/taken', {method:'POST',
-        headers:{'Content-Type':'application/json'},
+      await fetch(API + '/basket/taken', {method:'POST',
+        headers: apiHeaders(),
         body: JSON.stringify({asins: rows.map(x => x.asin)})});
       render(); scheduleSave();
       try{ window.scrollTo({top: 0, behavior:'smooth'}); }catch(e){}
       alert(`セラースカウトから ${rows.length} 件を取り込みました。\n`
-          + `「${res.title}」として新しいリサーチを作りました。`
+          + (made.length > 1
+             ? `それぞれ別のリサーチとして ${made.length} 件作りました。`
+             : `「${made[0].title}」として新しいリサーチを作りました。`)
           + (document.body.classList.contains('sp-ready')
              ? '\n続けてSP-APIから寸法・重量・手数料を取り込みます。' : ''));
 
@@ -6509,7 +6529,7 @@ if(FIREBASE_CONFIG.databaseURL){
       // 打鍵が無いので走らない。取り込んだ直後にこちらから呼んでおく。
       // (寸法・重量・手数料・商品仕様はSP-APIでしか埋まらないため)
       if(document.body.classList.contains('sp-ready')){
-        for(const r of res.rows){
+        for(const r of made.map(x => x.rows[0])){
           try{
             await spFetchRow(r, false);        // 既に入っている値は上書きしない
             r.spAutoAsin = (r.asin || '').trim().toUpperCase();
@@ -6522,9 +6542,9 @@ if(FIREBASE_CONFIG.databaseURL){
     }
 
     async function poll(){
-      if(busy || document.hidden) return;
+      if(!API || busy || document.hidden) return;
       let j;
-      try{ j = await (await fetch(API + '/api/basket/count', {cache:'no-store'})).json(); }
+      try{ j = await (await fetch(API + '/basket/count', {cache:'no-store', headers: apiHeaders()})).json(); }
       catch(e){ return; }                       // セラースカウトが止まっているだけ
       if(!(j.register && j.count)) return;
       busy = true;
@@ -6532,8 +6552,8 @@ if(FIREBASE_CONFIG.databaseURL){
       catch(e){ console.warn('セラースカウトの取り込みに失敗:', e); }
       finally{
         // 伝言は成否によらず消す。残すと次の見回りでまた走ってしまう
-        try{ await fetch(API + '/api/basket/registered', {method:'POST',
-             headers:{'Content-Type':'application/json'}, body:'{}'}); }catch(e){}
+        try{ await fetch(API + '/basket/registered', {method:'POST',
+             headers: apiHeaders(), body:'{}'}); }catch(e){}
         busy = false;
       }
     }

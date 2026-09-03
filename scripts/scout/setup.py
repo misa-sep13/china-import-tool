@@ -4,7 +4,7 @@
 このPCのユーザーフォルダに置いて、他の人からは読めないようにする。
 リポジトリの中には置かない（gitに乗ってしまうため）。
 """
-import getpass
+import subprocess
 import json
 import os
 import sys
@@ -28,6 +28,33 @@ def load():
     return {}
 
 
+def _shape(token):
+    """中身は出さずに、正しく渡ったか確かめられる程度の情報だけ返す。"""
+    return f"{token[:6]}...{token[-6:]}" if len(token) > 16 else "(短すぎます)"
+
+
+def _from_clipboard():
+    """クリップボードの中身を取り出す。取れなければ空文字。
+
+    PowerShell を使う。pyperclip などを入れずに済ませたい
+    （外注さんのPCに追加インストールを増やしたくない）。
+    """
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"],
+            capture_output=True, timeout=20)
+    except Exception:
+        return ""
+    if out.returncode != 0:
+        return ""
+    text = out.stdout.decode("utf-8", "replace").strip().strip('"' + "'")
+    # トークンらしくないものを拾っても混乱するだけなので弾く
+    if "." not in text or len(text) < 40 or len(text) > 4000:
+        return ""
+    return text
+
+
+
 def check(base, token):
     """保存する前に、そのトークンで実際に通るか確かめる。
 
@@ -41,7 +68,10 @@ def check(base, token):
             return json.load(res).get("total", 0)
     except urllib.error.HTTPError as e:
         if e.code == 401:
-            raise SystemExit("このトークンでは通りませんでした。取り直してください")
+            raise SystemExit(
+                "このトークンでは通りませんでした。\n"
+                "  ・貼り付けが途中で切れていないか（上の文字数を確認）\n"
+                "  ・ログアウトして入り直し、取り直してみてください")
         raise SystemExit(f"サーバーに繋がりませんでした（{e.code}）")
     except Exception as e:
         raise SystemExit(f"サーバーに繋がりませんでした（{type(e).__name__}）")
@@ -59,11 +89,35 @@ def main():
         print()
 
     print("一元管理ツールにログインした状態で F12 を押し、")
-    print("Console に次を貼って出てきた文字列を貼り付けてください。")
+    print("Console に次を貼って Enter してください。")
+    print("（画面には何も出ませんが、トークンがコピーされます）")
     print()
-    print("  localStorage.getItem('auth_token')")
+    print("  copy(localStorage.getItem('auth_token'))")
     print()
-    token = getpass.getpass("トークン（貼り付けても表示されません）: ").strip().strip('"\'')
+
+    # クリップボードから直接読む。
+    # 以前は伏せ字入力に貼り付けてもらっていたが、Windowsのコンソールでは
+    # 貼り付けが途中で切れることがある（151文字が6文字になった）。
+    # コピーさえできていれば貼り付け作業そのものが要らない。
+    token = _from_clipboard()
+    if token:
+        print(f"  クリップボードから読み取りました: {len(token)}文字  {_shape(token)}")
+        if input("  これを使いますか？ [Y/n]: ").strip().lower() in ("n", "no"):
+            token = ""
+        else:
+            print()
+    if not token:
+        print()
+        print("クリップボードから読めませんでした。")
+        print("上のコピーを実行してからもう一度開くか、ここに貼り付けてください。")
+        print("（今度は入力した文字が見えます。人に見られない状態で行ってください）")
+        token = input("トークン: ")
+    token = token.strip().strip('"' + "'")
+
+    if token:
+        print(f"  受け取った文字数: {len(token)}文字  {_shape(token)}")
+        if "." not in token or len(token) < 40:
+            print("  ※ 形が違うようです。コピーが途中で切れていないか確認してください")
     if not token:
         token = cur.get("token", "")
     if not token:
