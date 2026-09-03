@@ -235,6 +235,10 @@
     </div>
 
     <h3>データ更新</h3>
+    <div class="fld">
+      <label>取り込むフォルダ（空なら全部）</label>
+      <input type="text" id="bmFolder" placeholder="例: Amazonセラー">
+    </div>
     <button class="btn blue" id="btnImport">ブックマークを取り込む</button>
     <button class="btn ghost" id="btnResolve" style="display:none"></button>
     <div class="fld">
@@ -329,6 +333,8 @@ let lastPhase = "";                  // 直前に何をしていたか（終了�
 // 競合リサーチシートへ持っていく「かご」。中身はサーバ側(basket表)が本体で、
 // ここは画面のボタンの見た目をすぐ切り替えるための控え
 let BASKET = new Set();
+
+try { $("#bmFolder").value = localStorage.getItem("scout_bm_folder") || ""; } catch(e) {}
 
 function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show");
   setTimeout(()=>t.classList.remove("show"), 2600); }
@@ -706,7 +712,13 @@ $("#btnCsv").addEventListener("click", ()=>{
 });
 $("#btnImport").addEventListener("click", async ()=>{
   kickLocal();                       // 押した直後でないとブラウザが起動を許さない
-  const r = await (await fetch("/api/import",{method:"POST"})).json();
+  // フォルダは「ブックマーク バー / Ama / Amazonセラー」の一部でよい。
+  // 次回も同じフォルダを見ることが多いので覚えておく
+  const folder = $("#bmFolder").value.trim();
+  try { localStorage.setItem("scout_bm_folder", folder); } catch(e) {}
+  const r = await (await fetch("/api/import",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({folder})})).json();
   toast(r.message ? r.message.split("\n").pop() : "取り込みました");
   lastRunning = true; poll();        // 終わったら自動でセラー一覧を読み直す
 });
