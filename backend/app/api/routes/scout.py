@@ -10,16 +10,18 @@ Amazonはデータセンターのipからだと即ブロックするので、サ
 複数人で分担できる。分担の割り当てはせず、同じASINは新しい巡回で上書きする
 （誰が回しても結果は同じなので、重複しても新しい情報になるだけ）。
 """
+import json
 from datetime import datetime, timezone, date
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.scout import (
     ScoutSeller, ScoutProduct, ScoutHistory, ScoutBasket, ScoutRun,
+    ScoutCrawlRequest,
 )
 
 router = APIRouter(prefix="/scout", tags=["scout"])
@@ -298,15 +300,22 @@ def list_products(
 def scout_status(db: Session = Depends(get_db)):
     """画面が定期的に見に来る状態。
 
-    配布版はローカルサーバーが巡回を実行していたので進捗を返していたが、
-    ここでは巡回は手元のPCで走るため「実行中」は常にfalse。
-    画面側は running=false なら操作を受け付ける作りになっている。
+    巡回自体は手元のPCで走るが、依頼が出ているかどうかはここで分かる。
+    画面側は running=false のときだけ操作を受け付ける作りなので、
+    依頼中・実行中は running=true にして二重に押せないようにする。
     """
     sellers = db.query(ScoutSeller).all()
     latest = max((s.last_run_at for s in sellers if s.last_run_at), default=None)
+    cur = _active_request(db)
+    if cur and cur.status == "running":
+        phase = f"手元のPCで巡回中（{cur.taken_by or '実行中'}）"
+    elif cur:
+        phase = "巡回を依頼しました。手元のPCの常駐が拾うのを待っています"
+    else:
+        phase = ""
     return {
-        "running": False,
-        "phase": "",
+        "running": bool(cur),
+        "phase": phase,
         "done": 0,
         "total": 0,
         "current": "",
@@ -315,7 +324,7 @@ def scout_status(db: Session = Depends(get_db)):
         # 画面上部の「セラー〇件 / 商品〇件」がここを見ている
         "seller_total": len(sellers),
         "product_total": db.query(ScoutProduct).count(),
-        "message": "巡回は手元のPCで実行します（scripts/scout/sync_server.py）",
+        "message": phase or "巡回は手元のPCで実行します（【常駐する】.bat）",
     }
 
 
@@ -520,14 +529,113 @@ _LOCAL_ONLY = (
 )
 
 
+class CrawlIn(BaseModel):
+    """画面から来る巡回条件。そのまま手元のPCへ渡す。"""
+    pages: Optional[int] = None
+    early_stop: Optional[bool] = None
+    fast: Optional[bool] = None
+    slow: Optional[bool] = None
+    resume: Optional[bool] = None
+    stale_days: Optional[int] = None
+    sellers: Optional[List[str]] = None
+    hidden: Optional[bool] = None
+
+
+def _active_request(db: Session):
+    """まだ終わっていない依頼。二重に積まないために使う。"""
+    return (db.query(ScoutCrawlRequest)
+            .filter(ScoutCrawlRequest.status.in_(["pending", "running"]))
+            .order_by(ScoutCrawlRequest.id.desc()).first())
+
+
 @router.post("/crawl")
-def crawl_not_here():
-    return {"ok": False, "running": False, "message": _LOCAL_ONLY}
+def request_crawl(data: CrawlIn, request: Request, db: Session = Depends(get_db)):
+    """巡回を手元のPCに依頼する。
+
+    ここでは走らせない（サーバーからのアクセスはAmazonに弾かれる）。
+    依頼を積んでおき、常駐している scout_agent.py が拾って実行する。
+    """
+    cur = _active_request(db)
+    if cur:
+        waited = "実行中" if cur.status == "running" else "順番待ち"
+        return {"ok": False, "running": True,
+                "message": f"すでに巡回を依頼済みです（{waited}）"}
+
+    req = ScoutCrawlRequest(
+        requested_by=getattr(request.state, "actor_role", "") or "",
+        params=json.dumps(data.model_dump(exclude_none=True), ensure_ascii=False),
+        status="pending",
+    )
+    db.add(req)
+    db.commit()
+    return {"ok": True, "running": True, "request_id": req.id,
+            "message": "手元のPCに巡回を依頼しました。"
+                       "常駐（【常駐する】.bat）が動いていれば、まもなく始まります"}
 
 
 @router.post("/stop")
-def stop_not_here():
-    return {"ok": False, "running": False, "message": "巡回は手元のPCで止めてください"}
+def stop_crawl(db: Session = Depends(get_db)):
+    cur = _active_request(db)
+    if not cur:
+        return {"ok": True, "running": False, "message": "動いている巡回はありません"}
+    was_running = cur.status == "running"
+    cur.status = "canceled"
+    cur.finished_at = datetime.now(timezone.utc)
+    db.commit()
+    if was_running:
+        return {"ok": True, "running": False,
+                "message": "中止を伝えました。実行中の分は区切りのよいところで止まります"}
+    return {"ok": True, "running": False, "message": "巡回の依頼を取り消しました"}
+
+
+# ---------- 手元のPCの常駐（scout_agent.py）が使う ----------
+
+@router.get("/crawl-request")
+def take_crawl_request(run_by: str = "", db: Session = Depends(get_db)):
+    """未着手の依頼を1件受け取る。無ければ null。
+
+    受け取った時点で running にして、他のPCが二重に走らせないようにする。
+    """
+    req = (db.query(ScoutCrawlRequest)
+           .filter(ScoutCrawlRequest.status == "pending")
+           .order_by(ScoutCrawlRequest.id).first())
+    if not req:
+        return {"request": None}
+    req.status = "running"
+    req.taken_at = datetime.now(timezone.utc)
+    req.taken_by = run_by or ""
+    db.commit()
+    return {"request": {"id": req.id,
+                        "params": json.loads(req.params or "{}"),
+                        "requested_by": req.requested_by or ""}}
+
+
+class CrawlDoneIn(BaseModel):
+    ok: bool = True
+    message: Optional[str] = None
+
+
+@router.post("/crawl-request/{req_id}/finish")
+def finish_crawl_request(req_id: int, data: CrawlDoneIn, db: Session = Depends(get_db)):
+    req = db.query(ScoutCrawlRequest).filter(ScoutCrawlRequest.id == req_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="依頼が見つかりません")
+    # 途中で中止された依頼は canceled のままにする（上書きすると理由が消える）
+    if req.status == "running":
+        req.status = "done" if data.ok else "failed"
+    req.finished_at = datetime.now(timezone.utc)
+    req.message = data.message
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/crawl-request/{req_id}")
+def check_crawl_request(req_id: int, db: Session = Depends(get_db)):
+    """常駐側が「中止されていないか」を確認するために見る。"""
+    req = db.query(ScoutCrawlRequest).filter(ScoutCrawlRequest.id == req_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="依頼が見つかりません")
+    return {"status": req.status}
 
 
 @router.post("/import")
