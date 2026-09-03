@@ -118,6 +118,7 @@ class ScoutCrawlRequest(Base):
     id = Column(Integer, primary_key=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     requested_by = Column(String)          # 依頼した人の役割（owner / contractor）
+    kind = Column(String, default="crawl", index=True)   # crawl / bookmarks
     params = Column(Text)                  # 巡回条件（JSON）。画面の指定をそのまま持つ
     status = Column(String, default="pending", index=True)
     taken_at = Column(DateTime(timezone=True), nullable=True)

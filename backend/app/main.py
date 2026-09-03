@@ -229,6 +229,7 @@ def _migrate():
         ("welfare_work_instructions","shipment_no", "ALTER TABLE welfare_work_instructions ADD COLUMN shipment_no VARCHAR"),
         ("welfare_inventory_movements","shipment_no", "ALTER TABLE welfare_inventory_movements ADD COLUMN shipment_no VARCHAR"),
         ("scout_baskets","register_requested_at", "ALTER TABLE scout_baskets ADD COLUMN register_requested_at TIMESTAMP WITH TIME ZONE"),
+        ("scout_crawl_requests","kind", "ALTER TABLE scout_crawl_requests ADD COLUMN kind VARCHAR DEFAULT 'crawl'"),
         # 販促品／レビュー特典フラグ。楽天に出品していないのでRMS push・発注推奨・
         # 在庫一覧の対象外にするが、就労支援在庫の数量把握のためマスタ登録は可能にする
         ("rakuten_products","is_promo", "ALTER TABLE rakuten_products ADD COLUMN is_promo BOOLEAN DEFAULT FALSE"),

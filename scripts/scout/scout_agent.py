@@ -33,6 +33,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CONF = os.path.join(os.path.expanduser("~"), ".scout_config.json")
 DEFAULT_BASE = "https://china-import-tool.onrender.com/api"
 DEFAULT_INTERVAL = 30
+KIND_LABEL = {"crawl": "巡回", "bookmarks": "ブックマークの取り込み"}
 
 
 def log(msg):
@@ -85,22 +86,31 @@ def build_args(params):
 
 def run_one(base, token, run_by, req):
     req_id = req["id"]
+    kind = req.get("kind") or "crawl"
     params = req.get("params") or {}
-    log(f"依頼 #{req_id} を受け取りました: {json.dumps(params, ensure_ascii=False)}")
+    log(f"依頼 #{req_id}（{KIND_LABEL.get(kind, kind)}）を受け取りました"
+        + (f": {json.dumps(params, ensure_ascii=False)}" if params else ""))
 
-    cmd = [sys.executable, os.path.join(HERE, "sync_server.py"),
-           "--token", token, "--run-by", run_by] + build_args(params)
-    log("巡回を始めます（Chromeのウィンドウが開きます）")
+    if kind == "bookmarks":
+        # ブックマークはこのPCの中にしか無いので、サーバーからは読めない
+        cmd = [sys.executable, os.path.join(HERE, "push_sellers.py"),
+               "--token", token]
+        log("ブックマークを読んでいます")
+    else:
+        cmd = [sys.executable, os.path.join(HERE, "sync_server.py"),
+               "--token", token, "--run-by", run_by] + build_args(params)
+        log("巡回を始めます（Chromeのウィンドウが開きます）")
 
     ok, message = True, None
     try:
         rc = subprocess.call(cmd, cwd=HERE)
+        label = KIND_LABEL.get(kind, kind)
         if rc != 0:
             ok = False
-            message = f"巡回が異常終了しました（コード {rc}）"
+            message = f"{label}が異常終了しました（コード {rc}）"
             log(message)
         else:
-            log("巡回が終わりました")
+            log(f"{label}が終わりました")
     except Exception as e:
         ok = False
         message = f"{type(e).__name__}: {e}"

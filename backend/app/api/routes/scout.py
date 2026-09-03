@@ -307,10 +307,11 @@ def scout_status(db: Session = Depends(get_db)):
     sellers = db.query(ScoutSeller).all()
     latest = max((s.last_run_at for s in sellers if s.last_run_at), default=None)
     cur = _active_request(db)
+    label = _KIND_LABEL.get(cur.kind if cur else "", "巡回")
     if cur and cur.status == "running":
-        phase = f"手元のPCで巡回中（{cur.taken_by or '実行中'}）"
+        phase = f"手元のPCで{label}を実行中（{cur.taken_by or '実行中'}）"
     elif cur:
-        phase = "巡回を依頼しました。手元のPCの常駐が拾うのを待っています"
+        phase = f"{label}を依頼しました。手元のPCが拾うのを待っています"
     else:
         phase = ""
     return {
@@ -324,7 +325,7 @@ def scout_status(db: Session = Depends(get_db)):
         # 画面上部の「セラー〇件 / 商品〇件」がここを見ている
         "seller_total": len(sellers),
         "product_total": db.query(ScoutProduct).count(),
-        "message": phase or "巡回は手元のPCで実行します（【常駐する】.bat）",
+        "message": phase or "巡回・ブックマーク取り込みは手元のPCで実行します",
     }
 
 
@@ -554,11 +555,40 @@ class CrawlIn(BaseModel):
     hidden: Optional[bool] = None
 
 
-def _active_request(db: Session):
-    """まだ終わっていない依頼。二重に積まないために使う。"""
-    return (db.query(ScoutCrawlRequest)
-            .filter(ScoutCrawlRequest.status.in_(["pending", "running"]))
-            .order_by(ScoutCrawlRequest.id.desc()).first())
+_KIND_LABEL = {"crawl": "巡回", "bookmarks": "ブックマークの取り込み"}
+
+
+def _active_request(db: Session, kind: Optional[str] = None):
+    """まだ終わっていない依頼。二重に積まないために使う。
+
+    kind を渡すとその種類だけを見る。巡回とブックマーク取り込みは
+    別々の作業なので、片方が動いていても、もう片方は依頼できてよい。
+    """
+    q = db.query(ScoutCrawlRequest).filter(
+        ScoutCrawlRequest.status.in_(["pending", "running"]))
+    if kind:
+        q = q.filter(ScoutCrawlRequest.kind == kind)
+    return q.order_by(ScoutCrawlRequest.id.desc()).first()
+
+
+def _queue(db: Session, request: Request, kind: str, params: dict):
+    """手元のPCへの依頼を積む。積めなければメッセージだけ返す。"""
+    cur = _active_request(db, kind)
+    label = _KIND_LABEL.get(kind, kind)
+    if cur:
+        waited = "実行中" if cur.status == "running" else "順番待ち"
+        return {"ok": False, "running": True,
+                "message": f"すでに{label}を依頼済みです（{waited}）"}
+    req = ScoutCrawlRequest(
+        requested_by=getattr(request.state, "actor_role", "") or "",
+        kind=kind,
+        params=json.dumps(params, ensure_ascii=False),
+        status="pending",
+    )
+    db.add(req)
+    db.commit()
+    return {"ok": True, "running": True, "request_id": req.id,
+            "message": f"手元のPCに{label}を依頼しました。まもなく始まります"}
 
 
 @router.post("/crawl")
@@ -568,22 +598,7 @@ def request_crawl(data: CrawlIn, request: Request, db: Session = Depends(get_db)
     ここでは走らせない（サーバーからのアクセスはAmazonに弾かれる）。
     依頼を積んでおき、常駐している scout_agent.py が拾って実行する。
     """
-    cur = _active_request(db)
-    if cur:
-        waited = "実行中" if cur.status == "running" else "順番待ち"
-        return {"ok": False, "running": True,
-                "message": f"すでに巡回を依頼済みです（{waited}）"}
-
-    req = ScoutCrawlRequest(
-        requested_by=getattr(request.state, "actor_role", "") or "",
-        params=json.dumps(data.model_dump(exclude_none=True), ensure_ascii=False),
-        status="pending",
-    )
-    db.add(req)
-    db.commit()
-    return {"ok": True, "running": True, "request_id": req.id,
-            "message": "手元のPCに巡回を依頼しました。"
-                       "常駐（【常駐する】.bat）が動いていれば、まもなく始まります"}
+    return _queue(db, request, "crawl", data.model_dump(exclude_none=True))
 
 
 @router.post("/stop")
@@ -619,6 +634,7 @@ def take_crawl_request(run_by: str = "", db: Session = Depends(get_db)):
     req.taken_by = run_by or ""
     db.commit()
     return {"request": {"id": req.id,
+                        "kind": req.kind or "crawl",
                         "params": json.loads(req.params or "{}"),
                         "requested_by": req.requested_by or ""}}
 
@@ -652,11 +668,13 @@ def check_crawl_request(req_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/import")
-def import_not_here():
-    return {"ok": False, "message":
-            "ブックマークの取り込みは手元のPCで実行します。"
-            "scripts/scout フォルダの【ブックマーク取り込み】.bat を"
-            "ダブルクリックしてください（初めてのときは先に【初回設定】.bat）"}
+def request_import(request: Request, db: Session = Depends(get_db)):
+    """ブックマークの取り込みを手元のPCに依頼する。
+
+    ブックマークはそのPCの中にしか無いので、サーバーでは読めない。
+    巡回と同じ仕組みで依頼を積み、手元で拾って実行する。
+    """
+    return _queue(db, request, "bookmarks", {})
 
 
 @router.post("/resolve")
