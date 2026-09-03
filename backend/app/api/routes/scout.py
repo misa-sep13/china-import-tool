@@ -401,6 +401,12 @@ def list_basket(db: Session = Depends(get_db)):
             "reviews": p.reviews if p else None,
             "rating": p.rating if p else None,
             "added_at": b.added_at.isoformat() if b.added_at else None,
+            # シート側は自分の列名で読む。名前が違うと値が入らないので両方返す
+            "competitor": p.title if p else None,
+            "monthlySales": p.sales_min if p else None,
+            "reviewCount": p.reviews if p else None,
+            "reviewRate": p.rating if p else None,
+            "note": "",
         })
     # 配布版の画面は rows で読む
     return {"rows": out, "items": out, "count": len(out)}
@@ -408,8 +414,15 @@ def list_basket(db: Session = Depends(get_db)):
 
 @router.get("/basket/count")
 def basket_count(db: Session = Depends(get_db)):
-    n = db.query(ScoutBasket).filter(ScoutBasket.taken_at.is_(None)).count()
-    return {"count": n}
+    """かごの件数と、シートへ渡す合図が立っているか。
+
+    シート側が5秒ごとにここを見て、register が立っていたら取り込みに来る。
+    """
+    # シートが開いている間ずっと数秒おきに呼ばれる。行は読まず件数だけ数える
+    base = db.query(ScoutBasket).filter(ScoutBasket.taken_at.is_(None))
+    return {"count": base.count(),
+            "register": base.filter(
+                ScoutBasket.register_requested_at.isnot(None)).count() > 0}
 
 
 @router.post("/basket/add")
@@ -653,15 +666,33 @@ def resolve_not_here():
 
 @router.post("/basket/register")
 def basket_register(db: Session = Depends(get_db)):
-    """かごの中身を競合リサーチシートへ渡す印を付ける。
+    """かごの中身を競合リサーチシートへ渡す合図を立てる。
 
-    シート側は /scout/basket を読んで行にするので、ここでは
-    「渡した」印だけ付ける（もう一度押しても二重に入らないように）。
+    シートとスカウトは別々の画面なので直接は渡せない。ここに合図を残し、
+    シート側が見に来て取り込む。取り込みが終わると合図は消える。
     """
     rows = db.query(ScoutBasket).filter(ScoutBasket.taken_at.is_(None)).all()
     if not rows:
-        return {"ok": False, "count": 0}
+        return {"ok": False, "count": 0, "message": "かごが空です"}
+    now = datetime.now(timezone.utc)
+    for b in rows:
+        b.register_requested_at = now
+    db.commit()
     return {"ok": True, "count": len(rows)}
+
+
+@router.post("/basket/registered")
+def basket_register_done(db: Session = Depends(get_db)):
+    """シート側が取り込み終わったので合図を消す。
+
+    成否によらず消す。残すと次の見回りでまた走ってしまう。
+    """
+    rows = (db.query(ScoutBasket)
+            .filter(ScoutBasket.register_requested_at.isnot(None)).all())
+    for b in rows:
+        b.register_requested_at = None
+    db.commit()
+    return {"ok": True, "cleared": len(rows)}
 
 
 @router.get("/basket/registered")

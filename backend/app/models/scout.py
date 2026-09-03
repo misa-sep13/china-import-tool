@@ -84,6 +84,9 @@ class ScoutBasket(Base):
     added_at = Column(DateTime(timezone=True), server_default=func.now())
     added_by = Column(String)
     taken_at = Column(DateTime(timezone=True), nullable=True)   # シートへ入れた時刻
+    # 「競合リサーチシートに登録」を押した合図。シート側は5秒ごとに見に来て、
+    # これが立っていたら取り込む。取り込んだら消す（次の見回りで二重に走らないため）
+    register_requested_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class ScoutRun(Base):
