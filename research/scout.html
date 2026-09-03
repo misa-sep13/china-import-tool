@@ -325,6 +325,7 @@
 const $ = s => document.querySelector(s);
 const SALES_STEPS = [0,10,20,30,40,50,100,200,300,400,500,1000];
 let SELLERS = [], picked = new Set(), timer = null, lastRunning = false, CAPPED = [];
+let lastPhase = "";                  // 直前に何をしていたか（終了の知らせを出し分ける）
 // 競合リサーチシートへ持っていく「かご」。中身はサーバ側(basket表)が本体で、
 // ここは画面のボタンの見た目をすぐ切り替えるための控え
 let BASKET = new Set();
@@ -524,7 +525,12 @@ async function poll(){
     $("#progLog").textContent = s.log||"";
     $("#progLog").scrollTop = 1e6;
   }
-  if(lastRunning && !on){ toast("巡回が終わりました"); load(); loadSellers(); }
+  if(lastRunning && !on){
+    toast(lastPhase.indexOf("ブックマーク") >= 0
+          ? "ブックマークの取り込みが終わりました" : "巡回が終わりました");
+    load(); loadSellers();
+  }
+  lastPhase = s.phase || "";
   lastRunning = on;
 }
 
@@ -699,9 +705,10 @@ $("#btnCsv").addEventListener("click", ()=>{
   else { location.href = "/api/csv?" + filters().toString(); }
 });
 $("#btnImport").addEventListener("click", async ()=>{
+  kickLocal();                       // 押した直後でないとブラウザが起動を許さない
   const r = await (await fetch("/api/import",{method:"POST"})).json();
   toast(r.message ? r.message.split("\n").pop() : "取り込みました");
-  loadSellers();
+  lastRunning = true; poll();        // 終わったら自動でセラー一覧を読み直す
 });
 $("#btnCapped").addEventListener("click", async ()=>{
   if(!CAPPED.length) return;
