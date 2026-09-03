@@ -65,6 +65,10 @@ def main():
     ap.add_argument("--base", default=os.environ.get("SCOUT_API", ""))
     ap.add_argument("--token", default=os.environ.get("APP_TOKEN", ""))
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--folder", default="",
+                    help="このフォルダの中だけ取り込む（部分一致・カンマ区切りで複数可）")
+    ap.add_argument("--list-folders", action="store_true",
+                    help="ブックマークのフォルダ一覧だけ出す")
     args = ap.parse_args()
 
     # setup.py で保存した設定を使う。sync_server.py と同じ置き場所・同じ優先順。
@@ -88,6 +92,32 @@ def main():
 
     print("ブックマークを探しています…")
     sellers, asins = collect_all()
+
+    if args.list_folders:
+        counts = {}
+        for _, _, folder, _ in sellers:
+            counts[folder or "(フォルダなし)"] = counts.get(folder or "(フォルダなし)", 0) + 1
+        print()
+        print("セラーのブックマークがあるフォルダ:")
+        for f, n in sorted(counts.items(), key=lambda x: -x[1]):
+            print(f"  {n:>4}件  {f}")
+        return 0
+
+    # フォルダで絞る。フォルダ名は「ブックマーク バー / Ama / Amazonセラー」の
+    # ような形なので、指定はその一部でよい（全部書かせるのは現実的でない）
+    wanted = [w.strip().lower() for w in (args.folder or "").split(",") if w.strip()]
+    if wanted:
+        before = len(sellers)
+        sellers = [x for x in sellers
+                   if any(w in (x[2] or "").lower() for w in wanted)]
+        print(f"  フォルダ「{args.folder}」で絞り込み: {before}件 → {len(sellers)}件")
+        if not sellers:
+            print()
+            print("そのフォルダにセラーのブックマークが見つかりませんでした。")
+            print("フォルダ名の一部（例: Amazonセラー）で指定してください。")
+            print("--list-folders を付けると、あるフォルダの一覧が出ます。")
+            return 1
+
     print(f"  セラーページ: {len(sellers)}件")
     print(f"  商品ページ  : {len(asins)}件"
           f"{'（URLにセラーIDが無いので今回は送りません）' if asins else ''}")

@@ -95,7 +95,10 @@ def run_one(base, token, run_by, req):
         # ブックマークはこのPCの中にしか無いので、サーバーからは読めない
         cmd = [sys.executable, os.path.join(HERE, "push_sellers.py"),
                "--token", token]
-        log("ブックマークを読んでいます")
+        folder = (params.get("folder") or "").strip()
+        if folder:
+            cmd += ["--folder", folder]
+        log(f"ブックマークを読んでいます" + (f"（フォルダ: {folder}）" if folder else ""))
     else:
         cmd = [sys.executable, os.path.join(HERE, "sync_server.py"),
                "--token", token, "--run-by", run_by] + build_args(params)

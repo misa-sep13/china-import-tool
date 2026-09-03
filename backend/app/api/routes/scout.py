@@ -667,14 +667,22 @@ def check_crawl_request(req_id: int, db: Session = Depends(get_db)):
     return {"status": req.status}
 
 
+class ImportIn(BaseModel):
+    # 「ブックマーク バー / Ama / Amazonセラー」の一部でよい。
+    # 空なら全部のブックマークから拾う
+    folder: Optional[str] = None
+
+
 @router.post("/import")
-def request_import(request: Request, db: Session = Depends(get_db)):
+def request_import(data: ImportIn | None = None, *, request: Request,
+                   db: Session = Depends(get_db)):
     """ブックマークの取り込みを手元のPCに依頼する。
 
     ブックマークはそのPCの中にしか無いので、サーバーでは読めない。
     巡回と同じ仕組みで依頼を積み、手元で拾って実行する。
     """
-    return _queue(db, request, "bookmarks", {})
+    folder = (data.folder or "").strip() if data else ""
+    return _queue(db, request, "bookmarks", {"folder": folder} if folder else {})
 
 
 @router.post("/resolve")
