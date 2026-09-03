@@ -515,7 +515,8 @@ def summary(db: Session = Depends(get_db)):
 
 _LOCAL_ONLY = (
     "この操作は手元のPCで実行します。"
-    "scripts/scout/sync_server.py を動かしてください"
+    "scripts/scout フォルダの【巡回する】.bat をダブルクリックしてください"
+    "（初めてのときは先に【初回設定】.bat）"
 )
 
 
@@ -533,8 +534,8 @@ def stop_not_here():
 def import_not_here():
     return {"ok": False, "message":
             "ブックマークの取り込みは手元のPCで実行します。"
-            "配布版のセラースカウトで取り込んでから、"
-            "scripts/scout/sync_server.py を動かしてください"}
+            "scripts/scout フォルダの【ブックマーク取り込み】.bat を"
+            "ダブルクリックしてください（初めてのときは先に【初回設定】.bat）"}
 
 
 @router.post("/resolve")
