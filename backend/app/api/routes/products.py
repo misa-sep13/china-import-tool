@@ -322,3 +322,33 @@ def export_t4s_cost(db: Session = Depends(get_db)):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=t4s_cost.xlsx"}
     )
+
+
+@router.post("/reset-amazon-ids")
+def reset_amazon_ids(dry_run: bool = True, db: Session = Depends(get_db)):
+    """ASINとFNSKUを消す。商品そのものは残す。
+
+    Amazonのアカウントを切り替えると、ASIN・FNSKUは前のアカウントの
+    ものになる。古いASINのまま在庫を取りに行っても見つからず、0が
+    返り続ける（実際にそうなった）。
+
+    SKU・商品名・原価・セット構成は使い続けるので消さない。
+    新しいASINは、出品してから商品マスタで入れ直す。
+
+    既定は dry_run=true。何が消えるか見てから実行する。
+    """
+    rows = (db.query(Product)
+            .filter((Product.asin.isnot(None)) | (Product.fnsku.isnot(None)))
+            .all())
+    target = [{"sku": p.sku, "name": (p.name or "")[:40],
+               "asin": p.asin, "fnsku": p.fnsku} for p in rows]
+
+    if dry_run:
+        return {"dry_run": True, "件数": len(target), "対象": target,
+                "説明": "dry_run=false で実行します。商品そのものは消えません"}
+
+    for p in rows:
+        p.asin = None
+        p.fnsku = None
+    db.commit()
+    return {"dry_run": False, "消した件数": len(target), "対象": target}
