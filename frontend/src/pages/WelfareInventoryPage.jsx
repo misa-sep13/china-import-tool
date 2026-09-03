@@ -274,13 +274,17 @@ export default function WelfareInventoryPage() {
       }
       return combined
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       setImportResult(data)
-      qc.invalidateQueries(['welfare-inventory'])
-      qc.invalidateQueries(['welfare-movements'])
-      qc.invalidateQueries(['welfare-work-instructions'])
-      // 取り込み直後は常に最新日のタブを開く（前回選んでいた古いタブが
-      // まだ存在すると、そのまま居座ってしまうため明示的にリセットする）
+      // 取り込み直後は常に最新日のタブを開く。
+      // 選択を空にするのは「再取得が終わったあと」でなければならない。
+      // 先に空にすると、まだ古い一覧が入っている状態でタブ選択が走り、
+      // 前回と同じ日付が選び直されて居座ってしまう（実際に起きた）。
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['welfare-inventory'] }),
+        qc.invalidateQueries({ queryKey: ['welfare-movements'] }),
+        qc.invalidateQueries({ queryKey: ['welfare-work-instructions'] }),
+      ])
       setActiveWorkDate('')
     },
   })

@@ -37,6 +37,9 @@ class WelfareInventoryMovement(Base):
     source_file = Column(String)
     source_sheet = Column(String)
     source_order_no = Column(String)
+    # 配送依頼No（便の番号）。同じ発注を2便に分けて送ることがあるため、
+    # 「どの便で届いたか」が分からないと分納の2便目を重複と誤判定する
+    shipment_no = Column(String, index=True)
     name_cn = Column(Text)
     supplier_spec = Column(String)
     buy_url = Column(Text)
@@ -56,6 +59,7 @@ class WelfareWorkInstruction(Base):
     source_file = Column(String)
     source_sheet = Column(String)
     source_order_no = Column(String, index=True)
+    shipment_no = Column(String, index=True)   # 配送依頼No。重複判定に使う
     name_jp = Column(String)
     source_product_name = Column(Text)
     color = Column(String)
