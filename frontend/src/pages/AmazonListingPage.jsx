@@ -141,6 +141,9 @@ export default function AmazonListingPage() {
                   <tr style={{ borderTop: '1px solid #f1f5f9' }}>
                     <td style={{ textAlign: 'center' }}>
                       <input type="checkbox" checked={!!picked[r.id]}
+                        disabled={!r.amazon_product_type || !r.amazon_jan}
+                        title={!r.amazon_product_type || !r.amazon_jan
+                          ? '先に「準備」を押してください' : ''}
                         onChange={e => setPicked({ ...picked, [r.id]: e.target.checked })} />
                     </td>
                     <td style={{ padding: 6, fontFamily: 'monospace' }}>{r.sku || '—'}</td>
@@ -157,9 +160,16 @@ export default function AmazonListingPage() {
                     </td>
                     <td style={{ padding: 6 }}>
                       <span style={{ color: st.color, fontWeight: 600 }}>{st.text}</span>
+                      {(!r.amazon_product_type || !r.amazon_jan) && (
+                        <div style={{ fontSize: 10, color: '#b45309' }}>
+                          準備がまだです
+                        </div>
+                      )}
                     </td>
                     <td style={{ padding: 6 }}>
-                      <button style={btn}
+                      <button
+                        style={(!r.amazon_product_type || !r.amazon_jan) && openId !== r.id
+                          ? btnMain : btn}
                         onClick={() => setOpenId(openId === r.id ? null : r.id)}>
                         {openId === r.id ? '閉じる' : '準備'}
                       </button>
