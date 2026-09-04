@@ -558,10 +558,20 @@ def _apply_inbound(db, o, items):
         p = prods.get(x.item_id)
         if not p or not x.qty:
             continue
-        before = p.inbound or 0
-        p.inbound = before + x.qty
-        changed.append({"sku": p.sku, "name": p.name,
-                        "before": before, "after": p.inbound, "qty": x.qty})
+        before, before2 = p.inbound or 0, p.standard_stock or 0
+        # 発注済1がまだ残っているのに足すと、別の便の分が合算されて
+        # どちらがいつ届くのか分からなくなる。埋まっていれば発注済2へ積む
+        # （発注済1を入荷しきったら _promote_stage が繰り上げる）
+        if before > 0:
+            p.standard_stock = before2 + x.qty
+            stage = 2
+        else:
+            p.inbound = before + x.qty
+            stage = 1
+        changed.append({"sku": p.sku, "name": p.name, "stage": stage,
+                        "before": before if stage == 1 else before2,
+                        "after": p.inbound if stage == 1 else p.standard_stock,
+                        "qty": x.qty})
     o.inbound_applied = True
     return changed
 
@@ -589,10 +599,15 @@ def apply_inbound(oid: int, data: ApplyInboundIn, db: Session = Depends(get_db))
             p = prods.get(x.item_id)
             if not p or not x.qty:
                 continue
-            before = p.inbound or 0
-            p.inbound = max(0, before - x.qty)
+            # 足したときと逆順に戻す。後から積んだ発注済2から先に引く
+            before, before2 = p.inbound or 0, p.standard_stock or 0
+            take2 = min(x.qty, before2)
+            p.standard_stock = before2 - take2
+            p.inbound = max(0, before - (x.qty - take2))
             changed.append({"sku": p.sku, "name": p.name,
-                            "before": before, "after": p.inbound, "qty": -x.qty})
+                            "before": before + before2,
+                            "after": (p.inbound or 0) + (p.standard_stock or 0),
+                            "qty": -x.qty})
         o.inbound_applied = False
     db.commit()
     return {"ok": True, "applied": o.inbound_applied, "changed": changed}
