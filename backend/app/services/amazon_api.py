@@ -845,13 +845,17 @@ def fetch_sales_period(days: int, offset_days: int, asin_list: List[str]) -> Dic
 
 
 def update_listing_price(sku: str, price: float) -> tuple:
-    """Feeds APIで出品価格を更新。戻り値: (success: bool, error_msg: str)"""
+    """Feeds APIで出品価格を更新。戻り値: (success: bool, error_msg: str)
+
+    MerchantIdentifier は以前アカウントIDを直書きしていた。アカウントを
+    切り替えたときに直し忘れて価格更新が失敗するので、環境変数から取る。
+    """
     mp = "A1VC38T7YXB528"
     token = _get_access_token()
 
     xml_body = f'''<?xml version="1.0" encoding="utf-8"?>
 <AmazonEnvelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="amznenvelope.xsd">
-  <Header><DocumentVersion>1.01</DocumentVersion><MerchantIdentifier>A29K12KTHSASJ0</MerchantIdentifier></Header>
+  <Header><DocumentVersion>1.01</DocumentVersion><MerchantIdentifier>{_seller_id()}</MerchantIdentifier></Header>
   <MessageType>Price</MessageType>
   <Message><MessageID>1</MessageID>
     <Price><SKU>{sku}</SKU><StandardPrice currency="JPY">{round(price)}</StandardPrice></Price>

@@ -293,11 +293,16 @@ def export_t4s_cost(db: Session = Depends(get_db)):
         cell = ws.cell(row=2, column=i, value=h)
         cell.font = Font(bold=True)
 
-    # 固定値（ThreeSky+ Japan店舗）
-    SELLER_ACCOUNT = "ThreeSky+"
+    # アカウントを切り替えたときに直し忘れないよう、設定から取る。
+    # 以前はここに旧アカウントのIDを直書きしていた
+    from app.core.config import settings as cfg
+    from app.models.amazon_research import AmazonResearchSettings
+
+    st = db.query(AmazonResearchSettings).first()
+    SELLER_ACCOUNT = (st.brand_name if st and st.brand_name else "") or "ThreeSky Plus"
     SHOP_NAME = "Japan"
-    SELLER_ID = "A29K12KTHSASJ0"
-    MARKETPLACE_ID = "A1VC38T7YXB528"
+    SELLER_ID = cfg.SP_API_SELLER_ID or ""
+    MARKETPLACE_ID = "A1VC38T7YXB528"   # Amazon.co.jp。国が変わらない限り固定
 
     # 行3以降: 商品データ
     for row_idx, p in enumerate(products, 3):
