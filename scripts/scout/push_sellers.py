@@ -237,6 +237,25 @@ def main():
             raise SystemExit(f"ファイルが見つかりません: {path}")
         print("書き出したファイルから読んでいます…")
         sellers, asins = collect_html(path)
+        # ドラッグ＆ドロップで来たときは引数を足せないので、ここで聞く。
+        # 書き出したファイルには個人のブックマークも入っているため、
+        # フォルダを選べないと関係ないセラーまで登録されてしまう
+        if not args.folder and sys.stdin and sys.stdin.isatty():
+            counts = {}
+            for _, _, folder, _ in sellers:
+                counts[folder or "(フォルダなし)"] = counts.get(folder or "(フォルダなし)", 0) + 1
+            if counts:
+                print()
+                print("出品者ページがあるフォルダ:")
+                for f, n in sorted(counts.items(), key=lambda x: -x[1]):
+                    print(f"  {n:>4}件  {f}")
+                print()
+                print("取り込むフォルダを入れてください（名前の一部でOK・カンマ区切りで複数可）")
+                try:
+                    args.folder = input("  空のまま Enter ですべて取り込みます: ").strip()
+                except EOFError:
+                    args.folder = ""
+                print()
     else:
         print("ブックマークを探しています…")
         sellers, asins = collect_all()
