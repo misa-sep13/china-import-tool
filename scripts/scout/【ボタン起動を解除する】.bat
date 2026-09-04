@@ -1,15 +1,19 @@
 @echo off
 chcp 65001 > nul
-echo ============================================================
-echo  セラースカウト  ボタン起動の解除
-echo ============================================================
-echo.
-echo  「更新する」ボタンからこのPCで巡回を始める登録を消します。
-echo  巡回そのものは【巡回する】.bat で今までどおり実行できます。
-echo.
-pause
-reg delete "HKCU\Software\Classes\scout" /f > nul 2>&1
-echo.
-echo  解除しました。
+cd /d "%~dp0"
+title Seller Scout - Disable Button
+python --version > nul 2>&1
+if errorlevel 1 (
+  echo.
+  echo  Python is not installed  /  Python ga haitte imasen
+  echo.
+  echo  https://www.python.org/downloads/
+  echo.
+  echo  Check "Add python.exe to PATH" during install.
+  echo.
+  pause
+  exit /b 1
+)
+python register_button.py --remove
 echo.
 pause

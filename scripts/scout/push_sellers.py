@@ -94,6 +94,16 @@ def main():
             "トークンがありません。先に【初回設定】を実行してください"
             "（コマンドなら python setup.py）")
 
+    print("=" * 56)
+    print(" セラースカウト  ブックマーク取り込み")
+    print("=" * 56)
+    print()
+    print("  このPCのブラウザのブックマークから")
+    print("  Amazonの出品者ページを探して、一元管理ツールに登録します。")
+    print("  Chrome・Edge・Brave・Firefox をまとめて見ます。")
+    print("  ブラウザは開いたままで大丈夫です。")
+    print()
+
     print("ブックマークを探しています…")
     sellers, asins = collect_all()
 

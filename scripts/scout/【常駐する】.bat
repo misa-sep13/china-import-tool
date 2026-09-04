@@ -1,19 +1,19 @@
 @echo off
 chcp 65001 > nul
 cd /d "%~dp0"
-title セラースカウト 常駐
-echo ============================================================
-echo  セラースカウト  常駐
-echo ============================================================
-echo.
-echo  この画面を開いたままにしておいてください。
-echo  一元管理の「競合リサーチ」で【更新する】を押すと、
-echo  ここで自動的に巡回が始まります。
-echo.
-echo  Amazonからログアウトしているか確認してください。
-echo  止めるときは、この画面を閉じてください。
-echo.
+title Seller Scout - Waiting
+python --version > nul 2>&1
+if errorlevel 1 (
+  echo.
+  echo  Python is not installed  /  Python ga haitte imasen
+  echo.
+  echo  https://www.python.org/downloads/
+  echo.
+  echo  Check "Add python.exe to PATH" during install.
+  echo.
+  pause
+  exit /b 1
+)
 python scout_agent.py
 echo.
-echo  常駐が止まりました。
 pause

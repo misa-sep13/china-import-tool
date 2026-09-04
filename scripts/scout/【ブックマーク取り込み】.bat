@@ -1,21 +1,19 @@
 @echo off
 chcp 65001 > nul
 cd /d "%~dp0"
-echo ============================================================
-echo  セラースカウト  ブックマーク取り込み
-echo ============================================================
-echo.
-echo  このPCのブラウザのブックマークから
-echo  Amazonの出品者ページを探して、一元管理ツールに登録します。
-echo.
-echo  Chrome・Edge・Brave・Firefox をまとめて見ます。
-echo  ブラウザは開いたままで大丈夫です。
-echo.
-pause
-echo.
+title Seller Scout - Bookmarks
+python --version > nul 2>&1
+if errorlevel 1 (
+  echo.
+  echo  Python is not installed  /  Python ga haitte imasen
+  echo.
+  echo  https://www.python.org/downloads/
+  echo.
+  echo  Check "Add python.exe to PATH" during install.
+  echo.
+  pause
+  exit /b 1
+)
 python push_sellers.py
 echo.
-echo ============================================================
-echo  終わりました。一元管理の「競合リサーチ」で確認できます。
-echo ============================================================
 pause

@@ -153,6 +153,7 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="先頭から何社まで巡回するか")
     ap.add_argument("--sellers", default="", help="セラーIDをカンマ区切りで指定")
     args, rest = ap.parse_known_args()
+    from_agent = bool(args.token)      # 常駐・ボタン起動は --token を付けてくる
 
     # setup.py で保存した設定を使う。毎回トークンを打たなくて済むように。
     # コマンドラインで渡されたものがあれば、そちらを優先する。
@@ -171,6 +172,25 @@ def main():
 
     if not args.token:
         raise SystemExit("トークンがありません。先に初回設定を実行してください: python setup.py")
+
+    # バッチから直接動かしたときだけ、始める前に確認する。
+    # （常駐やボタンからの起動は --token 付きで来るので、そこでは止めない）
+    if not from_agent:
+        print("=" * 56)
+        print(" セラースカウト  巡回")
+        print("=" * 56)
+        print()
+        print("  ★ Amazonからログアウトしているか確認してください ★")
+        print("  ログインしたままだと、途中で自動的に中止します。")
+        print()
+        print("  全社だと1時間半ほどかかります。")
+        print("  途中で閉じても、次回は続きから再開できます。")
+        print()
+        try:
+            input("  始めるときは Enter を押してください（やめるときは×で閉じる）: ")
+        except EOFError:
+            pass
+        print()
     if not os.path.exists(DB_PATH):
         print(f"ローカルDBを作ります: {DB_PATH}")
 

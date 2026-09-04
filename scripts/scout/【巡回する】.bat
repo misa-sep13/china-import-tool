@@ -1,21 +1,19 @@
 @echo off
 chcp 65001 > nul
 cd /d "%~dp0"
-echo ============================================================
-echo  セラースカウト  巡回
-echo ============================================================
-echo.
-echo  Amazonからログアウトしているか確認してください。
-echo  ログインしたままだと、途中で自動的に中止します。
-echo.
-echo  全289社で1時間半ほどかかります。
-echo  途中で閉じても、次回は続きから再開できます。
-echo.
-pause
-echo.
+title Seller Scout - Crawl
+python --version > nul 2>&1
+if errorlevel 1 (
+  echo.
+  echo  Python is not installed  /  Python ga haitte imasen
+  echo.
+  echo  https://www.python.org/downloads/
+  echo.
+  echo  Check "Add python.exe to PATH" during install.
+  echo.
+  pause
+  exit /b 1
+)
 python sync_server.py
 echo.
-echo ============================================================
-echo  終わりました。一元管理の「競合リサーチ」で確認できます。
-echo ============================================================
 pause
