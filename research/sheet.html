@@ -154,19 +154,19 @@
   body.t4s-ready li.t4s-only{display:list-item;}
   /* Amazonサジェスト取得（⚡）は、対応サーバーが居るときだけ出す（取得以外は誰でも見られる） */
   .sug-only{display:none;}
-  body.sug-ready .sug-only{display:inline-block;}
+  body.sug-ready .sug-only, body.ars-ready .sug-only{display:inline-block;}
   li.sug-only{display:none;}
-  body.sug-ready li.sug-only{display:list-item;}
+  body.sug-ready li.sug-only, body.ars-ready li.sug-only{display:list-item;}
   .imgtext-only{display:none;}
-  body.imgtext-ready .imgtext-only{display:inline-block;}
+  body.imgtext-ready .imgtext-only, body.ars-ready .imgtext-only{display:inline-block;}
   li.imgtext-only{display:none;}
-  body.imgtext-ready li.imgtext-only{display:list-item;}
+  body.imgtext-ready li.imgtext-only, body.ars-ready li.imgtext-only{display:list-item;}
   label.sug-deep{display:inline-flex;align-items:center;gap:4px;
     font-size:11px;color:var(--ink-2);cursor:pointer;}
   /* 取り込みサーバーが止まっているときだけ出る注意書き（入力欄と⚡は常に出す。
      消えると「機能が無くなった」と誤解するので、隠さず理由を書く） */
   .sug-off{display:none;font-size:10.5px;color:var(--warn);font-weight:700;}
-  body:not(.sug-ready) .sug-off{display:inline;}
+  body:not(.sug-ready):not(.ars-ready) .sug-off{display:inline;}
   label.sug-deep input{width:auto;margin:0;}
   .an-body .src-head textarea.sug-in{width:190px;min-height:0;height:38px;flex:0 0 auto;
     padding:3px 7px;font-size:11px;font-family:inherit;line-height:1.5;resize:vertical;
@@ -1602,6 +1602,30 @@ if(FIREBASE_CONFIG.databaseURL){
 
   // group:'man' を付けた欄には色が付く＝「手で入れないと埋まらない欄」。
   // 色の無い欄はSP-APIの取り込みで自動で入る（取り込みを使わないなら全部手入力）。
+  // サジェストと商品画像の文字は、一元管理のサーバー（常に動いている）で
+  // 取れるようにした。中継サーバーは起動していないと使えず、外注さんの
+  // PCでは動かなかったため。中継が居ればそちらを優先する（手元の方が速い）。
+  //
+  // 使う場所より前に置くこと。const は巻き上げられないので、後ろにあると
+  // 実行時に落ちる。
+  const SP_SERVER_URL = 'http://127.0.0.1:8765';
+  const ARS_API = (window.__ARS_API__ || '').replace(/\/$/, '');
+  // 一元管理から開いていれば、中継サーバーが無くてもサジェストと
+  // 画像の文字が使える。ボタンを出すための印
+  if (ARS_API) {
+    document.addEventListener('DOMContentLoaded',
+      () => document.body.classList.add('ars-ready'));
+  }
+  function apiFor(path){
+    if (document.body.classList.contains('sp-ready')) return SP_SERVER_URL + path;
+    return ARS_API ? ARS_API + '/amazon-research' + path : SP_SERVER_URL + path;
+  }
+  function apiHeaders(){
+    const t = window.__ARS_TOKEN__ || '';
+    return (!document.body.classList.contains('sp-ready') && t)
+      ? {Authorization: 'Bearer ' + t} : {};
+  }
+
   const COLS = [
     {key:'asin',         label:'ASIN',           type:'asin',   group:'key', tip:'ここが起点。競合商品のASIN（B0から始まる10桁）を最初に入れます。入れると商品ページを開くリンクが出て、色の付いていない欄はSP-APIの取り込みで埋められます'},
     {key:'image',        label:'画像',           type:'image',
@@ -4116,7 +4140,8 @@ if(FIREBASE_CONFIG.databaseURL){
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), 180000);
       try{
-        const res = await fetch(SP_SERVER + '/imgtext?asin=' + asin, {signal: ctl.signal});
+        const res = await fetch(apiFor('/imgtext?asin=' + asin),
+                                {signal: ctl.signal, headers: apiHeaders()});
         const j = await res.json();
         if(!j.ok){ imgStatus.textContent = '取り込めませんでした：' + (j.error || '不明なエラー'); return; }
         savePage(id, {imgtext: j.text});
@@ -4451,8 +4476,9 @@ if(FIREBASE_CONFIG.databaseURL){
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), deep ? 180000 : 30000);
       try{
-        const res = await fetch(SP_SERVER + '/suggest?q=' + encodeURIComponent(seed)
-          + (deep ? '&deep=1' : ''), {signal: ctl.signal});
+        const res = await fetch(
+          apiFor('/suggest?q=' + encodeURIComponent(seed) + (deep ? '&deep=1' : '')),
+          {signal: ctl.signal, headers: apiHeaders()});
         j = await res.json();
       }catch(e){
         j = {ok: false, error: 'サーバーに繋がらないか、時間切れです'};
