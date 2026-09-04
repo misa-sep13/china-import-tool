@@ -96,6 +96,10 @@ class AmazonResearchSettings(Base):
     ship_mode = Column(String, default="sea")   # sea / air
     customs_fee_jpy = Column(Float, default=2000)  # 通関料（船便のみ・便あたり）
     rate_updated_at = Column(DateTime(timezone=True), nullable=True)
+    # Amazonへの新規出品に使う。GS1事業者コードは自社に割り当てられた固定値で、
+    # 後ろに連番を付けて13桁のJANにする（採番の実体は JanCode 台帳）
+    gs1_prefix = Column(String)            # 例: 4570001（7桁）/ 456901234（9桁）
+    brand_name = Column(String)            # 出品時のブランド名
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
@@ -131,3 +135,25 @@ class AmazonResearchSheetBackup(Base):
     data = Column(Text)
     size_bytes = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class JanCode(Base):
+    """自社で採番したJANコード（GS1事業者コードから発番）の台帳。
+
+    新規出品にはJANが要る。GS1の事業者コードは自社に割り当てられた固定値で、
+    その後ろに商品アイテムコードを順番に付けて13桁にする。
+    同じ番号を2回使うと別商品が同一視されるので、発番したものは必ず残す。
+    取り消しても番号は再利用しない（一度Amazonに送った可能性があるため）。
+    """
+    __tablename__ = "jan_codes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, unique=True, index=True)   # 13桁
+    item_seq = Column(Integer, index=True)           # 事業者コードに続く連番
+    sku = Column(String, index=True)                 # 割り当て先（決まっていれば）
+    asin = Column(String, index=True)                # 登録できたら入る
+    name = Column(String)                            # 何に使ったか分かるように
+    status = Column(String, default="issued", index=True)  # issued / used / void
+    note = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

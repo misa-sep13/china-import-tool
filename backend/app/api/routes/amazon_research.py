@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.amazon_research import (
     AmazonResearch, AmazonResearchItem, AmazonResearchSettings,
-    AmazonResearchSheet, AmazonResearchSheetBackup,
+    AmazonResearchSheet, AmazonResearchSheetBackup, JanCode,
 )
 from app.services import amazon_research_calc as calc
 
@@ -37,6 +37,8 @@ def research_asin(asin: str, price: Optional[float] = None):
 # ---------- 設定 ----------
 
 class SettingsIn(BaseModel):
+    gs1_prefix: Optional[str] = None
+    brand_name: Optional[str] = None
     exchange_rate: Optional[float] = None
     rate_adjust: Optional[float] = None
     china_fixed: Optional[float] = None
@@ -74,6 +76,8 @@ def _settings_out(s: AmazonResearchSettings) -> dict:
         "customs_fee_jpy": s.customs_fee_jpy,
         "settle_rate": round(calc.settle_rate(s), 4) if s.exchange_rate else None,
         "rate_updated_at": s.rate_updated_at.isoformat() if s.rate_updated_at else None,
+        "gs1_prefix": s.gs1_prefix,
+        "brand_name": s.brand_name,
     }
 
 
@@ -470,3 +474,94 @@ def get_sheet_backup(backup_id: int, db: Session = Depends(get_db)):
         raise HTTPException(500, "控えを読めませんでした")
     return {"data": data,
             "created_at": row.created_at.isoformat() if row.created_at else None}
+
+
+# ---------- JANコードの採番 ----------
+#
+# 新規出品にはJANが要る。GS1事業者コードは自社に割り当てられた固定値で、
+# 後ろに商品アイテムコードを順番に付け、最後にチェックデジットを足して13桁にする。
+# 同じ番号を2回使うと別商品が同一視されるので、発番したものは必ず台帳に残し、
+# 取り消しても番号は再利用しない（一度Amazonへ送った可能性があるため）。
+
+
+def _check_digit(body12: str) -> str:
+    """JAN13のチェックデジット。奇数桁×1・偶数桁×3の合計を10の倍数に切り上げる。"""
+    total = sum(int(c) * (3 if i % 2 else 1) for i, c in enumerate(body12))
+    return str((10 - total % 10) % 10)
+
+
+def _make_jan(prefix: str, seq: int) -> str:
+    room = 12 - len(prefix)          # 商品アイテムコードに使える桁数
+    if room <= 0:
+        raise HTTPException(400, "GS1事業者コードの桁数が正しくありません（7桁か9桁）")
+    if seq >= 10 ** room:
+        raise HTTPException(
+            400,
+            f"採番できる番号を使い切りました（{len(prefix)}桁の事業者コードでは"
+            f"{10 ** room - 1}件まで）")
+    body = prefix + str(seq).zfill(room)
+    return body + _check_digit(body)
+
+
+class JanIssueIn(BaseModel):
+    sku: Optional[str] = None
+    name: Optional[str] = None
+    note: Optional[str] = None
+
+
+def _jan_out(j: JanCode):
+    return {"id": j.id, "code": j.code, "item_seq": j.item_seq, "sku": j.sku,
+            "asin": j.asin, "name": j.name, "status": j.status, "note": j.note,
+            "created_at": j.created_at.isoformat() if j.created_at else None}
+
+
+@router.get("/jan")
+def list_jan(status: Optional[str] = None, db: Session = Depends(get_db)):
+    q = db.query(JanCode)
+    if status:
+        q = q.filter(JanCode.status == status)
+    rows = q.order_by(JanCode.item_seq.desc()).limit(500).all()
+    st = _get_settings(db)
+    return {"rows": [_jan_out(x) for x in rows],
+            "gs1_prefix": st.gs1_prefix,
+            "issued": db.query(JanCode).count()}
+
+
+@router.post("/jan/issue")
+def issue_jan(data: JanIssueIn, db: Session = Depends(get_db)):
+    """次の番号を1つ発番して台帳に残す。"""
+    st = _get_settings(db)
+    prefix = (st.gs1_prefix or "").strip()
+    if not prefix.isdigit() or len(prefix) not in (7, 9):
+        raise HTTPException(400, "先にGS1事業者コード（7桁か9桁）を設定してください")
+
+    last = db.query(JanCode).order_by(JanCode.item_seq.desc()).first()
+    seq = (last.item_seq or 0) + 1 if last else 1
+    code = _make_jan(prefix, seq)
+    if db.query(JanCode).filter(JanCode.code == code).first():
+        raise HTTPException(409, "その番号はすでに使われています")
+
+    row = JanCode(code=code, item_seq=seq, sku=(data.sku or None),
+                  name=(data.name or None), note=(data.note or None), status="issued")
+    db.add(row)
+    db.commit()
+    return _jan_out(row)
+
+
+class JanPatchIn(BaseModel):
+    sku: Optional[str] = None
+    asin: Optional[str] = None
+    name: Optional[str] = None
+    status: Optional[str] = None
+    note: Optional[str] = None
+
+
+@router.patch("/jan/{jan_id:int}")
+def update_jan(jan_id: int, data: JanPatchIn, db: Session = Depends(get_db)):
+    row = db.query(JanCode).filter(JanCode.id == jan_id).first()
+    if not row:
+        raise HTTPException(404, "見つかりません")
+    for k, v in data.model_dump(exclude_none=True).items():
+        setattr(row, k, v)
+    db.commit()
+    return _jan_out(row)
