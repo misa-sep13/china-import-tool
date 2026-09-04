@@ -30,6 +30,73 @@ import scout_bookmarks as bm   # noqa: E402  配布版のブックマーク収�
 DEFAULT_BASE = "https://china-import-tool.onrender.com/api"
 
 
+def collect_html(path):
+    """ブラウザから書き出したブックマークのHTMLから拾う。
+
+    プロファイルの置き場所はブラウザや設定で変わり、探し当てられないことがある
+    （実際に外注さんのPCで1件も読めなかった）。書き出したファイルなら
+    確実に読めるので、逃げ道として用意しておく。
+
+    形式は Netscape のブックマークファイル。フォルダは <H3> の入れ子で表される。
+    """
+    from html.parser import HTMLParser
+
+    class P(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack = []          # いま何のフォルダの中にいるか
+            self.pending = None      # 直前の <H3>（名前を読み終えたら stack へ）
+            self.cur_a = None
+            self.sellers, self.asins = {}, {}
+
+        def handle_starttag(self, tag, attrs):
+            d = dict(attrs)
+            if tag == "h3":
+                self.pending = ""
+            elif tag == "dl":
+                # <H3>フォルダ名</H3> の直後の <DL> がその中身
+                # タグの間の改行や字下げが混ざるので落とす
+                self.stack.append((self.pending or "").strip())
+                self.pending = None
+            elif tag == "a" and d.get("href"):
+                self.cur_a = {"href": d["href"], "name": ""}
+
+        def handle_endtag(self, tag):
+            if tag == "dl" and self.stack:
+                self.stack.pop()
+            elif tag == "a" and self.cur_a:
+                url = self.cur_a["href"]
+                name = self.cur_a["name"].strip()
+                self.cur_a = None
+                if "amazon." not in url:
+                    return
+                folder = " / ".join([f for f in self.stack if f])
+                m = bm.SELLER_RE.search(url)
+                if m:
+                    sid = m.group(1)
+                    self.sellers.setdefault(
+                        sid, (sid, bm.clean_name(name, sid), folder, url))
+                    return
+                m = bm.ASIN_RE.search(url)
+                if m:
+                    self.asins.setdefault(m.group(1), (m.group(1), name, folder, url))
+
+        def handle_data(self, data):
+            if self.pending is not None:
+                self.pending += data
+            elif self.cur_a is not None:
+                self.cur_a["name"] += data
+
+    with io.open(path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    p = P()
+    p.feed(text)
+    total = text.lower().count("<a href=")
+    print(f"  書き出しファイル: ブックマーク {total}件 / "
+          f"セラー {len(p.sellers)}件 / 商品ページ {len(p.asins)}件")
+    return list(p.sellers.values()), list(p.asins.values())
+
+
 def _count_bookmarks(path):
     """そのプロファイルのブックマーク総数と、Amazonのものの数を数える。
 
@@ -106,6 +173,10 @@ def main():
                     help="このフォルダの中だけ取り込む（部分一致・カンマ区切りで複数可）")
     ap.add_argument("--list-folders", action="store_true",
                     help="ブックマークのフォルダ一覧だけ出す")
+    ap.add_argument("--html", default="",
+                    help="ブラウザから書き出したブックマークのHTMLから読む")
+    ap.add_argument("--help-html", action="store_true",
+                    help="書き出し方の案内だけ出す")
     args = ap.parse_args()
 
     # setup.py で保存した設定を使う。sync_server.py と同じ置き場所・同じ優先順。
@@ -137,8 +208,38 @@ def main():
     print("  ブラウザは開いたままで大丈夫です。")
     print()
 
-    print("ブックマークを探しています…")
-    sellers, asins = collect_all()
+    if args.help_html:
+        print("=" * 56)
+        print(" ブックマークを書き出して取り込む")
+        print("=" * 56)
+        print()
+        print("  ブラウザのプロファイルが見つからないときの方法です。")
+        print()
+        print("  【Chromeの場合】")
+        print("   1. 右上の「⋮」→ ブックマーク → ブックマークマネージャ")
+        print("      （Ctrl + Shift + O でも開きます）")
+        print("   2. 右上の「⋮」→「ブックマークをエクスポート」")
+        print("   3. 分かりやすい場所に保存（デスクトップなど）")
+        print()
+        print("  【Edgeの場合】")
+        print("   1. 右上の「…」→ お気に入り")
+        print("   2. 「…」→「お気に入りのエクスポート」")
+        print()
+        print("  保存したHTMLファイルを、この")
+        print("  【ブックマークHTMLから取り込む】.bat の上に")
+        print("  ドラッグ＆ドロップしてください。")
+        print()
+        return 0
+
+    if args.html:
+        path = args.html.strip().strip('"')
+        if not os.path.isfile(path):
+            raise SystemExit(f"ファイルが見つかりません: {path}")
+        print("書き出したファイルから読んでいます…")
+        sellers, asins = collect_html(path)
+    else:
+        print("ブックマークを探しています…")
+        sellers, asins = collect_all()
 
     if args.list_folders:
         counts = {}
