@@ -207,7 +207,7 @@
   .table-wrap::-webkit-scrollbar-track{background:var(--surface-2);}
   table{width:100%;border-collapse:collapse;}
   /* 1%あたりの幅を稼いで、見出しが折り返さないようにする */
-  .table-wrap table{min-width:2100px;table-layout:fixed;}
+  .table-wrap table{min-width:2160px;table-layout:fixed;}
   th,td{border:1px solid var(--line);padding:4px;vertical-align:top;}
   th{background:var(--surface-3);font-size:11px;font-weight:700;color:var(--ink-2);
     padding:8px 5px;text-align:center;line-height:1.45;letter-spacing:.01em;}
@@ -254,6 +254,7 @@
   .sp-auto .sp-diff-btn{background:#fff7ed;border-color:#f0b27a;color:#9a5518;font-weight:800;}
   .sp-auto .sp-diff-btn:hover{background:#fdead6;color:#9a5518;border-color:#e79a54;}
   .sp-auto .sp-diff-x{background:var(--surface);border-color:var(--line);color:var(--ink-3);margin-left:3px;}
+  .sp-auto .sp-warn{display:block;color:#9a5518;font-weight:700;cursor:help;}
 
   /* 色の意味を表の上に出す凡例 */
   .legend{display:flex;flex-wrap:wrap;gap:6px 8px;font-size:11px;color:var(--ink-2);margin:0 0 10px;}
@@ -342,6 +343,8 @@
     flex:0 0 auto;box-shadow:none;}
   td.parts-cell .parts-sum{margin-top:5px;font-size:11.5px;font-weight:800;color:#1e40af;
     text-align:right;font-variant-numeric:tabular-nums;}
+  td.factors .cn-total{margin-top:5px;font-size:11.5px;font-weight:800;color:#1e40af;
+    text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
   td.parts-cell .parts-add{margin-top:4px;padding:3px 6px;font-size:10px;width:100%;box-shadow:none;}
   td.center{text-align:center;}
 
@@ -419,7 +422,9 @@
   .chip{display:inline-block;background:var(--brand-soft);color:#1e40af;border-radius:4px;
     padding:1px 6px;margin:1px 2px 1px 0;font-size:10.5px;font-weight:600;}
   .row-actions{text-align:center;}
-  /* URL行ごとの操作（開く・コピー・ラクマート発注） */
+  /* URL行ごとの操作（開く・コピー・代行業者で発注） */
+  td.urls-cell .agentbuy{padding:1px 5px;font-size:10px;flex:0 0 auto;background:#c40000;border-color:#c40000;color:#fff;}
+  td.urls-cell .agentbuy:hover{background:#a30000;border-color:#a30000;}
   td.urls-cell .url-actions{display:flex;flex-wrap:wrap;gap:3px;align-items:center;margin:0 0 2px;}
   td.urls-cell .url-copy{padding:1px 5px;font-size:10px;flex:0 0 auto;}
   /* リサーチ枠の表示順の入れ替え（↑↓・枠の左上） */
@@ -814,7 +819,7 @@
         <input type="number" id="exchangeRateInput" step="0.01" placeholder="取得中...">
       </div>
       <div class="field">
-        <label for="rateAdjustInput" title="ラクマートの決済レートは市場為替より高い。2026-07の実績は中央24.85円/元">決済レート補正（%）</label>
+        <label for="rateAdjustInput" title="代行業者の決済レートは市場為替より高い（実績では+6%前後）">決済レート補正（%）</label>
         <input type="number" id="rateAdjustInput" step="0.1" placeholder="例: 6">
       </div>
       <div class="field">
@@ -881,7 +886,7 @@
       <td>これも<b>1販売単位につき1回だけ</b>。②と合わせて「1688単価に比例しない定額部分」を表しています。</td></tr>
     <tr><td>④ 円へ換算</td>
       <td>①＋②＋③（元） × 決済レート。</td>
-      <td>決済レート＝市場為替×1.06。<b>補正6%は為替の話だけ</b>で費用は含みません。ラクマートの決済レートは市場為替より高いため（市場23.39→決済24.79、実績中央値24.85）。</td></tr>
+      <td>決済レート＝市場為替×1.06。<b>補正6%は為替の話だけ</b>で費用は含みません。代行業者の決済レートは市場為替より高いため（例：市場23.39→決済24.79）。</td></tr>
     <tr><td>⑤ 決済重量</td>
       <td>実重量と容積重量の大きいほう。</td>
       <td>容積除数は<b>6000で固定</b>（輸送方法で変えません）。箱詰め係数は<b>容積重量にだけ</b>掛けます（商品ごとに100/95/90/85/80%から選択・既定100%）（実重量は詰めても縮まないため）。切り上げ・四捨五入はせず小数のまま使います。</td></tr>
@@ -898,14 +903,14 @@
 
   <h4>4. 係数とその根拠</h4>
   <table class="guide"><colgroup><col class="c1"><col class="c2"><col></colgroup>
-    <tbody><tr><th>係数</th><th>既定値</th><th>根拠（すべて自社の実績から実測）</th></tr>
-    <tr><td>決済レート補正</td><td>6%</td><td>2026年7月の配送依頼書レート実績 24.71〜25.11（中央値24.85）と市場為替の差</td></tr>
-    <tr><td>中国国内送料</td><td>0.50元/点</td><td>ラベル代0.80元と合わせて1.30元。1688代金に対する中国側実費を実発注1,175件に当てはめて決定</td></tr>
-    <tr><td>オプション単価</td><td>実績の最頻値</td><td>配送依頼書5,256明細の集計。ラベル貼付0.80元は2,767品目で発生（ほぼ全商品）</td></tr>
-    <tr><td>容積除数</td><td>6000</td><td>箱の実データ814件から逆算。RW船便5916・Raku-DQ 5916・航空便6000・OCS 5916とほぼ同一のため輸送方法で分けていません</td></tr>
-    <tr><td>箱詰め係数</td><td>商品ごと<br>（既定100%）</td><td>容積重量に掛ける。各行の「決済重量」欄で 100/95/90/85/80% から選ぶ。硬い箱に入った商品は詰めても縮まないので100%、柔らかい物ほど小さくする。78発注の実測平均は0.84倍だったが、原価の過小評価を避けるため既定は安全側の100%とし、商品の形に応じて下げる運用にした</td></tr>
-    <tr><td>輸送単価</td><td>船便7.5 / 航空便19.5元/kg</td><td>2026年実績の重量加重平均 RW船便7.07・Raku-DQ 7.37・航空便19.79元/kg。重量シェアの88.6%が船便</td></tr>
-    <tr><td>輸入関連費</td><td>13.8%</td><td>関税の記録2026年（通関128件・申告CIF 29,535,329円）で納税額＋手数料4,424,400円＝<b>対CIF 14.98%</b>。申告CIFは課税前原価の<b>92.0%</b>なので 14.98%×92.0%＝13.8%</td></tr>
+    <tbody><tr><th>係数</th><th>既定値</th><th>根拠（★すべて元の作者の代行業者での実発注データから実測。使う代行業者に合わせて校正してください）</th></tr>
+    <tr><td>決済レート補正</td><td>6%</td><td>代行業者の請求書に出てくる実決済レートと、ネットの市場為替との差（★業者ごとに違う）</td></tr>
+    <tr><td>中国国内送料</td><td>0.50元/点</td><td>ラベル代0.80元と合わせて1.30元。1688代金に対する中国側実費を実発注データに当てはめて決定</td></tr>
+    <tr><td>オプション単価</td><td>実績の最頻値</td><td>発注明細の集計。ラベル貼付0.80元はほぼ全商品で発生（★業者の料金表で差し替え）</td></tr>
+    <tr><td>容積除数</td><td>6000</td><td>箱の実データから逆算すると各便5916〜6000でほぼ同一のため、輸送方法で分けていません</td></tr>
+    <tr><td>箱詰め係数</td><td>商品ごと<br>（既定100%）</td><td>容積重量に掛ける。各行の「決済重量」欄で 100/95/90/85/80% から選ぶ。硬い箱に入った商品は詰めても縮まないので100%、柔らかい物ほど小さくする。実発注での実測平均は0.84倍だったが、原価の過小評価を避けるため既定は安全側の100%とし、商品の形に応じて下げる運用にした</td></tr>
+    <tr><td>輸送単価</td><td>船便7.5 / 航空便19.5元/kg</td><td>★代行業者ごとに違う。元の作者の代行業者実績の重量加重平均（船便7.1〜7.4・航空便19.8元/kg）を丸めた初期値</td></tr>
+    <tr><td>輸入関連費</td><td>13.8%</td><td>1年ぶんの通関実績で（納税額＋通関手数料）÷申告CIF＝<b>約15.0%</b>。申告CIFは課税前原価の<b>92.0%</b>なので 15.0%×92.0%≒13.8%（★取扱いカテゴリの関税率で変わる）</td></tr>
   </tbody></table>
   <div class="guide-note">申告CIFが課税前原価の92.0%になるのは、検品・ラベル貼付・セット化などのオプション費用（原価の8.7%）と箱袋代（2.2%）が中国側の<b>役務</b>であって輸入貨物の取引価格ではなく、課税価格に入らないためです。物品だけ（1688代金＋中国国内送料＋国際運賃）で見ると申告CIFは103.2%で、少なく申告しているわけではありません。</div>
 
@@ -992,12 +997,12 @@
   <ul>
     <li><b>リサーチ名</b>は見出しをクリックで編集。商品が複数見つかったら<b>「＋ 候補商品を追加」</b>で行を増やします。</li>
     <li><b>1688の3列（1688 URL・1688単価・オプション代）は1行目の内容を他の行へ配れます</b>――1行目の下の<b>「↓ 下の行すべてに反映」</b>、2行目以降の<b>「⤒ 1行目をコピー」</b>。コピー先は上書きされます。</li>
-    <li><b>1688 URL</b>は「＋ URLを追加」で何件でも。URLを入れると欄の下に「開く ↗」「コピー」が出ます（URLが複数のときは①②…で対応が分かります）。</li>
+    <li><b>1688 URL</b>は「＋ URLを追加」で何件でも。URLを入れると欄の下に「開く ↗」「コピー」「〇〇で発注」が出ます。「〇〇で発注」は代行業者でその1688商品のページを開きます（URLが複数のときは①②…で対応が分かります）。業者名と行き先はHTML先頭の <code>AGENT</code> で決まります。</li>
     <li>各リサーチ枠の左上の「↑↓」で、枠ごと表示順を入れ替えられます。枠の見出しのプルダウンで工程のステータス（<b>リサーチ中→発注済み→画像依頼済み→商品登録済み</b>、ほかに<b>ボツ</b>）を付けられ、枠の色が変わります（発注済み=緑／画像依頼済み=茶／商品登録済み=紫／ボツ=薄いグレー。どれも中身はそのまま読めます）。上のツールバーの同じ並びのタブで絞り込んで見られます。</li>
     <li><b>勝てる要素</b>は欄をクリックして当てはまるものを複数チェック（各項目の下に説明が出ます）。</li>
     <li>入力内容は<b>自動保存</b>されます。作業を終えるときは念のため<b>「CSVエクスポート」</b>で控えを保存しておくと安心です。</li>
     <li class="sp-only"><b>ASINを入れると自動で取り込みます</b>（このPC専用）。ボタンを押す必要はありません。入力が終わって少し待つと、色の付いていない欄が埋まり、ASIN欄の下に<b>✓ 取り込みました</b>と出ます。<b>すでに手で入れてある欄は勝手に書き換えません</b>。値が違うときは<b>🔄 ○項目が変わりました</b>と出るので、カーソルを合わせて「売価：2,980 → 3,455」のように中身を確認し、<b>押せば新しい値に入れ替え、✕なら今の値のまま</b>にできます（売価が動いたときの気付きに使えます）。ASINを別の商品に差し替えたときは、古い値は残さず丸ごと入れ替えます。</li>
-    <li class="sp-only"><b>📥 SP-APIで一括取り込み</b>（このPC専用）：あとから全行まとめて取り直したいときに使います。<b>ASINだけ入れて</b>押すと、商品名・画像・三辺・実重量・<b>売価（カート価格）</b>・配送（FBA/自己発送）・手数料に加えて、<b>商品仕様（商品名・箇条書き・商品の説明・ブランド名などの商品情報）</b>まで自動で入ります（配送セルにカーソルを合わせると出品者数の内訳が出ます）。<b>既定では空欄だけを埋める</b>ので、手で直した値は守られます。売価が変わったときなどに入れ直したい場合だけ、横の<b>「すでに入っている値も取り込み直す」</b>にチェックを入れてください（色の付いた欄＝薄緑・オレンジ・青は常に触りません）。三辺・実重量は<b>梱包サイズだけ</b>を取り込みます（本体サイズしか無い商品は空のまま＝手入力）。<b>月間販売個数・レビュー数・レビューレート（薄緑の3列）はSP-APIでは取れません。</b>セラースカウトの「📋 競合リサーチシートに登録」で取り込むと自動で入ります（使わないときはtool4sellerか商品ページを見て手入力）。</li>
+    <li class="sp-only"><b>📥 SP-APIで一括取り込み</b>（このPC専用）：あとから全行まとめて取り直したいときに使います。<b>ASINだけ入れて</b>押すと、商品名・画像・三辺・実重量・<b>売価（カート価格）</b>・配送（FBA/自己発送）・手数料に加えて、<b>商品仕様（商品名・箇条書き・商品の説明・ブランド名などの商品情報）</b>まで自動で入ります（配送セルにカーソルを合わせると出品者数の内訳が出ます）。<b>売価はAmazonの価格APIと商品ページの表示価格を毎回つき合わせています</b>。Amazonの価格APIは値段を変えても半日ほど古い値を返すことがあるので、食い違ったときは<b>商品ページの表示価格（お客さんに見えている値段）を売価に入れ、手数料もその値段で計算し直して</b>、ASIN欄の下に<b>⚠ ページの値段を採用</b>と出します（カーソルを合わせると両方の値が見られます）。<b>既定では空欄だけを埋める</b>ので、手で直した値は守られます。売価が変わったときなどに入れ直したい場合だけ、横の<b>「すでに入っている値も取り込み直す」</b>にチェックを入れてください（色の付いた欄＝薄緑・オレンジ・青は常に触りません）。三辺・実重量は<b>梱包サイズだけ</b>を取り込みます（本体サイズしか無い商品は空のまま＝手入力）。<b>月間販売個数・レビュー数・レビューレート（薄緑の3列）はSP-APIでは取れません。</b>セラースカウトの「📋 競合リサーチシートに登録」で取り込むと自動で入ります（使わないときはtool4sellerか商品ページを見て手入力）。</li>
     <li><b>🔎 セラースカウトから取り込む</b>：セラースカウト側で気になる商品の<b>「＋ リサーチシートへ」</b>を押してためておき、<b>「📋 競合リサーチシートに登録」</b>を押すと、こちらに<b>新しいリサーチが1件できて</b>行が入ります。ASIN・画像・ライバル商品名・<b>月間販売個数・レビュー数・レビューレート（薄緑の3列）</b>・売価・商品備考が埋まり、続けてSP-APIから寸法・重量・手数料も取り込みます。リサーチ名にはライバル商品名が入ります。同じASINが既にある行は、行を増やさず空いている欄だけ埋めます。</li>
     <li><b>💰 シミュレーション</b>（手数料の欄の下）：AmazonのFBA料金シミュレーターをその商品で開きます。ASINもクリップボードにコピーするので、自動で入らなければ貼り付けてください。</li>
     <li><b>箱詰め係数</b>（決済重量の欄の中）：容積重量に掛ける係数を商品ごとに100/95/90/85/80%から選べます。<b>既定は100%</b>。硬い箱に入った商品は詰めても縮まないので100%、衣類やクッションのように大きくつぶれる物ほど下げます。「箱詰め係数」の文字にカーソルを合わせると、5段階それぞれの目安が出ます。</li>
@@ -1010,14 +1015,14 @@
   <ul>
     <li><b>商品仕様</b>は<b>「📥 SP-APIで一括取り込み」</b>で全商品ぶんまとめて入ります。取り込めないときは商品ページで Ctrl+A → Ctrl+C して貼れば自動整形されます。</li>
     <li><b>📄 手動で取り込む</b>＝レビュー・キーワードのカードにある折りたたみです。ふだんは⚡で済むので畳んであり、押すと<b>「Amazonの商品ページを開く／tool4sellerで開く」「ファイル（CSV）を読み込む」</b>が出ます。⚡が使えない環境や、自動取得が失敗したときに使ってください（ファイルはカードの枠へ直接ドラッグしても取り込めます）。</li>
-    <li class="t4s-only"><b>⚡ 自動で取り込む</b>（このPC専用）：レビュー・キーワードのカードの⚡ボタンを押すと、tool4sellerを裏で自動操作して取ってきます（1商品30〜90秒。レビューは最大500件・検索だけなのでポイント消費なし）。<b>「⚡ 未取得の全商品を自動取り込み」</b>で、ASINが入っている商品のうち未取得のものをまとめて取れます（既に入っているものは壊しません）。<b>⚡はレビューとキーワードを続けて押してかまいません</b>。押した順に1つずつ自動で進み、あとの方は「順番待ち…」と表示されます。「ログインが切れています」と出たら 自動化\【tool4seller ログイン】.bat でログインし直してください（レビューも取るなら同じ窓でamazon.co.jpにもログイン）。</li>
+    <li class="t4s-only"><b>⚡ 自動で取り込む</b>（このPC専用）：レビュー・キーワードのカードの⚡ボタンを押すと、tool4sellerを裏で自動操作して取ってきます（1商品30〜90秒。レビューは最大500件・検索だけなのでポイント消費なし）。<b>「⚡ 未取得の全商品を自動取り込み」</b>で、ASINが入っている商品のうち未取得のものをまとめて取れます（既に入っているものは壊しません）。<b>⚡はレビューとキーワードを続けて押してかまいません</b>。押した順に1つずつ自動で進み、あとの方は「順番待ち…」と表示されます。「ログインが切れています」と出たら「SP-API取り込み」フォルダの【tool4seller ログイン】.bat でログインし直してください（レビューも取るなら同じ窓でamazon.co.jpにもログイン）。この専用の窓のログインは普段のChromeとは別で7日で切れますが、切れる前なら取り込みのたびに自動で延長されるので、週に1回でも取り込んでいればログインし直しは不要です（1週間以上使わなかった時だけ切れます）。</li>
     <li class="sug-only"><b>サジェスト</b>（このPC専用）＝<b>Amazonの検索窓に出る入力候補</b>を集めるカードです。元の語を入れて<b>「⚡ サジェストを取得」</b>を押すと<b>人気順（1位から）</b>で入り、<b>「👁 見る」で順位付きの一覧</b>を確認できます（📋順位付きでコピーも可）。<b>深掘り</b>にチェックを入れると「語＋あ〜わ／a〜z／0〜9」の総当たりで約10倍広く集めます（20秒ほど。関係ない語も混ざるので見て選んでください）。元の語は<b>1行に1語</b>で複数入れられ（「,」区切りでも可・一度に5語まで）、<b>語ごとに独立した順位表</b>になります（見る画面・プロンプトとも語ごとに1位から）。商品ごとではなく<b>リサーチ全体で1つ</b>で、保存は人気順に全体で300件まで（複数語のときは語ごとに均等割り）。取得すると<b>分析用プロンプトに順位付きで自動で入り</b>、①検索キーワードの<b>「＋ サジェストの語を足す」</b>の元データにもなります。</li>
-    <li class="imgtext-only"><b>⚡ 商品画像の文字</b>（このPC専用）＝競合の<b>メイン+サブ画像に書かれている文字</b>を、AI（Claude Haiku）が<b>原文ママで書き出す</b>カードです。行にASINを入れて⚡を押すだけ（20〜60秒・<b>1商品1〜3円ほどのAPI利用料</b>）。取得した文字は<b>分析用・商品説明・画像作成指示書のプロンプトに自動で入ります</b>。A+（商品紹介コンテンツ）の画像はSP-APIでは取れないため対象外です。使うには 自動化\.env に ANTHROPIC_API_KEY を設定してサーバーを起動し直してください。</li>
+    <li class="imgtext-only"><b>⚡ 商品画像の文字</b>（このPC専用）＝競合の<b>メイン+サブ画像に書かれている文字</b>を、AI（Claude Haiku）が<b>原文ママで書き出す</b>カードです。行にASINを入れて⚡を押すだけ（20〜60秒・<b>1商品1〜3円ほどのAPI利用料</b>）。取得した文字は<b>分析用・商品説明・画像作成指示書のプロンプトに自動で入ります</b>。A+（商品紹介コンテンツ）の画像はSP-APIでは取れないため対象外です。使うには「SP-API取り込み」フォルダの .env に ANTHROPIC_API_KEY を設定してサーバーを起動し直してください。</li>
     <li><b>レビューは必ずtool4sellerのダウンロードファイルを使ってください。</b>商品ページに出ているレビューはAmazonが選んだ一部で、それを全部だと思って分析すると<b>不満の傾向を読み違えます</b>。ファイルは<b>何個でもまとめて投げ込め</b>、ファイル名のASINを見て商品ごとに自動で振り分けます（すでに入っている商品は上書きせず飛ばします）。日付・評価・タイトル・本文だけを抜き出します。</li>
     <li><b>キーワード</b>は「🔎 tool4sellerで調べる」でページを開き、エクスポートしたCSVを欄にドラッグ。<b>こちらも複数まとめて投げ込め、ASINで振り分けます</b>。<b>コンバージョン率が入っている語だけを残し</b>（未記載・「-」・0は除外）、<b>オーガニック順位が上の順（同順位ならCVが高い順）</b>に並べます。除いた語数も表示します。</li>
     <li><b>「📊 全商品のKWを一覧で見る」</b>＝全商品のキーワードを、CSVにある項目（オーガニック順位・週間検索・ABA順位・競合品数・需給比・集中度・CV・PPC入札）を並べた表で確認できます。<b>見出しをクリックで並べ替え</b>（▲昇順／▼降順。値が無い行は常に最後）。</li>
     <li><b>「📋 全商品のKWをまとめてコピー」</b>＝全商品ぶんを重複なし・順位順で、半角スペース区切りの1行にしてコピーします（下の<b>「🏷 出品原稿をつくる」</b>で自動的に仕分けるので、ふだんはそちらを使えば十分です）。</li>
-    <li><b>「📋 分析用プロンプトをコピー」</b>＝全候補商品のシート情報（販売数・価格・原価試算・勝てる要素など）と、貼ってある仕様・レビューが1つのプロンプトにまとまります。ChatGPTなどに貼れば、訴求の型・レビューの不満・差別化の余地をまとめて出せます。<b>ASINから作った競合のAmazonページURLと、表に入れた1688 URLも商品ごとに入ります</b>。ブラウザを操作できるAI（<b>Claude in Chrome</b> など）に貼ると、<b>競合のAmazonページを開いて画像（サブ画像・A+）まで見て</b>「画像でしか言っていない訴求」「画像が答えていない不安」を出し、さらに<b>仕入れ元の1688ページを開いて</b>素材・入数・仕入単価・別注の余地まで読み、<b>1688にあるのにAmazonで訴求されていない差別化</b>や<b>原価のズレ</b>まで出してくれます（URLを開けない相手には「未確認」と書かせる指示が自動で付きます）。</li>
+    <li><b>「📋 分析用プロンプトをコピー」</b>＝全候補商品のシート情報（販売数・価格・原価試算・勝てる要素など）と、貼ってある仕様・レビューが1つのプロンプトにまとまります。ChatGPTなどに貼ると、回答は<b>前半の要約（競合の弱点・差別化ポイント・登録キーワード案）</b>と後半の詳細分析の2部構成で出ます。人は前半だけ読めば足ります。登録キーワード案は①検索キーワード欄にそのまま貼れる形（上限バイトはパネルで選んだカテゴリーに追従）です。<b>同じチャットで④⑥の「同じチャットで続ける版」を使うと、この分析を根拠に商品説明文と画像作成指示書まで続けて作れます</b>。<b>ASINから作った競合のAmazonページURLと、表に入れた1688 URLも商品ごとに入ります</b>。ブラウザを操作できるAI（<b>Claude in Chrome</b> など）に貼ると、<b>競合のAmazonページを開いて画像（サブ画像・A+）まで見て</b>「画像でしか言っていない訴求」「画像が答えていない不安」を出し、さらに<b>仕入れ元の1688ページを開いて</b>素材・入数・仕入単価・別注の余地まで読み、<b>1688にあるのにAmazonで訴求されていない差別化</b>や<b>原価のズレ</b>まで出してくれます（URLを開けない相手には「未確認」と書かせる指示が自動で付きます）。</li>
   </ul>
 
   <h4>🏷 出品原稿をつくる（タイトル・検索キーワード・商品説明）</h4>
@@ -1026,9 +1031,9 @@
     <li><b>① 検索キーワード</b>＝Amazonの検索キーワード欄にそのまま貼る1行。<b>上限はカテゴリーで違う</b>ため、パネル上部のカテゴリー選択で切り替えてください（ホーム＆キッチン・スポーツ＆アウトドア・おもちゃ・DIY工具・カー用品・ペット用品などは<b>500バイト未満</b>、服＆ファッション小物・シューズ＆バッグ・ジュエリー・時計は<b>250バイト未満</b>）。上限に達すると赤くなります。<b>③商品タイトルを先に書いてから仕分けると、タイトルにある語は自動で除かれます</b>（同じ語を繰り返しても効かないため、そのぶん別の語を入れられます）。</li>
     <li><b>② 商品説明に入れる必須キーワード</b>＝本文に自然に織り込む語。タイトルと重なって構いません。</li>
     <li><b>③ 商品タイトル</b>＝<b>親が1行、バリエーションは「子」を追加</b>して1行ずつ書きます（子にはバリエーションテーマの名称も入れます）。<b>行ごとに字数・禁止語・同じ語の3回以上の重複を自動チェック</b>します（重複はAmazonの商品仕様エラーの原因になります）。下の整えるボタンは<b>最後に触った行</b>に効き、「対象：子（カラー ブラック）」のようにどこに効くかが出ます。</li>
-    <li><b>④ 商品説明プロンプト</b>＝押すとプロンプトがコピーされます。タイトル・必須キーワード・<b>競合の商品仕様とレビュー</b>・<b>自社の差別化ポイント</b>が自動で差し込まれます。差別化ポイントの欄には、セット数・梱包・付属品など<b>自社で実際にやっている改良を事実だけ</b>書いてください（1688のページは改良前のベース商品なので、書かないとAIには見えません。書いた内容だけが「自社の強み」として使われ、書いていない改良を勝手に主張しないルールが自動で付きます）。<b>表の1688 URLと競合のAmazonページURLも入る</b>ので、<b>Claude in Chrome</b> のようにブラウザを開けるAIに貼れば、1688ページと競合の画像を見てから書かせられます。ChatGPTなどURLを開けない相手に貼るときは、これまでどおり<b>1688のページを画像で添付</b>してください。「商品画像の文字」カードで取得してあれば、競合画像のキャッチコピーもプロンプトに自動で入ります。</li>
+    <li><b>④ 商品説明プロンプト</b>＝押すとプロンプトがコピーされます。タイトル・必須キーワード・<b>競合の商品仕様とレビュー</b>・<b>自社の差別化ポイント</b>が自動で差し込まれます。差別化ポイントの欄には、セット数・梱包・付属品など<b>自社で実際にやっている改良を事実だけ</b>書いてください（1688のページは改良前のベース商品なので、書かないとAIには見えません。書いた内容だけが「自社の強み」として使われ、書いていない改良を勝手に主張しないルールが自動で付きます）。<b>表の1688 URLと競合のAmazonページURLも入る</b>ので、<b>Claude in Chrome</b> のようにブラウザを開けるAIに貼れば、1688ページと競合の画像を見てから書かせられます。ChatGPTなどURLを開けない相手に貼るときは、これまでどおり<b>1688のページを画像で添付</b>してください。「商品画像の文字」カードで取得してあれば、競合画像のキャッチコピーもプロンプトに自動で入ります。<b>「📋 同じチャットで続ける版」</b>＝分析用プロンプトを貼ったチャットで続けて頼むとき用。競合の仕様・レビューを再掲せず、上の分析を根拠に書かせるので短くなります。</li>
     <li><b>⑤ できた5行</b>＝ChatGPTの回答を貼り付けると<b>そのまま保存されます</b>（次に開いても残ります）。<b>「✅ チェックする」</b>で、行数・各行の字数（120〜130字）・【見出し】の有無・必須キーワードの使用漏れ・3回以上の重複・禁止語をまとめて判定します。</li>
-    <li><b>⑥ 画像作成指示書のプロンプト</b>＝デザイナーに渡す指示書をChatGPTに作らせるためのものです。<b>手で入れるのは「ターゲット顧客」と「商品画像の色合い（トンマナ）」の2つだけ</b>。この2つも思いつかなければ<b>「🤖 この2つをAIに考えてもらう」</b>を押してプロンプトをコピーし、ChatGPTの答えを<b>どちらかの欄にそのまま貼るだけで、2つの欄に自動で振り分けます</b>。残りの商品タイトル・商品説明文・バリエーション・1688リンク（表の1688 URL列）・ライバル（競合の商品名とAmazonリンク）・競合の仕様とレビューは<b>シートから自動で入ります</b>。自社の強み（日本企業／24時間365日対応／日本人スタッフのアフターフォロー）は固定で入り、④で書いた<b>自社の差別化ポイント</b>も比較表とアピールポイントに反映されます。<b>1688 URLと競合のAmazonページURLはプロンプト本文にも入る</b>ので、<b>Claude in Chrome</b> のようにブラウザを開けるAIに貼れば、1688のページと<b>競合の画像の作り（1枚目の見せ方・サブ画像の順番・A+）</b>を見てから構成案を作らせられます。ChatGPTなどURLを開けない相手に貼るときは、こちらも<b>1688のページを画像で添付</b>してください。返ってきた構成案を下の欄に貼り、<b>「📄 Wordで書き出す」</b>を押すと、■の項目と構成案が入った<b>.docxファイル</b>がダウンロードされます（ファイル名は「日付_商品名60字程度」。ブランド名は自動で外し、単語の切れ目で切ります）。そのままデザイナーへ渡せます。「商品画像の文字」カードで取得してあれば、競合画像のキャッチコピーもプロンプトに自動で入ります。</li>
+    <li><b>⑥ 画像作成指示書のプロンプト</b>＝デザイナーに渡す指示書をChatGPTに作らせるためのものです。<b>手で入れるのは「ターゲット顧客」と「商品画像の色合い（トンマナ）」の2つだけ</b>。この2つも思いつかなければ<b>「🤖 この2つをAIに考えてもらう」</b>を押してプロンプトをコピーし、ChatGPTの答えを<b>どちらかの欄にそのまま貼るだけで、2つの欄に自動で振り分けます</b>。残りの商品タイトル・商品説明文・バリエーション・1688リンク（表の1688 URL列）・ライバル（競合の商品名とAmazonリンク）・競合の仕様とレビューは<b>シートから自動で入ります</b>。自社の強み（HTML先頭の <code>SELLER_STRENGTHS</code> に書いた項目）は固定で入り、④で書いた<b>自社の差別化ポイント</b>も比較表とアピールポイントに反映されます。<b>1688 URLと競合のAmazonページURLはプロンプト本文にも入る</b>ので、<b>Claude in Chrome</b> のようにブラウザを開けるAIに貼れば、1688のページと<b>競合の画像の作り（1枚目の見せ方・サブ画像の順番・A+）</b>を見てから構成案を作らせられます。ChatGPTなどURLを開けない相手に貼るときは、こちらも<b>1688のページを画像で添付</b>してください。返ってきた構成案を下の欄に貼り、<b>「📄 Wordで書き出す」</b>を押すと、■の項目と構成案が入った<b>.docxファイル</b>がダウンロードされます（ファイル名は「日付_商品名60字程度」。ブランド名は自動で外し、単語の切れ目で切ります）。そのままデザイナーへ渡せます。「商品画像の文字」カードで取得してあれば、競合画像のキャッチコピーもプロンプトに自動で入ります。<b>「📋 同じチャットで続ける版」</b>も④と同じで、分析用プロンプトのチャットで続けるときに使います。</li>
   </ul>
 
   <h4>キーワードの整え方（①の編集ボタン）</h4>
@@ -1501,6 +1506,43 @@ const FIREBASE_CONFIG = {
 };
 /* ========================================================================= */
 
+/* =========================================================================
+   ★★ 仕入れ代行業者の設定（ここが業者ごとに変わる唯一の場所）★★
+   初期値は元の作者が使っている代行業者（ラクマート）を前提に作られています。
+   別の代行業者を使う場合は、この AGENT だけ書き換えれば画面と発注ボタンが追従します。
+   料率（送料・オプション単価・決済レート補正）は別途 AGENT_OPTIONS と
+   defaultSettings() を直してください（docs/05 に一覧があります）。
+   ========================================================================= */
+const AGENT = {
+  // 画面のボタンや説明に出る名前
+  name: 'ラクマート',
+
+  // 1688の商品URL → 代行業者の商品ページ。
+  // ★別の代行業者での調べ方：その業者にログイン → トップの検索窓に1688の
+  //   商品URLを貼って検索 → 開いたページのURLをコピーし、商品ID部分を
+  //   offerId に置き換えた形をここに書く。分からなければ null にすると
+  //   「発注」ボタン自体が出なくなります（開く／コピーは残ります）。
+  productUrl(offerId){
+    return 'https://www.rakumart.com/ProductDetails?goods_id=' + offerId + '&fromPlatform=1688';
+  },
+  // offer IDが読めないURL（短縮リンク等）を投げるキーワード検索
+  searchUrl(keyword){
+    return 'https://www.rakumart.com/CommoditySearch?type=keywordSearch&keyword=' + encodeURIComponent(keyword);
+  }
+};
+
+/* 自分のブランド名。画像作成指示書のファイル名から自動で落とします（例: ['MYBRAND']） */
+const BRAND_WORDS = [];
+
+/* 出品者としての固定の強み。画像作成指示書の比較表に毎回入ります。
+   自社に当てはまらない項目は消し、事実だけを書いてください */
+const SELLER_STRENGTHS = [
+  '・日本企業',
+  '・24時間365日対応',
+  '・日本人スタッフが誠実にアフターフォローいたします'
+];
+/* ========================================================================= */
+
 // Firebaseはネットワーク経由でしか読み込めないため（file://で開いた場合など）、
 // 失敗してもシート自体は動くように動的import＋try/catchで読み込む。
 let firebaseReady = false;
@@ -1580,7 +1622,10 @@ if(FIREBASE_CONFIG.databaseURL){
     {key:'weight',       label:'実重量 (kg)',    type:'number', tip:'商品パッケージの重量（kg）'},
     {key:'sizeType',     label:'サイズ区分',     type:'select', tip:'ふつうは自動判定のままでOK。原価計算には使っておらず、FBA手数料を調べるときの手がかりとして表示しているだけです',
      options:[{v:'',label:'自動判定'},{v:'small',label:'小型'},{v:'standard',label:'標準'},{v:'oversize',label:'大型'}]},
-    {key:'price',        label:'売価',           type:'number'},
+    {key:'price',        label:'売価',           type:'number',
+     tip:'SP-APIで取り込むとAmazonの表示価格そのまま（カート価格・送料込み）が入ります。ポイント還元は隣のポイント欄に分けてあり、広告前粗利で差し引きます'},
+    {key:'points',       label:'ポイント',       type:'number',
+     tip:'カート価格に付いているポイント還元（円相当）。SP-APIの取り込みで自動で入ります。ポイントはセラー負担のコストなので、広告前粗利＝売価−ポイント−原価−手数料 で差し引かれます'},
     {key:'fulfill',      label:'配送',           type:'select',
      tip:'競合がFBAか自己発送か。SP-APIで取り込むとカートを取っている出品者の配送方法が入ります。セルにカーソルを合わせると出品者数の内訳（FBA何人／自己発送何人）が出ます',
      options:[{v:'',label:'-'},{v:'FBA',label:'FBA'},{v:'自己発送',label:'自己発送'}]},
@@ -1622,30 +1667,35 @@ if(FIREBASE_CONFIG.databaseURL){
     {label:'商品ページが雑', desc:'タイトル・箇条書き・A+コンテンツが未最適化。しっかり作るだけで勝てる'},
   ];
 
-  // ラクマートのオプション。自社の2026年 配送依頼書5,256明細から、実際に使ったものだけを
-  // タオタロウの料金表どおり。単位が「点」「枚」「セット」で違うものが
-  // あるが、いずれも1販売単位あたりで数えている。
-  const TAOTARO_OPTIONS = [
-    {label:'商品ラベル貼り付け作業', price:0.50, desc:'FNSKUラベル。0.5元/枚'},
-    {label:'全量開封検品',          price:0.50, desc:'0.5元/個'},
-    {label:'アパレル検品・詳細検品',  price:2.00, desc:'オプション検品。2元/点'},
-    {label:'写真撮影',             price:3.00, desc:'1商品1回3元（最大3枚・商品により変動）'},
-    {label:'ネームタグ取り外し',      price:1.00, desc:'1元/枚'},
-    {label:'ネームタグ縫い付け',      price:2.00, desc:'2元/枚'},
-    {label:'品質表示タグ取り外し',    price:1.00, desc:'洗濯表示タグ。1元/枚'},
-    {label:'品質表示タグ取り付け',    price:2.00, desc:'洗濯表示タグ。2元/枚'},
-    {label:'OPP袋入替（タオタロウ支給）', price:0.50, desc:'0.5元/点'},
-    {label:'OPP袋入替（自社支給）',    price:0.30, desc:'0.3元/点'},
-    {label:'おもちゃ年齢表示シール',   price:0.20, desc:'0.2元/点'},
-    {label:'Made in Chinaシール',   price:0.20, desc:'0.2元/点'},
-    {label:'説明書・チラシのセット',   price:0.50, desc:'0.5元/セット'},
-    {label:'圧縮梱包',             price:4.00, desc:'4元/点'},
+  // ★★ 業者ごとに変わる：代行業者に頼む加工オプションと単価（元／販売単位）★★
+  // 初期値は元の作者の代行業者の料金表・実発注データから拾った最頻値。よく使う順に並べてある。
+  // 0元のもの(通常OPP袋入れ替え・made in China・年齢シール等)は原価に効かないので載せていない。
+  // 別の代行業者を使う場合は、その業者のオプション料金表を見てこの表ごと入れ替えること。
+  // ラクマート（タオタロウ）のオプション。自社の2026年 配送依頼書5,256明細から、
+  // 実際に使ったものだけを料金表どおりに並べている。単位が「点」「枚」「セット」で
+  // 違うものがあるが、いずれも1販売単位あたりで数えている。
+  // ★別の代行業者に変えるときは、その業者の料金表でこの表ごと入れ替えること。
+  const AGENT_OPTIONS = [
+  {label:'商品ラベル貼り付け作業', price:0.50, desc:'FNSKUラベル。0.5元/枚'},
+  {label:'全量開封検品',          price:0.50, desc:'0.5元/個'},
+  {label:'アパレル検品・詳細検品',  price:2.00, desc:'オプション検品。2元/点'},
+  {label:'写真撮影',             price:3.00, desc:'1商品1回3元（最大3枚・商品により変動）'},
+  {label:'ネームタグ取り外し',      price:1.00, desc:'1元/枚'},
+  {label:'ネームタグ縫い付け',      price:2.00, desc:'2元/枚'},
+  {label:'品質表示タグ取り外し',    price:1.00, desc:'洗濯表示タグ。1元/枚'},
+  {label:'品質表示タグ取り付け',    price:2.00, desc:'洗濯表示タグ。2元/枚'},
+  {label:'OPP袋入替（タオタロウ支給）', price:0.50, desc:'0.5元/点'},
+  {label:'OPP袋入替（自社支給）',    price:0.30, desc:'0.3元/点'},
+  {label:'おもちゃ年齢表示シール',   price:0.20, desc:'0.2元/点'},
+  {label:'Made in Chinaシール',   price:0.20, desc:'0.2元/点'},
+  {label:'説明書・チラシのセット',   price:0.50, desc:'0.5元/セット'},
+  {label:'圧縮梱包',             price:4.00, desc:'4元/点'},
   ];
   const DEFAULT_OPTIONS = ['商品ラベル貼り付け作業'];
   // 選んだオプションの合計＋自由入力＝1販売単位あたりのオプション代(元)
   function optionsTotal(row){
     const sel = Array.isArray(row.optSel) ? row.optSel : [];
-    const picked = TAOTARO_OPTIONS.filter(o => sel.indexOf(o.label) >= 0)
+    const picked = AGENT_OPTIONS.filter(o => sel.indexOf(o.label) >= 0)
                                    .reduce((t, o) => t + o.price, 0);
     return picked + num(row.extra);
   }
@@ -1658,10 +1708,10 @@ if(FIREBASE_CONFIG.databaseURL){
   // 列幅(%)。見出しが1行に収まるように配ってある。合計100。
   // 長い見出し（手数料(FBA+販売)・オプション代・1688単価）を広めに取り、
   // 三辺や粗利率のような短い見出しから少しずつ回している。
-  //  ASIN 画像 商品名 販売数 ﾚﾋﾞｭ数 ﾚｰﾄ  要素  備考  長 中 短  重量 ｻｲｽﾞ 売価 配送 手数料
-  const COL_WIDTHS = [4,  4,  6.4,  3.6,  3.2,  3.8, 3.6, 3.4, 2.8,2.8,2.8, 3.4, 3.8, 3.4, 3,  5,
+  //  ASIN 画像 商品名 販売数 ﾚﾋﾞｭ数 ﾚｰﾄ  要素  備考  長 中 短  重量 ｻｲｽﾞ 売価 ﾎﾟｲﾝﾄ 配送 手数料
+  const COL_WIDTHS = [4,  4,  6.0,  3.6,  3.2,  3.8, 3.6, 3.4, 2.8,2.8,2.8, 3.4, 3.8, 3.4, 2.6, 3,  4.8,
   //  1688URL 1688単価 ｵﾌﾟｼｮﾝ 決済重量 内訳 原価 粗利 粗利率 削除
-      4.4,    5.4,     7.4,   4.9,    4.9, 4.4, 4.4, 3.0,  2.2];
+      4.2,    5.1,     7.0,   4.6,    4.6, 4.2, 4.2, 2.9,  2.2];
 
   // 箱詰め係数の選択肢。容積重量に掛ける値で、箱の中の隙間の少なさを表す。
   // 「詰めても縮まない物ほど100%に近い」と覚えると迷わない。
@@ -1670,8 +1720,8 @@ if(FIREBASE_CONFIG.databaseURL){
     {v:'100', label:'100%',  tip:'既定。硬い箱にきっちり入っていて、詰めても一切つぶれない物。\n例：家電の化粧箱、工具箱、プラケース入りのおもちゃ、ガラス・陶器の箱入り'},
     {v:'95',  label:'95%',   tip:'ほぼ箱なりだが、ごくわずかに隙間を詰められる物。\n例：厚紙の箱入り雑貨、ブリスターパック、硬めの化粧箱'},
     {v:'90',  label:'90%',   tip:'箱や台紙はあるが、多少はつぶれて隙間が減る物。\n例：薄い紙箱入りの小物、台紙付きアクセサリー、軽い樹脂ケース'},
-    {v:'85',  label:'85%',   tip:'標準。袋入りの雑貨など、詰めるとそこそこ隙間が減る物。\n例：ポリ袋入りの小物、キッチン用品、文具（実測78発注の平均が0.84倍）'},
-    {v:'80',  label:'80%',   tip:'柔らかく、押すと大きくつぶれる物。\n例：衣類・タオル・腹巻き、クッション、ぬいぐるみ、布製カバー'},
+    {v:'85',  label:'85%',   tip:'標準。袋入りの雑貨など、詰めるとそこそこ隙間が減る物。\n例：ポリ袋入りの小物、キッチン用品、文具（実発注での実測平均が0.84倍）'},
+    {v:'80',  label:'80%',   tip:'柔らかく、押すと大きくつぶれる物。\n例：衣類・タオル・マフラー、クッション、ぬいぐるみ、布製カバー'},
   ];
 
   let rowUpdaters = [];
@@ -1693,8 +1743,9 @@ if(FIREBASE_CONFIG.databaseURL){
   function defaultResearch(){
     return {id: uid(), title:'新規リサーチ（例：商品カテゴリ名）', comment:'', createdAt: Date.now(), rows:[defaultRow()]};
   }
-  // 既定値の根拠（すべて自社の原価計算シート2026年版から実測。検証は実発注1,175件）:
-  //  決済レート補正6%   : 配送依頼書の決済レート(2026-07 中央値24.85)と市場為替の差
+  // 既定値の根拠（★すべて元の作者の代行業者での実発注データから実測した値です。
+  //   別の代行業者では料率が違うので、最初の数発注で必ず検算し直してください）:
+  //  決済レート補正6%   : 発注明細（代行業者の請求書）の決済レートと市場為替の差
   //  中国側 +1.30元/点  : 1688代金に対する上乗せを1点あたり定額で持つ。
   //      内訳は ラベル代0.80元(各行のオプション代・既定でON) + 中国国内送料0.50元(chinaFixed)。
   //      (実測2,723品目では通常ラベル0.80元が発生率100%、国内送料は中央値0.35元・発生時0.75元、
@@ -1718,7 +1769,7 @@ if(FIREBASE_CONFIG.databaseURL){
   //      容積重量にだけ掛ける(実重量は詰めても縮まない)。
   //  容積除数6000       : 箱の実データ814件から逆算するとRW船便5916/Raku-DQ 5916/航空便6000/OCS 5916。
   //      輸送方法で変わらないので固定。最低請求重量は箱単位でしか効かないため商品単位では持たない。
-  //  船便7.5元/kg       : 2026年実績の重量加重平均 RW船便7.07元/kg・Raku-DQ 7.37元/kg。
+  //  船便7.5元/kg       : ★業者ごとに違う。元の作者の代行業者実績の重量加重平均が船便7.1〜7.4元/kg。
   //      実際は重量帯で段階がある(船便100kg超7元/50〜99kg 9元/〜49kg 12元、航空便19.5〜20.5元)が、
   //      重量シェアの88.6%が船便なので選択肢は船便7.5と航空便19.5の2つに絞っている。
   // 精度: 中国側だけ(実額と比較・非循環)で中央絶対誤差6.7%。
@@ -2090,13 +2141,14 @@ if(FIREBASE_CONFIG.databaseURL){
       w.push('複数部材のセット（基本作業費は1販売単位に1回だけ加算。セット組み代はオプション代へ）');
     return w;
   }
-  // 広告前粗利 = 売価 − 原価（国際送料・輸入関連費込み） − Amazon手数料
+  // 広告前粗利 = 売価 − ポイント − 原価（国際送料・輸入関連費込み） − Amazon手数料
   // ※広告費・返品引当・クーポン・保管費は含まない
+  // 売価はAmazonの表示価格そのまま。ポイント還元はセラー負担なのでここで差し引く
   function computeProfit(row, cost){
     // 原価が確定しないうちは粗利も出さない（原価0円として計算すると粗利を過大に見せるため）
     if(!has(row.price) || cost.cost === null) return {amount:null, rate:null};
     const price = num(row.price);
-    const amount = price - cost.cost - num(row.fee);
+    const amount = price - num(row.points) - cost.cost - num(row.fee);
     return {amount, rate: price !== 0 ? (amount / price * 100) : 0};
   }
 
@@ -2143,17 +2195,28 @@ if(FIREBASE_CONFIG.databaseURL){
     const panel = el('div', 'factor-panel');
     panel.style.display = 'none';
 
+    // 1688代金(部材合計)＋オプション代 の総額。部材側が変わった時は
+    // buildPartsCell から td._refreshTotal() で呼び直される
+    const total = el('div', 'cn-total');
+    total.title = '1688代金(部材合計) ＋ オプション代 ＝ 1販売単位あたりの中国側仕入額(元)。中国国内送料は含まない';
+    function refreshTotal(){
+      const opt = optionsTotal(row), parts = partsTotal(row);
+      const t = parts + opt;
+      total.textContent = (parts || opt) ? ('1688＋オプション ' + (Math.round(t * 100) / 100) + ' 元') : '';
+    }
+    td._refreshTotal = refreshTotal;
     function label(){
       const sel = Array.isArray(row.optSel) ? row.optSel : [];
       const t = optionsTotal(row);
       btn.innerHTML = '';
+      refreshTotal();
       if(!t && !sel.length){ btn.className = 'factor-btn empty'; btn.textContent = '選択...'; return; }
       btn.className = 'factor-btn';
       btn.appendChild(el('span', 'chip', '計 ' + (Math.round(t * 100) / 100) + '元'));
       sel.forEach(n => btn.appendChild(el('span', 'chip', n.length > 8 ? n.slice(0, 8) + '…' : n)));
     }
 
-    TAOTARO_OPTIONS.forEach(o => {
+    AGENT_OPTIONS.forEach(o => {
       const lab = el('label');
       const cb = document.createElement('input');
       cb.type = 'checkbox';
@@ -2161,7 +2224,7 @@ if(FIREBASE_CONFIG.databaseURL){
       cb.addEventListener('change', () => {
         const set = new Set(row.optSel || []);
         cb.checked ? set.add(o.label) : set.delete(o.label);
-        row.optSel = TAOTARO_OPTIONS.filter(x => set.has(x.label)).map(x => x.label);
+        row.optSel = AGENT_OPTIONS.filter(x => set.has(x.label)).map(x => x.label);
         label(); onChange(); scheduleSave();
       });
       lab.appendChild(cb);
@@ -2214,6 +2277,7 @@ if(FIREBASE_CONFIG.databaseURL){
 
     label();
     td.appendChild(btn);
+    td.appendChild(total);
     td.appendChild(panel);
     return td;
   }
@@ -2477,6 +2541,42 @@ if(FIREBASE_CONFIG.databaseURL){
       '原価の妥当性（1688ページの実際の単価と、シート情報の「1688代金」がずれていれば指摘してください。ロットで単価が変わる場合は、その段も添える）',
       'レビューの不満のうち、仕入れ側で潰せるもの（1688ページの仕様・オプションで解決できる不満と、できない不満に分ける）');
     const opened = [amzN ? 'Amazonの商品ページ' : '', urls.length ? '1688の仕入れページ' : ''].filter(Boolean);
+    // 検索キーワード案。上限は①検索キーワードパネルで選んだカテゴリー上限（500/250）に追従する。
+    // 1行目をそのまま①へ貼れるよう、語だけの1行と根拠を分けて出させる。
+    const kwLim = (research.kwLimit === 250) ? 250 : 500;
+    const kwSafe = kwLim - 30;   // AIのバイト数の数え間違いに備えた余裕
+    const kwSec = [
+      '■要約3「登録キーワード案」の作り方（上限 ' + kwLim + 'バイト未満）',
+      '',
+      '詳細分析（レビューの言葉・流入キーワード・Amazonサジェスト' + (urls.length ? '・1688の仕様' : '') + '）を根拠に、',
+      'この商品で参入するときにバックエンドの「検索キーワード」欄へ登録する語を選んでください。',
+      '',
+      '【選び方】',
+      '・優先順位：①サジェスト上位の言い回し ②検索ボリュームが大きくCV率が高い流入キーワード ③レビューで買い手が実際に使っている言葉（用途・シーン・悩み・対象者） ④表記ゆれ（ひらがな／カタカナ／漢字、略称、旧称）',
+      '・商品名そのもの（タイトルに必ず入る語）は入れず、タイトルに入りきらない言い換え・関連語を優先してください。同じ語をタイトルと重ねても効きません。',
+      '・1語1回。似た語の繰り返し（大文字小文字・全角半角の違いだけの語）は1つにまとめてください。',
+      '・「の」「で」などの助詞、句読点、カンマは入れず、半角スペース区切りの単語だけにしてください。',
+      '',
+      '【入れてはいけない語】',
+      '・ブランド名（自社・他社とも）、ASIN、競合の商品名',
+      '・主観的・最上級の表現（人気 おすすめ 最高 高品質 など）',
+      '・価格・配送の訴求（最安 激安 送料無料 セール など）',
+      '・一時性・希少性の表現（限定 新作 最新 在庫限り など）',
+      '・Amazonへの言及、他社比較、保証の文言',
+      '※これらはAmazonの規約で無効か商品仕様エラーの原因になります。',
+      '',
+      '【バイト数の数え方】',
+      '全角1文字=3バイト、半角英数字と半角スペース=1バイトで数えてください（全角だけなら約' + Math.floor(kwLim / 3) + '文字が上限の目安）。',
+      '余裕を見て ' + kwSafe + 'バイト以内に収め、最後に合計バイト数を書いてください。',
+      '',
+      '【出力の形式】',
+      '1行目：登録する語だけを半角スペース区切りで1行に（見出しや記号は付けない。この行をそのまま登録欄に貼ります）',
+      '2行目：合計バイト数と語数',
+      '3行目以降：登録する全部の語について、語ごとに「語｜根拠（サジェスト◯位／検索ボリューム◯／レビューで◯件言及 など）」を1行ずつ',
+      '最後に：入れなかった候補と外した理由（禁止語・タイトルと重複・根拠が弱い の3区分）'
+    ].join('\n');
+    // 回答は「人が読む要約」→「AIが後で使う詳細」の2部構成。要約だけ読めば足り、
+    // 詳細は同じチャットで続ける④商品説明文・⑥画像作成指示書の材料として残る。
     return [
       'あなたはAmazon物販の競合リサーチを支援するアナリストです。',
       '以下は「' + (research.title || '無題のリサーチ') + '」で調べた競合商品の情報です。中身は各ブロックの見出しのとおりです。',
@@ -2497,14 +2597,27 @@ if(FIREBASE_CONFIG.databaseURL){
       '・ページ画像や説明文に書かれている使い方・注意書き',
       '※ページを開けない場合は「1688ページは未確認」と明記し、中身は推測しないでください。'
     ] : []).concat([
-      opened.length ? '' : null,
+      '',
+      '【回答の構成（この順で書いてください）】',
+      '回答は2部構成です。前半の要約だけを人が読みます。後半の詳細分析は、このチャットで続けて頼む商品説明文・画像作成指示書の作成であなたが使います。',
       opened.length
-        ? '次の観点でまとめてください。憶測は避け、貼られている情報と、開いたページで実際に見たものだけを根拠にしてください。'
-        : '次の観点でまとめてください。憶測は避け、書かれていることだけを根拠にしてください。'
-    ].filter(v => v !== null)).concat(views.map((v, i) => (i + 1) + '. ' + v)).concat([
+        ? '憶測は避け、貼られている情報と、開いたページで実際に見たものだけを根拠にしてください。'
+        : '憶測は避け、書かれていることだけを根拠にしてください。',
+      '',
+      '■前半：要約（ここだけ人が読みます。簡潔に）',
+      '1. 競合の弱点：レビューの不満と商品ページ・画像の弱点を合わせ、頻出・重大な順に5点以内。1点1行で、根拠（レビュー◯件／画像に無い など）を添えてください',
+      '2. 差別化ポイント：参入するなら狙う具体案を3つ。1案1〜2行で、どの弱点・需要に対応するかを添えてください',
+      '3. 登録キーワード案：下の「■要約3「登録キーワード案」の作り方」に従って出してください',
+      '',
+      '■後半：参考・詳細分析（次の作業のための記録。観点ごとに3〜5行の短い箇条書き）'
+    ]).concat(views.map((v, i) => (i + 1) + '. ' + v)).concat([
+      '',
+      kwSec,
       '',
       '※レビューやキーワードが少数しか貼られていない場合は、その旨を明記してください。',
       '※シート情報しか無い商品は、数字（販売数・粗利率など）と担当者の見立てから言えることだけ述べてください。',
+      '',
+      'この分析は、このあと同じチャットで商品説明文と画像作成指示書の作成に使います。次の依頼ではこの分析と貼られた競合情報を根拠にしてください。',
       '',
       '---',
       '',
@@ -2533,6 +2646,9 @@ if(FIREBASE_CONFIG.databaseURL){
       const t = partsTotal(row);
       const n = (row.parts || []).filter(p => has(p && p.price)).length;
       sum.textContent = t ? ('合計 ' + (Math.round(t * 100) / 100) + ' 元' + (n > 1 ? '（' + n + '部材）' : '')) : '';
+      // 隣のオプション代セルに出している「1688＋オプション」の総額も追従させる
+      const tr = td.closest('tr');
+      if(tr) tr.querySelectorAll('td.factors').forEach(x => { if(x._refreshTotal) x._refreshTotal(); });
     }
     function draw(){
       list.innerHTML = '';
@@ -2569,6 +2685,16 @@ if(FIREBASE_CONFIG.databaseURL){
     draw();
     td.appendChild(list); td.appendChild(sum); td.appendChild(addBtn);
     return td;
+  }
+
+  // 1688のURL → 代行業者の商品ページ（トップの検索窓に1688 URLを入れたのと同じ遷移先）。
+  // offer IDが読めないURL（短縮リンク等）は代行業者のキーワード検索へ投げる。
+  // ★行き先は先頭の AGENT で決まります（業者ごとに違う場所）
+  function agentUrl(u){
+    const t = String(u || '').trim();
+    const m = t.match(/offer\/(\d{6,})/i) || t.match(/[?&]offerId=(\d{6,})/i);
+    if(m && typeof AGENT.productUrl === 'function') return AGENT.productUrl(m[1]);
+    return typeof AGENT.searchUrl === 'function' ? AGENT.searchUrl(t) : t;
   }
 
   // 1688のURLは1商品で複数のセラーを比較することが多いので、何件でも足せるようにする。
@@ -2612,6 +2738,16 @@ if(FIREBASE_CONFIG.databaseURL){
         });
         actions.appendChild(open);
         actions.appendChild(copy);
+        // 「〇〇で発注」＝AGENT.productUrl が無ければボタン自体を出さない
+        if(typeof AGENT.productUrl === 'function'){
+          const buy = el('button', 'mini agentbuy', AGENT.name + 'で発注' + mark);
+          buy.title = AGENT.name + 'でこの1688商品のページを開きます（トップページの検索に1688 URLを入れたときと同じページ）';
+          buy.addEventListener('click', () => {
+            const t = (row[c.key][i] || '').trim();
+            if(t) window.open(agentUrl(t), '_blank', 'noopener');
+          });
+          actions.appendChild(buy);
+        }
 
         function syncLink(){
           const t = (row[c.key][i] || '').trim();
@@ -3511,6 +3647,9 @@ if(FIREBASE_CONFIG.databaseURL){
       pick.value = research.rows.some(r => r.id === cur) ? cur
                  : (research.rows[0] ? research.rows[0].id : '');
     }
+    // 商品を切り替えたら消す状態文(レビュー/KW/画像文字の「◯件を取り込みました」など)。
+    // 消さないと前の商品の結果が別の商品の下に残って見える(2026-09-03)
+    const cardStatuses = [];
     // 選んだ商品の保存内容を欄に出す
     function load(){
       const p = getPage(pick.value) || {};
@@ -3518,6 +3657,7 @@ if(FIREBASE_CONFIG.databaseURL){
       rvTa.value = p.reviews || '';
       kwTa.value = p.keywords || '';
       imgTa.value = p.imgtext || '';
+      cardStatuses.forEach(x => { x.textContent = ''; x.classList.remove('warn'); });
       const n = [];
       if(p.spec) n.push('仕様 ' + p.spec.length.toLocaleString('ja-JP') + '文字');
       if(p.reviews) n.push('レビュー ' + p.reviews.length.toLocaleString('ja-JP') + '文字');
@@ -3614,6 +3754,7 @@ if(FIREBASE_CONFIG.databaseURL){
     const rvClear = el('button', 'mini danger', '🧹 クリア');
     rvClear.title = 'いま選んでいる商品のレビューを消します（他の商品は残ります）';
     const rvStatus = el('span', 'an-status');
+    cardStatuses.push(rvStatus);
 
     // 1ファイル読んで「どのASINぶんか」「整形後のテキスト」を返す
     function reviewsFromFile(file){
@@ -3722,6 +3863,7 @@ if(FIREBASE_CONFIG.databaseURL){
     const kwClear = el('button', 'mini danger', '🧹 クリア');
     kwClear.title = 'いま選んでいる商品のキーワードを消します（他の商品は残ります）';
     const kwStatus = el('span', 'an-status');
+    cardStatuses.push(kwStatus);
 
     // 1ファイル読んで「どのASINぶんか」「整形後の語」を返す（レビューと同じ作り）
     function keywordsFromFile(file){
@@ -3943,6 +4085,7 @@ if(FIREBASE_CONFIG.databaseURL){
     fbImg.appendChild(imgTa);
     const imgRow = el('div', 'an-row');
     const imgStatus = el('span', 'an-status');
+    cardStatuses.push(imgStatus);
     const imgAuto = el('button', 'mini imgtext-only', '⚡ 自動で取り込む');
     imgAuto.title = '競合のメイン+サブ画像をSP-APIで取り、AI（Claude Haiku）が画像内の文字を書き出します'
       + '（20〜60秒・1商品1〜3円ほどのAPI利用料）';
@@ -4225,7 +4368,7 @@ if(FIREBASE_CONFIG.databaseURL){
     sugGet.title = 'Amazonの検索窓に出る候補を、人気順（1位から）で取ってきます';
     // サーバーが止まっていると取得できないので、その旨をカードに出しておく
     const sugOff = el('span', 'sug-off', '⚠ 取り込みサーバーが止まっています');
-    sugOff.title = '自動化フォルダの「SP-API取り込み（常駐）.vbs」を実行すると使えるようになります';
+    sugOff.title = '「SP-API取り込み」フォルダの「【SP-API取り込みサーバーを起動】.bat」を実行すると使えるようになります';
     const sugStatus = el('span', 'an-status');
     const SUG_KEEP = 300;      // 保存の上限。深掘りは数百件返るが、下位は精度が低く保存も重い
 
@@ -4297,8 +4440,8 @@ if(FIREBASE_CONFIG.databaseURL){
         return;
       }
       if(!document.body.classList.contains('sug-ready')){
-        sugStatus.textContent = '取り込みサーバーが動いていません。自動化フォルダの'
-          + '「SP-API取り込み（常駐）.vbs」を実行してから、もう一度押してください';
+        sugStatus.textContent = '取り込みサーバーが動いていません。「SP-API取り込み」フォルダの'
+          + '「【SP-API取り込みサーバーを起動】.bat」を実行してから、もう一度押してください';
         return;
       }
       const seed = seeds.join(',');
@@ -4992,7 +5135,9 @@ if(FIREBASE_CONFIG.databaseURL){
       + 'すぐ下の<b>自社の差別化ポイント</b>、それと表の<b>1688 URL</b>と<b>競合のAmazonページURL</b>が自動で差し込まれます。'
       + '<b>Claude in Chrome</b> のようにブラウザを開けるAIに貼れば、1688のページと競合の画像を見てから書いてくれます。'
       + '「商品画像の文字」を取得してあれば、競合画像のキャッチコピーもプロンプトに自動で入ります。'
-      + 'ChatGPTなどURLを開けない相手に貼るときは、<b>1688の商品ページを画像で添付</b>してから実行してください。';
+      + 'ChatGPTなどURLを開けない相手に貼るときは、<b>1688の商品ページを画像で添付</b>してから実行してください。'
+      + '<b>「📋 同じチャットで続ける版」</b>は、分析用プロンプトを貼ったチャットで続けて頼むとき用です。'
+      + '競合の仕様・レビューは再掲せず、上の分析を根拠に書かせるので貼る量が大きく減ります。';
     body.appendChild(pNote);
 
     // 自社の差別化ポイント。1688の画像は改良前のベース商品しか写っておらず、
@@ -5009,23 +5154,30 @@ if(FIREBASE_CONFIG.databaseURL){
     dpTa.addEventListener('input', () => { edSave(); });
     const pRow = el('div', 'an-row');
     const pBtn = el('button', 'primary', '📋 商品説明プロンプトをコピー');
+    // 分析用プロンプトを貼ったチャットで続けるときは、競合情報を再掲しない短い版を使う
+    const pBtn2 = el('button', 'mini', '📋 同じチャットで続ける版');
+    pBtn2.title = '「分析用プロンプトをコピー」を貼ったのと同じチャットで続けて頼むとき用。'
+      + '\n競合の仕様・レビューを再掲せず、上の分析を根拠に書かせる短いプロンプトです。';
     const pStatus = el('span', 'an-status');
     const pOut = el('div', 'an-out');
     pOut.style.display = 'none';
-    pRow.appendChild(pBtn); pRow.appendChild(pStatus);
+    pRow.appendChild(pBtn); pRow.appendChild(pBtn2); pRow.appendChild(pStatus);
     body.appendChild(pRow); body.appendChild(pOut);
 
-    pBtn.addEventListener('click', () => {
+    const copyListing = short => {
       // 子があれば子のタイトルを / でつなぐ（プロンプトの指定どおり）。無ければ親だけ。
       const kids = (research.titleChildren || []).map(c => (c.title || '').trim()).filter(Boolean);
       const forPrompt = kids.length ? kids.join('/') : (research.titleParent || '').trim();
-      const p = buildListingPrompt(research, forPrompt, specTa.value, dpTa.value);
+      const p = buildListingPrompt(research, forPrompt, specTa.value, dpTa.value, short);
       if(!p){ pStatus.textContent = 'まず商品タイトルを入れてください'; return; }
+      const tag = short ? '同じチャットで続ける版を' : '';
       navigator.clipboard.writeText(p)
-        .then(() => { pStatus.textContent = 'コピーしました（' + p.length.toLocaleString('ja-JP') + '文字）'; })
+        .then(() => { pStatus.textContent = tag + 'コピーしました（' + p.length.toLocaleString('ja-JP') + '文字）'; })
         .catch(() => { pOut.style.display = 'block'; pOut.textContent = p;
                        pStatus.textContent = '下に表示しました。選択してコピーしてください'; });
-    });
+    };
+    pBtn.addEventListener('click', () => copyListing(false));
+    pBtn2.addEventListener('click', () => copyListing(true));
 
     // ---- ⑤ 商品説明の本文（貼って保存＋チェック）----
     const cLabel = el('label', null, '⑤ できた5行（貼り付けると保存されます）');
@@ -5081,7 +5233,8 @@ if(FIREBASE_CONFIG.databaseURL){
     const iNote = el('div', 'an-note');
     iNote.innerHTML = 'この2つだけ入力してください（ほかはシートの内容から自動で入ります）。'
       + '思いつかないときは<b>「🤖 この2つをAIに考えてもらう」</b>を押し、'
-      + '返ってきた答えを<b>そのままどちらかの欄に貼れば、2つに自動で振り分けます</b>。';
+      + '返ってきた答えを<b>そのままどちらかの欄に貼れば、2つに自動で振り分けます</b>。'
+      + '<b>「📋 同じチャットで続ける版」</b>は、分析用プロンプトを貼ったチャットで続けて頼むとき用です（競合情報を再掲せず、上の分析を根拠に書かせます）。';
     body.appendChild(iNote);
 
     // まず「何を書けばいいか」をAIに聞けるようにする。答えはそのまま下の2欄に貼れる形で返す。
@@ -5110,10 +5263,13 @@ if(FIREBASE_CONFIG.databaseURL){
 
     const iRow = el('div', 'an-row');
     const iBtn = el('button', 'primary', '📋 画像作成指示書プロンプトをコピー');
+    const iBtn2 = el('button', 'mini', '📋 同じチャットで続ける版');
+    iBtn2.title = '「分析用プロンプトをコピー」を貼ったのと同じチャットで続けて頼むとき用。'
+      + '\n競合の仕様・レビューを再掲せず、上の分析を根拠に書かせる短いプロンプトです。';
     const iStatus = el('span', 'an-status');
     const iOut = el('div', 'an-out');
     iOut.style.display = 'none';
-    iRow.appendChild(iBtn); iRow.appendChild(iStatus);
+    iRow.appendChild(iBtn); iRow.appendChild(iBtn2); iRow.appendChild(iStatus);
     body.appendChild(iRow); body.appendChild(iOut);
 
     // AIが返した構成案を貼っておく欄。ここまで入れば、そのままWordにして渡せる。
@@ -5199,20 +5355,23 @@ if(FIREBASE_CONFIG.databaseURL){
       edSave();
       askStatus.textContent = '貼り付けた内容を「ターゲット顧客」と「色合い」に振り分けました';
     }));
-    iBtn.addEventListener('click', () => {
+    const copyImage = short => {
       // 保存は0.5秒待ってから走るので、いま欄に入っている値をそのまま渡す
-      const p = buildImagePrompt(research, perTa.value, toneTa.value, cTa.value, dpTa.value);
+      const p = buildImagePrompt(research, perTa.value, toneTa.value, cTa.value, dpTa.value, short);
       const miss = [];
       if(!(research.titleParent || '').trim() && !(research.titleChildren || []).length) miss.push('③商品タイトル');
       if(!cTa.value.trim()) miss.push('⑤できた5行');
       if(!perTa.value.trim()) miss.push('ターゲット顧客');
+      const tag = short ? '同じチャットで続ける版を' : '';
       navigator.clipboard.writeText(p)
-        .then(() => { iStatus.textContent = 'コピーしました（' + p.length.toLocaleString('ja-JP') + '文字）'
+        .then(() => { iStatus.textContent = tag + 'コピーしました（' + p.length.toLocaleString('ja-JP') + '文字）'
           + (miss.length ? '　※' + miss.join('・') + 'が空のままです' : ''); })
         .catch(() => { iOut.style.display = 'block'; iOut.textContent = p;
                        iStatus.textContent = '下に表示しました。選択してコピーしてください'; });
       iStatus.classList.toggle('warn', !!miss.length);
-    });
+    };
+    iBtn.addEventListener('click', () => copyImage(false));
+    iBtn2.addEventListener('click', () => copyImage(true));
 
     edRefresh();
     // 鍵の状態を最後に反映する（全部の欄と道具が出来上がってから）
@@ -5423,7 +5582,8 @@ if(FIREBASE_CONFIG.databaseURL){
     ].join('\n');
   }
 
-  function buildImagePrompt(research, personaIn, toneIn, bulletsIn, diffIn){
+  // short=true は「同じチャットで続ける版」（buildListingPromptと同じ考え方）。
+  function buildImagePrompt(research, personaIn, toneIn, bulletsIn, diffIn, short){
     const parent = (research.titleParent || '').trim();
     const kids = (research.titleChildren || []).filter(c => (c.title || '').trim() || (c.name || '').trim());
     const kidTitles = kids.map(c => (c.title || '').trim()).filter(Boolean);
@@ -5485,19 +5645,28 @@ if(FIREBASE_CONFIG.databaseURL){
           + (diff ? '\n※1688に写っているのは改良前のベース商品です。セット数・梱包・付属品などの改良は【自社の差別化ポイント】が正です。' : '')
         : '[　画像に添付しています。必ず画像に書かれている内容を理解してから画像作成指示書を作成してください。　]',
       '',
-      '━━━━ ◆競合の参考情報（ほぼ同じ商品。訴求と画像の構成の参考に。事実は1688優先） ━━━━',
-      '',
-      '【競合他社商品情報（参考）】',
-      '[' + (refs.join('\n\n') || '　競合の商品仕様・レビューが未入力です　') + ']',
-      '',
-      ...(amzRefs.length ? [
-        '【競合のAmazon商品ページ（参考。開いて画像の作りを見てください）】',
-        '[' + amzRefs.join('\n') + ']',
-        IMG_LOOK_RULE,
-        '※競合がどの順番で何を画像にしているかを踏まえ、こちらは「先に見せる情報」を組み替えてください。'
-          + '競合の構図・文言をそのまま真似ないでください。',
+      ...(short ? [
+        '━━━━ ◆競合の参考情報（このチャットの上にある分析を使う） ━━━━',
+        '',
+        '競合の仕様・レビュー・Amazonページの画像の作りは、このチャットの先に貼った分析用プロンプトと、それに対するあなたの分析（競合の弱点・差別化ポイント・詳細分析）にあります。ここには再掲しません。',
+        '競合の弱点（画像が答えていない不安を含む）を画像で先回りして答え、差別化ポイントを【画像3】〜【画像5】と【画像8】に反映してください。'
+          + '競合がどの順番で何を画像にしているかを踏まえ、こちらは「先に見せる情報」を組み替え、構図・文言をそのまま真似ないでください。',
         ''
-      ] : []),
+      ] : [
+        '━━━━ ◆競合の参考情報（ほぼ同じ商品。訴求と画像の構成の参考に。事実は1688優先） ━━━━',
+        '',
+        '【競合他社商品情報（参考）】',
+        '[' + (refs.join('\n\n') || '　競合の商品仕様・レビューが未入力です　') + ']',
+        '',
+        ...(amzRefs.length ? [
+          '【競合のAmazon商品ページ（参考。開いて画像の作りを見てください）】',
+          '[' + amzRefs.join('\n') + ']',
+          IMG_LOOK_RULE,
+          '※競合がどの順番で何を画像にしているかを踏まえ、こちらは「先に見せる情報」を組み替えてください。'
+            + '競合の構図・文言をそのまま真似ないでください。',
+          ''
+        ] : [])
+      ]),
       '【指示および条件】',
       '・以下の【出力フォーマット】に沿って構成案を出力してください。',
       '・画像上に配置するため、キャッチコピーや補足テキストは、スマホで見た際にもパッと目に入りやすいよう、'
@@ -5582,8 +5751,10 @@ if(FIREBASE_CONFIG.databaseURL){
     ].join('\n');
   }
 
-  // プロンプトの組み立て。京平様が使っている文面をそのまま使い、空欄だけ差し込む。
-  function buildListingPrompt(research, title, mustKw, diffIn){
+  // プロンプトの組み立て。運用者が使っている文面をそのまま使い、空欄だけ差し込む。
+  // short=true は「同じチャットで続ける版」。分析用プロンプトを貼ったチャットで続けて頼む前提で、
+  // 競合の仕様・レビュー・Amazonページは再掲せず、上にある分析を根拠にさせる。
+  function buildListingPrompt(research, title, mustKw, diffIn, short){
     const t = (title || '').trim();
     if(!t) return null;
     const diff = ((diffIn !== undefined ? diffIn : research.diffPoints) || '').trim();
@@ -5633,13 +5804,20 @@ if(FIREBASE_CONFIG.databaseURL){
       '【1688のページ（自社商品の仕入れ元）】',
       '[　画像に添付しています。必ず画像に書かれている内容を理解してから商品説明文を作成してください。　]',
       ''
-    ]).concat([
+    ]).concat(short ? [
+      '━━━━ ◆競合の参考情報（このチャットの上にある分析を使う） ━━━━',
+      '',
+      '競合の仕様・レビュー・Amazonページの内容は、このチャットの先に貼った分析用プロンプトと、それに対するあなたの分析（競合の弱点・差別化ポイント・詳細分析）にあります。ここには再掲しません。',
+      '訴求の切り口と顧客の悩みはその分析を根拠にし、競合の弱点を突き、差別化ポイントを訴求に使ってください。',
+      '※競合の画像や文章をそのまま真似せず、こちらの言葉で書いてください。',
+      ''
+    ] : [
       '━━━━ ◆競合の参考情報（ほぼ同じ商品。訴求の参考に。事実は1688優先） ━━━━',
       '',
       '【競合の仕様・レビュー（参考）】',
       '[' + (refs.join('\n\n') || '（competitorの仕様・レビューが未入力です）') + ']',
       ''
-    ]).concat(amz.length ? [
+    ]).concat(!short && amz.length ? [
       '【競合のAmazon商品ページ（参考。開いて画像も見てください）】',
       '[' + amz.join('\n') + ']',
       IMG_LOOK_RULE,
@@ -5835,7 +6013,7 @@ if(FIREBASE_CONFIG.databaseURL){
     htr.appendChild(thBoth);
     htr.appendChild(thCost);
     const thP = el('th', null, '広告前粗利');
-    thP.title = '売価 − 原価 − Amazon手数料。広告費・返品引当・クーポン・保管費は含みません';
+    thP.title = '売価 − ポイント − 原価 − Amazon手数料。広告費・返品引当・クーポン・保管費は含みません';
     htr.appendChild(thP);
     htr.appendChild(el('th', null, '粗利率'));
     htr.appendChild(el('th', null, ''));
@@ -6021,7 +6199,7 @@ if(FIREBASE_CONFIG.databaseURL){
     document.body.classList.toggle('bk-lost', !on && seen);
     if(!on && seen && bkStatusEl){
       bkStatusEl.textContent = '⚠ 控えサーバーが停止中（このブラウザにだけ保存されています）';
-      bkStatusEl.title = '■ツール\\自動化\\SP-API取り込み（常駐）.vbs を実行すると復帰します';
+      bkStatusEl.title = '「SP-API取り込み」フォルダの【SP-API取り込みサーバーを起動】.bat を実行すると復帰します';
     }
     // ヘッダーの保存の説明を、控えが動いている環境では言い直す（共有モード時は触らない）
     const sn = document.getElementById('shareNote');
@@ -6210,7 +6388,7 @@ if(FIREBASE_CONFIG.databaseURL){
   }
 
   // SP-APIから取れる欄の日本語名。差分の説明に使う。
-  const SP_LABELS = {competitor:'商品名', price:'売価', fee:'手数料', fulfill:'配送',
+  const SP_LABELS = {competitor:'商品名', price:'売価', points:'ポイント', fee:'手数料', fulfill:'配送',
                      lenA:'長辺', lenB:'中辺', lenC:'短辺', weight:'実重量'};
 
   // 1行ぶんをSP-APIから取り込む。
@@ -6218,6 +6396,14 @@ if(FIREBASE_CONFIG.databaseURL){
   //   ・すでに入っている欄は上書きせず、値が違えば「変更あり」として row.spDiff に控える
   //     （overwrite=true のときだけ実際に置き換える）
   // 戻り値: {filled, diffs, notes}
+  // 価格APIと商品ページの表示価格が食い違ったときの印。取り込み直して一致すれば消える
+  function addPageWarn(row, box){
+    if(!row.spPageWarn) return;
+    const w = el('span', 'sp-warn', '⚠ ページの値段を採用');
+    w.title = row.spPageWarn;
+    box.appendChild(w);
+  }
+
   async function spFetchRow(row, overwrite){
     const asin = (row.asin || '').trim().toUpperCase();
     const q = '?asin=' + asin + (has(row.price) ? '&price=' + num(row.price) : '');
@@ -6263,6 +6449,16 @@ if(FIREBASE_CONFIG.databaseURL){
     if(memo) row.spMemo = memo;
     if(j.sellers) row.spSellers = j.sellers;
 
+    // Amazonの価格API（カート価格）は値上げ・値下げの反映が数時間〜半日ほど遅れることがある。
+    // サーバー側が商品ページの表示価格と突き合わせて食い違いを見つけたら、
+    // ページ側（＝お客さんに見えている値段）を売価に入れたうえでここに知らせてくる。
+    row.spPageWarn = j.pageDiff
+      ? 'Amazonの価格APIは ' + Number(j.pageDiff.api || 0).toLocaleString('ja-JP')
+        + '円 を返しましたが、商品ページの表示は '
+        + Number(j.pageDiff.page).toLocaleString('ja-JP') + '円 でした。\n'
+        + '商品ページの値段のほうを売価と手数料に使っています（Amazon側の反映待ちです）。'
+      : null;
+
     // 差分は「見た」と分かるまで残す。上書きしたなら解消済みなので消す。
     row.spDiff = (overwrite || !diffs.length) ? null
       : diffs.map(d => ({key: d.key, label: d.label, old: String(d.old), now: String(d.now)}));
@@ -6301,12 +6497,14 @@ if(FIREBASE_CONFIG.databaseURL){
         scheduleSave();
       });
       box.appendChild(x);
+      addPageWarn(row, box);
       return;
     }
     if(row.spDoneAt && Date.now() - row.spDoneAt < 8000){
       box.classList.add('ok');
       box.textContent = '✓ 取り込みました';
     }
+    addPageWarn(row, box);
   }
 
   async function autoImport(row, box){
@@ -6677,7 +6875,7 @@ if(FIREBASE_CONFIG.databaseURL){
     // 画面の列順に合わせる。URLは画面から外したが、過去に入力したぶんが消えないようCSVには残す。
     const head = ['リサーチ名','管理者からのコメント','ASIN','画像','ライバル商品名','月間販売個数','レビュー数','レビューレート',
                   '勝てる要素','商品備考','長辺(cm)','中辺(cm)','短辺(cm)','実重量(kg)','サイズ区分',
-                  '売価','配送','出品者数','手数料','1688 URL','1688代金 内訳','1688代金 合計(元)','オプション内容','オプション代(元)',
+                  '売価','ポイント','配送','出品者数','手数料','1688 URL','1688代金 内訳','1688代金 合計(元)','オプション内容','オプション代(元)',
                   '決済重量(kg)','中国側原価(円)','国際送料(円)','送料比率(%)','原価(円)','要注意','広告前粗利','粗利率','状態','URL(旧)'];
     const esc = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
     const lines = [head.map(esc).join(',')];
@@ -6693,7 +6891,7 @@ if(FIREBASE_CONFIG.databaseURL){
           row.competitor, row.monthlySales, row.reviewCount, row.reviewRate,
           factors, row.note,
           row.lenA, row.lenB, row.lenC, row.weight, cost.tierLabel || '',
-          row.price, row.fulfill || '', row.spSellers || '', row.fee,
+          row.price, row.points, row.fulfill || '', row.spSellers || '', row.fee,
           (row.urls1688 || []).filter(u => (u || '').trim()).join(' / '),
           (row.parts || []).filter(p => has(p && p.price))
             .map(p => num(p.price) + '×' + (has(p.qty) ? num(p.qty) : 1)).join(' + '),
