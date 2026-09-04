@@ -5,6 +5,9 @@
 計算がずれないよう、原価はサーバー側で出して保存する）。
 """
 import json
+import urllib.parse
+import os
+import re
 from datetime import datetime, timezone
 from typing import Optional, List
 
@@ -626,3 +629,176 @@ def product_type_schema(product_type: str):
     """その商品タイプで何を入れないといけないかを返す。"""
     from app.services import amazon_api
     return amazon_api.fetch_product_type_schema(product_type)
+
+
+# ---------- Amazonサジェスト ----------
+#
+# 検索窓に出る入力候補。実際に検索されている言い回しなので、そのまま
+# 需要の証拠になる。Amazonの補完APIは公開されていて、鍵は要らない。
+#
+# もともと手元のPCで動かすサーバーに置いていたが、起動していないと
+# 使えず、外注さんのPCでも動かない。ここに移して常に使えるようにした。
+
+_SUGGEST_URL = "https://completion.amazon.co.jp/api/2017/suggestions"
+# 深掘りで足す文字。ひらがな・英字・数字を後ろに付けて総当たりする
+_DEEP_SUFFIX = ([chr(c) for c in range(ord("あ"), ord("ん") + 1)]
+                + [chr(c) for c in range(ord("a"), ord("z") + 1)]
+                + [str(n) for n in range(10)])
+
+
+async def _fetch_suggest(client, word: str) -> list:
+    """1語ぶんの候補を取る。人気順で返ってくる。"""
+    params = {
+        "limit": 11, "prefix": word, "suggestion-type": "KEYWORD",
+        "page-type": "Gateway", "alias": "aps", "site-variant": "desktop",
+        "version": 3, "event": "onKeyPress", "wc": "", "lop": "ja_JP",
+        "last-prefix": "", "avg-ks-time": 0, "fb": 1, "session-id": "000-0000000-0000000",
+        "request-id": "SUGGEST", "mid": "A1VC38T7YXB528", "plain-mid": 1,
+        "client-info": "amazon-search-ui",
+    }
+    try:
+        r = await client.get(_SUGGEST_URL, params=params, timeout=10)
+        if r.status_code != 200:
+            return []
+        return [s.get("value") for s in (r.json().get("suggestions") or [])
+                if s.get("value")]
+    except Exception:
+        return []
+
+
+@router.get("/suggest")
+async def suggest(q: str, deep: int = 0):
+    """検索窓の入力候補。カンマか改行で複数語を渡せる（5語まで）。
+
+    deep=1 で「語＋あ〜ん／a〜z／0〜9」の総当たり。10倍ほど広く集まるが
+    時間がかかり、関係ない語も混ざる。
+    """
+    import httpx
+
+    seeds = [w.strip() for w in re.split(r"[,\n、]", q or "") if w.strip()][:5]
+    if not seeds:
+        return {"ok": False, "error": "元の語がありません"}
+
+    groups = []
+    async with httpx.AsyncClient() as client:
+        for seed in seeds:
+            # まず素の語。これが人気順の本命
+            found = await _fetch_suggest(client, seed)
+            seen = set(found)
+
+            if deep:
+                # 総当たり。順番は保ちつつ、重複は落とす
+                import asyncio
+                tasks = [_fetch_suggest(client, f"{seed}{s}") for s in _DEEP_SUFFIX]
+                for res in await asyncio.gather(*tasks):
+                    for v in res:
+                        if v not in seen:
+                            seen.add(v)
+                            found.append(v)
+
+            groups.append({"seed": seed, "suggestions": found})
+
+    # 全体でも返す。古い呼び方をしている画面のため
+    flat = []
+    for g in groups:
+        flat.extend(g["suggestions"])
+    return {"ok": True, "groups": groups, "suggestions": flat[:300]}
+
+
+# ---------- 商品画像の文字 ----------
+#
+# 競合のメイン画像・サブ画像に書かれている文字を、そのまま書き出す。
+# 画像の中の文言は検索では拾えないが、売り文句がそのまま出ているので
+# 分析や商品説明を作るときの材料になる。
+#
+# 画像はSP-APIのカタログから取る（A+の画像は取れないので対象外）。
+
+@router.get("/imgtext")
+async def image_text(asin: str):
+    """競合の商品画像に書かれている文字を書き出す。
+
+    1商品あたり1〜3円ほどのAPI利用料がかかる。
+    """
+    import base64 as _b64
+    import httpx
+    from app.services import amazon_api
+    from app.services import copywriter
+
+    asin = (asin or "").strip().upper()
+    if not asin:
+        return {"ok": False, "error": "ASINがありません"}
+    if not copywriter.is_enabled():
+        return {"ok": False,
+                "error": "ANTHROPIC_API_KEY が未設定です。Renderの環境変数に入れてください"}
+
+    # カタログから画像のURLを取る
+    try:
+        params = urllib.parse.urlencode({
+            "marketplaceIds": "A1VC38T7YXB528",
+            "includedData": "images",
+        })
+        data = amazon_api._call_sp_api(f"/catalog/2022-04-01/items/{asin}?{params}")
+    except Exception as e:
+        return {"ok": False, "error": f"画像を取れませんでした: {type(e).__name__}"}
+
+    urls = []
+    for grp in (data.get("images") or []):
+        for im in (grp.get("images") or []):
+            # 大きすぎると重いので、程よい大きさのものを選ぶ
+            if im.get("link") and 300 <= (im.get("width") or 0) <= 1200:
+                urls.append(im["link"])
+    # 同じ画像が複数サイズで返るので、重複を落とす
+    seen, picked = set(), []
+    for u in urls:
+        key = u.rsplit("/", 1)[-1].split("._")[0]
+        if key not in seen:
+            seen.add(key)
+            picked.append(u)
+    picked = picked[:7]          # メイン＋サブ6枚まで
+    if not picked:
+        return {"ok": False, "error": "この商品の画像が取れませんでした"}
+
+    # 画像を読み込んでAIに渡す
+    content = []
+    async with httpx.AsyncClient(timeout=30) as client:
+        for u in picked:
+            try:
+                r = await client.get(u)
+                if r.status_code != 200:
+                    continue
+                content.append({
+                    "type": "image",
+                    "source": {"type": "base64",
+                               "media_type": r.headers.get("content-type", "image/jpeg"),
+                               "data": _b64.b64encode(r.content).decode()},
+                })
+            except Exception:
+                continue
+    if not content:
+        return {"ok": False, "error": "画像を読み込めませんでした"}
+
+    content.append({"type": "text", "text": (
+        "これはAmazonの商品画像です。画像の中に書かれている日本語の文字を、"
+        "そのまま書き出してください。\n"
+        "・言い換えや要約はせず、原文のまま写してください\n"
+        "・画像ごとに「1枚目」「2枚目」と見出しを付けてください\n"
+        "・文字が無い画像は「（文字なし）」と書いてください\n"
+        "・あなたの感想や説明は要りません")})
+
+    payload = {
+        "model": "claude-haiku-4-5-20251001",   # 画像の読み取りは軽いモデルで足りる
+        "max_tokens": 2000,
+        "messages": [{"role": "user", "content": content}],
+    }
+    headers = {"x-api-key": os.environ.get("ANTHROPIC_API_KEY", ""),
+               "anthropic-version": "2023-06-01",
+               "content-type": "application/json"}
+    async with httpx.AsyncClient(timeout=120) as client:
+        res = await client.post("https://api.anthropic.com/v1/messages",
+                                json=payload, headers=headers)
+    if res.status_code != 200:
+        return {"ok": False, "error": f"読み取りに失敗しました（{res.status_code}）: "
+                                      f"{res.text[:200]}"}
+    text = "".join(b.get("text", "") for b in res.json().get("content", [])
+                   if b.get("type") == "text").strip()
+    return {"ok": True, "asin": asin, "images": len(content) - 1, "text": text}
