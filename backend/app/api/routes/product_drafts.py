@@ -647,3 +647,154 @@ def publish_images(draft_id: int, request: Request, db: Session = Depends(get_db
         urls.append(f"{base}/api/product-drafts/public-image/{i.public_token}")
     db.commit()
     return {"urls": urls, "件数": len(urls)}
+
+
+# ---------- Amazonへの出品 ----------
+
+class AmazonPrepareIn(BaseModel):
+    """出品の下ごしらえ。競合ASINから商品タイプを決め、JANを割り当てる。"""
+    rival_asin: Optional[str] = None    # 空ならドラフトの参考商品を使う
+    issue_jan: bool = True              # JANが無ければ採番する
+
+
+@router.post("/{draft_id:int}/amazon/prepare")
+def amazon_prepare(draft_id: int, data: AmazonPrepareIn,
+                   db: Session = Depends(get_db)):
+    """出品の準備。商品タイプを決めて、必要なものを揃える。
+
+    商品タイプはAmazonの分類で、これが決まらないと何を入れるべきかも
+    決まらない。競合の商品から借りるのが一番確実で早い。
+    """
+    from app.services import amazon_api
+
+    d = db.query(ProductDraft).filter(ProductDraft.id == draft_id).first()
+    if not d:
+        raise HTTPException(404, "ドラフトが見つかりません")
+
+    asin = (data.rival_asin or d.rival_item_code or "").strip()
+    # 楽天の商品コードはASINではないので、形で見分ける
+    if not (len(asin) == 10 and asin.upper().startswith("B")):
+        asin = ""
+    if not asin:
+        raise HTTPException(
+            400, "参考にするAmazonのASINがありません。ASINを指定してください")
+
+    r = amazon_api.fetch_product_type(asin)
+    if not r.get("ok"):
+        raise HTTPException(400, r.get("error") or "商品タイプが分かりません")
+    d.amazon_product_type = r["product_type"]
+
+    # JANの割り当て。無ければ台帳から1つ取る
+    if data.issue_jan and not d.amazon_jan:
+        from app.models.amazon_research import JanCode
+        free = (db.query(JanCode)
+                .filter(JanCode.status == "issued", JanCode.sku.is_(None))
+                .order_by(JanCode.item_seq).first())
+        if free:
+            free.sku = d.sku
+            free.name = (d.rakuten_title or "")[:80]
+            free.status = "used"
+            d.amazon_jan = free.code
+
+    db.commit()
+
+    schema = amazon_api.fetch_product_type_schema(d.amazon_product_type)
+    return {
+        "product_type": d.amazon_product_type,
+        "display_name": schema.get("display_name"),
+        "required_fields": schema.get("required_fields") or [],
+        "jan": d.amazon_jan,
+        "jan_warning": None if d.amazon_jan else
+            "JANコードがありません。台帳に空きがないか確認してください",
+    }
+
+
+class AmazonSubmitIn(BaseModel):
+    draft_ids: list[int]
+    dry_run: bool = True     # 既定は送らない。中身を見てから実行する
+
+
+@router.post("/amazon/submit")
+def amazon_submit(data: AmazonSubmitIn, request: Request,
+                  db: Session = Depends(get_db)):
+    """まとめてAmazonへ出品する。
+
+    送る前に全件そろっているか確かめ、1件でも足りなければ1件も送らない。
+    途中まで登録して失敗するのが一番後始末が大変なため。
+    """
+    import secrets
+    from app.services import amazon_api
+    from app.models.amazon_research import AmazonResearchSettings
+
+    st = db.query(AmazonResearchSettings).first()
+    brand = (st.brand_name if st else "") or ""
+
+    rows = (db.query(ProductDraft)
+            .filter(ProductDraft.id.in_(data.draft_ids)).all())
+    if not rows:
+        raise HTTPException(400, "対象がありません")
+
+    # 事前チェック
+    problems = []
+    for d in rows:
+        miss = []
+        if not d.sku:
+            miss.append("SKU")
+        if not d.rakuten_title:
+            miss.append("商品名")
+        if not d.price:
+            miss.append("価格")
+        if not d.amazon_product_type:
+            miss.append("商品タイプ（先に「出品の準備」を押す）")
+        if not d.amazon_jan:
+            miss.append("JANコード")
+        if not brand:
+            miss.append("ブランド名（設定で入れる）")
+        if miss:
+            problems.append({"sku": d.sku or f"id={d.id}", "足りないもの": miss})
+    if problems:
+        return {"ok": False, "送っていません": True, "問題": problems}
+
+    base = str(request.base_url).rstrip("/")
+    results = []
+    for d in rows:
+        # 画像に公開URLを付ける。Amazonが取りに来る
+        imgs = (db.query(ProductDraftImage)
+                .filter(ProductDraftImage.draft_id == d.id)
+                .order_by(ProductDraftImage.sort_order, ProductDraftImage.id).all())
+        urls = []
+        for i in imgs:
+            if not i.public_token:
+                i.public_token = secrets.token_urlsafe(24)
+            urls.append(f"{base}/api/product-drafts/public-image/{i.public_token}")
+
+        draft = _dict(d)
+        draft["brand_name"] = brand
+        draft["amazon_jan"] = d.amazon_jan
+        draft["amazon_bullets"] = _json_list(d.amazon_bullets)
+        draft["amazon_image_urls"] = urls
+
+        attrs = amazon_api.build_listing_attributes(
+            draft, d.amazon_product_type, _json_obj(d.amazon_attrs))
+        sku = d.amazon_sku or d.sku
+
+        if data.dry_run:
+            results.append({"sku": sku, "dry_run": True,
+                            "product_type": d.amazon_product_type,
+                            "attributes": attrs})
+            continue
+
+        r = amazon_api.submit_listing(sku, d.amazon_product_type, attrs)
+        if r.get("ok"):
+            d.amazon_status = "submitted"
+            d.amazon_submitted_at = datetime.now(timezone.utc)
+            d.amazon_error = None
+        else:
+            d.amazon_status = "failed"
+            d.amazon_error = json.dumps(r, ensure_ascii=False)[:2000]
+        results.append({"sku": sku, **r})
+
+    db.commit()
+    ok = sum(1 for r in results if r.get("ok") or r.get("dry_run"))
+    return {"ok": True, "dry_run": data.dry_run,
+            "成功": ok, "失敗": len(results) - ok, "結果": results}
