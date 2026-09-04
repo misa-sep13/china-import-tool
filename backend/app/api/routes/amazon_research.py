@@ -646,6 +646,11 @@ _DEEP_SUFFIX = ([chr(c) for c in range(ord("あ"), ord("ん") + 1)]
                 + [str(n) for n in range(10)])
 
 
+# ブラウザを名乗らないと、200は返るが候補が空になる（実測）
+_SUGGEST_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+
+
 async def _fetch_suggest(client, word: str) -> list:
     """1語ぶんの候補を取る。人気順で返ってくる。"""
     params = {
@@ -657,7 +662,9 @@ async def _fetch_suggest(client, word: str) -> list:
         "client-info": "amazon-search-ui",
     }
     try:
-        r = await client.get(_SUGGEST_URL, params=params, timeout=10)
+        r = await client.get(_SUGGEST_URL, params=params, timeout=10,
+                             headers={"User-Agent": _SUGGEST_UA,
+                                      "Accept": "application/json"})
         if r.status_code != 200:
             return []
         return [s.get("value") for s in (r.json().get("suggestions") or [])
