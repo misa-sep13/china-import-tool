@@ -768,7 +768,9 @@ async def image_text(asin: str):
         })
         data = amazon_api._call_sp_api(f"/catalog/2022-04-01/items/{asin}?{params}")
     except Exception as e:
-        return {"ok": False, "error": f"画像を取れませんでした: {type(e).__name__}"}
+        # 中身が分からないと直しようがないので、返ってきた文言もそのまま出す
+        return {"ok": False,
+                "error": f"画像を取れませんでした: {type(e).__name__}: {e}"[:400]}
 
     urls = []
     for grp in (data.get("images") or []):
