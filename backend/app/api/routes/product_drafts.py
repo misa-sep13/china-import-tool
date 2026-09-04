@@ -59,6 +59,12 @@ class DraftIn(BaseModel):
     spec_rows:       Optional[list[dict]] = None
     seo_words:       Optional[str] = None
     product_notes:   Optional[str] = None
+    amazon_product_type: Optional[str] = None
+    amazon_jan:      Optional[str] = None
+    amazon_bullets:  Optional[list[str]] = None
+    amazon_attrs:    Optional[dict] = None
+    amazon_sku:      Optional[str] = None
+    amazon_status:   Optional[str] = None
 
 
 class AdoptIn(BaseModel):
@@ -116,6 +122,16 @@ def _dict(d: ProductDraft) -> dict:
         "features": _json_list(d.features),
         "spec_rows": _json_list(d.spec_rows),
         "seo_words": d.seo_words, "product_notes": d.product_notes,
+        "amazon_product_type": d.amazon_product_type,
+        "amazon_jan": d.amazon_jan,
+        "amazon_bullets": _json_list(d.amazon_bullets),
+        "amazon_attrs": _json_obj(d.amazon_attrs),
+        "amazon_sku": d.amazon_sku,
+        "amazon_status": d.amazon_status or "draft",
+        "amazon_asin": d.amazon_asin,
+        "amazon_error": d.amazon_error,
+        "amazon_submitted_at": (d.amazon_submitted_at.isoformat()
+                                if d.amazon_submitted_at else None),
         "registered_at": d.registered_at.isoformat() if d.registered_at else None,
         "register_error": d.register_error,
         "created_at": d.created_at.isoformat() if d.created_at else None,
@@ -135,6 +151,10 @@ def _apply(d: ProductDraft, data: DraftIn):
             setattr(d, k, json.dumps(v or [], ensure_ascii=False))
         elif k == "item_specs":
             d.item_specs = json.dumps(v or {}, ensure_ascii=False)
+        elif k == "amazon_bullets":
+            d.amazon_bullets = json.dumps(v or [], ensure_ascii=False)
+        elif k == "amazon_attrs":
+            d.amazon_attrs = json.dumps(v or {}, ensure_ascii=False)
         else:
             setattr(d, k, v)
 
