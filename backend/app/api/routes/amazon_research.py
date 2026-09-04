@@ -653,13 +653,13 @@ _SUGGEST_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 async def _fetch_suggest(client, word: str) -> list:
     """1語ぶんの候補を取る。人気順で返ってくる。"""
+    # 空文字のパラメータ（wc・last-prefix）やダミーのsession-idを混ぜると、
+    # 200は返るが候補が空になる。動くことを確かめた組み合わせだけ送る
     params = {
         "limit": 11, "prefix": word, "suggestion-type": "KEYWORD",
         "page-type": "Gateway", "alias": "aps", "site-variant": "desktop",
-        "version": 3, "event": "onKeyPress", "wc": "", "lop": "ja_JP",
-        "last-prefix": "", "avg-ks-time": 0, "fb": 1, "session-id": "000-0000000-0000000",
-        "request-id": "SUGGEST", "mid": "A1VC38T7YXB528", "plain-mid": 1,
-        "client-info": "amazon-search-ui",
+        "version": 3, "event": "onKeyPress", "lop": "ja_JP",
+        "mid": "A1VC38T7YXB528", "client-info": "amazon-search-ui",
     }
     try:
         r = await client.get(_SUGGEST_URL, params=params, timeout=10,
