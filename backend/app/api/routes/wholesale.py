@@ -670,8 +670,9 @@ async def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)
             p.stock = before_stock + q
             sku_stock[p.sku] = p.stock
             updated.add(p.sku)
-        # 発注済からは、どちらの場合も減らす
-        p.inbound = max(0, before_inbound - q)
+        # 発注済からは、どちらの場合も減らす。
+        # 発注済1で足りなければ発注済2から引く（入荷待ち一覧と同じ扱い）
+        _consume_inbound(p, q)
         changed.append({
             "sku": p.sku, "name": p.name, "qty": q,
             "stock_before": before_stock, "stock_after": p.stock or 0,
@@ -744,6 +745,19 @@ async def _push_rms(db, updated_skus):
         source="wholesale_receive", source_label="卸入荷",
     )
     return {"items": len(items), "ok": res.get("ok", 0), "fail": res.get("fail", 0)}
+
+
+def _consume_inbound(p, qty: int) -> tuple:
+    """届いた分を発注済から引く。発注済1を先に、足りなければ発注済2から。
+
+    発注済1しか見ないと、発注済2に積んである分を入荷できない。
+    戻り値: (実際に引けた数, 発注済1から引いた数, 発注済2から引いた数)
+    """
+    take1 = min(qty, p.inbound or 0)
+    take2 = min(qty - take1, p.standard_stock or 0)
+    p.inbound = (p.inbound or 0) - take1
+    p.standard_stock = (p.standard_stock or 0) - take2
+    return take1 + take2, take1, take2
 
 
 def _promote_stage(p) -> bool:
@@ -840,7 +854,10 @@ def list_pending_items(supplier_id: Optional[int] = None, db: Session = Depends(
         p_ = prods.get(w.rakuten_product_id)
         if not p_:
             continue
-        manual = (p_.inbound or 0) - pending_by_product.get(w.id, 0)
+        # 発注済1だけで数えると、発注済2に積んである分を入荷できない。
+        # 1回の便で全部届いたのに一部しか入れられず、実際に困った
+        ordered = (p_.inbound or 0) + (p_.standard_stock or 0)
+        manual = ordered - pending_by_product.get(w.id, 0)
         if manual <= 0:
             continue
         out.append({
@@ -924,7 +941,7 @@ async def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
             p.stock = before_stock + q
             sku_stock[p.sku] = p.stock
             updated.add(p.sku)
-        p.inbound = max(0, before_inbound - q)
+        _consume_inbound(p, q)
         changed.append({
             "sku": p.sku, "name": p.name, "qty": q,
             "order_id": r.order_id,
@@ -941,7 +958,8 @@ async def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
         p = prod_by_id.get(pid)
         if not p or q <= 0:
             continue
-        q = min(q, p.inbound or 0)   # 発注済を超えて入荷はできない
+        # 発注済を超えて入荷はできない（発注済1＋発注済2まで）
+        q = min(q, (p.inbound or 0) + (p.standard_stock or 0))
         if q <= 0:
             continue
         before_stock, before_inbound = p.stock or 0, p.inbound or 0
@@ -949,7 +967,7 @@ async def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
             p.stock = before_stock + q
             sku_stock[p.sku] = p.stock
             updated.add(p.sku)
-        p.inbound = max(0, before_inbound - q)
+        _consume_inbound(p, q)
         changed.append({
             "sku": p.sku, "name": p.name, "qty": q, "order_id": None,
             "stock_before": before_stock, "stock_after": p.stock or 0,
