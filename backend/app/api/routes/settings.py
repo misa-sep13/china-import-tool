@@ -87,8 +87,14 @@ def sp_api_test():
         "SP_API_REFRESH_TOKEN": bool(cfg.SP_API_REFRESH_TOKEN),
         "SP_API_LWA_APP_ID": bool(cfg.SP_API_LWA_APP_ID),
         "SP_API_LWA_CLIENT_SECRET": bool(cfg.SP_API_LWA_CLIENT_SECRET),
+        # 出品と価格更新に要る。読むだけのAPIには不要なので、
+        # 繋がっていても入っていないことがある
+        "SP_API_SELLER_ID": bool(cfg.SP_API_SELLER_ID),
     }
-    missing = [k for k, v in have.items() if not v]
+    # 読むだけなら SELLER_ID は無くても動く。出品や価格更新のときに要る
+    need = ("SP_API_REFRESH_TOKEN", "SP_API_LWA_APP_ID",
+            "SP_API_LWA_CLIENT_SECRET")
+    missing = [k for k in need if not have[k]]
     if missing:
         return {"ok": False, "設定": have,
                 "理由": f"未設定: {'、'.join(missing)}"}
@@ -111,4 +117,8 @@ def sp_api_test():
         m = p.get("marketplace") or {}
         places.append({"名前": m.get("name"), "国": m.get("countryCode"),
                        "id": m.get("id")})
-    return {"ok": True, "設定": have, "出品先": places}
+    r = {"ok": True, "設定": have, "出品先": places}
+    if not have["SP_API_SELLER_ID"]:
+        r["注意"] = ("SP_API_SELLER_ID が未設定です。読み取りはできますが、"
+                     "出品と価格更新には必要です")
+    return r
