@@ -1661,3 +1661,128 @@ def fetch_product_type_schema(product_type: str) -> dict:
             "display_name": meta.get("displayName") or pt,
             "required_fields": fields,
             "auto_filled": sorted(k for k in required if k in _FILLED_BY_TOOL)}
+
+
+# ---------- 出品（Listings Items API） ----------
+
+def build_listing_attributes(draft: dict, product_type: str,
+                             extra: dict = None) -> dict:
+    """出品に送る attributes を組み立てる。
+
+    Amazonは項目ごとに [{"value": ..., "marketplace_id": ...}] の形を取る。
+    素の値を渡すと400になるので、ここで包む。
+
+    ドラフトから埋まるもの（商品名・説明・ブランド・JAN・価格・画像）と、
+    商品タイプごとの必須項目（原産国など extra）を混ぜる。
+    """
+    mp = _RESEARCH_MP
+
+    def one(value, **kw):
+        return [{"value": value, "marketplace_id": mp, **kw}]
+
+    a = {}
+    a["item_name"] = one(draft.get("rakuten_title") or "")
+    if draft.get("brand_name"):
+        a["brand"] = one(draft["brand_name"])
+    if draft.get("description_pc"):
+        # Amazonの商品説明にHTMLタグは使えない。楽天用の表を落とす
+        a["product_description"] = one(_strip_html(draft["description_pc"]))
+
+    # 要点（箇条書き）。5個まで
+    bullets = draft.get("amazon_bullets") or []
+    if bullets:
+        a["bullet_point"] = [{"value": b, "marketplace_id": mp}
+                             for b in bullets[:5] if str(b).strip()]
+
+    # JANコード。新規出品にはこれが要る
+    if draft.get("amazon_jan"):
+        a["externally_assigned_product_identifier"] = one(
+            draft["amazon_jan"], type="ean")
+
+    # 価格と在庫。在庫は0で作り、実在庫は既存の在庫連携が入れる
+    price = draft.get("price")
+    if price:
+        a["purchasable_offer"] = [{
+            "marketplace_id": mp, "currency": "JPY",
+            "our_price": [{"schedule": [{"value_with_tax": int(price)}]}],
+        }]
+    a["fulfillment_availability"] = [{
+        "fulfillment_channel_code": "DEFAULT", "quantity": 0,
+    }]
+    a["condition_type"] = one("new_new")
+
+    # 画像。R-Cabinetに上げたものは楽天用なので使わない。
+    # Amazonは公開URLを渡す必要があり、別に用意する
+    imgs = [u for u in (draft.get("amazon_image_urls") or []) if u]
+    if imgs:
+        a["main_product_image_locator"] = [
+            {"marketplace_id": mp, "media_location": imgs[0]}]
+        if len(imgs) > 1:
+            a["other_product_image_locator"] = [
+                {"marketplace_id": mp, "media_location": u} for u in imgs[1:9]]
+
+    # 商品タイプごとの必須項目。画面で入れてもらったもの
+    for k, v in (extra or {}).items():
+        if v is None or str(v).strip() == "":
+            continue
+        a[k] = one(v)
+
+    return a
+
+
+def _strip_html(text: str) -> str:
+    """HTMLを落として素の文にする。Amazonの説明文にタグは使えない。"""
+    import re as _re
+    t = _re.sub(r"<br\s*/?>", "\n", text or "", flags=_re.I)
+    t = _re.sub(r"</(tr|table|p|div)>", "\n", t, flags=_re.I)
+    t = _re.sub(r"<[^>]+>", "", t)
+    t = _re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()[:2000]
+
+
+def submit_listing(sku: str, product_type: str, attributes: dict,
+                   issue_locale: str = "ja_JP") -> dict:
+    """1商品をAmazonへ出品する。
+
+    PUTなので、同じSKUへもう一度送ると差し替えになる。新規も更新も
+    同じ呼び方でよい。
+
+    戻り値には Amazon が返した問題点（issues）をそのまま入れる。
+    何が足りないかは、それを見ないと分からない。
+    """
+    token = _get_access_token()
+    params = urllib.parse.urlencode({
+        "marketplaceIds": _RESEARCH_MP,
+        "issueLocale": issue_locale,
+    })
+    url = (f"https://sellingpartnerapi-fe.amazon.com/listings/2021-08-01/items/"
+           f"{_seller_id()}/{urllib.parse.quote(sku)}?{params}")
+    body = json.dumps({
+        "productType": product_type,
+        "requirements": "LISTING",
+        "attributes": attributes,
+    }, ensure_ascii=False).encode()
+
+    req = urllib.request.Request(url, data=body, method="PUT", headers={
+        "x-amz-access-token": token,
+        "Content-Type": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=60) as res:
+            r = json.loads(res.read())
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode()[:800]
+        except Exception:
+            pass
+        return {"ok": False, "status": e.code, "error": detail}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:300]}"}
+
+    # ACCEPTED でも issues に警告が入ることがある。そのまま返す
+    issues = r.get("issues") or []
+    fatal = [i for i in issues if i.get("severity") == "ERROR"]
+    return {"ok": r.get("status") == "ACCEPTED" and not fatal,
+            "status": r.get("status"), "sku": r.get("sku"),
+            "issues": issues}

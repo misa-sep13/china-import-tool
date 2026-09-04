@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -599,3 +599,51 @@ def get_template_info(manage_number: str, db: Session = Depends(get_db)):
         "shipping": json.loads(row.shipping or "{}"),
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
+
+
+# ---------- Amazonへ渡す画像の公開 ----------
+#
+# Amazonは出品時に画像を公開URLで受け取る。認証を付けられないので、
+# 推測されにくい合言葉を持つ口を用意して、そのURLを渡す。
+
+@router.get("/public-image/{token}")
+def public_image(token: str, db: Session = Depends(get_db)):
+    """合言葉つきの画像。Amazonが取りに来る。
+
+    ログイン不要。合言葉は32文字のランダムなので、総当たりでは当たらない。
+    出品が終わったら合言葉を消せば見られなくなる。
+    """
+    from fastapi import Response
+    if not token or len(token) < 16:
+        raise HTTPException(404, "見つかりません")
+    i = (db.query(ProductDraftImage)
+         .filter(ProductDraftImage.public_token == token).first())
+    if not i or not i.data:
+        raise HTTPException(404, "見つかりません")
+    return Response(content=base64.b64decode(i.data),
+                    media_type=i.mime or "image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.post("/{draft_id:int}/images/publish")
+def publish_images(draft_id: int, request: Request, db: Session = Depends(get_db)):
+    """預かっている画像に公開URLを付ける。出品の直前に呼ぶ。
+
+    すでに合言葉があるものは作り直さない（Amazon側が同じURLを見ている
+    ことがあるため）。
+    """
+    import secrets
+    rows = (db.query(ProductDraftImage)
+            .filter(ProductDraftImage.draft_id == draft_id)
+            .order_by(ProductDraftImage.sort_order, ProductDraftImage.id).all())
+    if not rows:
+        return {"urls": [], "件数": 0}
+
+    base = str(request.base_url).rstrip("/")
+    urls = []
+    for i in rows:
+        if not i.public_token:
+            i.public_token = secrets.token_urlsafe(24)
+        urls.append(f"{base}/api/product-drafts/public-image/{i.public_token}")
+    db.commit()
+    return {"urls": urls, "件数": len(urls)}

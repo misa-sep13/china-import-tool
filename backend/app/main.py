@@ -282,6 +282,26 @@ def _migrate():
          "ALTER TABLE product_drafts ADD COLUMN template_sku VARCHAR"),
         ("product_drafts","variant_axis2",
          "ALTER TABLE product_drafts ADD COLUMN variant_axis2 VARCHAR"),
+        ("product_drafts","amazon_product_type",
+         "ALTER TABLE product_drafts ADD COLUMN amazon_product_type VARCHAR"),
+        ("product_drafts","amazon_jan",
+         "ALTER TABLE product_drafts ADD COLUMN amazon_jan VARCHAR"),
+        ("product_drafts","amazon_bullets",
+         "ALTER TABLE product_drafts ADD COLUMN amazon_bullets TEXT"),
+        ("product_drafts","amazon_attrs",
+         "ALTER TABLE product_drafts ADD COLUMN amazon_attrs TEXT"),
+        ("product_drafts","amazon_sku",
+         "ALTER TABLE product_drafts ADD COLUMN amazon_sku VARCHAR"),
+        ("product_drafts","amazon_status",
+         "ALTER TABLE product_drafts ADD COLUMN amazon_status VARCHAR DEFAULT 'draft'"),
+        ("product_drafts","amazon_submitted_at",
+         "ALTER TABLE product_drafts ADD COLUMN amazon_submitted_at TIMESTAMP"),
+        ("product_drafts","amazon_asin",
+         "ALTER TABLE product_drafts ADD COLUMN amazon_asin VARCHAR"),
+        ("product_drafts","amazon_error",
+         "ALTER TABLE product_drafts ADD COLUMN amazon_error TEXT"),
+        ("product_draft_images","public_token",
+         "ALTER TABLE product_draft_images ADD COLUMN public_token VARCHAR"),
         ("product_drafts","series_name",
          "ALTER TABLE product_drafts ADD COLUMN series_name VARCHAR"),
         ("product_drafts","item_specs",
@@ -1307,6 +1327,11 @@ async def auth_middleware(request: _StarletteRequest, call_next):
     if not path.startswith("/api/") or path.startswith(_AUTH_EXEMPT_PREFIXES):
         return await call_next(request)
     if request.method == "GET" and path in _AUTH_PUBLIC_GET_PATHS:
+        return await call_next(request)
+    # Amazonが出品時に画像を取りに来る。認証を付けられないので、
+    # 合言葉つきのURLだけ通す（合言葉は32文字のランダム）
+    if request.method == "GET" and path.startswith(
+            "/api/product-drafts/public-image/"):
         return await call_next(request)
 
     auth_header = request.headers.get("authorization", "")

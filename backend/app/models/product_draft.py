@@ -54,6 +54,19 @@ class ProductDraft(Base):
     # なぞるしかなくなる。自分が知っていることを書いておく場所
     product_notes = Column(Text)
 
+    # ---- Amazon出品 ----
+    # 楽天とAmazonでは要るものが違う。Amazonは商品タイプごとに必須項目が
+    # 決まっていて、それを埋めてSP-APIへ送る
+    amazon_product_type = Column(String)   # CAMERA_DIGITAL など
+    amazon_jan          = Column(String)   # 割り当てたJANコード
+    amazon_bullets      = Column(Text)     # 商品の要点（5個まで・JSON配列）
+    amazon_attrs        = Column(Text)     # 商品タイプごとの必須項目（JSON）
+    amazon_sku          = Column(String)   # 出品用SKU。空なら sku を使う
+    amazon_status       = Column(String, default="draft")  # draft/ready/submitted/live/failed
+    amazon_submitted_at = Column(DateTime(timezone=True), nullable=True)
+    amazon_asin         = Column(String)   # 登録できたら入る
+    amazon_error        = Column(Text)     # 失敗の理由
+
     # ---- 商品説明の材料 ----
     # 説明文は「特徴の箇条書き＋仕様表＋検索キーワード」という決まった
     # 形で作っている。自由文で持つと形が崩れるので、材料として分けて持つ
@@ -140,6 +153,11 @@ class ProductDraftImage(Base):
     size      = Column(Integer)
     data      = Column(Text)        # base64
     sort_order = Column(Integer, default=0)
+
+    # Amazonへ出品するとき、画像は公開URLで渡す必要がある。
+    # Amazonは認証できないので、推測されにくい合言葉を付けた口を用意し、
+    # そのURLを渡す
+    public_token = Column(String, index=True)
 
     # R-Cabinetへ上げたあとのURL。上げ終わるまでは空
     cabinet_url = Column(Text)
