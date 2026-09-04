@@ -267,7 +267,7 @@
 
   /* SP-API取り込み。ローカル中継サーバーが動いているPCでだけ出す */
   .sp-import{display:none;align-items:center;gap:8px;}
-  body.sp-ready .sp-import{display:inline-flex;}
+  body.sp-usable .sp-import{display:inline-flex;}
   .sp-import .sp-ov{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-2);cursor:pointer;}
   .sp-import .sp-ov input{width:auto;margin:0;}
   .sp-import .sp-status{font-size:11px;color:var(--ink-2);}
@@ -5900,8 +5900,13 @@ if(FIREBASE_CONFIG.databaseURL){
 
   // ---- SP-APIからの取り込み ----------------------------------------------
   // ブラウザから直接SP-APIは呼べない（CORS）し、リフレッシュトークンを共有HTMLに
-  // 置くと外注さんに漏れるので、ローカルの中継サーバー（自動化\sp_research.py）に聞く。
-  // サーバーが動いていない環境ではボタンごと出さない（body.sp-ready が付かない）。
+  // 置くと外注さんに漏れる。そこで誰かに代わりに聞いてもらう。
+  //   ・中継サーバー（自動化\sp_research.py）が動いていればそちら
+  //   ・動いていなければ一元管理のサーバー（/amazon-research/asin）
+  // 中継は入れた人しか動かしておらず、実際には誰も動かしていなかったので、
+  // 寸法・重量・手数料が空のままになっていた。サーバー側でも取れるようにしてある。
+  // 中継でしかできないこと（tool4seller・サジェスト・画像の文字起こし・控え保存）は
+  // 今までどおり body.sp-ready で出し分ける。
   const SP_SERVER = 'http://127.0.0.1:8765';
   // 起動直後は表の描画で画面が固まっていて、待ち時間を短く取ると取りこぼす。
   // 少し置いてから聞き、駄目ならもう一度だけ試す（サーバーを後から立ち上げた場合の救済）。
@@ -5969,6 +5974,10 @@ if(FIREBASE_CONFIG.databaseURL){
   }
   function spSetReady(on){
     document.body.classList.toggle('sp-ready', on);
+    // 取り込み機能そのものは、中継が無くてもサーバー経由で使える。
+    // 見た目の出し分けは sp-usable で行い、sp-ready は中継専用の機能
+    // （tool4seller・サジェスト・画像の文字起こし）に残す
+    document.body.classList.toggle('sp-usable', on || !!API_BASE);
   }
 
   // ---- 入力内容の控え（中継サーバーへ自動保存）------------------------------
@@ -6212,7 +6221,14 @@ if(FIREBASE_CONFIG.databaseURL){
   async function spFetchRow(row, overwrite){
     const asin = (row.asin || '').trim().toUpperCase();
     const q = '?asin=' + asin + (has(row.price) ? '&price=' + num(row.price) : '');
-    const res = await fetch(SP_SERVER + '/asin' + q);
+    // 中継サーバーが居るならそちら、居なければ一元管理のサーバーから取る。
+    // 中継は入れた人しか動かしておらず、入れていない人（外注さん）の画面では
+    // 寸法・重量・手数料がいつまでも空のままだった。SP-APIは正規のAPIなので
+    // サーバーからも叩ける。
+    const useLocal = document.body.classList.contains('sp-ready');
+    const res = useLocal
+      ? await fetch(SP_SERVER + '/asin' + q)
+      : await fetch(API_BASE + '/amazon-research/asin' + q, {headers: apiHeaders()});
     const j = await res.json();
     if(!j.ok) throw new Error(j.error || 'HTTP ' + res.status);
 
@@ -6296,7 +6312,7 @@ if(FIREBASE_CONFIG.databaseURL){
   async function autoImport(row, box){
     const asin = (row.asin || '').trim().toUpperCase();
     if(!/^[A-Z0-9]{10}$/.test(asin)){ row.spDiff = null; drawSpAuto(row, box); return; }
-    if(!document.body.classList.contains('sp-ready')) return;   // サーバーが居ないときは何もしない
+    if(!document.body.classList.contains('sp-usable')) return;  // 取り込み先が無いときは何もしない
     if(row.spBusy) return;
     if(row.spAutoAsin === asin) return;                          // 同じASINを取り直さない
 
@@ -6555,13 +6571,13 @@ if(FIREBASE_CONFIG.databaseURL){
           + (made.length > 1
              ? `それぞれ別のリサーチとして ${made.length} 件作りました。`
              : `「${made[0].title}」として新しいリサーチを作りました。`)
-          + (document.body.classList.contains('sp-ready')
+          + (document.body.classList.contains('sp-usable')
              ? '\n続けてSP-APIから寸法・重量・手数料を取り込みます。' : ''));
 
       // ASIN欄を手で打った行は input を合図に自動で取り込まれるが、ここで作った行は
       // 打鍵が無いので走らない。取り込んだ直後にこちらから呼んでおく。
       // (寸法・重量・手数料・商品仕様はSP-APIでしか埋まらないため)
-      if(document.body.classList.contains('sp-ready')){
+      if(document.body.classList.contains('sp-usable')){
         for(const r of made.map(x => x.rows[0])){
           try{
             await spFetchRow(r, false);        // 既に入っている値は上書きしない
