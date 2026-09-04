@@ -673,6 +673,28 @@ async def _fetch_suggest(client, word: str) -> list:
         return []
 
 
+@router.get("/suggest/debug")
+async def suggest_debug(q: str = "ガーゼハンカチ"):
+    """サジェストが空で返る原因を見る。応答をそのまま返す。
+
+    Amazonはデータセンターからの通信を弾くことがあり、その場合は
+    200で中身が空になる（403やエラーにはならない）ので判別しづらい。
+    """
+    import httpx
+    params = {
+        "limit": 11, "prefix": q, "suggestion-type": "KEYWORD",
+        "page-type": "Gateway", "alias": "aps", "site-variant": "desktop",
+        "version": 3, "event": "onKeyPress", "lop": "ja_JP",
+        "mid": "A1VC38T7YXB528", "client-info": "amazon-search-ui",
+    }
+    async with httpx.AsyncClient() as client:
+        r = await client.get(_SUGGEST_URL, params=params, timeout=15,
+                             headers={"User-Agent": _SUGGEST_UA,
+                                      "Accept": "application/json"})
+    return {"status": r.status_code, "body": r.text[:600],
+            "sent_ua": _SUGGEST_UA[:40]}
+
+
 @router.get("/suggest")
 async def suggest(q: str, deep: int = 0):
     """検索窓の入力候補。カンマか改行で複数語を渡せる（5語まで）。
