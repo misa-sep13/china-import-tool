@@ -22,6 +22,18 @@ from app.services import amazon_research_calc as calc
 router = APIRouter(prefix="/amazon-research", tags=["amazon-research"])
 
 
+@router.get("/asin")
+def research_asin(asin: str, price: Optional[float] = None):
+    """リサーチシートの1行ぶんをSP-APIから取る。
+
+    以前は手元の中継サーバー(127.0.0.1:8765)が担っていたが、入れた人しか
+    使えず実際には誰も動かしていなかった。SP-APIは正規のAPIなので
+    サーバーから叩ける。ここに寄せて、外注さんの画面でも埋まるようにする。
+    """
+    from app.services import amazon_api
+    return amazon_api.fetch_research_asin(asin, price)
+
+
 # ---------- 設定 ----------
 
 class SettingsIn(BaseModel):

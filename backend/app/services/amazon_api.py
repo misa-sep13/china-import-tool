@@ -1366,3 +1366,175 @@ def parse_campaign_name(name: str) -> tuple:
                 return (prefix, asin)
             return (prefix, None)
     return ("other", None)
+
+
+# ---------- 競合リサーチシート用（1ASINぶんをまとめて取る） ----------
+#
+# リサーチシートは配布版のころ、手元の中継サーバー(127.0.0.1:8765)を経由して
+# SP-APIを叩いていた。中継を入れた人しか使えず、実際には誰も動かしていなかった
+# ため、寸法・重量・手数料が空のままになっていた。
+# SP-APIは正規のAPIでサーバーから叩けるので、ここに寄せる。
+
+_RESEARCH_MP = "A1VC38T7YXB528"
+
+# 仕様欄に出す属性。多すぎると読めないので、判断に使うものだけ拾う
+_SPEC_KEYS = [
+    ("brand", "ブランド"), ("material", "素材"), ("color", "カラー"),
+    ("size", "サイズ"), ("style", "スタイル"), ("model_number", "型番"),
+    ("item_type_name", "種類"), ("number_of_items", "入数"),
+]
+
+
+def _cm(value, unit) -> Optional[float]:
+    """SP-APIの寸法をcmに直す。単位はinches/centimeters等で返ってくる。"""
+    v = _positive_float(value)
+    if v is None:
+        return None
+    u = (unit or "").lower()
+    if u.startswith("inch"):
+        return round(v * 2.54, 1)
+    if u.startswith("milli"):
+        return round(v / 10, 1)
+    if u.startswith("meter"):
+        return round(v * 100, 1)
+    return round(v, 1)
+
+
+def _kg(value, unit) -> Optional[float]:
+    v = _positive_float(value)
+    if v is None:
+        return None
+    u = (unit or "").lower()
+    if u.startswith("pound") or u == "lb":
+        return round(v * 0.4536, 3)
+    if u.startswith("ounce") or u == "oz":
+        return round(v * 0.02835, 3)
+    if u.startswith("gram") and not u.startswith("kilo"):
+        return round(v / 1000, 3)
+    return round(v, 3)
+
+
+def _image_data_url(url: str) -> Optional[str]:
+    """画像を取ってきてdata URLにする。
+
+    URLをそのまま返すと、シート側が縮小のためcanvasに描いた時点で
+    別サイトの画像として扱われ、取り出せなくなることがある。
+    こちらで取ってしまえばその問題が起きない。
+    """
+    if not url:
+        return None
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as res:
+            raw = res.read()
+            mime = res.headers.get("Content-Type", "image/jpeg").split(";")[0]
+        import base64
+        return f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
+    except Exception:
+        return None
+
+
+def fetch_research_asin(asin: str, price: Optional[float] = None) -> dict:
+    """リサーチシートの1行ぶん。商品名・寸法・重量・手数料・画像・仕様。
+
+    どれか取れなくても他は返す（1項目のために全部が空になるのを避ける）。
+    取れなかったものは notes に理由を入れて画面に出す。
+    """
+    asin = (asin or "").strip().upper()
+    if not asin:
+        return {"ok": False, "error": "ASINがありません"}
+
+    fields: Dict[str, object] = {}
+    notes: List[str] = []
+    image_url = None
+    spec_lines: List[str] = []
+    rank = None
+
+    try:
+        params = urllib.parse.urlencode({
+            "marketplaceIds": _RESEARCH_MP,
+            "includedData": "attributes,dimensions,images,summaries,salesRanks",
+        })
+        data = _call_sp_api(f"/catalog/2022-04-01/items/{asin}?{params}")
+    except Exception as e:
+        return {"ok": False, "error": f"商品情報を取得できませんでした（{type(e).__name__}）"}
+
+    for s in data.get("summaries", []):
+        if s.get("marketplaceId") != _RESEARCH_MP:
+            continue
+        if s.get("itemName"):
+            fields["competitor"] = s["itemName"]
+        break
+
+    for img_set in data.get("images", []):
+        for img in img_set.get("images", []):
+            if img.get("variant") == "MAIN":
+                image_url = img.get("link")
+                break
+        if image_url:
+            break
+
+    # 寸法。package（梱包後）を優先する。送料も手数料も箱の大きさで決まるため
+    for dim in data.get("dimensions", []):
+        if dim.get("marketplaceId") != _RESEARCH_MP:
+            continue
+        box = dim.get("package") or dim.get("item") or {}
+        sides = []
+        for key in ("length", "width", "height"):
+            v = _cm((box.get(key) or {}).get("value"), (box.get(key) or {}).get("unit"))
+            if v:
+                sides.append(v)
+        if len(sides) == 3:
+            sides.sort(reverse=True)          # 長辺・中辺・短辺の順
+            fields["lenA"], fields["lenB"], fields["lenC"] = sides
+        w = _kg((box.get("weight") or {}).get("value"), (box.get("weight") or {}).get("unit"))
+        if w:
+            fields["weight"] = w
+        break
+    if "lenA" not in fields:
+        notes.append("寸法はAmazonに登録がありませんでした")
+    if "weight" not in fields:
+        notes.append("重量はAmazonに登録がありませんでした")
+
+    for ranks in data.get("salesRanks", []):
+        for r in (ranks.get("displayGroupRanks") or []) + (ranks.get("classificationRanks") or []):
+            if r.get("rank"):
+                rank = r["rank"]
+                break
+        if rank:
+            break
+
+    attrs = data.get("attributes") or {}
+    for key, label in _SPEC_KEYS:
+        vals = attrs.get(key)
+        if not isinstance(vals, list) or not vals:
+            continue
+        v = vals[0]
+        text = v.get("value") if isinstance(v, dict) else v
+        if text not in (None, ""):
+            spec_lines.append(f"{label}: {text}")
+    for bullet in (attrs.get("bullet_point") or [])[:5]:
+        text = bullet.get("value") if isinstance(bullet, dict) else bullet
+        if text:
+            spec_lines.append(f"・{text}")
+
+    # 手数料は売価が決まっていないと出せない（金額に対して計算されるため）
+    if price:
+        try:
+            fee = _fetch_fba_fee(_RESEARCH_MP, asin, float(price), "asin")
+            if fee is not None:
+                fields["fee"] = round(fee)
+                fields["fulfill"] = "FBA"
+        except Exception:
+            notes.append("手数料を取得できませんでした")
+    else:
+        notes.append("売価を入れると手数料も取り込みます")
+
+    return {
+        "ok": True,
+        "fields": fields,
+        "image": _image_data_url(image_url),
+        "spec": "\n".join(spec_lines) or None,
+        "rank": rank,
+        "notes": notes,
+    }
