@@ -38,14 +38,18 @@ def collect_all():
     sellers, asins = {}, {}
 
     # find_profiles は (ラベル, パス) のタプルを返す
-    for label, path in bm.find_profiles():
+    profiles = list(bm.find_profiles())
+    if not profiles:
+        print("  ブラウザのブックマークが見つかりませんでした")
+    for label, path in profiles:
         try:
             s, a = bm.collect(path)
         except Exception as e:
             print(f"  読めませんでした: {label} ({type(e).__name__})")
             continue
-        if s:
-            print(f"  {label}: セラー {len(s)}件")
+        # 0件でも出す。出さないと「読めていない」のか
+        # 「読めたがセラーが無い」のか分からない（実際に切り分けに困った）
+        print(f"  {label}: セラー {len(s)}件 / 商品ページ {len(a)}件")
         for sid, name, folder, url in s:
             sellers.setdefault(sid, (sid, name, folder, url))
         for asin, name, folder, url in a:
@@ -105,17 +109,40 @@ def main():
 
     # フォルダで絞る。フォルダ名は「ブックマーク バー / Ama / Amazonセラー」の
     # ような形なので、指定はその一部でよい（全部書かせるのは現実的でない）
+    if not sellers:
+        print()
+        print("このPCのブックマークに、出品者ページが1件もありませんでした。")
+        print()
+        print("拾えるのは、Amazonの「出品者プロフィール」のページです。")
+        print("  https://www.amazon.co.jp/sp?seller=XXXXXXXXXX")
+        print("  https://www.amazon.co.jp/s?me=XXXXXXXXXX")
+        print()
+        print("商品ページ（/dp/...）はセラーIDが分からないので拾えません。")
+        print("商品ページの「販売元」のリンクを開いてから、そのページを")
+        print("ブックマークしてください。")
+        print()
+        print("上に出ているプロファイルが、ふだんお使いのブラウザと")
+        print("合っているかもご確認ください。")
+        return 1
+
     wanted = [w.strip().lower() for w in (args.folder or "").split(",") if w.strip()]
     if wanted:
+        before_rows = list(sellers)
         before = len(sellers)
         sellers = [x for x in sellers
                    if any(w in (x[2] or "").lower() for w in wanted)]
         print(f"  フォルダ「{args.folder}」で絞り込み: {before}件 → {len(sellers)}件")
         if not sellers:
             print()
-            print("そのフォルダにセラーのブックマークが見つかりませんでした。")
-            print("フォルダ名の一部（例: Amazonセラー）で指定してください。")
-            print("--list-folders を付けると、あるフォルダの一覧が出ます。")
+            print("そのフォルダには出品者ページのブックマークがありませんでした。")
+            print("フォルダ名は一部でかまいません（例: Amazonセラー）。")
+            print()
+            print("出品者ページがあるフォルダは次のとおりです:")
+            counts = {}
+            for _, _, folder, _ in before_rows:
+                counts[folder or "(フォルダなし)"] = counts.get(folder or "(フォルダなし)", 0) + 1
+            for f, n in sorted(counts.items(), key=lambda x: -x[1]):
+                print(f"  {n:>4}件  {f}")
             return 1
 
     print(f"  セラーページ: {len(sellers)}件")
