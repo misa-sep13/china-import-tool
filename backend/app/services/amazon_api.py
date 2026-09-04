@@ -1569,8 +1569,21 @@ def fetch_product_type(asin: str) -> dict:
             "includedData": "productTypes,summaries",
         })
         data = _call_sp_api(f"/catalog/2022-04-01/items/{asin}?{params}")
+    except urllib.error.HTTPError as e:
+        # 何が起きたか分からないと直せない。応答の中身も返す
+        body = ""
+        try:
+            body = e.read().decode()[:400]
+        except Exception:
+            pass
+        hint = ""
+        if e.code == 403:
+            hint = "アプリのロールに Product Listing が入っているか確認してください"
+        elif e.code == 404:
+            hint = "そのASINが日本のカタログに無いようです"
+        return {"ok": False, "error": f"HTTP {e.code}: {body}", "ヒント": hint}
     except Exception as e:
-        return {"ok": False, "error": f"商品タイプを取得できませんでした（{type(e).__name__}）"}
+        return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:300]}"}
 
     ptype = None
     for p in data.get("productTypes", []):
