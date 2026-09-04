@@ -5911,6 +5911,31 @@ if(FIREBASE_CONFIG.databaseURL){
   //   ・この問い合わせ自体がサーバーへの生存通知になる。シートを閉じると途切れるので、
   //     サーバーは3分後に自分で終了する＝開いている間だけ動く
   const SP_POLL_MS = 30000;
+  // 中継サーバーはこのPCに入れた人しか動かしていない。入れていない人（外注さん）の
+  // 画面では、30秒ごとに接続エラーが赤く出続けて「何か壊れている」ように見える。
+  // 一度も応答が無かったブラウザでは、数回試したら問い合わせ自体をやめる。
+  // 一度でも繋がったブラウザでは今までどおり見張り続ける（.batを後から起動しても拾う）。
+  const SP_SEEN = 'arsSpRelaySeen';
+  const SP_MAX_TRY = 2;
+  const SP_SLOW_MS = 300000;         // 5分
+  let spTimer = null, spFails = 0, spSlowed = false;
+  function spSeenBefore(){
+    try { return localStorage.getItem(SP_SEEN) === '1'; } catch(e) { return false; }
+  }
+  function spSlowDown(){
+    // 完全にやめると、あとから中継を立ち上げても再読み込みするまで気づけない。
+    // 間隔を空けるだけにして、遅くとも5分で拾えるようにしておく
+    if(spSlowed) return;
+    spSlowed = true;
+    if(spTimer) clearInterval(spTimer);
+    spTimer = setInterval(spPoll, SP_SLOW_MS);
+  }
+  function spSpeedUp(){
+    if(!spSlowed) return;
+    spSlowed = false;
+    if(spTimer) clearInterval(spTimer);
+    spTimer = setInterval(spPoll, SP_POLL_MS);
+  }
   function spPoll(){
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 5000);
@@ -5918,6 +5943,11 @@ if(FIREBASE_CONFIG.databaseURL){
       .then(r => r.ok ? r.json() : null)
       .then(j => {
         clearTimeout(timer);
+        if(j && j.ok){
+          spFails = 0;
+          spSpeedUp();
+          try { localStorage.setItem(SP_SEEN, '1'); } catch(e) {}
+        }
         spSetReady(!!(j && j.ok));
         // backup:true は控え保存に対応したサーバーの目印（古いサーバーなら出さない）
         bkSetReady(!!(j && j.ok && j.backup));
@@ -5932,7 +5962,10 @@ if(FIREBASE_CONFIG.databaseURL){
       .catch(() => { clearTimeout(timer); spSetReady(false); bkSetReady(false);
                      document.body.classList.remove('t4s-ready');
                      document.body.classList.remove('sug-ready');
-                     document.body.classList.remove('imgtext-ready'); });
+                     document.body.classList.remove('imgtext-ready');
+                     // 使っていない人の画面をエラーで埋めない。
+                     // あとから中継を立ち上げたときは、再読み込みで拾い直す
+                     if(++spFails >= SP_MAX_TRY && !spSeenBefore()) spSlowDown(); });
   }
   function spSetReady(on){
     document.body.classList.toggle('sp-ready', on);
@@ -6729,7 +6762,7 @@ if(FIREBASE_CONFIG.databaseURL){
   })();
   // ローカル中継サーバーが動いていればSP-API取り込みボタンを出す（以後30秒おきに確認）
   setTimeout(spPoll, 400);
-  setInterval(spPoll, SP_POLL_MS);
+  spTimer = setInterval(spPoll, SP_POLL_MS);
   syncSettingsInputs();
   setStatus(firebaseReady ? '共有モード（' + WORKSPACE + '）' : 'ローカル保存のみ');
   // レート未取得、または12時間以上前なら自動で取り直す。
