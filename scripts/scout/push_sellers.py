@@ -11,6 +11,7 @@ Chrome・Edge・Brave・Firefox の全プロファイルから
   python push_sellers.py --dry-run                   # 送らずに中身だけ見る
 """
 import argparse
+import io
 import json
 import os
 import sys
@@ -27,6 +28,36 @@ sys.path.insert(0, HERE)
 import scout_bookmarks as bm   # noqa: E402  配布版のブックマーク収集をそのまま使う
 
 DEFAULT_BASE = "https://china-import-tool.onrender.com/api"
+
+
+def _count_bookmarks(path):
+    """そのプロファイルのブックマーク総数と、Amazonのものの数を数える。
+
+    セラー0件のときに「ファイルが読めていない」のか
+    「読めたがAmazonのブックマークが無い」のかを見分けるために出す。
+    """
+    try:
+        with io.open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return None, None
+    total = [0, 0]
+
+    def walk(node):
+        if node.get("type") == "folder":
+            for c in node.get("children", []):
+                walk(c)
+            return
+        url = node.get("url", "")
+        if url:
+            total[0] += 1
+            if "amazon." in url:
+                total[1] += 1
+
+    for root in (data.get("roots") or {}).values():
+        if isinstance(root, dict):
+            walk(root)
+    return total[0], total[1]
 
 
 def collect_all():
@@ -49,7 +80,9 @@ def collect_all():
             continue
         # 0件でも出す。出さないと「読めていない」のか
         # 「読めたがセラーが無い」のか分からない（実際に切り分けに困った）
-        print(f"  {label}: セラー {len(s)}件 / 商品ページ {len(a)}件")
+        n_all, n_amazon = _count_bookmarks(path)
+        head = f"  {label}: ブックマーク {n_all}件" if n_all is not None else f"  {label}:"
+        print(f"{head}（うちAmazon {n_amazon}件）/ セラー {len(s)}件 / 商品ページ {len(a)}件")
         for sid, name, folder, url in s:
             sellers.setdefault(sid, (sid, name, folder, url))
         for asin, name, folder, url in a:
