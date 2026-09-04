@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     SP_API_AWS_SECRET_KEY: Optional[str] = None
     SP_API_ROLE_ARN: Optional[str] = None
     SP_API_MARKETPLACE: str = "JP"
+    # 出品に使う。セラーセントラルの「出品用アカウント情報」に出ている出品者ID
+    SP_API_SELLER_ID: Optional[str] = None
 
     # Tool4Seller
     TOOL4SELLER_EMAIL: Optional[str] = None

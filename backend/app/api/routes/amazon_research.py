@@ -565,3 +565,63 @@ def update_jan(jan_id: int, data: JanPatchIn, db: Session = Depends(get_db)):
         setattr(row, k, v)
     db.commit()
     return _jan_out(row)
+
+
+class JanImportIn(BaseModel):
+    """GS1側で採番済みの番号を台帳に取り込む。
+
+    ツールを使う前に発番した分。ここを入れておかないと、次の採番が
+    1番から始まって既存商品と衝突する。
+    """
+    code: str
+    name: Optional[str] = None
+    sku: Optional[str] = None
+    asin: Optional[str] = None
+    note: Optional[str] = None
+
+
+@router.post("/jan/import")
+def import_jan(data: JanImportIn, db: Session = Depends(get_db)):
+    code = (data.code or "").strip()
+    if not code.isdigit() or len(code) != 13:
+        raise HTTPException(400, "JANは13桁の数字で入れてください")
+    if _check_digit(code[:12]) != code[-1]:
+        raise HTTPException(400, "チェックデジットが合いません。桁の写し間違いがないか確認してください")
+
+    st = _get_settings(db)
+    prefix = (st.gs1_prefix or "").strip()
+    if not prefix or not code.startswith(prefix):
+        raise HTTPException(400, "自社のGS1事業者コードで始まっていません")
+
+    if db.query(JanCode).filter(JanCode.code == code).first():
+        raise HTTPException(409, "その番号はすでに台帳にあります")
+
+    row = JanCode(code=code, item_seq=int(code[len(prefix):12]),
+                  name=(data.name or None), sku=(data.sku or None),
+                  asin=(data.asin or None), status="used",
+                  note=(data.note or "ツール導入前にGS1で採番済み"))
+    db.add(row)
+    db.commit()
+    return _jan_out(row)
+
+
+# ---------- 出品カテゴリ（商品タイプ） ----------
+#
+# Amazonは商品タイプごとに必須項目が違う。何を入れればよいかは
+# 決め打ちできないので、Amazonから定義を取ってきて画面に出す。
+# 競合のASINが分かっていれば、その商品タイプをそのまま使うのが確実
+# （同じ棚に並べたいのだから、競合と同じ型でよい）。
+
+
+@router.get("/product-type")
+def product_type_of_asin(asin: str):
+    """競合ASINの商品タイプを調べる。"""
+    from app.services import amazon_api
+    return amazon_api.fetch_product_type(asin)
+
+
+@router.get("/product-type/{product_type}/schema")
+def product_type_schema(product_type: str):
+    """その商品タイプで何を入れないといけないかを返す。"""
+    from app.services import amazon_api
+    return amazon_api.fetch_product_type_schema(product_type)

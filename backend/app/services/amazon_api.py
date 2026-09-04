@@ -1538,3 +1538,109 @@ def fetch_research_asin(asin: str, price: Optional[float] = None) -> dict:
         "rank": rank,
         "notes": notes,
     }
+
+
+# ---------- 出品カテゴリ（商品タイプ） ----------
+#
+# Amazonは商品タイプごとに必須項目が違い、数百種類ある。決め打ちはできないので
+# Amazonから定義を取ってきて画面に出す。競合ASINが分かっていれば、その商品タイプを
+# そのまま使うのが確実（同じ棚に並べたいのだから、競合と同じ型でよい）。
+
+
+def _seller_id() -> str:
+    sid = getattr(settings, "SP_API_SELLER_ID", None)
+    if not sid:
+        raise RuntimeError("SP_API_SELLER_ID が未設定です。Renderの環境変数に設定してください")
+    return sid
+
+
+def fetch_product_type(asin: str) -> dict:
+    """競合ASINの商品タイプを調べる。"""
+    asin = (asin or "").strip().upper()
+    if not asin:
+        return {"ok": False, "error": "ASINがありません"}
+    try:
+        params = urllib.parse.urlencode({
+            "marketplaceIds": _RESEARCH_MP,
+            "includedData": "productTypes,summaries",
+        })
+        data = _call_sp_api(f"/catalog/2022-04-01/items/{asin}?{params}")
+    except Exception as e:
+        return {"ok": False, "error": f"商品タイプを取得できませんでした（{type(e).__name__}）"}
+
+    ptype = None
+    for p in data.get("productTypes", []):
+        if p.get("marketplaceId") == _RESEARCH_MP and p.get("productType"):
+            ptype = p["productType"]
+            break
+    name = None
+    for s in data.get("summaries", []):
+        if s.get("marketplaceId") == _RESEARCH_MP:
+            name = s.get("itemName")
+            break
+    if not ptype:
+        return {"ok": False, "error": "この商品には商品タイプが登録されていません"}
+    return {"ok": True, "product_type": ptype, "asin": asin, "item_name": name}
+
+
+# 出品原稿から自動で埋まる項目。画面で聞き直さないよう、ここで持っておく
+_FILLED_BY_TOOL = {
+    "item_name", "brand", "bullet_point", "product_description",
+    "externally_assigned_product_identifier", "merchant_suggested_asin",
+    "list_price", "purchasable_offer", "fulfillment_availability",
+    "condition_type", "main_product_image_locator", "other_product_image_locator",
+    "item_package_dimensions", "item_package_weight", "supplier_declared_dg_hz_regulation",
+}
+
+
+def fetch_product_type_schema(product_type: str) -> dict:
+    """その商品タイプの必須項目を、画面に出せる形にして返す。
+
+    Amazonが返す定義はJSON Schemaそのもので、そのままでは読めない。
+    必須のものだけを拾い、日本語の表示名と入力の種類を添える。
+    """
+    pt = (product_type or "").strip().upper()
+    if not pt:
+        return {"ok": False, "error": "商品タイプがありません"}
+    try:
+        params = urllib.parse.urlencode({
+            "marketplaceIds": _RESEARCH_MP,
+            "sellerId": _seller_id(),
+            "productType": pt,
+            "requirements": "LISTING",
+            "locale": "ja_JP",
+        })
+        meta = _call_sp_api(f"/definitions/2020-09-01/productTypes/{pt}?{params}")
+    except Exception as e:
+        return {"ok": False, "error": f"商品タイプの定義を取得できませんでした（{type(e).__name__}）"}
+
+    url = (meta.get("schema") or {}).get("link", {}).get("resource")
+    if not url:
+        return {"ok": False, "error": "定義の場所が返ってきませんでした"}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url), timeout=30) as res:
+            schema = json.loads(res.read())
+    except Exception as e:
+        return {"ok": False, "error": f"定義を読めませんでした（{type(e).__name__}）"}
+
+    props = schema.get("properties") or {}
+    required = schema.get("required") or []
+    fields = []
+    for key in required:
+        if key in _FILLED_BY_TOOL:
+            continue
+        p = props.get(key) or {}
+        items = (p.get("items") or {})
+        inner = (items.get("properties") or {}).get("value") or {}
+        enum = inner.get("enum") or items.get("enum") or p.get("enum")
+        fields.append({
+            "name": key,
+            "label": p.get("title") or key,
+            "description": p.get("description") or "",
+            "type": "select" if enum else "text",
+            "choices": (enum or [])[:200],
+        })
+    return {"ok": True, "product_type": pt,
+            "display_name": meta.get("displayName") or pt,
+            "required_fields": fields,
+            "auto_filled": sorted(k for k in required if k in _FILLED_BY_TOOL)}
