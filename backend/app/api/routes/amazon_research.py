@@ -90,7 +90,8 @@ def get_settings(db: Session = Depends(get_db)):
 def update_settings(data: SettingsIn, db: Session = Depends(get_db)):
     s = _get_settings(db)
     for f in ("exchange_rate", "rate_adjust", "china_fixed", "tariff_rate",
-              "pack_factor", "ship_yuan", "ship_mode", "customs_fee_jpy"):
+              "pack_factor", "ship_yuan", "ship_mode", "customs_fee_jpy",
+              "gs1_prefix", "brand_name"):
         v = getattr(data, f, None)
         if v is not None:
             setattr(s, f, v)
