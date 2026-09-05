@@ -437,16 +437,19 @@
     border:1px solid var(--line-2);border-radius:99px;padding:4px 24px 4px 12px;
     font-size:11.5px;font-weight:700;cursor:pointer;color:var(--ink);
     background:#fff url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" fill="none" stroke="%23667085" stroke-width="1.6" stroke-linecap="round"/></svg>') no-repeat right 9px center / 10px;}
+  .research-status select[data-st="adopted"],
   .research-status select[data-st="ordered"],.research-status select[data-st="imaged"],
   .research-status select[data-st="listed"],.research-status select[data-st="rejected"]{
     color:#fff;
     background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" fill="none" stroke="%23ffffff" stroke-width="1.6" stroke-linecap="round"/></svg>');}
+  .research-status select[data-st="adopted"]{background-color:#2563eb;border-color:#2563eb;}
   .research-status select[data-st="ordered"]{background-color:#15803d;border-color:#15803d;}
   .research-status select[data-st="imaged"]{background-color:#b45309;border-color:#b45309;}
   .research-status select[data-st="listed"]{background-color:#7c3aed;border-color:#7c3aed;}
   .research-status select[data-st="rejected"]{background-color:#6b7280;border-color:#6b7280;}
   /* ステータスの枠色。中身は暗くせず、左端の色帯だけで工程が分かるようにする。
      ボツだけ軽くグレーにする（読めなくなるほど落とさない） */
+  .research.st-adopted{border-color:#93b4e8;background:#f3f7fe;box-shadow:inset 4px 0 0 #2563eb;}
   .research.st-ordered{border-color:#5da983;background:#f2f9f5;box-shadow:inset 4px 0 0 #2f9e63;}
   .research.st-imaged{border-color:#d9aa6b;background:#fdf8f0;box-shadow:inset 4px 0 0 #b45309;}
   .research.st-listed{border-color:#b5a1e0;background:#f8f5fe;box-shadow:inset 4px 0 0 #7c3aed;}
@@ -457,6 +460,7 @@
   .status-filter button{border:none;border-radius:0;padding:7px 10px;font-size:12px;background:#fff;}
   .status-filter button + button{border-left:1px solid #e3e9f1;}
   .status-filter button.on{background:#2563eb;color:#fff;}
+  .status-filter button.on[data-f="adopted"]{background:#2563eb;}
   .status-filter button.on[data-f="ordered"]{background:#15803d;}
   .status-filter button.on[data-f="imaged"]{background:#b45309;}
   .status-filter button.on[data-f="listed"]{background:#7c3aed;}
@@ -1055,6 +1059,7 @@
   <span class="status-filter" id="statusFilter" title="リサーチ枠をステータスで絞り込みます">
     <button data-f="all">すべて</button>
     <button data-f="active">リサーチ中</button>
+    <button data-f="adopted">採用</button>
     <button data-f="ordered">発注済み</button>
     <button data-f="imaged">画像依頼済み</button>
     <button data-f="listed">商品登録済み</button>
@@ -6775,11 +6780,15 @@ if(FIREBASE_CONFIG.databaseURL){
   // 工程を足すときは STATUS_DEFS に1行足すだけ（枠の切替・絞り込み・CSVが全部ここを見る）。
   const STATUS_DEFS = [
     ['active', 'リサーチ中'],
+    ['adopted', '採用'],
     ['ordered', '発注済み'],
     ['imaged', '画像依頼済み'],
     ['listed', '商品登録済み'],
     ['rejected', 'ボツ']
   ];
+  // 「採用」以降が商品登録タブに出る。仕入れを決めた時点で登録の準備を
+  // 始められるよう、発注より前に置いてある
+  const ADOPTED_STATUSES = ['adopted', 'ordered', 'imaged', 'listed'];
   const STATUS_LABEL = Object.fromEntries(STATUS_DEFS);
   // 絞り込みは端末ごとの見え方なので共有stateではなくlocalStorageに持つ。
   const FILTER_KEY = 'arsStatusFilter:' + WORKSPACE;
