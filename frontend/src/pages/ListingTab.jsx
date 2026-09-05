@@ -150,7 +150,9 @@ function ListRow({ r, onStart, onOpen, busy }) {
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: C.text,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          whiteSpace: 'normal', display: '-webkit-box',
+          WebkitLineClamp: 1, WebkitBoxOrient: 'vertical',
+          overflow: 'hidden' }}>
           {r.research_title || '(名前なし)'}
         </div>
 

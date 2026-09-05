@@ -127,10 +127,13 @@ export default function ListingEditor({ listingId, onBack }) {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center',
         marginBottom: 10, flexWrap: 'wrap' }}>
         <button className="btn btn-secondary" onClick={onBack}>← 一覧へ</button>
-        {/* 折り返さない文字は、min-width を指定しても「縮められない幅」が
-            全長になる。0にして、はみ出しは … で切る */}
+        {/* 折り返さない長い文字は、min-width:0 を付けても「縮められない幅」が
+            全長のまま親へ伝わり、画面ごと横に伸びてしまう。日本語はどこでも
+            折り返せるので、折り返しは許したうえで1行で切る */}
         <div style={{ fontSize: 13, fontWeight: 600, flex: '1 1 0', minWidth: 0,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          whiteSpace: 'normal', display: '-webkit-box',
+          WebkitLineClamp: 1, WebkitBoxOrient: 'vertical',
+          overflow: 'hidden' }}>
           {d.research_title}
         </div>
         <button className="btn btn-secondary" onClick={resync} disabled={busy}>
