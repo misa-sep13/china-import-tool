@@ -58,7 +58,8 @@ export default function ResearchPage() {
   }, [url, isFrame])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 40px)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column',
+      height: 'calc(100vh - 40px)', minWidth: 0 }}>
       <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexShrink: 0 }}>
         {[
           { k: 'sheet', l: '📋 競合リサーチシート' },
@@ -95,7 +96,7 @@ export default function ResearchPage() {
           />
         </div>
       ) : (
-        <div style={{ flex: 1, minHeight: 0 }}>
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
           <ListingTab />
         </div>
       )}

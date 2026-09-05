@@ -122,7 +122,7 @@ export default function ListingEditor({ listingId, onBack }) {
   const sent = d.status === 'submitted' || d.status === 'live'
 
   return (
-    <div style={{ overflow: 'auto', height: '100%', padding: 2 }}>
+    <div style={{ overflow: 'auto', height: '100%', padding: 2, minWidth: 0 }}>
       {/* ---- 上のバー ---- */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center',
         marginBottom: 10, flexWrap: 'wrap' }}>
@@ -395,7 +395,9 @@ function Variations({ d, set }) {
         </select>
       </div>
 
-      <div style={{ overflowX: 'auto' }}>
+      {/* 表は幅を取るので、枠の中だけで横スクロールさせる。
+          min-width:0 が無いと枠が縮まず、画面全体が横に伸びる */}
+      <div style={{ overflowX: 'auto', minWidth: 0 }}>
         <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse',
           minWidth: 640 }}>
           <thead>

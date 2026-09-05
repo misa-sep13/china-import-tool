@@ -82,7 +82,7 @@ export default function ListingTab() {
   }
 
   return (
-    <div style={{ overflow: 'auto', height: '100%', padding: 2 }}>
+    <div style={{ overflow: 'auto', height: '100%', padding: 2, minWidth: 0 }}>
       {err && <Err text={err} />}
 
       <div style={{ ...card, marginBottom: 10, display: 'flex',
