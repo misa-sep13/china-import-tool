@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import api from '../api/client'
 import { C, card, label, input, bytes, Err } from './ListingTab'
-import { titleProblems, byteLen, KW_LIMITS, stripColor, childTitle }
-  from '../lib/listingChecks'
+import { titleProblems, byteLen, KW_LIMITS, stripColor, childTitle,
+  parentColorLeft } from '../lib/listingChecks'
 
 /**
  * 1商品ぶんの出品内容を仕上げる画面。
@@ -224,6 +224,16 @@ export default function ListingEditor({ listingId, onBack }) {
             <div key={i} style={{ fontSize: 11, color: C.warn, marginTop: 3,
               fontWeight: 700 }}>{t}</div>
           ))}
+          {(() => {
+            const left = parentColorLeft(d.title,
+              (d.children || []).map(c => c.axis1))
+            return left ? (
+              <div style={{ fontSize: 11, color: C.warn, marginTop: 3,
+                fontWeight: 700 }}>
+                末尾の「{left}」は色や個数です。親には入れず、子だけに付けてください
+              </div>
+            ) : null
+          })()}
           <div style={{ display: 'flex', gap: 6, alignItems: 'center',
             marginTop: 5, flexWrap: 'wrap' }}>
             <button className="btn btn-secondary" style={{ fontSize: 12 }}

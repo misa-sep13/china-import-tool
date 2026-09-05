@@ -56,6 +56,18 @@ export function repeatedWords(text, minLen = 2) {
   return [...cnt.entries()].filter(([, n]) => n >= 3)
 }
 
+/**
+ * 親タイトルの末尾が色や個数になっていないか。
+ * 親は選択肢をまとめる器なので、色は子だけに付ける。
+ * 入れたまま子へコピーすると、子に色が2つ並んでしまう。
+ */
+export function parentColorLeft(title, childValues = []) {
+  const last = String(title || '').trim().split(/\s+/).pop()
+  if (!last) return ''
+  const vals = childValues.map(v => String(v || '').trim()).filter(Boolean)
+  return (looksLikeColor(last) || vals.includes(last)) ? last : ''
+}
+
 /** 商品タイトル1行ぶんの問題点。シートの③と同じ内容を返す */
 export function titleProblems(title, max = 75) {
   const s = String(title || '').trim()

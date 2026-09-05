@@ -347,14 +347,11 @@ def build_title(src: dict, brand: str = "", push: str = "",
     for w in sorted(freq, key=lambda x: -freq[x]):
         add(w)
 
+    # サイズは三辺から。色や個数（バリエーションの情報）は親には入れない。
+    # 親は選択肢をまとめる器で、色は子ごとに末尾へ付けるため
     tail = []
     if src.get("len_a") and src.get("len_b"):
         tail.append(f"{_trim_num(src['len_a'])}×{_trim_num(src['len_b'])}cm")
-    kids = [re.sub(r"^(カラー|色|サイズ)\s*", "", (c.get("axis_label_value") or "")).strip()
-            for c in (src.get("children") or [])]
-    kids = [k for k in kids if k]
-    if kids:
-        tail.append("・".join(kids[:4]))
 
     head = " ".join([x for x in [brand,
                                  f"【{push.strip()}】" if push.strip() else "",
