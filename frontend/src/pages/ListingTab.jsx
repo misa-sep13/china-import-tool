@@ -33,16 +33,6 @@ const input = {
 
 const bytes = s => new TextEncoder().encode(s || '').length
 
-/** バリエーションテーマ。Amazonが受け付ける名前で送る */
-const THEMES = [
-  { v: '', l: '（単品・バリエーションなし）' },
-  { v: 'COLOR', l: 'カラー' },
-  { v: 'SIZE', l: 'サイズ' },
-  { v: 'SIZE_COLOR', l: 'サイズ × カラー' },
-  { v: 'STYLE', l: 'スタイル' },
-  { v: 'PATTERN', l: '柄' },
-]
-
 export default function ListingTab() {
   const [rows, setRows] = useState([])
   const [openId, setOpenId] = useState(null)      // listing_id
@@ -215,4 +205,4 @@ function Chip({ on, label }) {
   )
 }
 
-export { C, card, label, input, bytes, THEMES, Err }
+export { C, card, label, input, bytes, Err }

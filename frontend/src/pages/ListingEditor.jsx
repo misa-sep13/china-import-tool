@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import api from '../api/client'
-import { C, card, label, input, bytes, THEMES, Err } from './ListingTab'
+import { C, card, label, input, bytes, Err } from './ListingTab'
 
 /**
  * 1商品ぶんの出品内容を仕上げる画面。
@@ -435,12 +435,10 @@ function Variations({ d, set, nextSku }) {
     { id: null, sku: null, title: d.title || '', axis1: '', axis2: '' }])
   const del = i => set('children', kids.filter((c, n) => n !== i))
 
-  const theme = (d.variation_theme || '').toUpperCase()
-  const two = theme === 'SIZE_COLOR' || theme === 'COLOR_SIZE'
-  const a1 = theme.startsWith('SIZE') ? 'サイズ'
-    : theme.startsWith('COLOR') ? 'カラー'
-      : theme === 'STYLE' ? 'スタイル' : theme === 'PATTERN' ? '柄' : '値'
-  const a2 = theme === 'SIZE_COLOR' ? 'カラー' : 'サイズ'
+  // 軸は常に「色」。個数違いも「2個/ブラック」のように色の値として書く
+  const two = false
+  const a1 = '色'
+  const a2 = ''
 
   return (
     <section style={{ ...card, marginBottom: 10 }}>
@@ -458,12 +456,16 @@ function Variations({ d, set, nextSku }) {
             単品でも親を作ります（Amazonの推奨）
           </div>
         </div>
-      <div style={{ maxWidth: 260 }}>
-        <span style={label}>バリエーションテーマ</span>
-        <select style={input} value={d.variation_theme || ''}
-          onChange={e => set('variation_theme', e.target.value)}>
-          {THEMES.map(t => <option key={t.v} value={t.v}>{t.l}</option>)}
-        </select>
+      <div style={{ maxWidth: 380 }}>
+        <span style={label}>バリエーションの軸</span>
+        <div style={{ ...input, background: C.soft, color: C.sub,
+          display: 'flex', alignItems: 'center' }}>
+          色（固定）
+        </div>
+        <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>
+          色でないと選択肢ごとの画像が出ないため、個数違い・サイズ違いも
+          色として登録します（例: 2個/ブラック）
+        </div>
       </div>
       </div>
 
@@ -509,7 +511,7 @@ function Variations({ d, set, nextSku }) {
                 {many && (
                   <td style={td}>
                     <input style={{ ...input, fontSize: 12 }} value={c.axis1 || ''}
-                      placeholder={a1}
+                      placeholder="ブラック ／ 2個/ブラック"
                       onChange={e => putKid(i, 'axis1', e.target.value)} />
                   </td>
                 )}

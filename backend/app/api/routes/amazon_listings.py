@@ -587,12 +587,11 @@ def _problems(row: AmazonListing, db: Session) -> list:
             p.append(f"[{who}] SKUがありません")
         if not c.jan:
             p.append(f"[{who}] JANがありません")
-    if len(kids) > 1 and not (row.variation_theme or "").strip():
-        p.append("バリエーションテーマを選んでください")
+    # バリエーションは常に色で登録する（色でないと選択肢ごとの画像が出ない）
     if len(kids) > 1:
         for c in kids:
             if not (c.axis1 or "").strip():
-                p.append(f"[{c.title[:16] if c.title else c.sku}] バリエーションの値が空です")
+                p.append(f"[{c.title[:16] if c.title else c.sku}] 色が空です")
     return p
 
 
@@ -605,28 +604,18 @@ def _public_base() -> str:
             or os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
 
 
-# バリエーションテーマと、値を入れる項目名の対応。
-# Amazonはテーマ名と属性名が別で、ここがずれると400になる
-_THEME_FIELDS = {
-    "COLOR":      ["color"],
-    "SIZE":       ["size"],
-    "SIZE_COLOR": ["size", "color"],
-    "COLOR_SIZE": ["color", "size"],
-    "STYLE":      ["style"],
-    "PATTERN":    ["pattern"],
-    "FLAVOR":     ["flavor"],
-}
+# バリエーションは必ず色（COLOR）で登録する。
+#
+# Amazonはバリエーションテーマが色でないと、選択肢ごとの画像が出ない。
+# 個数違い・サイズ違いでも色として登録し、値のほうに「2個/ブラック」の
+# ように書く（Amazonの商品ページでも「色: 4個/クリア」と出る）。
+VARIATION_THEME = "COLOR"
 
 
 def _axis_attrs(row: AmazonListing, child: AmazonListingChild) -> dict:
-    """子の軸の値を、テーマに対応する項目名に振り分ける。"""
-    fields = _THEME_FIELDS.get((row.variation_theme or "").upper(), [])
-    out = {}
-    vals = [child.axis1, child.axis2]
-    for i, f in enumerate(fields):
-        if i < len(vals) and (vals[i] or "").strip():
-            out[f] = vals[i].strip()
-    return out
+    """子の軸の値。色として送る。"""
+    v = (child.axis1 or "").strip()
+    return {"color": v} if v else {}
 
 
 def _attributes(row: AmazonListing, child: AmazonListingChild,
@@ -720,9 +709,9 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
         }]
         # 軸がある（＝本当のバリエーション）ときだけテーマを送る
         axis = _axis_attrs(row, child)
-        if row.variation_theme and axis:
+        if axis:
             a["variation_theme"] = [{"marketplace_id": mp,
-                                     "name": row.variation_theme}]
+                                     "name": VARIATION_THEME}]
         for key, val in axis.items():
             a[key] = one(val)
 
@@ -753,8 +742,7 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True) -> dict:
         "condition_type": one("new_new"),
     }
     if has_variation:
-        a["variation_theme"] = [{"marketplace_id": mp,
-                                 "name": row.variation_theme or "COLOR"}]
+        a["variation_theme"] = [{"marketplace_id": mp, "name": VARIATION_THEME}]
     if row.brand:
         a["brand"] = one(row.brand)
     if row.description:
@@ -967,12 +955,28 @@ _SIZE_WORDS = {
 
 
 def sku_suffix(value: str) -> str:
-    """軸の値（ブラック・M・120cm など）をSKUの末尾にする。
+    """軸の値（ブラック・M・2個/ブラック など）をSKUの末尾にする。
 
     英数字はそのまま小文字に、よくある色名・サイズ名は英字へ。
+    「2個/ブラック」のような複合値は区切りごとに直して繋ぐ（2black）。
     どれにも当たらなければ空を返し、呼び出し側で連番にする。
     """
     v = (value or "").strip()
+    if not v:
+        return ""
+
+    # 区切りがあれば、それぞれ直して繋ぐ
+    if re.search(r"[/／・]", v):
+        parts = [p.strip() for p in re.split(r"[/／・]", v) if p.strip()]
+        joined = "".join(_one_suffix(p) for p in parts)
+        if joined:
+            return joined[:16]
+    return _one_suffix(v)
+
+
+def _one_suffix(v: str) -> str:
+    """区切りのない1語ぶん。"""
+    v = (v or "").strip()
     if not v:
         return ""
 

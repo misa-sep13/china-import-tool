@@ -600,6 +600,11 @@
   /* AIの回答を貼っておく欄。仕様・レビューと違い共有シートにも同期するので枠を変えて区別する */
   .an-sep{border-top:1px solid var(--line);margin-top:4px;padding-top:14px;}
   /* ③商品タイトルの命名ルール。見出しの横に小さく出す */
+  /* 子の軸は「色」で固定。値だけ入れてもらう */
+  .tl-axis{display:inline-flex;align-items:center;justify-content:center;
+    min-width:28px;height:26px;padding:0 6px;border-radius:5px;
+    background:var(--chip,#eef2f7);color:var(--ink-2);
+    font-size:11.5px;font-weight:700;flex:none;}
   .tl-rule{margin-left:10px;font-size:11px;font-weight:400;color:var(--ink-2);}
   .tl-rule b{font-weight:700;color:var(--ink);}
   .tl-rule-sep{margin:0 5px;color:var(--line);}
@@ -4830,6 +4835,48 @@ if(FIREBASE_CONFIG.databaseURL){
   // 計65字程度に収める。Amazonの上限より短いが、検索結果で切れずに読める長さ
   const TITLE_MAX = 65;
 
+  // ---- バリエーションは必ず「色」で登録する ----
+  //
+  // Amazonはバリエーションテーマが色でないと、選択肢ごとの画像が出ない。
+  // そのため個数違い・サイズ違いでも色として登録し、値のほうに
+  // 「2個/ブラック」「3個/ブラック」のように書く。
+  //
+  // 子の商品タイトルは「親タイトルから色を外したもの＋その値」。
+  // 色は末尾に置く（命名ルールのサイズ・数量・色が最後のため）。
+  const COLOR_WORDS = [
+    'ブラック', 'ホワイト', 'グレー', 'ネイビー', 'ブルー', 'レッド', 'ピンク',
+    'グリーン', 'イエロー', 'ベージュ', 'ブラウン', 'パープル', 'オレンジ',
+    'シルバー', 'ゴールド', 'カーキ', 'アイボリー', 'クリア', 'モカ',
+    'グレージュ', 'ワインレッド', 'ライトグレー', 'ダークグレー',
+    '黒', '白', '灰', '青', '赤', '緑', '黄', '紫', '茶', '銀', '金', '透明'
+  ];
+
+  /** 末尾がバリエーションの値かどうか。「4個/クリア」のような書き方も見る */
+  function looksLikeColor(word, extra){
+    const w = (word || '').trim();
+    if(!w) return false;
+    if((extra || []).some(v => v && v.trim() === w)) return true;
+    // 「2個/ブラック」「クリア/丸型」など、区切りの前後どちらかが色ならOK
+    const parts = w.split(/[\/／・]/).map(x => x.trim()).filter(Boolean);
+    return parts.some(p => COLOR_WORDS.some(c => p === c || p.endsWith(c)));
+  }
+
+  /** 親タイトルから末尾の色だけ外す。子タイトルの土台にする */
+  function titleWithoutColor(title, extra){
+    const parts = (title || '').trim().split(/\s+/);
+    while(parts.length > 1 && looksLikeColor(parts[parts.length - 1], extra)){
+      parts.pop();
+    }
+    return parts.join(' ');
+  }
+
+  /** 土台＋色で子タイトルを作る */
+  function childTitleOf(base, value){
+    const v = (value || '').trim();
+    const b = (base || '').trim();
+    return v ? (b ? b + ' ' + v : v) : b;
+  }
+
   // ---- 商品タイトルの下書きをつくる ----
   //
   // 命名ルール（京平様）:
@@ -5356,6 +5403,13 @@ if(FIREBASE_CONFIG.databaseURL){
     tAddRow.appendChild(tGenStatus);
     body.appendChild(tAddRow);
 
+    // 「カラー ブラック」「色：ピンク」のように軸の名前ごと入れていた
+    // 古いデータを、値だけに直す（軸は「色」で固定になったため）
+    (research.titleChildren || []).forEach(c => {
+      const m = (c.name || '').match(/^(?:カラー|色|COLOR|Color)\s*[:：]?\s*(.+)$/);
+      if(m) c.name = m[1].trim();
+    });
+
     // 旧データ（1本の文字列。バリエーションは / 区切り）から移行する
     if(!Array.isArray(research.titleChildren)){
       const old = (research.listingTitle || '').split('/').map(s => s.trim());
@@ -5370,12 +5424,24 @@ if(FIREBASE_CONFIG.databaseURL){
         const line = el('div', 'title-line');
         line.appendChild(el('span', 'tl-kind' + (kind === '親' ? ' parent' : ''), kind));
         if(kind === '子'){
+          // バリエーションは必ず「色」で登録する（色でないと選択肢ごとの
+          // 画像が出ない）。個数違いは「2個/ブラック」のように値へ書く
+          line.appendChild(el('span', 'tl-axis', '色'));
           const nm = document.createElement('input');
           nm.type = 'text';
           nm.className = 'tl-name';
-          nm.placeholder = 'バリエーションテーマの名称（例：カラー ブラック）';
+          nm.placeholder = '例: ブラック ／ 2個/ブラック';
+          nm.title = '入れた語が、この子の商品タイトルの一番後ろに入ります';
           nm.value = obj.name || '';
-          nm.addEventListener('input', () => { obj.name = nm.value; edSave(); });
+          nm.addEventListener('input', () => {
+            obj.name = nm.value;
+            // 手で直した子タイトルは残したいので、末尾の色だけ差し替える
+            const vals = (research.titleChildren || []).map(c => c.name);
+            const base = titleWithoutColor(obj.title || research.titleParent, vals);
+            obj.title = childTitleOf(base, nm.value);
+            ti.value = obj.title;
+            sync(); edSave();
+          });
           line.appendChild(nm);
         }
         const ti = document.createElement('input');
@@ -5427,7 +5493,11 @@ if(FIREBASE_CONFIG.databaseURL){
       drawTarget();
     }
     tAdd.addEventListener('click', () => {
-      research.titleChildren.push({name: '', title: ''});
+      // 親タイトルから色だけ外したものを土台にする。
+      // あとは「色」の欄に値を入れれば、末尾に付く
+      const vals = (research.titleChildren || []).map(c => c.name);
+      research.titleChildren.push(
+        {name: '', title: titleWithoutColor(research.titleParent, vals)});
       drawTitles(); edSave(); edRefresh();
     });
 
