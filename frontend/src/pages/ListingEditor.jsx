@@ -127,7 +127,9 @@ export default function ListingEditor({ listingId, onBack }) {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center',
         marginBottom: 10, flexWrap: 'wrap' }}>
         <button className="btn btn-secondary" onClick={onBack}>← 一覧へ</button>
-        <div style={{ fontSize: 13, fontWeight: 600, flex: 1, minWidth: 200,
+        {/* 折り返さない文字は、min-width を指定しても「縮められない幅」が
+            全長になる。0にして、はみ出しは … で切る */}
+        <div style={{ fontSize: 13, fontWeight: 600, flex: '1 1 0', minWidth: 0,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {d.research_title}
         </div>
@@ -396,8 +398,10 @@ function Variations({ d, set }) {
       </div>
 
       {/* 表は幅を取るので、枠の中だけで横スクロールさせる。
-          min-width:0 が無いと枠が縮まず、画面全体が横に伸びる */}
-      <div style={{ overflowX: 'auto', minWidth: 0 }}>
+          overflow-x だけでは枠の「縮められない幅」が表の最小幅のままになり、
+          画面全体が横に伸びてしまう。grid の minmax(0,1fr) で包んで防ぐ */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)' }}>
+      <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse',
           minWidth: 640 }}>
           <thead>
@@ -464,6 +468,7 @@ function Variations({ d, set }) {
             ))}
           </tbody>
         </table>
+      </div>
       </div>
 
       {kids.some(c => c.error) && (
