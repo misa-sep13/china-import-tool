@@ -4941,16 +4941,14 @@ if(FIREBASE_CONFIG.databaseURL){
     });
     Object.keys(freq).sort((a, b) => freq[b] - freq[a]).forEach(add);
 
-    // サイズ・数量・色。表の三辺と、バリエーションの子の名前から作る
+    // サイズは表の三辺から。
+    // 色や個数（バリエーションの情報）は親には入れない。
+    // 親は選択肢をまとめる器で、色は子ごとに末尾へ付けるため
     const tail = [];
     const r0 = rows[0] || {};
     if(has(r0.lenA) && has(r0.lenB)){
       tail.push(num(r0.lenA) + '×' + num(r0.lenB) + 'cm');
     }
-    const kids = (research.titleChildren || [])
-      .map(c => (c.name || '').replace(/^(カラー|色|サイズ)\s*/, '').trim())
-      .filter(Boolean);
-    if(kids.length) tail.push(kids.slice(0, 4).join('・'));
 
     return {brand: SELLER_BRAND, main: main, rel: rel, tail: tail};
   }
@@ -5481,6 +5479,15 @@ if(FIREBASE_CONFIG.databaseURL){
           const rep = repeatedWords(s);
           if(rep.length) msg.push('3回以上の重複: ' + rep.map(r => r[0] + '×' + r[1]).join('・')
             + '（エラー99300の原因）');
+          // 親は選択肢をまとめる器なので、色や個数は入れない。
+          // 入れたまま子へコピーすると、子に色が2つ並んでしまう
+          if(kind === '親'){
+            const last = s.split(/\s+/).pop();
+            const vals = (research.titleChildren || []).map(c => (c.name || '').trim());
+            if(last && (looksLikeColor(last) || vals.indexOf(last) >= 0)){
+              msg.push('末尾の「' + last + '」は色や個数です。親には入れず、子だけに付けてください');
+            }
+          }
           warn.textContent = msg.join(' ／ ');
           warn.classList.toggle('warn', !!msg.length);
         };
