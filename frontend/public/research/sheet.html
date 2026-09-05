@@ -2398,22 +2398,105 @@ if(FIREBASE_CONFIG.databaseURL){
   }
 
   // ---- 商品ページの読込と分析 ----
-  // 取得した本文は数万文字になるためクラウド同期しない（Firebaseが重くなる）。
-  // 共有stateには件数や★などの軽い要約だけ置き、本文はこのブラウザのlocalStorageに持つ。
+  // 商品仕様・レビュー・キーワード・画像の文字・分析結果。
+  //
+  // もとはこのブラウザのlocalStorageにだけ置いていた（本文が数万文字になり、
+  // シート本体のJSONに混ぜると同期が重くなるため）。ただそのせいで、
+  // 別のPCで取り込んでも中身が付いてこず、「取り込み済みなのに商品仕様が空」
+  // という状態になっていた。商品登録の画面からも材料として使いたいので、
+  // シートとは別のテーブルとしてサーバーへ置くことにした。
+  //
+  // 画面はこれまでどおり同期的に読むので、手元のlocalStorageは残して
+  // 「その場で見えるぶん」として使い、サーバーとは裏で同期する。
   const PAGE_KEY = 'arsPageCache:' + WORKSPACE;
   function pageCache(){
     try{ return JSON.parse(localStorage.getItem(PAGE_KEY)) || {}; }catch(e){ return {}; }
   }
+  function writeLocalPages(c){
+    try{ localStorage.setItem(PAGE_KEY, JSON.stringify(c)); return true; }
+    catch(e){ return false; }
+  }
   function savePage(rowId, data){
-    try{
-      const c = pageCache();
-      c[rowId] = Object.assign({}, c[rowId], data);
-      localStorage.setItem(PAGE_KEY, JSON.stringify(c));
-      pagesDirty = true;            // 次の控えにこの本文も含める
-      scheduleBackup();
-    }catch(e){ alert('保存領域が一杯です。不要なリサーチを削除してください。'); }
+    const c = pageCache();
+    c[rowId] = Object.assign({}, c[rowId], data);
+    if(!writeLocalPages(c)){
+      alert('このブラウザの保存領域が一杯です。サーバーへは保存します。');
+    }
+    pagesDirty = true;            // 次の控えにこの本文も含める
+    scheduleBackup();
+    pushPage(rowId, data);        // サーバーへも送る
   }
   function getPage(rowId){ return pageCache()[rowId] || null; }
+
+  // サーバーへ送る。押すたびに走るので、少しまとめてから送る
+  const pagePending = {};
+  let pageTimer = null;
+  function pushPage(rowId, data){
+    if(!API_BASE) return;         // 配布版（一元管理の外）では従来どおり手元だけ
+    pagePending[rowId] = Object.assign({}, pagePending[rowId], data);
+    clearTimeout(pageTimer);
+    pageTimer = setTimeout(flushPages, 1200);
+  }
+  async function flushPages(){
+    const ids = Object.keys(pagePending);
+    if(!ids.length) return;
+    for(const id of ids){
+      const body = pagePending[id];
+      delete pagePending[id];
+      try{
+        await fetch(API_BASE + '/amazon-research/pages/' + encodeURIComponent(id),
+          {method:'PUT',
+           headers: Object.assign({'Content-Type':'application/json'}, apiHeaders()),
+           body: JSON.stringify(body)});
+      }catch(e){ /* 通信が切れていても手元には残っているので、次の保存で送られる */ }
+    }
+  }
+
+  // 開いたときにサーバーぶんを取り込む。手元に無いものだけ足す
+  // （手元のほうが新しいことがあるため、上書きはしない）。
+  // 逆に手元にしか無いものは、サーバーへ引き取ってもらう。
+  async function syncPages(){
+    if(!API_BASE) return;
+    let server = {};
+    try{
+      const r = await fetch(API_BASE + '/amazon-research/pages?full=1',
+                            {headers: apiHeaders()});
+      server = (await r.json()).pages || {};
+    }catch(e){ return; }
+
+    const local = pageCache();
+    let pulled = 0;
+    Object.keys(server).forEach(id => {
+      const sv = server[id], lo = local[id] || {};
+      ['spec','reviews','keywords','imgtext','analysis'].forEach(f => {
+        if((sv[f] || '').trim() && !(lo[f] || '').trim()){
+          lo[f] = sv[f]; pulled++;
+        }
+      });
+      local[id] = lo;
+    });
+    if(pulled) writeLocalPages(local);
+
+    // 手元にあってサーバーに無いぶんを送る（初回の引っ越し）
+    const push = {};
+    Object.keys(local).forEach(id => {
+      const lo = local[id] || {}, sv = server[id] || {};
+      const one = {};
+      ['spec','reviews','keywords','imgtext','analysis'].forEach(f => {
+        if((lo[f] || '').trim() && !(sv[f] || '').trim()) one[f] = lo[f];
+      });
+      if(Object.keys(one).length) push[id] = one;
+    });
+    if(Object.keys(push).length){
+      try{
+        await fetch(API_BASE + '/amazon-research/pages/import',
+          {method:'POST',
+           headers: Object.assign({'Content-Type':'application/json'}, apiHeaders()),
+           body: JSON.stringify({pages: push})});
+      }catch(e){ /* 次に開いたときに送られる */ }
+    }
+    if(pulled) render();
+  }
 
   // 表の1行ぶん（販売数・寸法・原価試算・勝てる要素など）をプロンプト用の文章にする。
   // 数字の丸め方はシートの表示に合わせる。空欄の項目は載せない。
@@ -4647,9 +4730,72 @@ if(FIREBASE_CONFIG.databaseURL){
     body.appendChild(runRow);
     body.appendChild(out);
 
-    // 分析結果の貼り付け欄は廃止（2026-08-09 京平様の指示）。
-    // 回答はChatGPT側に残るので、シートに持たせる必要がなかった。
-    // 既存データの research.analysis は消さずに残してある（CSVにも出ない）。
+    // ---- 分析の結果 ----
+    // ChatGPTなどの回答を貼っておく欄。以前は「回答はChatGPT側に残るので不要」
+    // として外していたが、別のPCから見られず、後から読み返せなかったため戻した。
+    // 保存先はリサーチ単位（プロンプトも全商品まとめて1つのため）。
+    const anWrap = el('div', 'an-src');
+    const anHead = el('div', 'an-row');
+    const anToggle = el('button', 'mini', '📄 分析した結果を見る');
+    const anWhen = el('span', 'an-status');
+    anHead.appendChild(el('span', 'an-lead', '分析の結果'));
+    anHead.appendChild(anToggle);
+    anHead.appendChild(anWhen);
+    anWrap.appendChild(anHead);
+
+    const anBox = el('div', 'fb');
+    anBox.style.display = 'none';
+    const anTa = document.createElement('textarea');
+    anTa.placeholder = 'ChatGPTなどの回答をそのまま貼り付けてください。'
+      + '保存すると、次に開いたときも別のPCからも読めます';
+    anBox.appendChild(anTa);
+    const anRow = el('div', 'an-row');
+    const anSave = el('button', 'mini', '保存');
+    const anCopy = el('button', 'mini', '📋 コピー');
+    const anClear = el('button', 'mini danger', '🧹 クリア');
+    const anStatus = el('span', 'an-status');
+    [anSave, anCopy, anClear, anStatus].forEach(x => anRow.appendChild(x));
+    anBox.appendChild(anRow);
+    anWrap.appendChild(anBox);
+
+    function anLoad(){
+      const p = getPage(research.id) || {};
+      anTa.value = p.analysis || '';
+      const n = (p.analysis || '').length;
+      anWhen.textContent = n
+        ? '保存済み ' + n.toLocaleString('ja-JP') + '文字'
+        : 'まだありません';
+      anToggle.textContent = anBox.style.display === 'none'
+        ? (n ? '📄 分析した結果を見る' : '📄 分析した結果を貼る')
+        : '▲ 閉じる';
+    }
+    anToggle.addEventListener('click', () => {
+      anBox.style.display = anBox.style.display === 'none' ? 'block' : 'none';
+      anLoad();
+      if(anBox.style.display === 'block') anTa.focus();
+    });
+    anSave.addEventListener('click', () => {
+      savePage(research.id, {analysis: anTa.value.trim()});
+      anStatus.textContent = '保存しました';
+      anLoad();
+      setTimeout(() => { anStatus.textContent = ''; }, 2500);
+    });
+    anCopy.addEventListener('click', () => {
+      if(!anTa.value.trim()){ anStatus.textContent = 'まだ何もありません'; return; }
+      navigator.clipboard.writeText(anTa.value)
+        .then(() => { anStatus.textContent = 'コピーしました'; })
+        .catch(() => { anStatus.textContent = '選択してコピーしてください'; });
+    });
+    anClear.addEventListener('click', () => {
+      if(!anTa.value.trim()){ anStatus.textContent = 'すでに空です'; return; }
+      if(!confirm('保存してある分析の結果を消しますか？')) return;
+      anTa.value = '';
+      savePage(research.id, {analysis: ''});
+      anStatus.textContent = '消しました';
+      anLoad();
+    });
+    anLoad();
+    body.appendChild(anWrap);
 
     // 使い方の説明は右上の「📝 記入方法」にまとめた（2026-08-09 京平様の指示）。
     // ここに長文を置くと、毎回スクロールの邪魔になるため。
@@ -7008,6 +7154,9 @@ if(FIREBASE_CONFIG.databaseURL){
       setStatus('⚠ サーバーから読めませんでした（手元の内容で続行します）', true);
     }
   })();
+  // 商品仕様・レビューなどをサーバーと突き合わせる。
+  // シートの読み込みが済んでから（行が揃ってから）走らせたいので少し待つ
+  setTimeout(syncPages, 1500);
   // ローカル中継サーバーが動いていればSP-API取り込みボタンを出す（以後30秒おきに確認）
   setTimeout(spPoll, 400);
   spTimer = setInterval(spPoll, SP_POLL_MS);

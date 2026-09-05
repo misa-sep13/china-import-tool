@@ -47,6 +47,7 @@ from app.models import research as research_models
 from app.models import wholesale as wholesale_models
 from app.models import product_draft as product_draft_models
 from app.models import amazon_listing as amazon_listing_models
+from app.models import amazon_research_page as amazon_research_page_models
 
 def _migrate():
     from sqlalchemy import text, inspect

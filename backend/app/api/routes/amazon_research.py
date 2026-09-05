@@ -20,6 +20,7 @@ from app.models.amazon_research import (
     AmazonResearch, AmazonResearchItem, AmazonResearchSettings,
     AmazonResearchSheet, AmazonResearchSheetBackup, JanCode,
 )
+from app.models.amazon_research_page import AmazonResearchPage
 from app.services import amazon_research_calc as calc
 
 router = APIRouter(prefix="/amazon-research", tags=["amazon-research"])
@@ -833,3 +834,122 @@ async def image_text(asin: str):
     text = "".join(b.get("text", "") for b in res.json().get("content", [])
                    if b.get("type") == "text").strip()
     return {"ok": True, "asin": asin, "images": len(content) - 1, "text": text}
+
+
+# ---------- 競合1商品ぶんの調査メモ ----------
+#
+# 商品仕様・レビュー・キーワード・画像の文字・分析結果。
+# もとはブラウザにだけ置いていたが、PCを変えると消えてしまい、
+# 「取り込み済みなのに商品仕様が空」という状態が起きていた。
+# 商品登録の画面からも材料として使いたいので、ここへ移した。
+#
+# レビューは1件で数千文字になる。一覧では中身を返さず、字数だけ返す。
+
+class PageIn(BaseModel):
+    spec: Optional[str] = None
+    reviews: Optional[str] = None
+    keywords: Optional[str] = None
+    imgtext: Optional[str] = None
+    analysis: Optional[str] = None
+
+
+class PagesBulkIn(BaseModel):
+    # {row_id: {spec, reviews, ...}}。ブラウザに溜まっているぶんの引っ越し用
+    pages: dict
+
+
+_PAGE_FIELDS = ("spec", "reviews", "keywords", "imgtext", "analysis")
+
+
+def _page_out(p: AmazonResearchPage, full: bool = True) -> dict:
+    d = {"row_id": p.row_id,
+         "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+         "analysis_at": p.analysis_at.isoformat() if p.analysis_at else None}
+    for f in _PAGE_FIELDS:
+        v = getattr(p, f) or ""
+        d[f + "_len"] = len(v)
+        if full:
+            d[f] = v
+    return d
+
+
+@router.get("/pages")
+def list_pages(workspace: str = "default", full: int = 0,
+               db: Session = Depends(get_db)):
+    """調査メモをまとめて返す。
+
+    既定では字数だけ（レビューは数千文字あり、全部返すと重いため）。
+    full=1 で中身も返す。
+    """
+    rows = (db.query(AmazonResearchPage)
+            .filter(AmazonResearchPage.workspace == workspace).all())
+    return {"pages": {r.row_id: _page_out(r, full=bool(full)) for r in rows}}
+
+
+@router.get("/pages/{row_id}")
+def get_page(row_id: str, workspace: str = "default",
+             db: Session = Depends(get_db)):
+    r = (db.query(AmazonResearchPage)
+         .filter(AmazonResearchPage.workspace == workspace,
+                 AmazonResearchPage.row_id == row_id).first())
+    if not r:
+        return {"row_id": row_id, **{f: "" for f in _PAGE_FIELDS},
+                **{f + "_len": 0 for f in _PAGE_FIELDS}}
+    return _page_out(r)
+
+
+def _upsert_page(db: Session, workspace: str, row_id: str, data: dict):
+    r = (db.query(AmazonResearchPage)
+         .filter(AmazonResearchPage.workspace == workspace,
+                 AmazonResearchPage.row_id == row_id).first())
+    if r is None:
+        r = AmazonResearchPage(workspace=workspace, row_id=row_id)
+        db.add(r)
+    for f in _PAGE_FIELDS:
+        if f in data and data[f] is not None:
+            setattr(r, f, data[f])
+            if f == "analysis":
+                r.analysis_at = datetime.now(timezone.utc) if data[f] else None
+    return r
+
+
+@router.put("/pages/{row_id}")
+def put_page(row_id: str, body: PageIn, workspace: str = "default",
+             db: Session = Depends(get_db)):
+    """1商品ぶんを保存する。渡した項目だけ書き換える。"""
+    r = _upsert_page(db, workspace, row_id,
+                     body.model_dump(exclude_unset=True))
+    db.commit()
+    db.refresh(r)
+    return _page_out(r)
+
+
+@router.post("/pages/import")
+def import_pages(body: PagesBulkIn, workspace: str = "default",
+                 overwrite: int = 0, db: Session = Depends(get_db)):
+    """ブラウザに溜まっているぶんをまとめて引き取る。
+
+    既定では、サーバー側が空の項目だけ埋める。手元のほうが古いことも
+    あるので、勝手に上書きはしない。
+    """
+    saved, skipped = 0, 0
+    for row_id, data in (body.pages or {}).items():
+        if not isinstance(data, dict):
+            continue
+        r = (db.query(AmazonResearchPage)
+             .filter(AmazonResearchPage.workspace == workspace,
+                     AmazonResearchPage.row_id == row_id).first())
+        put = {}
+        for f in _PAGE_FIELDS:
+            v = (data.get(f) or "").strip() if isinstance(data.get(f), str) else None
+            if not v:
+                continue
+            if r is not None and (getattr(r, f) or "").strip() and not overwrite:
+                skipped += 1
+                continue
+            put[f] = v
+        if put:
+            _upsert_page(db, workspace, row_id, put)
+            saved += 1
+    db.commit()
+    return {"saved": saved, "skipped": skipped}
