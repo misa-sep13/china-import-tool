@@ -39,8 +39,11 @@ class AmazonListing(Base):
     product_type = Column(String)
     attrs        = Column(Text)            # 商品タイプごとの必須項目。JSON
 
-    # ---- バリエーション ----
-    # 空なら単品。入っていれば children が子SKUになる
+    # ---- 親子 ----
+    # Amazonは単品でも親子で作るのが推奨とされているので、親は常に持つ。
+    #   単品          a05（親） / a05_1（子）
+    #   バリエーション a06（親） / a06_black・a06_s（子）
+    parent_sku = Column(String, index=True)
     variation_theme = Column(String)       # COLOR / SIZE / SIZE_COLOR など
     axis1_label = Column(String)           # 画面に出す軸の名前（例: カラー）
     axis2_label = Column(String)

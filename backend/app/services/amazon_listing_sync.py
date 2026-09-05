@@ -171,7 +171,8 @@ def extract(research: dict, settings: dict) -> dict:
             continue
         axis_label, axis_value = split_child_name(ch.get("name"))
         kids.append({"sort_order": i, "title": title,
-                     "axis_label": axis_label, "axis1": axis_value})
+                     "axis_label": axis_label, "axis1": axis_value,
+                     "axis_label_value": axis_value})
 
     bullets = [b.strip() for b in
                re.split(r"\n{2,}|\n", research.get("listingBullets") or "")
@@ -213,6 +214,10 @@ def extract(research: dict, settings: dict) -> dict:
         "cost_missing": c.get("missing") or [],
 
         "children": kids,
+        # 商品タイトルの下書きを作るための材料
+        "sug_groups": research.get("sugGroups") or [],
+        "rival_names": [r.get("competitor") for r in (research.get("rows") or [])
+                        if isinstance(r, dict) and r.get("competitor")],
     }
 
 
@@ -238,3 +243,134 @@ def candidates(sheet: dict, all_status: bool = False) -> list:
             continue
         out.append(e)
     return out
+
+
+# ---------- 商品タイトルの下書き ----------
+#
+# 命名ルール:
+#   ブランド名 ／ メインキーワード ／ 関連ワード（SEOが高く成約のある語）
+#   ／ サイズ・数量・色   … 計65字程度
+#   推したい点があれば、ブランド名の次に【立てて入る】のように挟む
+#
+# 語はサジェスト（実際に検索されている言い回し）を先に、次に競合タイトルで
+# 多く使われている語。リサーチシートの「③ 商品タイトル」と同じ考え方。
+
+TITLE_TARGET = 65
+TITLE_LIMIT = 130
+
+# 入れても意味の薄い語
+_TITLE_SKIP = {"の", "と", "や", "用", "付", "入", "個", "枚", "セット",
+               "for", "with", "and", "the", "a", "an"}
+
+
+def _words(text: str) -> list:
+    """日本語まじりの文を、タイトルに使える単位に切る。
+
+    形態素解析は入れない（Renderに辞書を置きたくない）。
+    区切り文字と、全角スペースで割るだけで実用上足りている。
+    """
+    t = re.sub(r"[【】\[\]（）()「」『』/／,、|｜]", " ", text or "")
+    return [w for w in re.split(r"[\s　]+", t) if len(w) >= 2]
+
+
+def rival_brands(src: dict, specs: list = None) -> set:
+    """競合のブランド名を集める。自社タイトルに混ぜると商標の問題になる。
+
+    商品仕様の「ブランド名 | ○○」が最も確かなので、それを最優先で使う。
+    取り込んでいない商品は、競合タイトルの先頭語を疑う（先頭にブランドを
+    置くセラーが多いが、一般語のこともあるので他の競合にも出る語は残す）。
+    """
+    out = set()
+    for sp in (specs or []):
+        for m in re.finditer(r"^(?:ブランド名?|メーカー名?)\s*[|｜:：]\s*(.+)$",
+                             sp or "", re.M):
+            v = m.group(1).strip()
+            if v:
+                out.add(v)
+                out.update(_words(v))
+
+    rivals = [r for r in (src.get("rival_names") or []) if r]
+    if len(rivals) >= 2:
+        heads = [(_words(r) or [""])[0] for r in rivals]
+        for i, h in enumerate(heads):
+            # 他の競合にも出てくる語は一般語とみなして残す
+            if h and sum(1 for r in rivals if h in r) == 1:
+                out.add(h)
+    elif rivals:
+        h = (_words(rivals[0]) or [""])[0]
+        # 英字だけの先頭語はブランドのことが多い
+        if h and re.fullmatch(r"[A-Za-z][A-Za-z0-9\-']*", h):
+            out.add(h)
+    return {b for b in out if b}
+
+
+def build_title(src: dict, brand: str = "", push: str = "",
+                specs: list = None) -> str:
+    """1リサーチぶんの材料から、親タイトルの下書きを作る。
+
+    競合のブランド名は入れない（商標の問題になるため）。
+    """
+    seeds = [g.get("seed") for g in (src.get("sug_groups") or []) if g.get("seed")]
+    rivals = [r for r in (src.get("rival_names") or []) if r]
+    ng_brands = rival_brands(src, specs)
+
+    main = seeds[0] if seeds else ""
+    if not main and rivals:
+        cand = [w for w in _words(rivals[0])
+                if len(w) >= 3 and w not in ng_brands]
+        main = cand[0] if cand else ""
+    if not main:
+        return ""
+
+    seen = {main}
+    rel = []
+
+    def add(w):
+        w = (w or "").strip()
+        if not w or w in seen or w.lower() in _TITLE_SKIP:
+            return
+        if w in ng_brands:          # 競合のブランド名は入れない
+            return
+        seen.add(w)
+        rel.append(w)
+
+    for g in (src.get("sug_groups") or []):
+        for v in (g.get("list") or []):
+            for w in _words(v):
+                if w != main:
+                    add(w)
+
+    freq = {}
+    for r in rivals:
+        for w in set(_words(r)):
+            freq[w] = freq.get(w, 0) + 1
+    for w in sorted(freq, key=lambda x: -freq[x]):
+        add(w)
+
+    tail = []
+    if src.get("len_a") and src.get("len_b"):
+        tail.append(f"{_trim_num(src['len_a'])}×{_trim_num(src['len_b'])}cm")
+    kids = [re.sub(r"^(カラー|色|サイズ)\s*", "", (c.get("axis_label_value") or "")).strip()
+            for c in (src.get("children") or [])]
+    kids = [k for k in kids if k]
+    if kids:
+        tail.append("・".join(kids[:4]))
+
+    head = " ".join([x for x in [brand,
+                                 f"【{push.strip()}】" if push.strip() else "",
+                                 main] if x])
+    tail_s = " ".join(tail)
+    out = head
+    for w in rel:
+        nxt = out + " " + w
+        if len(nxt + ((" " + tail_s) if tail_s else "")) > TITLE_TARGET:
+            break
+        out = nxt
+    if tail_s:
+        out += " " + tail_s
+    return out[:TITLE_LIMIT].strip()
+
+
+def _trim_num(v) -> str:
+    f = float(v)
+    return str(int(f)) if f == int(f) else str(f)

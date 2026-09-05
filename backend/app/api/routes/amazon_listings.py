@@ -17,7 +17,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.amazon_research import AmazonResearchSheet, JanCode
+from app.models.amazon_research import (
+    AmazonResearchSheet, AmazonResearchSettings, JanCode,
+)
 from app.models.amazon_research_page import AmazonResearchPage
 from app.models.product import Product
 from app.models.amazon_listing import (
@@ -46,6 +48,7 @@ class ListingIn(BaseModel):
     weight: Optional[float] = None
     rival_asin: Optional[str] = None
     attrs: Optional[dict] = None
+    parent_sku: Optional[str] = None
     variation_theme: Optional[str] = None
     axis1_label: Optional[str] = None
     axis2_label: Optional[str] = None
@@ -106,6 +109,7 @@ def _out(row: AmazonListing, db: Session, src: dict = None) -> dict:
         "weight": row.weight,
         "rival_asin": row.rival_asin, "product_type": row.product_type,
         "attrs": _loads(row.attrs, {}),
+        "parent_sku": row.parent_sku,
         "variation_theme": row.variation_theme,
         "axis1_label": row.axis1_label, "axis2_label": row.axis2_label,
         "monthly_sales": row.monthly_sales, "review_count": row.review_count,
@@ -481,30 +485,36 @@ def prepare(listing_id: int, db: Session = Depends(get_db)):
         db.add(kids[0])
         db.flush()
 
-    # SKUは「a」＋連番（a01, a02, …）。まだ入っていない子にだけ振る。
-    # バリエーションは a05, a05-2, a05-3 … と親番号を共有させる
-    # （在庫や原価をまとめて追いやすいため）。画面で直せる。
+    # SKUは「a」＋連番（a01, a02, …）が親。子はその下に付ける。
+    # Amazonは単品でも親子で作るのが推奨とされているので、親は常に作る。
+    #   単品          a05（親） / a05_1（子）
+    #   バリエーション a06（親） / a06_black・a06_s（子）
     #
     # すでにSKUのある子がいれば、その頭を引き継ぐ。番号を採り直すと
-    # 発番済みのJANと結びつきがずれるため。
-    head = ""
-    for c in kids:
-        if (c.sku or "").strip():
-            head = c.sku.strip().split("-")[0]
-            break
+    # 発番済みのJANとの結びつきがずれるため。
+    head = (row.parent_sku or "").strip()
+    if not head:
+        for c in kids:
+            if (c.sku or "").strip():
+                head = c.sku.strip().split("_")[0]
+                break
     if not head:
         head = next_sku(db, "a")[0]
+    row.parent_sku = head
 
     taken = {(c.sku or "").strip() for c in kids if (c.sku or "").strip()}
+    single = len(kids) == 1
     for i, c in enumerate(kids):
         if (c.sku or "").strip():
             continue
-        # 1つ目は枝番なし。以降は -2, -3 …。空いている枝番を使う
-        cand = head if i == 0 else f"{head}-{i + 1}"
+        # 単品は _1。バリエーションは軸の値から作り、作れなければ連番
+        suf = "1" if single else (sku_suffix(c.axis1) or sku_suffix(c.axis2)
+                                  or str(i + 1))
+        cand = f"{head}_{suf}"
         n = i + 1
         while cand in taken:
             n += 1
-            cand = f"{head}-{n}"
+            cand = f"{head}_{suf}{n}"
         c.sku = cand
         taken.add(cand)
 
@@ -708,10 +718,12 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
             "marketplace_id": mp, "child_relationship_type": "variation",
             "parent_sku": parent_sku,
         }]
-        if row.variation_theme:
+        # 軸がある（＝本当のバリエーション）ときだけテーマを送る
+        axis = _axis_attrs(row, child)
+        if row.variation_theme and axis:
             a["variation_theme"] = [{"marketplace_id": mp,
                                      "name": row.variation_theme}]
-        for key, val in _axis_attrs(row, child).items():
+        for key, val in axis.items():
             a[key] = one(val)
 
     # 商品タイプごとの必須項目。画面で入れてもらったもの
@@ -722,8 +734,13 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
     return a
 
 
-def _parent_attributes(row: AmazonListing) -> dict:
-    """バリエーションの親。売り物ではないので価格も在庫も付けない。"""
+def _parent_attributes(row: AmazonListing, has_variation: bool = True) -> dict:
+    """親。売り物ではないので価格も在庫も付けない。
+
+    Amazonは単品でも親子で作るのが推奨なので、バリエーションが無くても
+    親は出す。そのときはバリエーションテーマを付けない
+    （軸が無いのにテーマだけ送ると弾かれるため）。
+    """
     mp = amazon_api._RESEARCH_MP
     extra = _loads(row.attrs, {}) or {}
 
@@ -734,9 +751,10 @@ def _parent_attributes(row: AmazonListing) -> dict:
         "item_name": one((row.title or "").strip()),
         "parentage_level": one("parent"),
         "condition_type": one("new_new"),
-        "variation_theme": [{"marketplace_id": mp,
-                             "name": row.variation_theme or "COLOR"}],
     }
+    if has_variation:
+        a["variation_theme"] = [{"marketplace_id": mp,
+                                 "name": row.variation_theme or "COLOR"}]
     if row.brand:
         a["brand"] = one(row.brand)
     if row.description:
@@ -781,6 +799,8 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
         kids = (db.query(AmazonListingChild)
                 .filter(AmazonListingChild.listing_id == row.id)
                 .order_by(AmazonListingChild.sort_order).all())
+        # 単品でも親子で作る（Amazonの推奨）。子が1つなら
+        # バリエーションテーマは持たせず、親1・子1の形で出す
         has_variation = len(kids) > 1
 
         item = {"listing_id": lid, "title": row.title,
@@ -795,28 +815,26 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
             results.append(item)
             continue
 
-        parent_sku = None
-        if has_variation:
-            # 親は子のSKUから作る（a05 の親なら a05-p）。
-            # 親は売り物ではないので、番号は子と共有でよい
-            head = (kids[0].sku or "").split("-")[0] or f"a{row.id:02d}"
-            parent_sku = f"{head}-p"
-            attrs = _parent_attributes(row)
-            rec = {"sku": parent_sku, "kind": "親", "attributes": attrs}
-            if body.dry_run:
-                rec["dry_run"] = True
-            else:
-                r = amazon_api.submit_listing(parent_sku, row.product_type, attrs)
-                rec.update(r)
-                if not r.get("ok"):
-                    item["sent"].append(rec)
-                    item["ok"] = False
-                    item["error"] = "親の登録に失敗したので、子は送っていません"
-                    row.status = "failed"
-                    db.commit()
-                    results.append(item)
-                    continue
+        parent_sku = ((row.parent_sku or "").strip()
+                      or (kids[0].sku or "").split("_")[0]
+                      or f"a{row.id:02d}")
+        # 親を先に出す。親が失敗したら子は送らない（親のいない子は弾かれる）
+        attrs = _parent_attributes(row, has_variation)
+        rec = {"sku": parent_sku, "kind": "親", "attributes": attrs}
+        if body.dry_run:
+            rec["dry_run"] = True
             item["sent"].append(rec)
+        else:
+            r = amazon_api.submit_listing(parent_sku, row.product_type, attrs)
+            rec.update(r)
+            item["sent"].append(rec)
+            if not r.get("ok"):
+                item["ok"] = False
+                item["error"] = "親の登録に失敗したので、子は送っていません"
+                row.status = "failed"
+                db.commit()
+                results.append(item)
+                continue
 
         all_ok = True
         for c in kids:
@@ -917,3 +935,106 @@ def sku_available(sku: str, db: Session = Depends(get_db)):
     if db.query(AmazonListingChild).filter(AmazonListingChild.sku == s).first():
         return {"ok": False, "reason": "ほかの出品で使われています"}
     return {"ok": True}
+
+
+# ---------- 子SKUの末尾 ----------
+#
+# Amazonは単品でも親子で作るのが推奨とされているので、親は常に作る。
+#   単品          a05（親） / a05_1（子）
+#   バリエーション a06（親） / a06_black・a06_s（子）
+#
+# 末尾は軸の値から作る。日本語のままだとSKUに使えないので、
+# よくある色名・サイズ名は英字に直す。当たらなければローマ字か連番。
+
+_COLOR_WORDS = {
+    "ブラック": "black", "黒": "black", "ホワイト": "white", "白": "white",
+    "グレー": "gray", "灰": "gray", "ネイビー": "navy", "ブルー": "blue",
+    "青": "blue", "レッド": "red", "赤": "red", "ピンク": "pink",
+    "グリーン": "green", "緑": "green", "イエロー": "yellow", "黄": "yellow",
+    "ベージュ": "beige", "ブラウン": "brown", "茶": "brown",
+    "パープル": "purple", "紫": "purple", "オレンジ": "orange",
+    "シルバー": "silver", "銀": "silver", "ゴールド": "gold", "金": "gold",
+    "カーキ": "khaki", "アイボリー": "ivory", "クリア": "clear",
+    "透明": "clear", "モカ": "mocha", "グレージュ": "greige",
+}
+
+_SIZE_WORDS = {
+    "エス": "s", "エム": "m", "エル": "l",
+    "小": "s", "中": "m", "大": "l",
+    "スモール": "s", "ミディアム": "m", "ラージ": "l",
+    "フリー": "free", "フリーサイズ": "free",
+}
+
+
+def sku_suffix(value: str) -> str:
+    """軸の値（ブラック・M・120cm など）をSKUの末尾にする。
+
+    英数字はそのまま小文字に、よくある色名・サイズ名は英字へ。
+    どれにも当たらなければ空を返し、呼び出し側で連番にする。
+    """
+    v = (value or "").strip()
+    if not v:
+        return ""
+
+    # 英数字だけならそのまま使える（M / XL / 120cm など）
+    ascii_only = re.sub(r"[^0-9A-Za-z]", "", v)
+    if ascii_only and len(ascii_only) == len(re.sub(r"\s", "", v)):
+        return ascii_only.lower()[:12]
+
+    for table in (_COLOR_WORDS, _SIZE_WORDS):
+        if v in table:
+            return table[v]
+        # 「ブラック（つや消し）」のような書き方も拾う
+        for k, en in table.items():
+            if v.startswith(k):
+                return en
+
+    # 数字を含むなら数字を活かす（120cm → 120）
+    num = re.sub(r"[^0-9]", "", v)
+    if num:
+        return num[:6]
+    return ""
+
+
+@router.post("/{listing_id:int}/title")
+def make_title(listing_id: int, push: str = "", db: Session = Depends(get_db)):
+    """商品タイトルの下書きを作る。作るだけで、保存はしない。
+
+    命名ルール（ブランド名／メインキーワード／関連ワード／サイズ・数量・色）
+    に沿って65字程度にまとめる。ここから手で直してもらう前提。
+    """
+    row = db.get(AmazonListing, listing_id)
+    if not row:
+        raise HTTPException(404, "ありません")
+
+    src = None
+    for c in sync.candidates(_sheet(db), all_status=True):
+        if c["research_id"] == row.research_id:
+            src = c
+            break
+    if src is None:
+        raise HTTPException(404, "元のリサーチがシートにありません")
+
+    # 子の軸の値は、この画面で直したぶんを使う
+    kids = (db.query(AmazonListingChild)
+            .filter(AmazonListingChild.listing_id == row.id)
+            .order_by(AmazonListingChild.sort_order).all())
+    if kids:
+        src = dict(src)
+        src["children"] = [{"axis_label_value": (c.axis1 or "")} for c in kids]
+
+    brand = (row.brand or "").strip()
+    if not brand:
+        st = db.query(AmazonResearchSettings).first()
+        brand = (st.brand_name or "").strip() if st else ""
+
+    # 競合のブランド名を外すため、取り込んである商品仕様も渡す
+    ids = [c.get("row_id") for c in (src.get("rows") or []) if c.get("row_id")]
+    specs = [v["spec"] for v in _notes_for(db, ids).values() if v.get("spec")]
+
+    title = sync.build_title(src, brand=brand, push=push or "", specs=specs)
+    if not title:
+        return {"ok": False,
+                "error": "元になる語がありません。リサーチシートでサジェストを取得するか、"
+                         "競合の商品名を入れてください"}
+    return {"ok": True, "title": title, "length": len(title)}

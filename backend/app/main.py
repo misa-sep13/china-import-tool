@@ -311,6 +311,9 @@ def _migrate():
          "ALTER TABLE product_drafts ADD COLUMN item_specs TEXT"),
         ("product_drafts","shipping_set",
          "ALTER TABLE product_drafts ADD COLUMN shipping_set VARCHAR"),
+        # Amazonは単品でも親子で作るのが推奨。親のSKUを持たせる
+        ("amazon_listings","parent_sku",
+         "ALTER TABLE amazon_listings ADD COLUMN parent_sku VARCHAR"),
     ]
 
     inspector = inspect(engine)

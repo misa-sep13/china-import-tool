@@ -52,6 +52,7 @@ export default function ListingEditor({ listingId, onBack }) {
         description: d.description, brand: d.brand, price: d.price,
         len_a: d.len_a, len_b: d.len_b, len_c: d.len_c, weight: d.weight,
         rival_asin: d.rival_asin, attrs: d.attrs,
+        parent_sku: d.parent_sku,
         variation_theme: d.variation_theme,
         axis1_label: d.axis1_label, axis2_label: d.axis2_label,
         children: (d.children || []).map(c => ({
@@ -87,6 +88,24 @@ export default function ListingEditor({ listingId, onBack }) {
         + (r.data.schema_error ? ` ／ 必須項目は取れませんでした: ${r.data.schema_error}` : ''))
       const c = await api.get(`/amazon-listings/${listingId}/check`)
       setProblems(c.data.problems || [])
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  // 命名ルールどおりの下書きを作る（ブランド名／メインキーワード／
+  // 関連ワード／サイズ・数量・色 で65字程度）。作ったあと手で直す前提
+  const [push, setPush] = useState('')
+  const genTitle = async () => {
+    setBusy(true); setErr(''); setMsg('')
+    try {
+      const r = await api.post(
+        `/amazon-listings/${listingId}/title?push=${encodeURIComponent(push)}`)
+      if (!r.data.ok) { setErr(r.data.error); return }
+      if ((d.title || '').trim()
+          && !confirm('いまの商品タイトルを下書きで置き換えますか？')) return
+      set('title', r.data.title)
+      setMsg(`${r.data.length}字で作りました。ここから手で直してください`)
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }
@@ -188,6 +207,20 @@ export default function ListingEditor({ listingId, onBack }) {
           <textarea style={{ ...input, minHeight: 46 }} value={d.title || ''}
             onChange={e => set('title', e.target.value)}
             placeholder="ブランド名 + 商品名 + 特徴 + サイズ など" />
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center',
+            marginTop: 5, flexWrap: 'wrap' }}>
+            <button className="btn btn-secondary" style={{ fontSize: 12 }}
+              onClick={genTitle} disabled={busy}>
+              ✨ 下書きを作る
+            </button>
+            <input style={{ ...input, fontSize: 12, maxWidth: 240 }}
+              value={push} onChange={e => setPush(e.target.value)}
+              placeholder="推したい点（例: 立てて入る）※任意" />
+            <span style={{ fontSize: 11, color: C.sub }}>
+              ブランド名／メインキーワード／関連ワード／サイズ・数量・色 の順で
+              65字程度にまとめます
+            </span>
+          </div>
         </div>
 
         <div style={{ marginBottom: 10 }}>
@@ -402,12 +435,24 @@ function Variations({ d, set, nextSku }) {
       <H t="バリエーションと出品するSKU"
         note="単品ならSKUは1つ。バリエーションは親を1つ作り、その下に子を並べます" />
 
-      <div style={{ maxWidth: 260, marginBottom: 10 }}>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap',
+        marginBottom: 10 }}>
+        <div style={{ maxWidth: 160 }}>
+          <span style={label}>親SKU</span>
+          <input style={input} value={d.parent_sku || ''}
+            placeholder={nextSku || 'a05'}
+            onChange={e => set('parent_sku', e.target.value.trim())} />
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>
+            単品でも親を作ります（Amazonの推奨）
+          </div>
+        </div>
+      <div style={{ maxWidth: 260 }}>
         <span style={label}>バリエーションテーマ</span>
         <select style={input} value={d.variation_theme || ''}
           onChange={e => set('variation_theme', e.target.value)}>
           {THEMES.map(t => <option key={t.v} value={t.v}>{t.l}</option>)}
         </select>
+      </div>
       </div>
 
       {/* 表は幅を取るので、枠の中だけで横スクロールさせる。
