@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import api from '../api/client'
 import { C, card, label, input, bytes, Err } from './ListingTab'
+import { titleProblems, byteLen, KW_LIMITS, stripColor, childTitle }
+  from '../lib/listingChecks'
 
 /**
  * 1商品ぶんの出品内容を仕上げる画面。
@@ -18,6 +20,7 @@ export default function ListingEditor({ listingId, onBack }) {
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
   const [nextSku, setNextSku] = useState('')   // 次に空いている番号。欄の下書きに出す
+  const [kwLimit, setKwLimit] = useState(500)  // 検索キーワードの上限（バイト）
   const dirty = useRef(false)
 
   useEffect(() => {
@@ -59,6 +62,7 @@ export default function ListingEditor({ listingId, onBack }) {
           id: c.id, sku: c.sku, title: c.title,
           axis1: c.axis1, axis2: c.axis2, price: c.price,
         })),
+        // 画面だけで使う値（色を外した土台）はサーバーへ送らない
         ...extra,
       }
       const r = await api.put(`/amazon-listings/${listingId}`, body)
@@ -144,7 +148,8 @@ export default function ListingEditor({ listingId, onBack }) {
     </div>
   }
 
-  const kwBytes = bytes(d.keywords)
+  const kwBytes = byteLen(d.keywords)
+  // 上限はカテゴリーで違う。シートのパネルと同じ2種類
   const sent = d.status === 'submitted' || d.status === 'live'
 
   return (
@@ -197,7 +202,7 @@ export default function ListingEditor({ listingId, onBack }) {
 
       {/* ---- 出品原稿 ---- */}
       <section style={{ ...card, marginBottom: 10 }}>
-        <H t="出品原稿" note="競合リサーチシートの「🏷 出品原稿をつくる」で作ったものが入ります。空なら、ここで直接書けます" />
+        <H t="出品原稿" note="競合リサーチシートの「🏷 出品原稿をつくる」と同じ中身です。どちらで直しても、もう一方に反映されます" />
 
         <div style={{ marginBottom: 10 }}>
           <span style={label}>
@@ -215,6 +220,10 @@ export default function ListingEditor({ listingId, onBack }) {
           <textarea style={{ ...input, minHeight: 46 }} value={d.title || ''}
             onChange={e => set('title', e.target.value)}
             placeholder="ブランド名 + 商品名 + 特徴 + サイズ など" />
+          {titleProblems(d.title).map((t, i) => (
+            <div key={i} style={{ fontSize: 11, color: C.warn, marginTop: 3,
+              fontWeight: 700 }}>{t}</div>
+          ))}
           <div style={{ display: 'flex', gap: 6, alignItems: 'center',
             marginTop: 5, flexWrap: 'wrap' }}>
             <button className="btn btn-secondary" style={{ fontSize: 12 }}
@@ -234,17 +243,21 @@ export default function ListingEditor({ listingId, onBack }) {
         <div style={{ marginBottom: 10 }}>
           <span style={label}>
             検索キーワード（Amazonの検索キーワード欄にそのまま入ります）
-            <Count n={kwBytes} max={500} unit="バイト" />
+            <Count n={kwBytes} max={kwLimit} unit="バイト" />
           </span>
           <textarea style={{
             ...input, minHeight: 56,
-            borderColor: kwBytes >= 500 ? C.bad : C.line,
+            borderColor: kwBytes >= kwLimit ? C.bad : C.line,
           }} value={d.keywords || ''}
             onChange={e => set('keywords', e.target.value)}
             placeholder="半角スペース区切り。タイトルにある語は入れなくて構いません" />
-          <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>
-            上限はカテゴリーで違います（多くは500バイト未満、服・シューズ・
-            ジュエリー・時計は250バイト未満）
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center',
+            marginTop: 3, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: C.sub }}>カテゴリー</span>
+            <select style={{ ...input, fontSize: 11, maxWidth: 420 }}
+              value={kwLimit} onChange={e => setKwLimit(+e.target.value)}>
+              {KW_LIMITS.map(k => <option key={k.v} value={k.v}>{k.l}</option>)}
+            </select>
           </div>
         </div>
 
@@ -428,11 +441,31 @@ function Variations({ d, set, nextSku }) {
   const many = kids.length > 1 || !!d.variation_theme
 
   const putKid = (i, k, v) => {
-    const a = kids.map((c, n) => n === i ? { ...c, [k]: v } : c)
+    const a = kids.map((c, n) => {
+      if (n !== i) return c
+      const next = { ...c, [k]: v }
+      if (k === 'axis1') {
+        // 色を入れたら、その語を子タイトルの一番後ろに入れる。
+        // 土台（色を外したもの）を覚えておき、毎回そこから作り直す
+        const base = next.titleBase !== undefined
+          ? next.titleBase
+          : stripColor(c.title || d.title, c.axis1)
+        next.titleBase = base
+        next.title = childTitle(base, v)
+      }
+      if (k === 'title') {
+        // 手で直したら土台も覚え直す。直した文言が消えないように
+        next.titleBase = stripColor(v, next.axis1)
+      }
+      return next
+    })
     set('children', a)
   }
-  const add = () => set('children', [...kids,
-    { id: null, sku: null, title: d.title || '', axis1: '', axis2: '' }])
+  const add = () => {
+    const base = stripColor(d.title)
+    set('children', [...kids,
+      { id: null, sku: null, title: base, titleBase: base, axis1: '', axis2: '' }])
+  }
   const del = i => set('children', kids.filter((c, n) => n !== i))
 
   // 軸は常に「色」。個数違いも「2個/ブラック」のように色の値として書く

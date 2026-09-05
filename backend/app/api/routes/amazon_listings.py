@@ -123,6 +123,8 @@ def _out(row: AmazonListing, db: Session, src: dict = None) -> dict:
     if src:
         # シート側の今の中身。取り込み直すと何が変わるかを画面で見せるため
         d["sheet"] = src
+        # 出品原稿はシートが正。二重に持つとずれるので、常にシートの値を返す
+        d.update(_read_sheet_draft(src))
         # 出品原稿を書くときの材料。競合の商品仕様・レビュー・分析の結果を
         # 登録画面でも読めるようにする（別タブへ戻らずに済むように）
         ids = [src["research_id"]] + [c.get("row_id") for c in src.get("rows", [])]
@@ -326,6 +328,25 @@ def update_listing(listing_id: int, body: ListingIn,
             # JANを発番済みの子は、消す指示でも残す（番号を宙に浮かせないため）
             if c.id not in keep and not c.jan:
                 db.delete(c)
+
+    # 出品原稿はシートを正とするので、こちらで直したぶんも書き戻す。
+    # そうしないと、シートを開いたときに古い内容に戻って見える
+    draft = {k: v for k, v in data.items()
+             if k in ("title", "keywords", "description")}
+    if "bullets" in data:
+        draft["description"] = "\n".join(
+            [str(b) for b in (data["bullets"] or []) if str(b).strip()])
+    back_kids = None
+    if kids is not None:
+        db.flush()
+        back_kids = [
+            {"axis1": c.axis1, "title": c.title}
+            for c in (db.query(AmazonListingChild)
+                      .filter(AmazonListingChild.listing_id == row.id)
+                      .order_by(AmazonListingChild.sort_order).all())]
+    if draft or back_kids is not None:
+        _write_sheet_draft(db, row.research_id, draft, back_kids)
+
     db.commit()
     db.refresh(row)
     return _out(row, db)
@@ -1042,3 +1063,90 @@ def make_title(listing_id: int, push: str = "", db: Session = Depends(get_db)):
                 "error": "元になる語がありません。リサーチシートでサジェストを取得するか、"
                          "競合の商品名を入れてください"}
     return {"ok": True, "title": title, "length": len(title)}
+
+
+# ---------- 出品原稿はリサーチシートを正とする ----------
+#
+# 商品タイトル・検索キーワード・要点の5行・子（色）は、リサーチシートの
+# 「🏷 出品原稿をつくる」で作るものと同じ中身。二重に持つと必ずずれるので、
+# シート側を正とし、この画面からの編集もシートへ書き戻す。
+#
+# amazon_listings の同名の列は、一覧の絞り込みや送信時の取り回しのために
+# 写しとして持っているだけ。読むときは常にシートを見る。
+
+# シート側のキー名（HTMLの都合で決まっていて変えられない）
+_DRAFT_KEYS = {
+    "title": "titleParent",
+    "keywords": "kwDraft",
+    "description": "listingBullets",
+}
+
+
+def _write_sheet_draft(db: Session, research_id: str, data: dict,
+                       children: list = None) -> bool:
+    """出品原稿をシートへ書き戻す。
+
+    シートは1枚のJSONなので、丸ごと読んで、その1リサーチの
+    決まった項目だけ差し替えて書く。ほかの人の編集を消さないよう、
+    書く直前に読み直す。
+    """
+    row = (db.query(AmazonResearchSheet)
+           .filter(AmazonResearchSheet.workspace == "default").first())
+    if row is None or not row.data:
+        return False
+    try:
+        sheet = json.loads(row.data)
+    except (ValueError, TypeError):
+        return False
+
+    target = None
+    for r in (sheet.get("researches") or []):
+        if isinstance(r, dict) and r.get("id") == research_id:
+            target = r
+            break
+    if target is None:
+        return False
+
+    changed = False
+    for field, key in _DRAFT_KEYS.items():
+        if field in data:
+            v = data[field]
+            v = "" if v is None else str(v)
+            if (target.get(key) or "") != v:
+                target[key] = v
+                changed = True
+
+    if children is not None:
+        kids = target.get("titleChildren")
+        kids = kids if isinstance(kids, list) else []
+        out = []
+        for i, c in enumerate(children):
+            old = kids[i] if i < len(kids) else {}
+            out.append({
+                "name": (c.get("axis1") or "").strip(),
+                "title": c.get("title") or "",
+                # 色を外した土台は画面側が持っているので、あれば引き継ぐ
+                "titleBase": old.get("titleBase"),
+            })
+        if out != kids:
+            target["titleChildren"] = out
+            changed = True
+
+    if not changed:
+        return False
+    raw = json.dumps(sheet, ensure_ascii=False)
+    row.data = raw
+    row.size_bytes = len(raw.encode("utf-8"))
+    return True
+
+
+def _read_sheet_draft(src: dict) -> dict:
+    """シートの出品原稿を、この画面が使う形にして返す。"""
+    if not src:
+        return {}
+    return {
+        "title": src.get("title") or "",
+        "keywords": src.get("keywords") or "",
+        "bullets": src.get("bullets") or [],
+        "description": src.get("description") or "",
+    }
