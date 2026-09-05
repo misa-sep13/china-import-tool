@@ -210,7 +210,7 @@ export default function ListingEditor({ listingId, onBack }) {
               <span>（SEO高い＆コンバージョンあるキーワードから）</span>
               <Sep /><b style={{ color: C.text }}>サイズ・数量・色</b>
             </span>
-            <Count n={(d.title || '').length} max={65} unit="字" />
+            <Count n={(d.title || '').length} max={75} unit="字" />
           </span>
           <textarea style={{ ...input, minHeight: 46 }} value={d.title || ''}
             onChange={e => set('title', e.target.value)}
@@ -226,7 +226,7 @@ export default function ListingEditor({ listingId, onBack }) {
               placeholder="推したい点（例: 立てて入る）※任意" />
             <span style={{ fontSize: 11, color: C.sub }}>
               ブランド名／メインキーワード／関連ワード／サイズ・数量・色 の順で
-              65字程度にまとめます
+              65字程度にまとめます（75字まではOK）
             </span>
           </div>
         </div>
