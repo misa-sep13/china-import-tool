@@ -1034,7 +1034,7 @@
   <ul>
     <li><b>① 検索キーワード</b>＝Amazonの検索キーワード欄にそのまま貼る1行。<b>上限はカテゴリーで違う</b>ため、パネル上部のカテゴリー選択で切り替えてください（ホーム＆キッチン・スポーツ＆アウトドア・おもちゃ・DIY工具・カー用品・ペット用品などは<b>500バイト未満</b>、服＆ファッション小物・シューズ＆バッグ・ジュエリー・時計は<b>250バイト未満</b>）。上限に達すると赤くなります。<b>③商品タイトルを先に書いてから仕分けると、タイトルにある語は自動で除かれます</b>（同じ語を繰り返しても効かないため、そのぶん別の語を入れられます）。</li>
     <li><b>② 商品説明に入れる必須キーワード</b>＝本文に自然に織り込む語。タイトルと重なって構いません。</li>
-    <li><b>③ 商品タイトル</b>＝<b>親が1行、バリエーションは「子」を追加</b>して1行ずつ書きます（子にはバリエーションテーマの名称も入れます）。<b>行ごとに字数・禁止語・同じ語の3回以上の重複を自動チェック</b>します（重複はAmazonの商品仕様エラーの原因になります）。下の整えるボタンは<b>最後に触った行</b>に効き、「対象：子（カラー ブラック）」のようにどこに効くかが出ます。</li>
+    <li><b>③ 商品タイトル</b>＝<b>「✨ 親タイトルの下書きを作る」</b>を押すと、<b>ブランド名／メインキーワード／関連ワード／サイズ・数量・色</b>の順で<b>65字程度</b>にまとめた下書きができます（語はサジェストと競合タイトルの多い順から選び、<b>競合のブランド名と禁止語は入れません</b>）。押したいポイントがあれば横の欄に入れると<b>【立てて入る】</b>のようにブランド名の次に挟みます。作ったあとは手で直してください。<b>親が1行、バリエーションは「子」を追加</b>して1行ずつ書きます（子にはバリエーションテーマの名称も入れます）。<b>行ごとに字数・禁止語・同じ語の3回以上の重複を自動チェック</b>します（重複はAmazonの商品仕様エラーの原因になります）。下の整えるボタンは<b>最後に触った行</b>に効き、「対象：子（カラー ブラック）」のようにどこに効くかが出ます。</li>
     <li><b>④ 商品説明プロンプト</b>＝押すとプロンプトがコピーされます。タイトル・必須キーワード・<b>競合の商品仕様とレビュー</b>・<b>自社の差別化ポイント</b>が自動で差し込まれます。差別化ポイントの欄には、セット数・梱包・付属品など<b>自社で実際にやっている改良を事実だけ</b>書いてください（1688のページは改良前のベース商品なので、書かないとAIには見えません。書いた内容だけが「自社の強み」として使われ、書いていない改良を勝手に主張しないルールが自動で付きます）。<b>表の1688 URLと競合のAmazonページURLも入る</b>ので、<b>Claude in Chrome</b> のようにブラウザを開けるAIに貼れば、1688ページと競合の画像を見てから書かせられます。ChatGPTなどURLを開けない相手に貼るときは、これまでどおり<b>1688のページを画像で添付</b>してください。「商品画像の文字」カードで取得してあれば、競合画像のキャッチコピーもプロンプトに自動で入ります。<b>「📋 同じチャットで続ける版」</b>＝分析用プロンプトを貼ったチャットで続けて頼むとき用。競合の仕様・レビューを再掲せず、上の分析を根拠に書かせるので短くなります。</li>
     <li><b>⑤ できた5行</b>＝ChatGPTの回答を貼り付けると<b>そのまま保存されます</b>（次に開いても残ります）。<b>「✅ チェックする」</b>で、行数・各行の字数（120〜130字）・【見出し】の有無・必須キーワードの使用漏れ・3回以上の重複・禁止語をまとめて判定します。</li>
     <li><b>⑥ 画像作成指示書のプロンプト</b>＝デザイナーに渡す指示書をChatGPTに作らせるためのものです。<b>手で入れるのは「ターゲット顧客」と「商品画像の色合い（トンマナ）」の2つだけ</b>。この2つも思いつかなければ<b>「🤖 この2つをAIに考えてもらう」</b>を押してプロンプトをコピーし、ChatGPTの答えを<b>どちらかの欄にそのまま貼るだけで、2つの欄に自動で振り分けます</b>。残りの商品タイトル・商品説明文・バリエーション・1688リンク（表の1688 URL列）・ライバル（競合の商品名とAmazonリンク）・競合の仕様とレビューは<b>シートから自動で入ります</b>。自社の強み（HTML先頭の <code>SELLER_STRENGTHS</code> に書いた項目）は固定で入り、④で書いた<b>自社の差別化ポイント</b>も比較表とアピールポイントに反映されます。<b>1688 URLと競合のAmazonページURLはプロンプト本文にも入る</b>ので、<b>Claude in Chrome</b> のようにブラウザを開けるAIに貼れば、1688のページと<b>競合の画像の作り（1枚目の見せ方・サブ画像の順番・A+）</b>を見てから構成案を作らせられます。ChatGPTなどURLを開けない相手に貼るときは、こちらも<b>1688のページを画像で添付</b>してください。返ってきた構成案を下の欄に貼り、<b>「📄 Wordで書き出す」</b>を押すと、■の項目と構成案が入った<b>.docxファイル</b>がダウンロードされます（ファイル名は「日付_商品名60字程度」。ブランド名は自動で外し、単語の切れ目で切ります）。そのままデザイナーへ渡せます。「商品画像の文字」カードで取得してあれば、競合画像のキャッチコピーもプロンプトに自動で入ります。<b>「📋 同じチャットで続ける版」</b>も④と同じで、分析用プロンプトのチャットで続けるときに使います。</li>
@@ -1533,7 +1533,10 @@ const AGENT = {
 };
 
 /* 自分のブランド名。画像作成指示書のファイル名から自動で落とします（例: ['MYBRAND']） */
-const BRAND_WORDS = [];
+const BRAND_WORDS = ['Aqualiora'];
+
+/* 商品タイトルの先頭に付けるブランド名。BRAND_WORDS の1つ目を使う */
+const SELLER_BRAND = BRAND_WORDS[0] || '';
 
 /* 出品者としての固定の強み。画像作成指示書の比較表に毎回入ります。
    自社に当てはまらない項目は消し、事実だけを書いてください */
@@ -4818,7 +4821,95 @@ if(FIREBASE_CONFIG.databaseURL){
     {v:500, label:'500バイト未満（ホーム＆キッチン／スポーツ＆アウトドア／おもちゃ／DIY・工具／カー用品／ペット用品 など）'},
     {v:250, label:'250バイト未満（服＆ファッション小物／シューズ＆バッグ／ジュエリー／時計）'}
   ];
-  const TITLE_MAX = 60;
+  // 命名ルール（ブランド名／メインキーワード／関連ワード／サイズ・数量・色）で
+  // 計65字程度に収める。Amazonの上限より短いが、検索結果で切れずに読める長さ
+  const TITLE_MAX = 65;
+
+  // ---- 商品タイトルの下書きをつくる ----
+  //
+  // 命名ルール（京平様）:
+  //   ブランド名 ／ メインキーワード ／ 関連ワード（SEOが高く成約のある語）
+  //   ／ サイズ・数量・色   … 計65字程度
+  //   推したい点があれば、ブランド名の次に【立てて入る】のように挟む
+  //
+  // 語の並びは「サジェスト＞競合タイトルに多い語」の順。実際に検索されて
+  // いる語を先に置く。タイトルに入れた語は検索キーワード欄では効かないので、
+  // ①のほうで自動的に除かれる（既存の仕組み）。
+  const TITLE_TARGET = TITLE_MAX;   // 命名ルールの「計65字程度」
+  const TITLE_LIMIT = 130;          // これ以上は切る
+
+  // タイトルに入れても意味の薄い語。数える対象から外す
+  const TITLE_SKIP = /^(の|と|や|для|for|with|and|the|a|an|用|付|入|個|枚|セット)$/i;
+
+  function titleParts(research){
+    // メインキーワード＝サジェストの元の語、無ければ競合タイトルの先頭あたり
+    const seeds = (research.sugGroups || []).map(g => g.seed).filter(Boolean);
+    const rows = (research.rows || []).filter(r => r.competitor);
+    const main = seeds[0]
+      || (rows[0] ? wordsOf(rows[0].competitor).find(w => w.length >= 3) : '')
+      || '';
+
+    // 関連ワード＝サジェストの上位 → 競合タイトルに多い語 の順で重複なく
+    const rel = [];
+    const seen = new Set([main]);
+    // 競合のブランド名は入れない（商標の問題になる）。
+    // 商品仕様を取り込んであれば「ブランド名 | ○○」から確実に拾える
+    const ngBrands = new Set();
+    rows.forEach(r => {
+      brandWordsIn((getPage(r.id) || {}).spec).forEach(b => ngBrands.add(b));
+    });
+    const add = w => {
+      const s = (w || '').trim();
+      if(!s || seen.has(s) || TITLE_SKIP.test(s)) return;
+      if(ngBrands.has(s)) return;          // 競合のブランド名
+      if(ngHit(s)) return;                 // 禁止語は入れない
+      seen.add(s); rel.push(s);
+    };
+    (research.sugGroups || []).forEach(g => {
+      (g.list || []).forEach(v => {
+        // 「ガーゼハンカチ 赤ちゃん」→「赤ちゃん」の部分を拾う
+        wordsOf(v).forEach(w => { if(w !== main) add(w); });
+      });
+    });
+    // 競合タイトルに多い語（多くのセラーが使う＝外せない語）
+    const freq = {};
+    rows.forEach(r => {
+      new Set(wordsOf(r.competitor || '')).forEach(w => {
+        freq[w] = (freq[w] || 0) + 1;
+      });
+    });
+    Object.keys(freq).sort((a, b) => freq[b] - freq[a]).forEach(add);
+
+    // サイズ・数量・色。表の三辺と、バリエーションの子の名前から作る
+    const tail = [];
+    const r0 = rows[0] || {};
+    if(has(r0.lenA) && has(r0.lenB)){
+      tail.push(num(r0.lenA) + '×' + num(r0.lenB) + 'cm');
+    }
+    const kids = (research.titleChildren || [])
+      .map(c => (c.name || '').replace(/^(カラー|色|サイズ)\s*/, '').trim())
+      .filter(Boolean);
+    if(kids.length) tail.push(kids.slice(0, 4).join('・'));
+
+    return {brand: SELLER_BRAND, main: main, rel: rel, tail: tail};
+  }
+
+  // 65字に収まるところまで関連ワードを足す
+  function buildTitle(research, push){
+    const p = titleParts(research);
+    if(!p.main) return '';
+    const head = [p.brand, push ? '【' + push.trim().replace(/[【】]/g, '') + '】' : '', p.main]
+      .filter(Boolean).join(' ');
+    const tail = p.tail.join(' ');
+    let s = head;
+    for(const w of p.rel){
+      const next = s + ' ' + w;
+      if((next + (tail ? ' ' + tail : '')).length > TITLE_TARGET) break;
+      s = next;
+    }
+    if(tail) s += ' ' + tail;
+    return s.slice(0, TITLE_LIMIT).trim();
+  }
 
   function bytesOf(s){ return new Blob([s]).size; }
   function wordsOf(s){ return String(s || '').split(/\s+/).filter(Boolean); }
@@ -5215,6 +5306,36 @@ if(FIREBASE_CONFIG.databaseURL){
     const tAdd = el('button', 'mini', '＋ 子（バリエーション）を追加');
     tAdd.dataset.writes = '1';
     tAddRow.appendChild(tAdd);
+
+    // 命名ルールどおりの下書きを作る。作ったあと手で直す前提
+    const tGen = el('button', 'mini', '✨ 親タイトルの下書きを作る');
+    tGen.dataset.writes = '1';
+    tGen.title = 'ブランド名／メインキーワード／関連ワード／サイズ・数量・色 の順で、'
+      + '65字程度にまとめます。語はサジェストと競合タイトルの多い順から選びます';
+    const tPush = document.createElement('input');
+    tPush.type = 'text';
+    tPush.className = 'tl-name';
+    tPush.placeholder = '推したい点（例: 立てて入る）※任意';
+    tPush.value = research.titlePush || '';
+    tPush.title = '入れると【立てて入る】のようにブランド名の次に挟みます';
+    tPush.addEventListener('input', () => { research.titlePush = tPush.value; edSave(); });
+    const tGenStatus = el('span', 'an-status');
+    tGen.addEventListener('click', () => {
+      const t = buildTitle(research, tPush.value);
+      if(!t){
+        tGenStatus.textContent = '元になる語がありません。'
+          + 'サジェストを取得するか、表に競合の商品名を入れてください';
+        return;
+      }
+      if((research.titleParent || '').trim()
+         && !confirm('いまの親タイトルを下書きで置き換えますか？')) return;
+      research.titleParent = t;
+      edSave(); drawTitles();
+      tGenStatus.textContent = t.length + '字で作りました。ここから手で直してください';
+    });
+    tAddRow.appendChild(tGen);
+    tAddRow.appendChild(tPush);
+    tAddRow.appendChild(tGenStatus);
     body.appendChild(tAddRow);
 
     // 旧データ（1本の文字列。バリエーションは / 区切り）から移行する
