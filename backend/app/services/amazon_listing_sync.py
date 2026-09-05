@@ -10,11 +10,17 @@
 import json
 import re
 
-# シートの「状態」で除くもの。
-# 状態は運用上ほとんど使われていない（2026-09 時点で19件すべて空）ので、
-# 「発注済みだけ出す」のような絞り込みにすると何も出てこない。
-# ここでは「ボツ」だけ外し、あとは画面側で絞れるようにしてある。
-EXCLUDED_STATUS = {"ボツ"}
+# シートの状態は日本語のラベルではなくキーで入っている
+# （リサーチ中は空文字、以降 adopted / ordered / imaged / listed / rejected）。
+# 「採用」以降が商品登録の対象。仕入れを決めた時点で登録の準備を始められる
+# よう、採用は発注より前の工程に置いてある。
+ADOPTED_STATUS = {"adopted", "ordered", "imaged", "listed"}
+
+STATUS_LABEL = {
+    "": "リサーチ中", "active": "リサーチ中", "adopted": "採用",
+    "ordered": "発注済み", "imaged": "画像依頼済み",
+    "listed": "商品登録済み", "rejected": "ボツ",
+}
 
 # タオタロウの代行オプション（1販売単位あたり・元）。
 # sheet.html の AGENT_OPTIONS と同じ値。片方だけ直すとずれるので注意
@@ -175,12 +181,17 @@ def extract(research: dict, settings: dict) -> dict:
         "research_id": research.get("id"),
         "research_title": research.get("title") or "",
         "status_on_sheet": research.get("status") or "",
+        "status_label": STATUS_LABEL.get(research.get("status") or "", ""),
 
         "title": (research.get("titleParent") or "").strip(),
         "keywords": (research.get("kwDraft") or "").strip(),
         "bullets": bullets[:5],
         "description": (research.get("listingBullets") or "").strip(),
         "diff_points": (research.get("diffPoints") or "").strip(),
+
+        # 候補商品の行ID。調査メモ（商品仕様・レビュー）を引くのに使う
+        "rows": [{"row_id": r.get("id"), "asin": (r.get("asin") or "").strip()}
+                 for r in (research.get("rows") or []) if isinstance(r, dict)],
 
         "rival_asin": (row.get("asin") or "").strip(),
         "rival_image": row.get("image") or "",
@@ -205,17 +216,22 @@ def extract(research: dict, settings: dict) -> dict:
     }
 
 
-def candidates(sheet: dict) -> list:
+def candidates(sheet: dict, all_status: bool = False) -> list:
     """出品の候補になるリサーチを、シートの並び順で返す。
 
-    ボツと、まだ何も入っていない雛形（競合ASINが無いもの）は外す。
+    既定では「採用」以降だけ。まだ何も入っていない雛形
+    （競合ASINが無いもの）は、状態にかかわらず外す。
     """
     st = sheet.get("settings") or {}
     out = []
     for r in sheet.get("researches") or []:
         if not isinstance(r, dict):
             continue
-        if (r.get("status") or "") in EXCLUDED_STATUS:
+        status = r.get("status") or ""
+        if all_status:
+            if status == "rejected":
+                continue
+        elif status not in ADOPTED_STATUS:
             continue
         e = extract(r, st)
         if not e["rival_asin"]:

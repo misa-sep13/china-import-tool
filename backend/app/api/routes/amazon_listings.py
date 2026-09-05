@@ -7,6 +7,7 @@
 """
 import base64
 import json
+import re
 import secrets
 from datetime import datetime, timezone
 from typing import Optional
@@ -17,6 +18,8 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.amazon_research import AmazonResearchSheet, JanCode
+from app.models.amazon_research_page import AmazonResearchPage
+from app.models.product import Product
 from app.models.amazon_listing import (
     AmazonListing, AmazonListingChild, AmazonListingImage,
 )
@@ -116,7 +119,28 @@ def _out(row: AmazonListing, db: Session, src: dict = None) -> dict:
     if src:
         # シート側の今の中身。取り込み直すと何が変わるかを画面で見せるため
         d["sheet"] = src
+        # 出品原稿を書くときの材料。競合の商品仕様・レビュー・分析の結果を
+        # 登録画面でも読めるようにする（別タブへ戻らずに済むように）
+        ids = [src["research_id"]] + [c.get("row_id") for c in src.get("rows", [])]
+        d["notes"] = _notes_for(db, [i for i in ids if i])
     return d
+
+
+def _notes_for(db: Session, ids: list) -> dict:
+    """調査メモを必要なぶんだけ読む。レビューは数千文字あるので字数も返す。"""
+    if not ids:
+        return {}
+    rows = (db.query(AmazonResearchPage)
+            .filter(AmazonResearchPage.workspace == "default",
+                    AmazonResearchPage.row_id.in_(ids)).all())
+    out = {}
+    for r in rows:
+        out[r.row_id] = {
+            "spec": r.spec or "", "reviews": r.reviews or "",
+            "keywords": r.keywords or "", "imgtext": r.imgtext or "",
+            "analysis": r.analysis or "",
+        }
+    return out
 
 
 # ---------- 一覧 ----------
@@ -137,6 +161,7 @@ def list_listings(db: Session = Depends(get_db)):
             "research_id": c["research_id"],
             "research_title": c["research_title"],
             "status_on_sheet": c["status_on_sheet"],
+            "status_label": c["status_label"],
             "rival_asin": c["rival_asin"],
             "rival_image": c["rival_image"],
             "monthly_sales": c["monthly_sales"],
@@ -158,7 +183,8 @@ def list_listings(db: Session = Depends(get_db)):
     for r in saved.values():
         rows.append({
             "research_id": r.research_id, "research_title": r.research_title,
-            "status_on_sheet": "", "rival_asin": r.rival_asin,
+            "status_on_sheet": "", "status_label": "",
+            "rival_asin": r.rival_asin,
             "rival_image": r.rival_image, "monthly_sales": r.monthly_sales,
             "review_count": r.review_count, "review_rate": r.review_rate,
             "price": r.price, "profit_rate": r.profit_rate, "cost_missing": [],
@@ -455,12 +481,35 @@ def prepare(listing_id: int, db: Session = Depends(get_db)):
         db.add(kids[0])
         db.flush()
 
-    # SKUの雛形。リサーチIDの末尾を使い、子には連番を付ける
-    base = (row.research_id or "")[-6:] or str(row.id)
-    issued = []
+    # SKUは「a」＋連番（a01, a02, …）。まだ入っていない子にだけ振る。
+    # バリエーションは a05, a05-2, a05-3 … と親番号を共有させる
+    # （在庫や原価をまとめて追いやすいため）。画面で直せる。
+    #
+    # すでにSKUのある子がいれば、その頭を引き継ぐ。番号を採り直すと
+    # 発番済みのJANと結びつきがずれるため。
+    head = ""
+    for c in kids:
+        if (c.sku or "").strip():
+            head = c.sku.strip().split("-")[0]
+            break
+    if not head:
+        head = next_sku(db, "a")[0]
+
+    taken = {(c.sku or "").strip() for c in kids if (c.sku or "").strip()}
     for i, c in enumerate(kids):
-        if not c.sku:
-            c.sku = f"az-{base}" + (f"-{i + 1}" if len(kids) > 1 else "")
+        if (c.sku or "").strip():
+            continue
+        # 1つ目は枝番なし。以降は -2, -3 …。空いている枝番を使う
+        cand = head if i == 0 else f"{head}-{i + 1}"
+        n = i + 1
+        while cand in taken:
+            n += 1
+            cand = f"{head}-{n}"
+        c.sku = cand
+        taken.add(cand)
+
+    issued = []
+    for c in kids:
         if not c.jan:
             c.jan = _issue_jan(db, c.sku, c.title or row.title or "")
             issued.append({"sku": c.sku, "jan": c.jan})
@@ -748,7 +797,10 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
 
         parent_sku = None
         if has_variation:
-            parent_sku = f"az-{(row.research_id or str(row.id))[-6:]}-p"
+            # 親は子のSKUから作る（a05 の親なら a05-p）。
+            # 親は売り物ではないので、番号は子と共有でよい
+            head = (kids[0].sku or "").split("-")[0] or f"a{row.id:02d}"
+            parent_sku = f"{head}-p"
             attrs = _parent_attributes(row)
             rec = {"sku": parent_sku, "kind": "親", "attributes": attrs}
             if body.dry_run:
@@ -797,3 +849,71 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
         results.append(item)
 
     return {"dry_run": body.dry_run, "results": results}
+
+
+# ---------- SKUの採番 ----------
+#
+# SKUは「a」＋2桁の連番（a01, a02, …）。2026-09 時点で a04 まで使用済み。
+# 次の番号は、商品マスタと出品レコードの両方を見て決める。
+# 片方だけ見ると、まだ商品マスタに載っていない出品ぶんと番号がぶつかる。
+#
+# 画面で好きな番号に直せるようにしてあるので、ここが返すのは「たたき台」。
+
+_SKU_RE = re.compile(r"^([a-z]+)(\d+)")
+
+
+def _used_sku_numbers(db: Session, prefix: str) -> set:
+    """その頭文字で使われている番号を集める。"""
+    used = set()
+
+    def take(sku):
+        m = _SKU_RE.match((sku or "").strip().lower())
+        if m and m.group(1) == prefix:
+            used.add(int(m.group(2)))
+
+    for (sku,) in db.query(Product.sku).all():
+        take(sku)
+    for (sku,) in db.query(AmazonListingChild.sku).all():
+        take(sku)
+    # 台帳に控えたぶんも見る（出品前に採番だけした状態を拾うため）
+    for (sku,) in db.query(JanCode.sku).all():
+        take(sku)
+    return used
+
+
+def next_sku(db: Session, prefix: str = "a", width: int = 2, count: int = 1) -> list:
+    """空いている番号を若い順に count 個返す。
+
+    抜け番があればそこを埋める、ということはしない。過去のSKUと
+    取り違えるより、常に最後の次を使うほうが安全なため。
+    """
+    used = _used_sku_numbers(db, prefix)
+    start = (max(used) + 1) if used else 1
+    return [f"{prefix}{str(start + i).zfill(width)}" for i in range(count)]
+
+
+@router.get("/next-sku")
+def peek_next_sku(prefix: str = "a", count: int = 1,
+                  db: Session = Depends(get_db)):
+    """次に使えるSKUを教える（採番はしない）。
+
+    画面で「次は a05 です」と出し、直したいときは直してもらう。
+    """
+    used = sorted(_used_sku_numbers(db, prefix))
+    return {"prefix": prefix,
+            "next": next_sku(db, prefix, count=max(1, min(count, 50))),
+            "used_count": len(used),
+            "last_used": f"{prefix}{str(used[-1]).zfill(2)}" if used else None}
+
+
+@router.get("/sku-available")
+def sku_available(sku: str, db: Session = Depends(get_db)):
+    """そのSKUが使えるか調べる。画面で直したときの確認用。"""
+    s = (sku or "").strip()
+    if not s:
+        return {"ok": False, "reason": "SKUが空です"}
+    if db.query(Product).filter(Product.sku == s).first():
+        return {"ok": False, "reason": "商品マスタで使われています"}
+    if db.query(AmazonListingChild).filter(AmazonListingChild.sku == s).first():
+        return {"ok": False, "reason": "ほかの出品で使われています"}
+    return {"ok": True}
