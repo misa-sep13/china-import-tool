@@ -5,7 +5,6 @@ import OrderPage from './pages/OrderPage'
 import ProductsPage from './pages/ProductsPage'
 import SettingsPage from './pages/SettingsPage'
 import InvoicePage from './pages/InvoicePage'
-import AmazonListingPage from './pages/AmazonListingPage'
 import PriceAdjustPage from './pages/PriceAdjustPage'
 import StockPage from './pages/StockPage'
 import AnalyticsPage from './pages/AnalyticsPage'
@@ -132,9 +131,6 @@ function App() {
         <NavLink to="/products" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🏷️ 商品マスタ
         </NavLink>
-        <NavLink to="/amazon-listing" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-          📦 商品登録
-        </NavLink>
         <NavLink to="/invoices" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📄 仕入管理
         </NavLink>
@@ -222,7 +218,9 @@ function App() {
           <Route path="/ads" element={<AdsPage />} />
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/invoices" element={<InvoicePage />} />
-          <Route path="/amazon-listing" element={<AmazonListingPage />} />
+          {/* 商品登録はリサーチの「🏷 商品登録」タブへ移した。
+              以前のURLをブックマークしている人のために残してある */}
+          <Route path="/amazon-listing" element={<Navigate to="/research" replace />} />
           <Route path="/fba-plan" element={<FbaPlanPage />} />
           <Route path="/price-adjust" element={<PriceAdjustPage />} />
           <Route path="/settings" element={<SettingsPage />} />

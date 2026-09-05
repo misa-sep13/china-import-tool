@@ -1,18 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
 import api from '../api/client'
+import ListingTab from './ListingTab'
 
 /**
- * リサーチ（競合リサーチシート ／ セラースカウト）。
+ * リサーチ（競合リサーチシート ／ セラースカウト ／ 商品登録）。
  *
  * 競合リサーチシートは、もらったHTML1枚をそのまま iframe で表示している。
  * 見た目も機能も配布版と完全に同じにするため作り直していない。
  * 保存先だけ localStorage から一元管理のサーバーへ差し替えてあり、
  * APIのURLとトークンを window.__ARS_API__ / __ARS_TOKEN__ で渡している。
+ *
+ * 商品登録だけはHTMLではなくReactで作ってある。シートのリサーチを元に
+ * 出品内容を仕上げる画面で、リサーチから登録まで画面を移らずに済ませたい
+ * ため、同じタブの並びに置いている。
  */
 export default function ResearchPage() {
   const [tab, setTab] = useState('sheet')
   const frameRef = useRef(null)
   const [ready, setReady] = useState(false)
+
+  const isFrame = tab === 'sheet' || tab === 'scout'
 
   // iframeの中へ、APIのURLとログイン済みトークンを渡す。
   // 中のスクリプトはこれを見て保存先とAPIの向き先を決める。
@@ -38,16 +45,17 @@ export default function ResearchPage() {
   const V = __BUILD_ID__
   const sheetUrl = `${import.meta.env.BASE_URL}research/sheet.html?v=${V}`
   const scoutUrl = `${import.meta.env.BASE_URL}research/scout.html?v=${V}`
-  const url = tab === 'sheet' ? sheetUrl : scoutUrl
+  const url = tab === 'scout' ? scoutUrl : sheetUrl
 
   // srcを空にしておき、設定を書き込んでから読み込ませる
   useEffect(() => {
+    if (!isFrame) return
     const f = frameRef.current
     if (!f) return
     setReady(false)
     injectConfig()
     f.src = url
-  }, [url])
+  }, [url, isFrame])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 40px)' }}>
@@ -55,32 +63,42 @@ export default function ResearchPage() {
         {[
           { k: 'sheet', l: '📋 競合リサーチシート' },
           { k: 'scout', l: '🔎 セラースカウト' },
+          { k: 'listing', l: '🏷 商品登録' },
         ].map(t => (
           <button key={t.k} onClick={() => setTab(t.k)}
             className={`btn ${tab === t.k ? 'btn-primary' : 'btn-secondary'}`}>
             {t.l}
           </button>
         ))}
-        <a className="btn btn-secondary" href={url} target="_blank" rel="noreferrer"
-          style={{ marginLeft: 'auto', textDecoration: 'none' }}>
-          新しいタブで開く
-        </a>
+        {isFrame && (
+          <a className="btn btn-secondary" href={url} target="_blank" rel="noreferrer"
+            style={{ marginLeft: 'auto', textDecoration: 'none' }}>
+            新しいタブで開く
+          </a>
+        )}
       </div>
 
-      {/* どちらも配布版のHTMLをそのまま使う。作り直すと見た目も機能も変わるため。
-          保存先とAPIの向き先だけ、埋め込み側から差し替えている */}
-      <div style={{
-        flex: 1, minHeight: 0, border: '1px solid #e5e7eb',
-        borderRadius: 8, overflow: 'hidden', background: '#fff',
-      }}>
-        <iframe
-          key={tab}
-          ref={frameRef}
-          title={tab === 'sheet' ? '競合リサーチシート' : 'セラースカウト'}
-          style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
-          onLoad={() => { injectConfig(); setReady(true) }}
-        />
-      </div>
+      {/* シートとスカウトは配布版のHTMLをそのまま使う。作り直すと見た目も
+          機能も変わるため。保存先とAPIの向き先だけ差し替えている。
+          商品登録はReactなので、iframeは外して直接描く */}
+      {isFrame ? (
+        <div style={{
+          flex: 1, minHeight: 0, border: '1px solid #e5e7eb',
+          borderRadius: 8, overflow: 'hidden', background: '#fff',
+        }}>
+          <iframe
+            key={tab}
+            ref={frameRef}
+            title={tab === 'sheet' ? '競合リサーチシート' : 'セラースカウト'}
+            style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+            onLoad={() => { injectConfig(); setReady(true) }}
+          />
+        </div>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <ListingTab />
+        </div>
+      )}
     </div>
   )
 }
