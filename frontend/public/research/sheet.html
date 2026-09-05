@@ -599,6 +599,11 @@
     border:1px solid var(--line);border-radius:var(--r-sm);padding:12px 14px;max-height:420px;overflow-y:auto;}
   /* AIの回答を貼っておく欄。仕様・レビューと違い共有シートにも同期するので枠を変えて区別する */
   .an-sep{border-top:1px solid var(--line);margin-top:4px;padding-top:14px;}
+  /* ③商品タイトルの命名ルール。見出しの横に小さく出す */
+  .tl-rule{margin-left:10px;font-size:11px;font-weight:400;color:var(--ink-2);}
+  .tl-rule b{font-weight:700;color:var(--ink);}
+  .tl-rule-sep{margin:0 5px;color:var(--line);}
+  .tl-rule-note{color:var(--ink-2);}
 
   /* ===== リサーチマニュアル（外注さん向け） ===== */
   /* 右上の読み物ボタン。窓を狭めても3つまとまって折り返すようにする */
@@ -5299,6 +5304,19 @@ if(FIREBASE_CONFIG.databaseURL){
     // ---- ③ 商品タイトル（親と、バリエーションの子）----
     const tLabel = el('label', null, '③ 商品タイトル（各' + TITLE_MAX + '字程度）');
     tLabel.classList.add('an-sep');
+    // 命名ルールを見出しの横に置いておく。書くたびに思い出せるように
+    const tRule = el('span', 'tl-rule');
+    [['ブランド名', ''],
+     ['メインキーワード', ''],
+     ['関連ワード', 'SEO高い＆コンバージョンあるキーワードから'],
+     ['サイズ・数量・色', '']].forEach(([name, note], i) => {
+      if(i) tRule.appendChild(el('span', 'tl-rule-sep', '／'));
+      const b = el('b', null, name);
+      if(note) b.title = note;
+      tRule.appendChild(b);
+      if(note) tRule.appendChild(el('span', 'tl-rule-note', '（' + note + '）'));
+    });
+    tLabel.appendChild(tRule);
     body.appendChild(tLabel);
     const tBox = el('div', 'title-box');
     body.appendChild(tBox);

@@ -202,7 +202,15 @@ export default function ListingEditor({ listingId, onBack }) {
         <div style={{ marginBottom: 10 }}>
           <span style={label}>
             商品タイトル（親）
-            <Count n={(d.title || '').length} max={200} unit="字" />
+            {/* 命名ルール。書くたびに思い出せるよう見出しの横に置く */}
+            <span style={{ marginLeft: 8, fontWeight: 400, fontSize: 11 }}>
+              <b style={{ color: C.text }}>ブランド名</b>
+              <Sep /><b style={{ color: C.text }}>メインキーワード</b>
+              <Sep /><b style={{ color: C.text }}>関連ワード</b>
+              <span>（SEO高い＆コンバージョンあるキーワードから）</span>
+              <Sep /><b style={{ color: C.text }}>サイズ・数量・色</b>
+            </span>
+            <Count n={(d.title || '').length} max={65} unit="字" />
           </span>
           <textarea style={{ ...input, minHeight: 46 }} value={d.title || ''}
             onChange={e => set('title', e.target.value)}
@@ -358,6 +366,10 @@ function H({ t, note }) {
       {note && <div style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>{note}</div>}
     </div>
   )
+}
+
+function Sep() {
+  return <span style={{ margin: '0 5px', color: C.line }}>／</span>
 }
 
 function Count({ n, max, unit }) {
