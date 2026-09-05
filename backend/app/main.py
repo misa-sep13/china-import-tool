@@ -6,6 +6,7 @@ from app.api.routes import inventory_snapshots
 from app.api.routes import material_costs
 from app.api.routes import cost_histories
 from app.api.routes import amazon_research
+from app.api.routes import amazon_listings
 from app.api.routes import scout
 from app.api.routes import welfare
 from app.api.routes import wholesale
@@ -45,6 +46,7 @@ from app.models import activity_log as activity_log_models
 from app.models import research as research_models
 from app.models import wholesale as wholesale_models
 from app.models import product_draft as product_draft_models
+from app.models import amazon_listing as amazon_listing_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -1330,8 +1332,9 @@ async def auth_middleware(request: _StarletteRequest, call_next):
         return await call_next(request)
     # Amazonが出品時に画像を取りに来る。認証を付けられないので、
     # 合言葉つきのURLだけ通す（合言葉は32文字のランダム）
-    if request.method == "GET" and path.startswith(
-            "/api/product-drafts/public-image/"):
+    if request.method == "GET" and (
+            path.startswith("/api/product-drafts/public-image/")
+            or path.startswith("/api/amazon-listings/public-image/")):
         return await call_next(request)
 
     auth_header = request.headers.get("authorization", "")
@@ -1378,6 +1381,7 @@ app.include_router(inventory_snapshots.router, prefix="/api")
 app.include_router(material_costs.router, prefix="/api")
 app.include_router(cost_histories.router, prefix="/api")
 app.include_router(amazon_research.router, prefix="/api")
+app.include_router(amazon_listings.router, prefix="/api")
 app.include_router(scout.router, prefix="/api")
 app.include_router(research_routes.router, prefix="/api")
 app.include_router(wholesale.router, prefix="/api")
