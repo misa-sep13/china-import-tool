@@ -17,7 +17,14 @@ export default function ListingEditor({ listingId, onBack }) {
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
+  const [nextSku, setNextSku] = useState('')   // 次に空いている番号。欄の下書きに出す
   const dirty = useRef(false)
+
+  useEffect(() => {
+    api.get('/amazon-listings/next-sku')
+      .then(r => setNextSku((r.data.next || [])[0] || ''))
+      .catch(() => {})
+  }, [])
 
   const load = useCallback(async () => {
     setErr('')
@@ -166,6 +173,9 @@ export default function ListingEditor({ listingId, onBack }) {
         </div>
       )}
 
+      {/* ---- リサーチで集めた材料 ---- */}
+      <Notes notes={d.notes} />
+
       {/* ---- 出品原稿 ---- */}
       <section style={{ ...card, marginBottom: 10 }}>
         <H t="出品原稿" note="競合リサーチシートの「🏷 出品原稿をつくる」で作ったものが入ります。空なら、ここで直接書けます" />
@@ -242,7 +252,7 @@ export default function ListingEditor({ listingId, onBack }) {
       </section>
 
       {/* ---- バリエーションとSKU ---- */}
-      <Variations d={d} set={set} />
+      <Variations d={d} set={set} nextSku={nextSku} />
 
       {/* ---- 画像 ---- */}
       <Images listingId={listingId} images={d.images || []}
@@ -368,7 +378,7 @@ function Bullets({ value, onChange }) {
 }
 
 /** バリエーションと、出品するSKUの一覧 */
-function Variations({ d, set }) {
+function Variations({ d, set, nextSku }) {
   const kids = d.children || []
   const many = kids.length > 1 || !!d.variation_theme
 
@@ -423,9 +433,12 @@ function Variations({ d, set }) {
             {kids.map((c, i) => (
               <tr key={c.id ?? `n${i}`} style={{ borderTop: `1px solid ${C.line}` }}>
                 <td style={td}>
-                  <span style={{ color: c.sku ? C.text : C.sub }}>
-                    {c.sku || '（準備で採番）'}
-                  </span>
+                  {/* 番号は「出品の準備」で自動採番するが、
+                      振り直したいこともあるので直せるようにしてある */}
+                  <input style={{ ...input, fontSize: 12,
+                    color: c.sku ? C.text : C.sub }}
+                    value={c.sku || ''} placeholder={nextSku || 'a05'}
+                    onChange={e => putKid(i, 'sku', e.target.value.trim())} />
                 </td>
                 <td style={td}>
                   <span style={{ color: c.jan ? C.key : C.sub }}>
@@ -711,5 +724,58 @@ function ResultPanel({ r, onClose }) {
         ))}
       </div>
     </div>
+  )
+}
+
+/** リサーチで集めた材料。競合の商品仕様・レビュー・分析の結果を、
+ *  出品原稿を書きながら読めるように置いておく。
+ *  長いので既定は畳んである。 */
+function Notes({ notes }) {
+  const [open, setOpen] = useState('')
+  if (!notes) return null
+
+  const items = []
+  Object.entries(notes).forEach(([id, n]) => {
+    ;[['spec', '競合の商品仕様'], ['reviews', 'レビュー'],
+      ['keywords', '競合のキーワード'], ['imgtext', '商品画像の文字'],
+      ['analysis', '分析の結果']].forEach(([k, label]) => {
+      if ((n[k] || '').trim()) items.push({ key: id + k, label, text: n[k] })
+    })
+  })
+  if (!items.length) {
+    return (
+      <section style={{ ...card, marginBottom: 10, fontSize: 12, color: C.sub }}>
+        競合の商品仕様・レビュー・分析の結果は、まだありません。
+        競合リサーチシートの「📋 商品仕様・レビュー・キーワード」で集めると、
+        ここに出て出品原稿の材料に使えます。
+      </section>
+    )
+  }
+
+  return (
+    <section style={{ ...card, marginBottom: 10 }}>
+      <H t="リサーチで集めた材料"
+        note="出品原稿を書くときの元ネタです。押すと中身が開きます" />
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {items.map(it => (
+          <button key={it.key} className="btn btn-secondary"
+            style={{ fontSize: 12 }}
+            onClick={() => setOpen(open === it.key ? '' : it.key)}>
+            {open === it.key ? '▲ ' : '▼ '}{it.label}
+            <span style={{ color: C.sub }}>
+              {' '}{it.text.length.toLocaleString('ja-JP')}字
+            </span>
+          </button>
+        ))}
+      </div>
+      {items.filter(it => it.key === open).map(it => (
+        <pre key={it.key} style={{ marginTop: 8, fontSize: 12, lineHeight: 1.6,
+          background: C.soft, border: `1px solid ${C.line}`, borderRadius: 6,
+          padding: 10, maxHeight: 320, overflow: 'auto',
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          {it.text}
+        </pre>
+      ))}
+    </section>
   )
 }

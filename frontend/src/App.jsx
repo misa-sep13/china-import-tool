@@ -123,7 +123,7 @@ function App() {
           📈 商品分析
         </NavLink>
         <NavLink to="/research" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-          🔍 競合リサーチ
+          🔍 リサーチ・商品登録
         </NavLink>
         <NavLink to="/ads" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📢 広告管理

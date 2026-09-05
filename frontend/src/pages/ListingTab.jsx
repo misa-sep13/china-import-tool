@@ -88,7 +88,7 @@ export default function ListingTab() {
       <div style={{ ...card, marginBottom: 10, display: 'flex',
         alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 13 }}>
-          リサーチ <b>{rows.length}</b> 件 ／ 登録を始めたもの{' '}
+          採用したリサーチ <b>{rows.length}</b> 件 ／ 登録を始めたもの{' '}
           <b>{rows.filter(r => r.listing_id).length}</b> 件
         </div>
         <label style={{ fontSize: 12, color: C.sub, display: 'flex',
@@ -109,9 +109,10 @@ export default function ListingTab() {
             onOpen={() => setOpenId(r.listing_id)} />
         ))}
         {!shown.length && (
-          <div style={{ ...card, color: C.sub, fontSize: 13 }}>
-            出せるリサーチがありません。競合リサーチシートで候補商品のASINを
-            入れると、ここに出てきます。
+          <div style={{ ...card, color: C.sub, fontSize: 13, lineHeight: 1.7 }}>
+            出せるリサーチがありません。<br />
+            リサーチシートで枠の状態を<b>「採用」</b>にすると、ここに出てきます
+            （採用・発注済み・画像依頼済み・商品登録済みが対象です）。
           </div>
         )}
       </div>
@@ -181,6 +182,13 @@ function ListRow({ r, onStart, onOpen, busy }) {
           <Chip on={r.bullet_count > 0} label={`要点${r.bullet_count || 0}行`} />
           {r.child_count > 0 &&
             <Chip on label={`バリエーション${r.child_count}`} />}
+          {r.status_label && (
+            <span style={{ fontSize: 11, color: '#2563eb', fontWeight: 600,
+              padding: '2px 8px', border: '1px solid #bfdbfe',
+              background: '#eff6ff', borderRadius: 10 }}>
+              {r.status_label}
+            </span>
+          )}
           {st && <span style={{ fontSize: 11, color: st.c, fontWeight: 600,
             padding: '2px 8px', border: `1px solid ${st.c}`, borderRadius: 10 }}>
             {st.l}</span>}
