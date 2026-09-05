@@ -255,22 +255,8 @@ def sync_one(research_id: str, overwrite: bool = False,
     row.synced_at = datetime.now(timezone.utc)
     db.flush()
 
-    # 子。すでに作ってあるものは触らない（SKUやJANが入っているため）
-    have = (db.query(AmazonListingChild)
-            .filter(AmazonListingChild.listing_id == row.id).count())
-    if not have:
-        if src["children"]:
-            for ch in src["children"]:
-                db.add(AmazonListingChild(
-                    listing_id=row.id, sort_order=ch["sort_order"],
-                    title=ch["title"], axis1=ch["axis1"]))
-            labels = [c["axis_label"] for c in src["children"] if c["axis_label"]]
-            if labels and not row.axis1_label:
-                row.axis1_label = labels[0]
-        else:
-            # 単品。SKUの器を1つだけ持たせる
-            db.add(AmazonListingChild(listing_id=row.id, sort_order=0,
-                                      title=src["title"] or ""))
+    # 子はシートに追従させる（SKU・JANはこちらのものを残す）
+    _pull_children(db, row, src)
     db.commit()
     db.refresh(row)
     return _out(row, db, src)
@@ -281,11 +267,18 @@ def get_listing(listing_id: int, db: Session = Depends(get_db)):
     row = db.get(AmazonListing, listing_id)
     if not row:
         raise HTTPException(404, "ありません")
+    # すでに登録を始めてあるので、採用を外していても読めるようにする
     src = None
-    for c in sync.candidates(_sheet(db)):
+    for c in sync.candidates(_sheet(db), all_status=True):
         if c["research_id"] == row.research_id:
             src = c
             break
+    # 開くたびにシートの子へ追従させる。シートで子を足しても
+    # ここに出てこない、ということがないように
+    if src:
+        _pull_children(db, row, src)
+        db.commit()
+        db.refresh(row)
     return _out(row, db, src)
 
 
@@ -496,6 +489,13 @@ def prepare(listing_id: int, db: Session = Depends(get_db)):
 
     schema = amazon_api.fetch_product_type_schema(row.product_type)
     fields = schema.get("fields") or [] if schema.get("ok") else []
+
+    # 採番する前に、シートの子へそろえておく
+    for c in sync.candidates(_sheet(db), all_status=True):
+        if c["research_id"] == row.research_id:
+            _pull_children(db, row, c)
+            db.flush()
+            break
 
     kids = (db.query(AmazonListingChild)
             .filter(AmazonListingChild.listing_id == row.id)
@@ -1150,3 +1150,45 @@ def _read_sheet_draft(src: dict) -> dict:
         "bullets": src.get("bullets") or [],
         "description": src.get("description") or "",
     }
+
+
+def _pull_children(db: Session, row: AmazonListing, src: dict) -> None:
+    """シートの子（色・子タイトル）をこちらへ取り込む。
+
+    出品原稿はシートが正なので、開くたびに追従させる。
+    ただしSKU・JAN・送信の結果はこちら側にしかないので、並び順で
+    突き合わせて残す（JANを振り直すと別商品として扱われてしまう）。
+
+    シートの子が減ったとき、JANを発番済みのものは消さない。
+    番号を宙に浮かせないため。
+    """
+    if not src:
+        return
+    kids = (db.query(AmazonListingChild)
+            .filter(AmazonListingChild.listing_id == row.id)
+            .order_by(AmazonListingChild.sort_order).all())
+    sheet_kids = src.get("children") or []
+
+    if not sheet_kids:
+        # 単品。器が1つも無ければ作る。中身はシートの親タイトル
+        if not kids:
+            db.add(AmazonListingChild(listing_id=row.id, sort_order=0,
+                                      title=src.get("title") or ""))
+        elif len(kids) == 1 and not (kids[0].title or "").strip():
+            kids[0].title = src.get("title") or ""
+        return
+
+    for i, sk in enumerate(sheet_kids):
+        if i < len(kids):
+            c = kids[i]
+        else:
+            c = AmazonListingChild(listing_id=row.id)
+            db.add(c)
+        c.sort_order = i
+        c.title = sk.get("title") or ""
+        c.axis1 = sk.get("axis1") or ""
+
+    # シートから減ったぶん。まだJANを振っていなければ落とす
+    for c in kids[len(sheet_kids):]:
+        if not c.jan:
+            db.delete(c)
