@@ -4870,6 +4870,14 @@ if(FIREBASE_CONFIG.databaseURL){
     return parts.join(' ');
   }
 
+  /** 分かっている値を末尾から外す。分からなければ色として推測して外す */
+  function stripValue(title, value){
+    const t = (title || '').trim();
+    const v = (value || '').trim();
+    if(v && t.endsWith(v)) return t.slice(0, t.length - v.length).trim();
+    return titleWithoutColor(t);
+  }
+
   /** 土台＋色で子タイトルを作る */
   function childTitleOf(base, value){
     const v = (value || '').trim();
@@ -5431,17 +5439,27 @@ if(FIREBASE_CONFIG.databaseURL){
           nm.type = 'text';
           nm.className = 'tl-name';
           nm.placeholder = '例: ブラック ／ 2個/ブラック';
-          nm.title = '入れた語が、この子の商品タイトルの一番後ろに入ります';
+          nm.title = '入れた語が、この子の商品タイトルの一番後ろに入ります'
+            + '（日本語入力は確定してから入ります）';
           nm.value = obj.name || '';
-          nm.addEventListener('input', () => {
-            obj.name = nm.value;
-            // 手で直した子タイトルは残したいので、末尾の色だけ差し替える
-            const vals = (research.titleChildren || []).map(c => c.name);
-            const base = titleWithoutColor(obj.title || research.titleParent, vals);
-            obj.title = childTitleOf(base, nm.value);
+
+          // 色を差し替えるたびに、覚えてある土台から作り直す。
+          // 前の値を推測して外すやり方だと、変換中の文字が積み上がってしまう
+          if(obj.titleBase === undefined){
+            obj.titleBase = stripValue(obj.title || research.titleParent, obj.name);
+          }
+          // 日本語入力は変換中にも input が飛ぶ。確定するまで反映しない
+          let composing = false;
+          const applyColor = () => {
+            obj.name = nm.value.trim();
+            obj.title = childTitleOf(obj.titleBase, obj.name);
             ti.value = obj.title;
             sync(); edSave();
-          });
+          };
+          nm.addEventListener('compositionstart', () => { composing = true; });
+          nm.addEventListener('compositionend', () => { composing = false; applyColor(); });
+          nm.addEventListener('input', () => { if(!composing) applyColor(); });
+          nm.addEventListener('change', () => { if(!composing) applyColor(); });
           line.appendChild(nm);
         }
         const ti = document.createElement('input');
@@ -5465,7 +5483,13 @@ if(FIREBASE_CONFIG.databaseURL){
           warn.classList.toggle('warn', !!msg.length);
         };
         ti.addEventListener('input', () => {
-          if(kind === '親') research.titleParent = ti.value; else obj.title = ti.value;
+          if(kind === '親'){
+            research.titleParent = ti.value;
+          }else{
+            obj.title = ti.value;
+            // 手で直したぶんを土台として覚え直す（末尾の色は外す）
+            obj.titleBase = stripValue(ti.value, obj.name);
+          }
           edSave(); sync();
         });
         ti.addEventListener('focus', () => { activeTitle = ti; drawTarget(); });
@@ -5495,9 +5519,8 @@ if(FIREBASE_CONFIG.databaseURL){
     tAdd.addEventListener('click', () => {
       // 親タイトルから色だけ外したものを土台にする。
       // あとは「色」の欄に値を入れれば、末尾に付く
-      const vals = (research.titleChildren || []).map(c => c.name);
-      research.titleChildren.push(
-        {name: '', title: titleWithoutColor(research.titleParent, vals)});
+      const base = titleWithoutColor(research.titleParent);
+      research.titleChildren.push({name: '', title: base, titleBase: base});
       drawTitles(); edSave(); edRefresh();
     });
 
