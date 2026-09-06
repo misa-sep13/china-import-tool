@@ -985,8 +985,10 @@ _GS1_COL = {
 @router.get("/jan/gs1-pending")
 def gs1_pending(db: Session = Depends(get_db)):
     """GS1へまだ届け出ていないJANの件数と一覧。"""
+    # 取り消した番号（void）は届け出ない
     rows = (db.query(JanCode)
-            .filter(JanCode.gs1_registered_at.is_(None))
+            .filter(JanCode.gs1_registered_at.is_(None),
+                    JanCode.status != "void")
             .order_by(JanCode.item_seq).all())
     return {
         "count": len(rows),
@@ -1007,7 +1009,8 @@ def gs1_export(db: Session = Depends(get_db)):
     from openpyxl import load_workbook
 
     rows = (db.query(JanCode)
-            .filter(JanCode.gs1_registered_at.is_(None))
+            .filter(JanCode.gs1_registered_at.is_(None),
+                    JanCode.status != "void")
             .order_by(JanCode.item_seq).all())
     if not rows:
         raise HTTPException(400, "未登録のJANはありません")
@@ -1055,7 +1058,8 @@ class Gs1DoneIn(BaseModel):
 @router.post("/jan/gs1-done")
 def gs1_done(body: Gs1DoneIn, db: Session = Depends(get_db)):
     """GS1へ届け出たものに印を付ける。"""
-    q = db.query(JanCode).filter(JanCode.gs1_registered_at.is_(None))
+    q = db.query(JanCode).filter(JanCode.gs1_registered_at.is_(None),
+                                 JanCode.status != "void")
     if body.codes:
         q = q.filter(JanCode.code.in_(body.codes))
     rows = q.all()
