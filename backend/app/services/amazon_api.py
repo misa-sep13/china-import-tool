@@ -1711,6 +1711,7 @@ def fetch_product_type_schema(product_type: str) -> dict:
             "fields": fields,
             "required_fields": fields,
             "auto_filled": sorted(set(k for k in required if k in _FILLED_BY_TOOL)),
+            "all_names": sorted(props.keys()),
             "all_count": len(props)}
 
 

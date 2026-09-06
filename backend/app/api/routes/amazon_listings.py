@@ -1775,9 +1775,16 @@ def _asked_from(issues: list) -> list:
     return out
 
 
-def _remember_asked(db: Session, product_type: str, issues: list) -> list:
-    """聞かれた項目をカテゴリに貯める。次回は先回りして欄を出せる。"""
+def _remember_asked(db: Session, product_type: str, issues: list,
+                    known: set = None) -> list:
+    """聞かれた項目をカテゴリに貯める。次回は先回りして欄を出せる。
+
+    Amazonの指摘には、属性名でないもの（SKUそのものなど）も混ざる。
+    定義にある項目だけを残さないと、入力欄に妙なものが並ぶ。
+    """
     asked = _asked_from(issues)
+    if known:
+        asked = [a for a in asked if a in known]
     if not asked:
         return []
     row = _memo_of(db, product_type)
@@ -1888,6 +1895,10 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
                   or (kids[0].sku or "").split("_")[0]
                   or f"a{row.id:02d}")
 
+    # 定義にある項目名。これに無いものは覚えない
+    schema0 = amazon_api.fetch_product_type_schema(row.product_type)
+    known = set(schema0.get("all_names") or [])
+
     checked = []
     asked_all = []
 
@@ -1897,7 +1908,7 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
         r = amazon_api.submit_listing(sku, row.product_type, attrs,
                                       validate_only=True)
         issues = r.get("issues") or []
-        added = _remember_asked(db, row.product_type, issues)
+        added = _remember_asked(db, row.product_type, issues, known)
         asked_all.extend(a for a in added if a not in asked_all)
         checked.append({
             "kind": kind, "sku": sku, "ok": bool(r.get("ok")),
@@ -1916,9 +1927,15 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
     db.commit()
 
     # 足りないと言われた項目を、入力欄として出せる形にする
-    schema = amazon_api.fetch_product_type_schema(row.product_type)
-    by_name = {f["name"]: f for f in (schema.get("fields") or [])}
+    by_name = {f["name"]: f for f in (schema0.get("fields") or [])}
     memo = get_memo(row.product_type, db)
+    # 以前に貯めた中に、属性でないものが混ざっていたら落とす
+    if known:
+        clean = [n for n in memo["asked"] if n in known]
+        if clean != memo["asked"]:
+            m = _memo_of(db, row.product_type)
+            m.asked = json.dumps(clean, ensure_ascii=False)
+            memo["asked"] = clean
     kinds = memo.get("kinds") or {}
     auto = auto_attr_values(db, row, kids[0] if kids else None)
     common = common_attrs(db)
