@@ -702,6 +702,9 @@ COMMON_FIELDS = [
                  ["KR", "韓国"], ["TW", "台湾"], ["US", "アメリカ"]]},
     {"name": "is_exclusive_product", "label": "Amazon.co.jp限定商品ですか？",
      "type": "bool", "default": "false"},
+    {"name": "distribution_designation", "label": "輸入種別",
+     "type": "select", "default": "default",
+     "choices": [["default", "正規品"], ["jp_parallel_import", "並行輸入"]]},
     {"name": "supplier_declared_dg_hz_regulation", "label": "危険物の該当性",
      "type": "select", "default": "not_applicable",
      "choices": [["not_applicable", "該当なし"],
@@ -778,6 +781,9 @@ _TYPE_HINTS = (
 
 def attr_kind(name: str, override: dict = None) -> str:
     n = (name or "").lower()
+    # 「よく聞かれる項目」で全商品ぶん答えているものは、ここでは聞かない
+    if n in _COMMON_DEFAULTS:
+        return "common"
     if (override or {}).get(n):
         return override[n]
     if n in _AUTO_ATTRS:
@@ -1707,6 +1713,7 @@ def put_memo(product_type: str, body: MemoIn, db: Session = Depends(get_db)):
             if k in _COMMON_DEFAULTS or k in _AUTO_ATTRS:
                 continue      # 共通・自動で入るものは覚えない
             if attr_kind(k, kinds) != "type":
+                # common・auto・item はここでは覚えない
                 now.pop(k, None)
                 continue      # 商品ごとに変わるものは覚えない
             if v in (None, ""):
@@ -1780,6 +1787,7 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
     memo = get_memo(row.product_type, db)
     kinds = memo.get("kinds") or {}
     auto = auto_attr_values(db, row, kids[0] if kids else None)
+    common = common_attrs(db)
 
     # 商品そのものの寸法。競合の商品仕様・画像の文字・商品説明から拾う。
     # SP-APIで取れるのは梱包サイズなので、そのままでは使えない
@@ -1804,6 +1812,11 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
         f["kind"] = attr_kind(n, kinds)
         if f["kind"] == "auto":
             f["auto_value"] = auto.get(n)
+        elif f["kind"] == "common":
+            v = common.get(n)
+            # 真偽値は「はい／いいえ」で見せる
+            f["auto_value"] = ("はい" if v is True else
+                               "いいえ" if v is False else v)
         # 寸法は読み取れたものを下書きとして添える
         if n == "item_length_width_height" and dims:
             f["suggest"] = (f"{dims.get('length','')}×{dims.get('width','')}"

@@ -599,23 +599,27 @@ export default function ListingEditor({ listingId, onBack }) {
           <H t={`この商品タイプで必要な項目（${d.product_type || ''}）`}
             note="Amazonに聞かれたものです。性質ごとに分けてあります" />
 
-          {/* ツールが決められるもの。入力は要らない */}
-          {fields.filter(f => f.kind === 'auto').length > 0 && (
+          {/* ツールが決められるもの・共通の設定で答えているもの。入力は要らない */}
+          {fields.filter(f => f.kind === 'auto' || f.kind === 'common').length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: C.good,
                 marginBottom: 4 }}>
                 自動で入ります（入力不要）
               </div>
               <div style={{ fontSize: 12, color: C.sub }}>
-                {fields.filter(f => f.kind === 'auto').map(f => {
+                {fields.filter(f => f.kind === 'auto' || f.kind === 'common').map(f => {
                   const v = f.auto_value
                   const t = v && typeof v === 'object'
                     ? `${v.length}×${v.width}×${v.height} cm`
                     : (v || '—')
                   return (
-                    <span key={f.name} style={{ marginRight: 12 }}>
+                    <span key={f.name} style={{ marginRight: 12,
+                      whiteSpace: 'nowrap' }}>
                       {f.label}
                       <b style={{ color: C.text }}> {t}</b>
+                      {f.kind === 'common' && (
+                        <span style={{ color: C.line }}>（共通）</span>
+                      )}
                     </span>
                   )
                 })}
