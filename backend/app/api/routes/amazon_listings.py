@@ -1962,6 +1962,9 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
 
     need = []
     for n in memo["asked"]:
+        # 商品名・JAN・価格・画像などツールが埋めるものは、ここでは聞かない
+        if n in amazon_api._FILLED_BY_TOOL:
+            continue
         f = dict(by_name.get(n) or {"name": n, "label": n, "type": "text",
                                     "choices": []})
         f["kind"] = attr_kind(n, kinds)
