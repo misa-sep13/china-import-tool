@@ -524,6 +524,24 @@ export default function ListingEditor({ listingId, onBack }) {
         <section style={{ ...card, marginBottom: 10 }}>
           <H t="Amazonの検証の結果"
             note="出品はしていません。ここで出た指摘を埋めれば、そのまま出せます" />
+
+          {/* 自分で確かめたいときのために、競合と仕入れ元を並べる */}
+          {(valid.links || []).length > 0 && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap',
+              marginBottom: 10, paddingBottom: 8,
+              borderBottom: `1px solid ${C.line}` }}>
+              <span style={{ fontSize: 11, color: C.sub }}>
+                自分で確かめる:
+              </span>
+              {valid.links.map((l, i) => (
+                <a key={i} href={l.url} target="_blank" rel="noreferrer"
+                  style={{ fontSize: 11, color: C.key }}>
+                  {l.kind === '1688' ? '🛒' : '🔗'} {l.kind}
+                  {l.kind === '競合' ? `（${l.label}）` : ''} ↗
+                </a>
+              ))}
+            </div>
+          )}
           {valid.checked.map((v, i) => (
             <div key={i} style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 600,
@@ -681,6 +699,16 @@ export default function ListingEditor({ listingId, onBack }) {
                           {f.suggest_from && (
                             <span style={{ color: C.sub }}>
                               {' '}（元: {f.suggest_from}）
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {f.suggest_note && (
+                        <div style={{ fontSize: 11, color: C.warn, marginTop: 3 }}>
+                          {f.suggest_note}
+                          {f.suggest_from && (
+                            <span style={{ color: C.sub }}>
+                              {' '}（選択肢に無いので、近いものを選んでください）
                             </span>
                           )}
                         </div>

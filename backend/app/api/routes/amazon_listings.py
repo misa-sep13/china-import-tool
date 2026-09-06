@@ -905,6 +905,60 @@ def _wrap_attr(name: str, value, mp: str) -> list:
     return [{"value": value, "marketplace_id": mp}]
 
 
+def read_material(texts: list, choices: list = None) -> dict:
+    """ライバルの商品仕様などから素材を拾う。
+
+    Amazonの選択肢に無い書き方（「PUレザー」「ポリエステル100%」など）も
+    あるので、選択肢が渡されていればその中の語に寄せる。
+    見つからなければ空を返す（勝手に決めない）。
+    """
+    words = [c["value"] if isinstance(c, dict) else c for c in (choices or [])]
+
+    def first_hit(text):
+        """本文に出てくる選択肢のうち、いちばん先に出るものを返す。
+
+        「PUレザー／裏地ポリエステル」なら、主たる素材である前者を採る。
+        """
+        best, at = None, None
+        for w in words:
+            if not w:
+                continue
+            i = text.find(w)
+            if i >= 0 and (at is None or i < at):
+                best, at = w, i
+        return best
+
+    # 「素材: ポリエステル」のように項目名で書いてあるものが最も確か。
+    # 文の途中の「〜な素材を使用」を拾わないよう、行頭か区切りの直後に限り、
+    # かつコロンで区切られているものだけを見る
+    rx = re.compile(
+        r"(?:^|[\n。、／/|｜･・])\s*(?:素材|材質|生地|材料)\s*[:：]\s*([^\n。、]{1,40})",
+        re.M)
+    for t in texts:
+        if not t:
+            continue
+        m = rx.search(t)
+        if not m:
+            continue
+        said = m.group(1).strip()
+        w = first_hit(said)
+        if w:
+            return {"value": w, "source": m.group(0).strip()}
+        # 選択肢に無くても、書いてあること自体は伝える
+        return {"value": None, "said": said, "source": m.group(0).strip()}
+
+    # 項目名が無くても、選択肢の語が本文に出ていれば拾う
+    for t in texts:
+        if not t:
+            continue
+        w = first_hit(t)
+        if w and len(w) >= 3:
+            i = t.find(w)
+            return {"value": w,
+                    "source": t[max(0, i - 12):i + len(w) + 12].strip()}
+    return {}
+
+
 def _public_base() -> str:
     """Amazonが画像を取りに来るときの土台となるURL。"""
     import os
@@ -1816,6 +1870,10 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
     texts.append(row.description)
     dims = read_dimensions(texts)
 
+    # 素材。ライバルの商品仕様などから拾う（無ければ空のまま）
+    mat_choices = (by_name.get("material") or {}).get("choices") or []
+    material = read_material(texts, mat_choices)
+
     need = []
     for n in memo["asked"]:
         f = dict(by_name.get(n) or {"name": n, "label": n, "type": "text",
@@ -1825,6 +1883,13 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
             f["auto_value"] = auto.get(n)
         elif f["kind"] == "common":
             f["auto_value"] = _common_label(n, common.get(n))
+        # 素材も読み取れたものを添える
+        if n == "material" and material:
+            if material.get("value"):
+                f["suggest"] = material["value"]
+            elif material.get("said"):
+                f["suggest_note"] = f"ライバルの記載: {material['said']}"
+            f["suggest_from"] = material.get("source")
         # 寸法は読み取れたものを下書きとして添える
         if n == "item_length_width_height" and dims:
             f["suggest"] = (f"{dims.get('length','')}×{dims.get('width','')}"
@@ -1834,8 +1899,24 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
                                    if k in ("length", "width", "height")}
         need.append(f)
 
+    # 自分で確かめたいときのために、競合のAmazonページと1688を並べる
+    links = []
+    if src2:
+        for r in (src2.get("rows") or []):
+            asin = (r.get("asin") or "").strip().upper()
+            if asin:
+                links.append({"kind": "競合", "asin": asin,
+                              "label": (r.get("competitor") or asin)[:40],
+                              "url": f"https://www.amazon.co.jp/dp/{asin}"})
+        for u in (src2.get("urls_1688") or []):
+            if u:
+                links.append({"kind": "1688", "label": "仕入れ元のページ",
+                              "url": u})
+
     return {"checked": checked,
             "newly_asked": asked_all,
             "need": need,
             "dimensions": dims,
+            "material": material,
+            "links": links,
             "memo": memo}
