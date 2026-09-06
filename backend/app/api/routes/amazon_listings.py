@@ -356,8 +356,17 @@ def delete_listing(listing_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "ありません")
     if row.status in ("submitted", "live"):
         raise HTTPException(400, "すでにAmazonへ送ったものは消せません")
-    for c in (db.query(AmazonListingChild)
-              .filter(AmazonListingChild.listing_id == row.id).all()):
+
+    kids = (db.query(AmazonListingChild)
+            .filter(AmazonListingChild.listing_id == row.id).all())
+    # JANを発番済みのものは消させない。消すと番号だけ台帳に残り、
+    # 何に使ったか分からなくなる（同じ番号は二度と使えない）
+    used = [c.jan for c in kids if c.jan]
+    if used:
+        raise HTTPException(
+            400, "JANを発番済みなので消せません（" + "・".join(used[:3])
+                 + "）。番号が宙に浮いてしまいます")
+    for c in kids:
         db.delete(c)
     for i in (db.query(AmazonListingImage)
               .filter(AmazonListingImage.listing_id == row.id).all()):
