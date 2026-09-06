@@ -714,6 +714,17 @@ COMMON_FIELDS = [
 ]
 
 _COMMON_DEFAULTS = {f["name"]: f["default"] for f in COMMON_FIELDS}
+_COMMON_LABELS = {f["name"]: dict(f.get("choices") or [])
+                  for f in COMMON_FIELDS}
+
+
+def _common_label(name: str, value):
+    """共通項目の値を、人が読める形にする。"""
+    if value is True:
+        return "はい"
+    if value is False:
+        return "いいえ"
+    return _COMMON_LABELS.get(name, {}).get(value, value)
 _COMMON_TYPE = {f["name"]: f["type"] for f in COMMON_FIELDS}
 
 
@@ -1813,10 +1824,7 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
         if f["kind"] == "auto":
             f["auto_value"] = auto.get(n)
         elif f["kind"] == "common":
-            v = common.get(n)
-            # 真偽値は「はい／いいえ」で見せる
-            f["auto_value"] = ("はい" if v is True else
-                               "いいえ" if v is False else v)
+            f["auto_value"] = _common_label(n, common.get(n))
         # 寸法は読み取れたものを下書きとして添える
         if n == "item_length_width_height" and dims:
             f["suggest"] = (f"{dims.get('length','')}×{dims.get('width','')}"
