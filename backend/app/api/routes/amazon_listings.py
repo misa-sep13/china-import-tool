@@ -715,8 +715,11 @@ def _problems(row: AmazonListing, db: Session) -> list:
 # ---------- Amazonへ送る ----------
 
 # ブランド登録（Amazonブランド登録）が済むまで、自社ブランド名では弾かれる。
-# 済むまでは「ノーブランド」で出す。設定の brand_ready で切り替える。
-NO_BRAND = "ノーブランド"
+# 済むまではブランド無しで出す。設定の brand_ready で切り替える。
+#
+# セラーセントラルの「この商品にはブランド名がありません」に当たる値は
+# 「ノーブランド品」。画面の表記に合わせてある。
+NO_BRAND = "ノーブランド品"
 
 
 def _brand_for(db: Session, row: AmazonListing) -> str:
