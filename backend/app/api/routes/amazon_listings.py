@@ -116,7 +116,7 @@ def _out(row: AmazonListing, db: Session, src: dict = None) -> dict:
         "rival_asin": row.rival_asin, "product_type": row.product_type,
         "attrs": _loads(row.attrs, {}),
         "parent_sku": row.parent_sku,
-        "fulfillment": row.fulfillment or "merchant",
+        "fulfillment": _fulfillment_of(db, row),
         "variation_theme": row.variation_theme,
         "axis1_label": row.axis1_label, "axis2_label": row.axis2_label,
         "monthly_sales": row.monthly_sales, "review_count": row.review_count,
@@ -140,6 +140,21 @@ def _out(row: AmazonListing, db: Session, src: dict = None) -> dict:
         # 競合のAmazonページと1688。いつでも開けるように常に返す
         d["links"] = _links_of(src)
     return d
+
+
+def _fulfillment_of(db: Session, row: AmazonListing) -> str:
+    """FBAか自己発送か。空ならシートの「配送」を見に行く。
+
+    列を後から足したので、それ以前に作った登録は空のままになっている。
+    空を自己発送と決めつけると、FBAの商品がFBMで出てしまう。
+    """
+    v = (row.fulfillment or "").strip().lower()
+    if v:
+        return v
+    for c in sync.candidates(_sheet(db), all_status=True):
+        if c["research_id"] == row.research_id:
+            return "fba" if c.get("fulfill") == "FBA" else "merchant"
+    return "merchant"
 
 
 def _links_of(src: dict) -> list:
@@ -678,6 +693,12 @@ def _problems(row: AmazonListing, db: Session) -> list:
             p.append(f"[{who}] SKUがありません")
         if not c.jan:
             p.append(f"[{who}] JANがありません")
+        else:
+            # GS1に届け出ていないJANは、Amazonが受け付けない
+            j = db.query(JanCode).filter(JanCode.code == c.jan).first()
+            if j is not None and j.gs1_registered_at is None:
+                p.append(f"[{who}] JAN {c.jan} がGS1に未登録です。"
+                         "登録しないとAmazonに弾かれます")
     # バリエーションは常に色で登録する（色でないと選択肢ごとの画像が出ない）
     if len(kids) > 1:
         shared = any(i.child_id is None for i in imgs)
@@ -1052,7 +1073,7 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
     # FBAか自己発送か。DEFAULT は自己発送を意味するので、
     # FBAの商品をそのまま送ると出荷方法が食い違ってしまう。
     # 自己発送のときだけ在庫0で作る（実在庫は既存の在庫連携が入れる）。
-    if (row.fulfillment or "").lower() == "fba":
+    if _fulfillment_of(db, row) == "fba":
         a["fulfillment_availability"] = [{
             "fulfillment_channel_code": "AMAZON_JP",
         }]
