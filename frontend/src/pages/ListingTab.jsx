@@ -40,16 +40,52 @@ export default function ListingTab() {
   const [busy, setBusy] = useState(false)
   const [onlyReady, setOnlyReady] = useState(false)
 
+  // 発番しただけではGS1に登録されない。溜まったら一括で届け出るので、
+  // 未登録の件数をここに出しておく
+  const [gs1, setGs1] = useState(null)
+
   const load = useCallback(async () => {
     setErr('')
     try {
-      const r = await api.get('/amazon-listings')
+      const [r, g] = await Promise.all([
+        api.get('/amazon-listings'),
+        api.get('/amazon-research/jan/gs1-pending').catch(() => null),
+      ])
       setRows(r.data.rows || [])
+      setGs1(g ? g.data : null)
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     }
   }, [])
   useEffect(() => { load() }, [load])
+
+  const gs1Export = async () => {
+    setBusy(true); setErr('')
+    try {
+      const r = await api.get('/amazon-research/jan/gs1-export',
+        { responseType: 'blob' })
+      const url = URL.createObjectURL(r.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `gs1_${new Date().toISOString().slice(0, 10)}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  const gs1Done = async () => {
+    if (!confirm(`未登録の${gs1.count}件に「GS1へ届け出済み」の印を付けます。`
+      + 'よろしいですか？')) return
+    setBusy(true); setErr('')
+    try {
+      await api.post('/amazon-research/jan/gs1-done', {})
+      await load()
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
 
   const start = async (researchId) => {
     setBusy(true); setErr('')
@@ -91,6 +127,29 @@ export default function ListingTab() {
           粗利率は競合リサーチシートと同じ計算です
         </div>
       </div>
+
+      {gs1 && gs1.count > 0 && (
+        <div style={{ ...card, marginBottom: 10, background: '#fffbeb',
+          borderColor: '#fde68a', display: 'flex', alignItems: 'center',
+          gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, color: '#92400e' }}>
+            GS1へ未登録のJANが <b>{gs1.count}</b> 件あります
+            （発番しただけでは登録されません）
+          </span>
+          <button className="btn btn-secondary" style={{ fontSize: 12 }}
+            onClick={gs1Export} disabled={busy}>
+            📄 一括登録フォームを書き出す
+          </button>
+          <button className="btn btn-secondary" style={{ fontSize: 12 }}
+            onClick={gs1Done} disabled={busy}>
+            ✅ 届け出済みにする
+          </button>
+          <span style={{ fontSize: 11, color: C.sub, width: '100%' }}>
+            カナ・取扱品目コード・JICFS分類・GPC分類は商品ごとに違うので空のまま出ます。
+            入れてからGS1の画面へ上げてください
+          </span>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gap: 8 }}>
         {shown.map(r => (

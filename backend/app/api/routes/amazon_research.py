@@ -4,6 +4,7 @@
 計算式は app/services/amazon_research_calc.py にまとめてある（画面ごとに
 計算がずれないよう、原価はサーバー側で出して保存する）。
 """
+import io
 import json
 import urllib.parse
 import os
@@ -953,3 +954,113 @@ def import_pages(body: PagesBulkIn, workspace: str = "default",
             saved += 1
     db.commit()
     return {"saved": saved, "skipped": skipped}
+
+
+# ---------- GS1への届け出 ----------
+#
+# JANを発番しただけでは、GS1 Japan（Japan Trade Item Data）に商品情報が
+# 登録されない。溜まったら一括登録フォーム（Excel）で届け出る運用なので、
+# 未登録の件数を出し、その様式で書き出せるようにしてある。
+#
+# 分類コード（取扱品目・JICFS・GPC）と商品名カナは商品ごとに違い、
+# 機械では決められない。空のまま出すので、GS1の画面へ上げる前に入れること。
+
+_GS1_FORM = "gjdb_product_uploadform.xlsx"
+
+# 一括登録フォームの列番号（1始まり）。様式が変わったらここを直す
+_GS1_COL = {
+    "status": 1,      # GTINステータスコード。02＝新規登録
+    "gtin": 3,        # GTIN（＝JAN13桁）
+    "name": 6,        # 商品名
+    "kana": 7,        # 商品名（カナ）
+    "item_code": 8,   # 取扱品目コード
+    "jicfs": 10,      # JICFS分類コード
+    "gpc": 12,        # GPC（GS1商品分類）コード
+    "brand": 14,      # ブランド名
+    "detail": 19,     # 商品名（詳細）
+    "own_code": 21,   # 自社商品コード
+}
+
+
+@router.get("/jan/gs1-pending")
+def gs1_pending(db: Session = Depends(get_db)):
+    """GS1へまだ届け出ていないJANの件数と一覧。"""
+    rows = (db.query(JanCode)
+            .filter(JanCode.gs1_registered_at.is_(None))
+            .order_by(JanCode.item_seq).all())
+    return {
+        "count": len(rows),
+        "rows": [{"code": r.code, "sku": r.sku, "name": r.name,
+                  "status": r.status,
+                  "created_at": r.created_at.isoformat() if r.created_at else None}
+                 for r in rows],
+    }
+
+
+@router.get("/jan/gs1-export")
+def gs1_export(db: Session = Depends(get_db)):
+    """未登録ぶんを、GS1の一括登録フォーム（Excel）にして返す。
+
+    分類コードとカナは空のまま。入れてからGS1の画面へ上げる。
+    """
+    from fastapi.responses import StreamingResponse
+    from openpyxl import load_workbook
+
+    rows = (db.query(JanCode)
+            .filter(JanCode.gs1_registered_at.is_(None))
+            .order_by(JanCode.item_seq).all())
+    if not rows:
+        raise HTTPException(400, "未登録のJANはありません")
+
+    st = db.query(AmazonResearchSettings).first()
+    brand = (st.brand_name or "").strip() if st else ""
+
+    # このファイルは app/api/routes/ にあるので、app/ まで3つ上がる
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "templates", _GS1_FORM)
+    wb = load_workbook(path)
+    ws = wb["商品情報リスト"]
+
+    # 1〜3行目は見出し・型・必須の説明。4行目から入れる
+    for i, r in enumerate(rows):
+        at = 4 + i
+        name = (r.name or r.sku or "").strip()
+        ws.cell(at, _GS1_COL["status"]).value = "02"
+        ws.cell(at, _GS1_COL["gtin"]).value = r.code
+        ws.cell(at, _GS1_COL["name"]).value = name[:100]
+        ws.cell(at, _GS1_COL["brand"]).value = brand[:40]
+        ws.cell(at, _GS1_COL["detail"]).value = (
+            (brand + " " + name).strip())[:400]
+        if r.sku:
+            ws.cell(at, _GS1_COL["own_code"]).value = r.sku[:20]
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    today = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d")
+    return StreamingResponse(
+        buf,
+        media_type=("application/vnd.openxmlformats-officedocument"
+                    ".spreadsheetml.sheet"),
+        # ファイル名に日本語は使えない（ヘッダはlatin-1のため）
+        headers={"Content-Disposition":
+                 f'attachment; filename="gs1_{today}_{len(rows)}items.xlsx"'})
+
+
+class Gs1DoneIn(BaseModel):
+    codes: Optional[list] = None   # 省略したら未登録ぶん全部
+
+
+@router.post("/jan/gs1-done")
+def gs1_done(body: Gs1DoneIn, db: Session = Depends(get_db)):
+    """GS1へ届け出たものに印を付ける。"""
+    q = db.query(JanCode).filter(JanCode.gs1_registered_at.is_(None))
+    if body.codes:
+        q = q.filter(JanCode.code.in_(body.codes))
+    rows = q.all()
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        r.gs1_registered_at = now
+    db.commit()
+    return {"marked": len(rows)}

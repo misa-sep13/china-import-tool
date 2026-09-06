@@ -314,6 +314,9 @@ def _migrate():
         # Amazonは単品でも親子で作るのが推奨。親のSKUを持たせる
         ("amazon_listings","parent_sku",
          "ALTER TABLE amazon_listings ADD COLUMN parent_sku VARCHAR"),
+        # 発番したJANをGS1へ届け出たか
+        ("jan_codes","gs1_registered_at",
+         "ALTER TABLE jan_codes ADD COLUMN gs1_registered_at TIMESTAMP"),
     ]
 
     inspector = inspect(engine)

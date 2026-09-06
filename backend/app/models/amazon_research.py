@@ -154,6 +154,9 @@ class JanCode(Base):
     asin = Column(String, index=True)                # 登録できたら入る
     name = Column(String)                            # 何に使ったか分かるように
     status = Column(String, default="issued", index=True)  # issued / used / void
+    # GS1 Japan（Japan Trade Item Data）へ届け出たか。
+    # 発番しただけでは登録されないので、溜まったら一括で届け出る
+    gs1_registered_at = Column(DateTime(timezone=True), nullable=True)
     note = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
