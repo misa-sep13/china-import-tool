@@ -482,7 +482,15 @@
   .an-note{font-size:11px;color:var(--ink-2);line-height:1.8;}
   .an-body textarea{width:100%;min-height:78px;padding:8px 10px;border:1px solid var(--line-2);
     border-radius:var(--r-sm);font-size:12px;font-family:inherit;line-height:1.7;background:var(--surface);color:var(--ink);}
-  .an-body textarea:focus,.an-body select:focus{outline:none;border-color:var(--brand);box-shadow:var(--focus);}
+  /* input には指定が無く、ブラウザ既定の黒い枠が出ていた。textareaに揃える */
+  .an-body input[type=text],.an-body input:not([type]){
+    width:100%;padding:7px 9px;border:1px solid var(--line-2);
+    border-radius:var(--r-sm);font-size:12px;font-family:inherit;
+    background:var(--surface);color:var(--ink);box-sizing:border-box;}
+  .an-body input[type=checkbox]{width:auto;padding:0;border:none;}
+  .an-body textarea:focus,.an-body select:focus,
+  .an-body input[type=text]:focus,.an-body input:not([type]):focus{
+    outline:none;border-color:var(--brand);box-shadow:var(--focus);}
   .an-body select{padding:6px 8px;border:1px solid var(--line-2);border-radius:var(--r-sm);
     font-size:12px;font-family:inherit;background:var(--surface);max-width:340px;color:var(--ink);}
   .an-body > label{font-size:11.5px;color:var(--ink-2);font-weight:700;margin-bottom:-6px;}
@@ -600,11 +608,6 @@
   /* AIの回答を貼っておく欄。仕様・レビューと違い共有シートにも同期するので枠を変えて区別する */
   .an-sep{border-top:1px solid var(--line);margin-top:4px;padding-top:14px;}
   /* ③商品タイトルの命名ルール。見出しの横に小さく出す */
-  /* 子の軸は「色」で固定。値だけ入れてもらう */
-  .tl-axis{display:inline-flex;align-items:center;justify-content:center;
-    min-width:28px;height:26px;padding:0 6px;border-radius:5px;
-    background:var(--chip,#eef2f7);color:var(--ink-2);
-    font-size:11.5px;font-weight:700;flex:none;}
   .tl-rule{margin-left:10px;font-size:11px;font-weight:400;color:var(--ink-2);}
   .tl-rule b{font-weight:700;color:var(--ink);}
   .tl-rule-sep{margin:0 5px;color:var(--line);}
@@ -5433,8 +5436,8 @@ if(FIREBASE_CONFIG.databaseURL){
         line.appendChild(el('span', 'tl-kind' + (kind === '親' ? ' parent' : ''), kind));
         if(kind === '子'){
           // バリエーションは必ず「色」で登録する（色でないと選択肢ごとの
-          // 画像が出ない）。個数違いは「2個/ブラック」のように値へ書く
-          line.appendChild(el('span', 'tl-axis', '色'));
+          // 画像が出ない）。個数違いは「2個/ブラック」のように値へ書く。
+          // 軸は固定なのでラベルは出さず、入力欄の案内だけにする
           const nm = document.createElement('input');
           nm.type = 'text';
           nm.className = 'tl-name';
@@ -7037,6 +7040,12 @@ if(FIREBASE_CONFIG.databaseURL){
   try{
     const f = localStorage.getItem(FILTER_KEY);
     if(f === 'all' || STATUS_LABEL[f]) statusFilter = f;
+  }catch(e){}
+  // 埋め込み元から絞り込みを指定できる（?filter=adopted）。
+  // 商品登録のタブは「採用」だけを開きたいため
+  try{
+    const q = new URLSearchParams(location.search).get('filter');
+    if(q && (q === 'all' || STATUS_LABEL[q])) statusFilter = q;
   }catch(e){}
   function resStatus(r){ return STATUS_LABEL[r.status] ? r.status : 'active'; }
   function matchesFilter(r){ return statusFilter === 'all' || resStatus(r) === statusFilter; }

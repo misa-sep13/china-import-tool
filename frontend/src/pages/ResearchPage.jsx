@@ -19,7 +19,9 @@ export default function ResearchPage() {
   const frameRef = useRef(null)
   const [ready, setReady] = useState(false)
 
-  const isFrame = tab === 'sheet' || tab === 'scout'
+  // 商品登録はシートそのもの。採用したものだけを開く。
+  // 別の画面を作ると同じ中身を二重に持つことになるため
+  const isFrame = tab !== 'old'
 
   // iframeの中へ、APIのURLとログイン済みトークンを渡す。
   // 中のスクリプトはこれを見て保存先とAPIの向き先を決める。
@@ -45,7 +47,9 @@ export default function ResearchPage() {
   const V = __BUILD_ID__
   const sheetUrl = `${import.meta.env.BASE_URL}research/sheet.html?v=${V}`
   const scoutUrl = `${import.meta.env.BASE_URL}research/scout.html?v=${V}`
-  const url = tab === 'scout' ? scoutUrl : sheetUrl
+  const url = tab === 'scout' ? scoutUrl
+    : tab === 'listing' ? `${sheetUrl}&filter=adopted`
+      : sheetUrl
 
   // srcを空にしておき、設定を書き込んでから読み込ませる
   useEffect(() => {
@@ -64,7 +68,8 @@ export default function ResearchPage() {
         {[
           { k: 'sheet', l: '📋 競合リサーチシート' },
           { k: 'scout', l: '🔎 セラースカウト' },
-          { k: 'listing', l: '🏷 商品登録' },
+          { k: 'listing', l: '🏷 商品登録（採用したもの）' },
+          { k: 'old', l: '（旧）登録画面' },
         ].map(t => (
           <button key={t.k} onClick={() => setTab(t.k)}
             className={`btn ${tab === t.k ? 'btn-primary' : 'btn-secondary'}`}>
@@ -90,7 +95,7 @@ export default function ResearchPage() {
           <iframe
             key={tab}
             ref={frameRef}
-            title={tab === 'sheet' ? '競合リサーチシート' : 'セラースカウト'}
+            title={tab === 'scout' ? 'セラースカウト' : '競合リサーチシート'}
             style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
             onLoad={() => { injectConfig(); setReady(true) }}
           />
