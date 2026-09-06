@@ -452,7 +452,7 @@ export default function ListingEditor({ listingId, onBack }) {
 
       {/* ---- 画像 ---- */}
       <Images listingId={listingId} images={d.images || []}
-        onChanged={load} />
+        children={d.children || []} onChanged={load} />
 
       {/* ---- 商品タイプごとの必須項目 ---- */}
       {fields && fields.length > 0 && (
@@ -747,10 +747,14 @@ const th = { padding: '4px 6px', fontWeight: 600 }
 const td = { padding: '4px 6px', verticalAlign: 'middle' }
 
 /** 商品画像。貼り付け・ドラッグ＆ドロップ・ファイル選択で入れる */
-function Images({ listingId, images, onChanged }) {
+function Images({ listingId, images, children, onChanged }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const fileRef = useRef(null)
+  // どこに入れるか。null＝共通（色ごとの画像が無い子はこれを使う）
+  const [target, setTarget] = useState(null)
+
+  const kids = (children || []).filter(c => c.id)
 
   const upload = useCallback(async (files) => {
     const list = [...files].filter(f => f.type.startsWith('image/'))
@@ -760,13 +764,14 @@ function Images({ listingId, images, onChanged }) {
       for (const f of list) {
         const fd = new FormData()
         fd.append('file', f)
-        await api.post(`/amazon-listings/${listingId}/images`, fd)
+        await api.post(`/amazon-listings/${listingId}/images`
+          + (target ? `?child_id=${target}` : ''), fd)
       }
       await onChanged()
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }
-  }, [listingId, onChanged])
+  }, [listingId, onChanged, target])
 
   // 画面のどこで貼っても取り込む。1枚ずつ選ばせると手間なので
   useEffect(() => {
@@ -800,6 +805,8 @@ function Images({ listingId, images, onChanged }) {
   }
 
   const base = (api.defaults.baseURL || '').replace(/\/api$/, '')
+  // いま選んでいる送り先のぶんだけ出す
+  const shown = images.filter(im => (im.child_id ?? null) === target)
 
   return (
     <section style={{ ...card, marginBottom: 10 }}
@@ -809,9 +816,37 @@ function Images({ listingId, images, onChanged }) {
         note="1枚目がメイン画像になります。Ctrl+V で貼り付け、ドラッグ＆ドロップ、ファイル選択のどれでも入ります" />
       {err && <Err text={err} />}
 
+      {/* バリエーションがあるときは、色ごとに画像を分けられる。
+          色ごとに入れていない子は「共通」の画像を使う */}
+      {kids.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap',
+          marginBottom: 8, alignItems: 'center' }}>
+          {[{ id: null, label: '共通' },
+            ...kids.map(c => ({ id: c.id, label: c.axis1 || c.sku || '（色なし）' }))
+          ].map(t => {
+            const n = images.filter(im => (im.child_id ?? null) === t.id).length
+            const on = target === t.id
+            return (
+              <button key={String(t.id)} className="btn btn-secondary"
+                onClick={() => setTarget(t.id)}
+                style={{ fontSize: 12,
+                  borderColor: on ? C.key : C.line,
+                  color: on ? C.key : C.sub,
+                  fontWeight: on ? 700 : 400 }}>
+                {t.label}
+                <span style={{ color: n ? C.good : C.line }}> {n}枚</span>
+              </button>
+            )
+          })}
+          <span style={{ fontSize: 11, color: C.sub }}>
+            色ごとに入れていないものは「共通」を使います
+          </span>
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap',
         alignItems: 'flex-start' }}>
-        {images.map((im, i) => (
+        {shown.map((im, i) => (
           <div key={im.id} style={{ width: 96 }}>
             <div style={{ position: 'relative', width: 96, height: 96,
               border: `1px solid ${i === 0 ? C.key : C.line}`, borderRadius: 6,
@@ -840,8 +875,15 @@ function Images({ listingId, images, onChanged }) {
           style={{ width: 96, height: 96, border: `1px dashed ${C.line}`,
             borderRadius: 6, display: 'flex', alignItems: 'center',
             justifyContent: 'center', cursor: 'pointer', color: C.sub,
-            fontSize: 12, textAlign: 'center', background: C.soft }}>
-          {busy ? '入れています…' : '＋ 画像を\n追加'}
+            fontSize: 11, textAlign: 'center', background: C.soft,
+            lineHeight: 1.5, padding: 4, boxSizing: 'border-box',
+            whiteSpace: 'pre-line' }}>
+          {busy ? '入れています…'
+            : (kids.length > 1
+              ? `＋ 画像を追加\n（${target
+                ? (kids.find(c => c.id === target)?.axis1 || 'この色')
+                : '共通'}）`
+              : '＋ 画像を\n追加')}
         </div>
         <input ref={fileRef} type="file" accept="image/*" multiple
           style={{ display: 'none' }}

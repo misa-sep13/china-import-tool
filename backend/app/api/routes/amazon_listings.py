@@ -636,7 +636,7 @@ def _problems(row: AmazonListing, db: Session) -> list:
         p.append("三辺と重量のどれかが空です")
 
     imgs = (db.query(AmazonListingImage)
-            .filter(AmazonListingImage.listing_id == row.id).count())
+            .filter(AmazonListingImage.listing_id == row.id).all())
     if not imgs:
         p.append("商品画像がありません。Amazonは画像が無いと公開されないことがあります")
 
@@ -652,9 +652,14 @@ def _problems(row: AmazonListing, db: Session) -> list:
             p.append(f"[{who}] JANがありません")
     # バリエーションは常に色で登録する（色でないと選択肢ごとの画像が出ない）
     if len(kids) > 1:
+        shared = any(i.child_id is None for i in imgs)
         for c in kids:
+            who = c.axis1 or c.title[:16] if (c.axis1 or c.title) else c.sku
             if not (c.axis1 or "").strip():
                 p.append(f"[{c.title[:16] if c.title else c.sku}] 色が空です")
+            # 色ごとの画像が無ければ共通を使う。どちらも無ければ画像なし
+            if imgs and not shared and not any(i.child_id == c.id for i in imgs):
+                p.append(f"[{who}] 画像がありません（共通の画像もありません）")
     return p
 
 
@@ -833,6 +838,24 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
         a["generic_keyword"] = one(row.keywords.strip())
     if "supplier_declared_dg_hz_regulation" not in extra:
         a["supplier_declared_dg_hz_regulation"] = one("not_applicable")
+
+    # 親にも画像を付ける。共通のものを使う（無ければ子の1枚目）
+    base = _public_base()
+    if db is not None and base:
+        imgs = (db.query(AmazonListingImage)
+                .filter(AmazonListingImage.listing_id == row.id)
+                .order_by(AmazonListingImage.sort_order).all())
+        mine = [i for i in imgs if i.child_id is None] or imgs
+        urls = [f"{base}/api/amazon-listings/public-image/{i.public_token}"
+                for i in mine]
+        if urls:
+            a["main_product_image_locator"] = [
+                {"marketplace_id": mp, "media_location": urls[0]}]
+            if len(urls) > 1:
+                a["other_product_image_locator"] = [
+                    {"marketplace_id": mp, "media_location": u}
+                    for u in urls[1:9]]
+
     for k, v in extra.items():
         if v is None or str(v).strip() == "":
             continue
