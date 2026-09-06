@@ -77,6 +77,7 @@ export default function ListingEditor({ listingId, onBack }) {
         rival_asin: d.rival_asin, attrs: d.attrs,
         must_kw: d.must_kw, diff_points: d.diff_points,
         parent_sku: d.parent_sku, is_test: d.is_test,
+        fulfillment: d.fulfillment,
         variation_theme: d.variation_theme,
         axis1_label: d.axis1_label, axis2_label: d.axis2_label,
         children: (d.children || []).map(c => ({
@@ -451,6 +452,14 @@ export default function ListingEditor({ listingId, onBack }) {
             type="number" />
           <F l="実重量 (kg)" v={d.weight} on={v => set('weight', v ? +v : null)}
             type="number" />
+          <div>
+            <span style={label}>出荷方法</span>
+            <select style={input} value={d.fulfillment || 'merchant'}
+              onChange={e => set('fulfillment', e.target.value)}>
+              <option value="fba">FBA（Amazonから出荷）</option>
+              <option value="merchant">自己発送</option>
+            </select>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center',
           marginTop: 10, flexWrap: 'wrap' }}>

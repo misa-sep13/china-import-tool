@@ -39,6 +39,10 @@ class AmazonListing(Base):
     product_type = Column(String)
     attrs        = Column(Text)            # 商品タイプごとの必須項目。JSON
 
+    # FBA か自己発送か。DEFAULT で送ると自己発送になってしまうので、
+    # シートの「配送」を引き継いで送り分ける
+    fulfillment = Column(String)           # fba / merchant
+
     # ---- 親子 ----
     # Amazonは単品でも親子で作るのが推奨とされているので、親は常に持つ。
     #   単品          a05（親） / a05_1（子）

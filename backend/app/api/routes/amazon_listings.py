@@ -52,6 +52,7 @@ class ListingIn(BaseModel):
     must_kw: Optional[str] = None       # ② 商品説明に入れる必須キーワード
     diff_points: Optional[str] = None   # 自社の差別化ポイント
     parent_sku: Optional[str] = None
+    fulfillment: Optional[str] = None
     variation_theme: Optional[str] = None
     axis1_label: Optional[str] = None
     axis2_label: Optional[str] = None
@@ -114,6 +115,7 @@ def _out(row: AmazonListing, db: Session, src: dict = None) -> dict:
         "rival_asin": row.rival_asin, "product_type": row.product_type,
         "attrs": _loads(row.attrs, {}),
         "parent_sku": row.parent_sku,
+        "fulfillment": row.fulfillment or "merchant",
         "variation_theme": row.variation_theme,
         "axis1_label": row.axis1_label, "axis2_label": row.axis2_label,
         "monthly_sales": row.monthly_sales, "review_count": row.review_count,
@@ -250,6 +252,8 @@ def sync_one(research_id: str, overwrite: bool = False,
     put("len_c", src["len_c"])
     put("weight", src["weight"])
     put("rival_asin", src["rival_asin"])
+    # シートの「配送」から。FBA以外は自己発送として扱う
+    put("fulfillment", "fba" if src.get("fulfill") == "FBA" else "merchant")
 
     # 判断根拠はシートが正。毎回そのまま写す
     row.rival_image = src["rival_image"]
@@ -796,10 +800,17 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
             "marketplace_id": mp, "currency": "JPY",
             "our_price": [{"schedule": [{"value_with_tax": int(price)}]}],
         }]
-    # 在庫は0で作る。実在庫は既存の在庫連携が入れる
-    a["fulfillment_availability"] = [{
-        "fulfillment_channel_code": "DEFAULT", "quantity": 0,
-    }]
+    # FBAか自己発送か。DEFAULT は自己発送を意味するので、
+    # FBAの商品をそのまま送ると出荷方法が食い違ってしまう。
+    # 自己発送のときだけ在庫0で作る（実在庫は既存の在庫連携が入れる）。
+    if (row.fulfillment or "").lower() == "fba":
+        a["fulfillment_availability"] = [{
+            "fulfillment_channel_code": "AMAZON_JP",
+        }]
+    else:
+        a["fulfillment_availability"] = [{
+            "fulfillment_channel_code": "DEFAULT", "quantity": 0,
+        }]
     a["condition_type"] = one("new_new")
 
     # 三辺と重量。必須なのにこれまで空だった。

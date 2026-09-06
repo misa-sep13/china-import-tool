@@ -204,6 +204,8 @@ def extract(research: dict, settings: dict) -> dict:
         "len_c": _f(row.get("lenC")) or None,
         "weight": _f(row.get("weight")) or None,
         "price": _i(row.get("price")),
+        # FBA か自己発送か。出品時の送り先チャネルに使う
+        "fulfill": (row.get("fulfill") or "").strip(),
         "fee": _i(row.get("fee")),
         "monthly_sales": _i(row.get("monthlySales")),
         "review_count": _i(row.get("reviewCount")),

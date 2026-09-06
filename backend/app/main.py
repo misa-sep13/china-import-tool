@@ -326,6 +326,9 @@ def _migrate():
         # どのカテゴリでもだいたい聞かれる項目の既定値
         ("amazon_research_settings","common_attrs",
          "ALTER TABLE amazon_research_settings ADD COLUMN common_attrs TEXT"),
+        # FBAか自己発送か。既定のDEFAULTだと自己発送になってしまう
+        ("amazon_listings","fulfillment",
+         "ALTER TABLE amazon_listings ADD COLUMN fulfillment VARCHAR"),
     ]
 
     inspector = inspect(engine)
