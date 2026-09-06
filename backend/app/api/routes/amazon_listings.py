@@ -137,7 +137,30 @@ def _out(row: AmazonListing, db: Session, src: dict = None) -> dict:
         # 登録画面でも読めるようにする（別タブへ戻らずに済むように）
         ids = [src["research_id"]] + [c.get("row_id") for c in src.get("rows", [])]
         d["notes"] = _notes_for(db, [i for i in ids if i])
+        # 競合のAmazonページと1688。いつでも開けるように常に返す
+        d["links"] = _links_of(src)
     return d
+
+
+def _links_of(src: dict) -> list:
+    """自分で確かめたいときのために、競合のAmazonページと1688を並べる。
+
+    素材や寸法が商品仕様に書かれていないことは多く、
+    そのときは元のページを見るしかない。
+    """
+    out = []
+    if not src:
+        return out
+    for r in (src.get("rows") or []):
+        asin = (r.get("asin") or "").strip().upper()
+        if asin:
+            out.append({"kind": "競合", "asin": asin,
+                        "label": (r.get("competitor") or asin)[:40],
+                        "url": f"https://www.amazon.co.jp/dp/{asin}"})
+    for u in (src.get("urls_1688") or []):
+        if u:
+            out.append({"kind": "1688", "label": "仕入れ元のページ", "url": u})
+    return out
 
 
 def _notes_for(db: Session, ids: list) -> dict:
@@ -1899,19 +1922,7 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
                                    if k in ("length", "width", "height")}
         need.append(f)
 
-    # 自分で確かめたいときのために、競合のAmazonページと1688を並べる
-    links = []
-    if src2:
-        for r in (src2.get("rows") or []):
-            asin = (r.get("asin") or "").strip().upper()
-            if asin:
-                links.append({"kind": "競合", "asin": asin,
-                              "label": (r.get("competitor") or asin)[:40],
-                              "url": f"https://www.amazon.co.jp/dp/{asin}"})
-        for u in (src2.get("urls_1688") or []):
-            if u:
-                links.append({"kind": "1688", "label": "仕入れ元のページ",
-                              "url": u})
+    links = _links_of(src2)
 
     return {"checked": checked,
             "newly_asked": asked_all,

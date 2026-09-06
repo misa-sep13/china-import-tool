@@ -297,6 +297,9 @@ export default function ListingEditor({ listingId, onBack }) {
 
       {/* ---- 判断根拠 ---- */}
       <Basis d={d} />
+      <div style={{ marginTop: -4, marginBottom: 10 }}>
+        <Links links={d.links} />
+      </div>
 
       {/* ---- 送信前の指摘 ---- */}
       {problems.length > 0 && (
@@ -525,23 +528,7 @@ export default function ListingEditor({ listingId, onBack }) {
           <H t="Amazonの検証の結果"
             note="出品はしていません。ここで出た指摘を埋めれば、そのまま出せます" />
 
-          {/* 自分で確かめたいときのために、競合と仕入れ元を並べる */}
-          {(valid.links || []).length > 0 && (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap',
-              marginBottom: 10, paddingBottom: 8,
-              borderBottom: `1px solid ${C.line}` }}>
-              <span style={{ fontSize: 11, color: C.sub }}>
-                自分で確かめる:
-              </span>
-              {valid.links.map((l, i) => (
-                <a key={i} href={l.url} target="_blank" rel="noreferrer"
-                  style={{ fontSize: 11, color: C.key }}>
-                  {l.kind === '1688' ? '🛒' : '🔗'} {l.kind}
-                  {l.kind === '競合' ? `（${l.label}）` : ''} ↗
-                </a>
-              ))}
-            </div>
-          )}
+          <Links links={valid.links} />
           {valid.checked.map((v, i) => (
             <div key={i} style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 600,
@@ -616,6 +603,7 @@ export default function ListingEditor({ listingId, onBack }) {
         <section style={{ ...card, marginBottom: 10 }}>
           <H t={`この商品タイプで必要な項目（${d.product_type || ''}）`}
             note="Amazonに聞かれたものです。性質ごとに分けてあります" />
+          <Links links={d.links} />
 
           {/* ツールが決められるもの・共通の設定で答えているもの。入力は要らない */}
           {fields.filter(f => f.kind === 'auto' || f.kind === 'common').length > 0 && (
@@ -776,6 +764,23 @@ export default function ListingEditor({ listingId, onBack }) {
 }
 
 /* ---------- 部品 ---------- */
+
+/** 競合のAmazonページと1688。素材や寸法を自分で確かめるとき用 */
+function Links({ links }) {
+  if (!links || !links.length) return null
+  return (
+    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap',
+      alignItems: 'center', marginBottom: 8 }}>
+      <span style={{ fontSize: 11, color: C.sub }}>自分で確かめる:</span>
+      {links.map((l, i) => (
+        <a key={i} href={l.url} target="_blank" rel="noreferrer"
+          style={{ fontSize: 12, color: C.key, fontWeight: 600 }}>
+          {l.kind === '1688' ? '🛒 1688で見る' : `🔗 ${l.label}`} ↗
+        </a>
+      ))}
+    </div>
+  )
+}
 
 function H({ t, note }) {
   return (
