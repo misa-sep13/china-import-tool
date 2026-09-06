@@ -577,13 +577,28 @@ def prepare(listing_id: int, db: Session = Depends(get_db)):
     return out
 
 
+# 出ていても送信は止めないもの。画像は後から足せるし、
+# ノーブランドの案内はそもそも「そう出します」という知らせなので
+_NOT_BLOCKING = ("画像がありません", "ノーブランド")
+
+
+def _blocking(problems: list) -> list:
+    return [p for p in problems
+            if not any(k in p for k in _NOT_BLOCKING)]
+
+
 @router.get("/{listing_id:int}/check")
 def check(listing_id: int, db: Session = Depends(get_db)):
-    """送る前の見落としを洗い出す。送信は止めないが、赤で出す。"""
+    """送る前の見落としを洗い出す。
+
+    blocking に入っているものが残っていると出品できない。
+    画像なしとノーブランドの案内は、出しても送信は止めない。
+    """
     row = db.get(AmazonListing, listing_id)
     if not row:
         raise HTTPException(404, "ありません")
-    return {"problems": _problems(row, db)}
+    problems = _problems(row, db)
+    return {"problems": problems, "blocking": _blocking(problems)}
 
 
 def _problems(row: AmazonListing, db: Session) -> list:
@@ -858,11 +873,7 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
                 "product_type": row.product_type,
                 "problems": problems, "sent": []}
 
-        # 画像なしとブランドの案内は警告どまり。
-        # それ以外が残っていたら本番送信はしない
-        skip = ("画像がありません", "ノーブランド")
-        blocking = [p for p in problems
-                    if not any(k in p for k in skip)]
+        blocking = _blocking(problems)
         if blocking and not body.dry_run:
             item["ok"] = False
             item["error"] = "足りないところがあるので送っていません"

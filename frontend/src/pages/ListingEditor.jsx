@@ -14,6 +14,7 @@ import { titleProblems, byteLen, KW_LIMITS, stripColor, childTitle,
 export default function ListingEditor({ listingId, onBack }) {
   const [d, setD] = useState(null)
   const [problems, setProblems] = useState([])
+  const [blocking, setBlocking] = useState([])  // これが残ると出品できない
   const [fields, setFields] = useState(null)     // 商品タイプの必須項目
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
@@ -38,6 +39,7 @@ export default function ListingEditor({ listingId, onBack }) {
       ])
       setD(r.data)
       setProblems(c.data.problems || [])
+      setBlocking(c.data.blocking || [])
       dirty.current = false
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
@@ -71,6 +73,7 @@ export default function ListingEditor({ listingId, onBack }) {
       dirty.current = false
       const c = await api.get(`/amazon-listings/${listingId}/check`)
       setProblems(c.data.problems || [])
+      setBlocking(c.data.blocking || [])
       setMsg('保存しました')
       return true
     } catch (e) {
@@ -93,6 +96,7 @@ export default function ListingEditor({ listingId, onBack }) {
         + (r.data.schema_error ? ` ／ 必須項目は取れませんでした: ${r.data.schema_error}` : ''))
       const c = await api.get(`/amazon-listings/${listingId}/check`)
       setProblems(c.data.problems || [])
+      setBlocking(c.data.blocking || [])
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }
@@ -161,6 +165,7 @@ export default function ListingEditor({ listingId, onBack }) {
       setD(r.data); setMsg('シートから取り込み直しました')
       const c = await api.get(`/amazon-listings/${listingId}/check`)
       setProblems(c.data.problems || [])
+      setBlocking(c.data.blocking || [])
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }
@@ -231,14 +236,20 @@ export default function ListingEditor({ listingId, onBack }) {
 
       {/* ---- 送信前の指摘 ---- */}
       {problems.length > 0 && (
-        <div style={{ ...card, marginBottom: 10, background: '#fffbeb',
-          borderColor: '#fde68a' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: C.warn,
-            marginBottom: 5 }}>
-            出品するまでに足りないもの（{problems.length}件）
+        <div style={{ ...card, marginBottom: 10,
+          background: blocking.length ? '#fffbeb' : C.soft,
+          borderColor: blocking.length ? '#fde68a' : C.line }}>
+          <div style={{ fontSize: 12, fontWeight: 700,
+            color: blocking.length ? C.warn : C.good, marginBottom: 5 }}>
+            {blocking.length
+              ? `出品するまでに足りないもの（${blocking.length}件）`
+              : '出品できます（下はお知らせです）'}
           </div>
           {problems.map((p, i) => (
-            <div key={i} style={{ fontSize: 12, color: '#92400e' }}>・{p}</div>
+            <div key={i} style={{ fontSize: 12,
+              color: blocking.includes(p) ? '#92400e' : C.sub }}>
+              {blocking.includes(p) ? '・' : '（参考）'}{p}
+            </div>
           ))}
         </div>
       )}
@@ -403,9 +414,10 @@ export default function ListingEditor({ listingId, onBack }) {
           gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
           <div>
             <span style={label}>ブランド名</span>
-            <input style={input} value={d.brand ?? ''} placeholder="Aqualiora"
+            <input style={input} value={d.brand ?? ''}
+              placeholder="空のままでOK"
               onChange={e => set('brand', e.target.value)} />
-            <div style={{ fontSize: 11, color: C.warn, marginTop: 3 }}>
+            <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>
               ブランド登録が済むまで「ノーブランド」で出します
             </div>
           </div>
@@ -482,15 +494,15 @@ export default function ListingEditor({ listingId, onBack }) {
           送る中身を見る（送信しません）
         </button>
         <button className="btn btn-primary" onClick={() => submit(false)}
-          disabled={busy || problems.some(p => !p.includes('画像がありません'))}>
+          disabled={busy || blocking.length > 0}>
           Amazonへ出品する
         </button>
         {sent && <span style={{ fontSize: 12, color: C.good }}>
           送信済みです。もう一度送ると差し替えになります
         </span>}
-        {problems.some(p => !p.includes('画像がありません')) && (
+        {blocking.length > 0 && (
           <span style={{ fontSize: 12, color: C.warn }}>
-            足りないところがあるので、まだ出品できません
+            足りないところがあるので、まだ出品できません（{blocking.length}件）
           </span>
         )}
       </section>
