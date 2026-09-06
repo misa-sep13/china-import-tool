@@ -737,6 +737,66 @@ def common_attrs(db: Session) -> dict:
     return {k: _typed(k, v) for k, v in out.items()}
 
 
+# ---------- 項目の性質を分ける ----------
+#
+# Amazonに聞かれる項目は3種類ある。どれに当たるかはこちらで判断し、
+# 画面には「毎回入れるもの」だけを出す。
+#
+#   auto … ツールが決められる（SKU・ブランド名から入る）
+#   type … そのカテゴリでは毎回同じ（1度入れれば覚える）
+#   item … 商品ごとに違う（毎回入れてもらう）
+#
+# 判断を間違えることもあるので、画面から type と item を入れ替えられる。
+
+# ツールが決められるもの。値の作り方も一緒に持つ
+_AUTO_ATTRS = {
+    "part_number": "sku",        # メーカー型番 ＝ SKU
+    "model_number": "sku",       # 品番・型番 ＝ SKU
+    "manufacturer": "brand",     # メーカー名 ＝ ブランド名
+}
+
+# 商品ごとに変わるもの。名前に含まれていたら item と見なす
+_ITEM_HINTS = (
+    "color", "size", "style", "pattern", "flavor", "material",
+    "model_name", "length", "width", "height", "weight", "dimension",
+    "price", "count", "quantity", "character", "edition", "scent",
+    "capacity", "volume", "wattage", "voltage", "age_range", "theme",
+)
+
+# カテゴリで毎回同じもの。名前に含まれていたら type と見なす
+_TYPE_HINTS = (
+    "department", "distribution_designation", "is_exclusive",
+    "country", "batteries", "regulation", "warranty", "target_gender",
+    "compliance", "certification", "safety", "import",
+)
+
+
+def attr_kind(name: str, override: dict = None) -> str:
+    n = (name or "").lower()
+    if (override or {}).get(n):
+        return override[n]
+    if n in _AUTO_ATTRS:
+        return "auto"
+    if any(h in n for h in _TYPE_HINTS):
+        return "type"
+    if any(h in n for h in _ITEM_HINTS):
+        return "item"
+    # 迷ったら商品ごと。間違えて覚えるより、毎回聞くほうが安全
+    return "item"
+
+
+def auto_attr_values(db: Session, row, child=None) -> dict:
+    """SKUやブランド名から決まる項目。"""
+    out = {}
+    sku = (child.sku if child is not None else None) or row.parent_sku or ""
+    brand = _brand_for(db, row)
+    for name, src in _AUTO_ATTRS.items():
+        v = sku if src == "sku" else brand
+        if v:
+            out[name] = v
+    return out
+
+
 def _public_base() -> str:
     """Amazonが画像を取りに来るときの土台となるURL。"""
     import os
@@ -769,6 +829,7 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
     # 共通 → カテゴリで覚えたもの → 商品ごと の順に重ねる。
     # 後のほうが強い（商品ごとの値が最優先）
     extra = dict(common_attrs(db))
+    extra.update(auto_attr_values(db, row, child))
     extra.update(memo_values(db, row.product_type))
     extra.update({k: _typed(k, v)
                   for k, v in (_loads(row.attrs, {}) or {}).items()
@@ -883,6 +944,7 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
     mp = amazon_api._RESEARCH_MP
     extra = dict(common_attrs(db)) if db is not None else {}
     if db is not None:
+        extra.update(auto_attr_values(db, row))
         extra.update(memo_values(db, row.product_type))
     extra.update({k: _typed(k, v)
                   for k, v in (_loads(row.attrs, {}) or {}).items()
@@ -1461,7 +1523,10 @@ def memo_values(db: Session, product_type: str) -> dict:
         return {}
     try:
         v = json.loads(row.values)
-        return v if isinstance(v, dict) else {}
+        if not isinstance(v, dict):
+            return {}
+        # __kinds__ は分類の上書きなので、出品には混ぜない
+        return {k: x for k, x in v.items() if not k.startswith("__")}
     except (ValueError, TypeError):
         return {}
 
@@ -1512,29 +1577,56 @@ def get_memo(product_type: str, db: Session = Depends(get_db)):
             return x if isinstance(x, type(d)) else d
         except (ValueError, TypeError):
             return d
+    vals = jl(row.values, {})
     return {"product_type": pt, "display_name": row.display_name,
-            "values": jl(row.values, {}), "asked": jl(row.asked, []),
+            "values": {k: v for k, v in vals.items() if not k.startswith("__")},
+            "kinds": vals.get("__kinds__") or {},
+            "asked": jl(row.asked, []),
             "used_count": row.used_count or 0,
             "updated_at": row.updated_at.isoformat() if row.updated_at else None}
 
 
 class MemoIn(BaseModel):
-    values: Optional[dict] = None
+    values: Optional[dict] = None       # 覚えさせたい値
+    kinds: Optional[dict] = None        # 分類の上書き {属性名: "type"|"item"}
     display_name: Optional[str] = None
 
 
 @router.put("/product-type-memo/{product_type}")
 def put_memo(product_type: str, body: MemoIn, db: Session = Depends(get_db)):
-    """このカテゴリで毎回同じになる値を覚えさせる。"""
+    """このカテゴリで毎回同じになる値を覚えさせる。
+
+    覚えるのは「カテゴリで毎回同じ」と分類した項目だけ。
+    商品ごとに変わるものは、こちらで判断して外す。
+    """
     row = _memo_of(db, (product_type or "").upper())
     if row is None:
         raise HTTPException(400, "商品タイプがありません")
     if body.display_name:
         row.display_name = body.display_name
+
+    now = memo_values(db, row.product_type)
+    kinds = dict((get_memo(product_type, db).get("kinds") or {}))
+    if body.kinds:
+        kinds.update({k: v for k, v in body.kinds.items()
+                      if v in ("type", "item")})
+
     if body.values is not None:
-        keep = {k: v for k, v in body.values.items()
-                if v not in (None, "") and k not in _COMMON_DEFAULTS}
-        row.values = json.dumps(keep, ensure_ascii=False)
+        for k, v in body.values.items():
+            if k in _COMMON_DEFAULTS or k in _AUTO_ATTRS:
+                continue      # 共通・自動で入るものは覚えない
+            if attr_kind(k, kinds) != "type":
+                now.pop(k, None)
+                continue      # 商品ごとに変わるものは覚えない
+            if v in (None, ""):
+                now.pop(k, None)
+            else:
+                now[k] = v
+
+    keep = dict(now)
+    if kinds:
+        keep["__kinds__"] = kinds
+    row.values = json.dumps(keep, ensure_ascii=False)
     db.commit()
     return get_memo(product_type, db)
 
@@ -1595,10 +1687,15 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
     schema = amazon_api.fetch_product_type_schema(row.product_type)
     by_name = {f["name"]: f for f in (schema.get("fields") or [])}
     memo = get_memo(row.product_type, db)
+    kinds = memo.get("kinds") or {}
+    auto = auto_attr_values(db, row, kids[0] if kids else None)
     need = []
     for n in memo["asked"]:
-        f = by_name.get(n) or {"name": n, "label": n, "type": "text",
-                               "choices": []}
+        f = dict(by_name.get(n) or {"name": n, "label": n, "type": "text",
+                                    "choices": []})
+        f["kind"] = attr_kind(n, kinds)
+        if f["kind"] == "auto":
+            f["auto_value"] = auto.get(n)
         need.append(f)
 
     return {"checked": checked,

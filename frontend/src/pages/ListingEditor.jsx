@@ -185,16 +185,28 @@ export default function ListingEditor({ listingId, onBack }) {
   }
 
   // このカテゴリで毎回同じになる値を覚えさせる
-  const rememberForType = async () => {
+  const rememberForType = async (kinds) => {
     setBusy(true); setErr('')
     try {
-      await api.put(`/amazon-listings/product-type-memo/${d.product_type}`,
-        { values: d.attrs || {} })
-      setMsg(`${d.product_type} の入力値を覚えました。`
+      const r = await api.put(
+        `/amazon-listings/product-type-memo/${d.product_type}`,
+        { values: d.attrs || {}, kinds: kinds || undefined })
+      const n = Object.keys(r.data.values || {}).length
+      setMsg(`${d.product_type} で ${n} 件を覚えました。`
         + '同じカテゴリの次の商品からは自動で入ります')
+      // 分類を変えたぶんを画面へ反映する
+      setFields(f => (f || []).map(x => ({
+        ...x, kind: (r.data.kinds || {})[x.name] || x.kind,
+      })))
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }
+  }
+
+  // 「覚える／毎回入れる」を入れ替える
+  const flipKind = (name, kind) => {
+    setFields(f => (f || []).map(x => x.name === name ? { ...x, kind } : x))
+    rememberForType({ [name]: kind })
   }
 
   const checkLines = async () => {
@@ -585,35 +597,79 @@ export default function ListingEditor({ listingId, onBack }) {
       {fields && fields.length > 0 && (
         <section style={{ ...card, marginBottom: 10 }}>
           <H t={`この商品タイプで必要な項目（${d.product_type || ''}）`}
-            note="Amazonに聞かれたものが並びます。毎回同じになる値は「このカテゴリで覚える」を押すと、次の商品から自動で入ります" />
-          <div style={{ display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
-            {fields.map(f => (
-              <div key={f.name}>
-                <span style={label}>{f.label || f.name}</span>
-                {f.type === 'select' && (f.choices || []).length ? (
-                  <select style={input} value={(d.attrs || {})[f.name] || ''}
-                    onChange={e => set('attrs',
-                      { ...(d.attrs || {}), [f.name]: e.target.value })}>
-                    <option value="">（選ぶ）</option>
-                    {f.choices.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                ) : (
-                  <input style={input} value={(d.attrs || {})[f.name] || ''}
-                    onChange={e => set('attrs',
-                      { ...(d.attrs || {}), [f.name]: e.target.value })} />
-                )}
+            note="Amazonに聞かれたものです。性質ごとに分けてあります" />
+
+          {/* ツールが決められるもの。入力は要らない */}
+          {fields.filter(f => f.kind === 'auto').length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.good,
+                marginBottom: 4 }}>
+                自動で入ります（入力不要）
               </div>
-            ))}
-          </div>
+              <div style={{ fontSize: 12, color: C.sub }}>
+                {fields.filter(f => f.kind === 'auto').map(f => (
+                  <span key={f.name} style={{ marginRight: 12 }}>
+                    {f.label}
+                    <b style={{ color: C.text }}> {f.auto_value || '—'}</b>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {[['type', 'このカテゴリで覚える（次から自動で入ります）', C.key],
+            ['item', '商品ごとに入れる（覚えません）', C.sub]].map(([kind, title, col]) => {
+            const list = fields.filter(f => f.kind === kind)
+            if (!list.length) return null
+            return (
+              <div key={kind} style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: col,
+                  marginBottom: 4 }}>{title}</div>
+                <div style={{ display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                  gap: 10 }}>
+                  {list.map(f => (
+                    <div key={f.name}>
+                      <span style={label}>
+                        {f.label}
+                        <button className="btn btn-secondary"
+                          style={{ float: 'right', fontSize: 10,
+                            padding: '0 6px', fontWeight: 400 }}
+                          title={kind === 'type'
+                            ? '商品ごとに変わるものなら、こちらへ'
+                            : 'このカテゴリで毎回同じなら、こちらへ'}
+                          onClick={() => flipKind(f.name,
+                            kind === 'type' ? 'item' : 'type')}>
+                          {kind === 'type' ? '→ 毎回入れる' : '→ 覚える'}
+                        </button>
+                      </span>
+                      {f.type === 'select' && (f.choices || []).length ? (
+                        <select style={input} value={(d.attrs || {})[f.name] || ''}
+                          onChange={e => set('attrs',
+                            { ...(d.attrs || {}), [f.name]: e.target.value })}>
+                          <option value="">（選ぶ）</option>
+                          {f.choices.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      ) : (
+                        <input style={input} value={(d.attrs || {})[f.name] || ''}
+                          onChange={e => set('attrs',
+                            { ...(d.attrs || {}), [f.name]: e.target.value })} />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+
           <div style={{ display: 'flex', gap: 8, alignItems: 'center',
-            marginTop: 10, flexWrap: 'wrap' }}>
+            flexWrap: 'wrap' }}>
             <button className="btn btn-secondary" style={{ fontSize: 12 }}
-              onClick={rememberForType} disabled={busy || !d.product_type}>
+              onClick={() => rememberForType()} disabled={busy || !d.product_type}>
               💾 このカテゴリで覚える
             </button>
             <span style={{ fontSize: 11, color: C.sub }}>
-              素材・カラーなど商品ごとに変わるものは覚えさせないでください
+              「このカテゴリで覚える」に入っているものだけ保存します
             </span>
           </div>
         </section>
