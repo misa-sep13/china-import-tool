@@ -1830,3 +1830,28 @@ def submit_listing(sku: str, product_type: str, attributes: dict,
     return {"ok": r.get("status") == "ACCEPTED" and not fatal,
             "status": r.get("status"), "sku": r.get("sku"),
             "issues": issues}
+
+
+def fetch_attr_definition(product_type: str, name: str) -> dict:
+    """商品タイプの定義から、1項目ぶんをそのまま返す。
+
+    選択肢が enum なのか examples なのか、どこに入っているかは
+    項目によって違う。画面に出ないときはここで中身を見る。
+    """
+    pt = (product_type or "").strip().upper()
+    try:
+        params = urllib.parse.urlencode({
+            "marketplaceIds": _RESEARCH_MP, "sellerId": _seller_id(),
+            "productTypeVersion": "LATEST", "locale": "ja_JP",
+        })
+        meta = _call_sp_api(
+            f"/definitions/2020-09-01/productTypes/{pt}?{params}")
+        url = (meta.get("schema") or {}).get("link", {}).get("resource")
+        with urllib.request.urlopen(urllib.request.Request(url), timeout=30) as res:
+            schema = json.loads(res.read())
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    prop = (schema.get("properties") or {}).get(name)
+    if prop is None:
+        return {"ok": False, "error": "その項目は定義にありません"}
+    return {"ok": True, "name": name, "definition": prop}

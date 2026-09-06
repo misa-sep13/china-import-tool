@@ -1070,3 +1070,10 @@ def gs1_done(body: Gs1DoneIn, db: Session = Depends(get_db)):
         r.gs1_registered_at = now
     db.commit()
     return {"marked": len(rows)}
+
+
+@router.get("/product-type/{product_type}/attr/{name}")
+def product_type_attr(product_type: str, name: str):
+    """1項目の定義をそのまま返す。選択肢がどこに入っているか調べる用。"""
+    from app.services import amazon_api
+    return amazon_api.fetch_attr_definition(product_type, name)
