@@ -1641,7 +1641,33 @@ def fetch_product_type_schema(product_type: str) -> dict:
         return {"ok": False, "error": f"定義を読めませんでした（{type(e).__name__}）"}
 
     props = schema.get("properties") or {}
-    required = schema.get("required") or []
+    # 最上位の required はごく少ない。実際に必須になるものは、
+    # 条件付き（allOf/anyOf/oneOf の中の required）に散らばっている。
+    # セラーセントラルの入力欄と揃えるため、そこまで拾う。
+    required = list(schema.get("required") or [])
+
+    def dig(node):
+        if isinstance(node, dict):
+            for k in ("required",):
+                v = node.get(k)
+                if isinstance(v, list):
+                    for x in v:
+                        if isinstance(x, str) and x not in required:
+                            required.append(x)
+            for k in ("allOf", "anyOf", "oneOf", "then", "else", "if"):
+                v = node.get(k)
+                if isinstance(v, list):
+                    for x in v:
+                        dig(x)
+                elif isinstance(v, dict):
+                    dig(v)
+        elif isinstance(node, list):
+            for x in node:
+                dig(x)
+
+    dig(schema)
+    # 定義に無い名前は出しても入れられないので落とす
+    required = [k for k in required if k in props]
     fields = []
     for key in required:
         if key in _FILLED_BY_TOOL:
@@ -1657,10 +1683,13 @@ def fetch_product_type_schema(product_type: str) -> dict:
             "type": "select" if enum else "text",
             "choices": (enum or [])[:200],
         })
+    # 呼び出し側が fields で読んでいるので、同じものを両方の名前で返す
     return {"ok": True, "product_type": pt,
             "display_name": meta.get("displayName") or pt,
+            "fields": fields,
             "required_fields": fields,
-            "auto_filled": sorted(k for k in required if k in _FILLED_BY_TOOL)}
+            "auto_filled": sorted(set(k for k in required if k in _FILLED_BY_TOOL)),
+            "all_count": len(props)}
 
 
 # ---------- 出品（Listings Items API） ----------
