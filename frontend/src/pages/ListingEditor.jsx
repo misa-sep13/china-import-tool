@@ -81,7 +81,7 @@ export default function ListingEditor({ listingId, onBack }) {
         variation_theme: d.variation_theme,
         axis1_label: d.axis1_label, axis2_label: d.axis2_label,
         children: (d.children || []).map(c => ({
-          id: c.id, sku: c.sku, title: c.title,
+          id: c.id, sku: c.sku, jan: c.jan, title: c.title,
           axis1: c.axis1, axis2: c.axis2, price: c.price,
         })),
         // 画面だけで使う値（色を外した土台）はサーバーへ送らない
@@ -947,10 +947,13 @@ function Variations({ d, set, nextSku }) {
                     onChange={e => putKid(i, 'sku', e.target.value.trim())} />
                 </td>
                 <td style={td}>
-                  <span style={{ color: c.jan ? C.key : C.sub, fontSize: 11.5,
-                    whiteSpace: 'nowrap' }}>
-                    {c.jan || '（準備で発番）'}
-                  </span>
+                  {/* GS1に登録済みの番号へ付け替えたいことがある。
+                      台帳にある番号だけ受け付ける */}
+                  <input style={{ ...input, fontSize: 11.5,
+                    color: c.jan ? C.key : C.sub }}
+                    value={c.jan || ''} placeholder="（準備で発番）"
+                    title="台帳にある番号に付け替えられます。外した番号は取り消しになります"
+                    onChange={e => putKid(i, 'jan', e.target.value.trim())} />
                 </td>
                 <td style={td}>
                   <input style={{ ...input, fontSize: 12 }} value={c.title || ''}

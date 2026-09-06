@@ -358,6 +358,28 @@ def update_listing(listing_id: int, body: ListingIn,
                 db.add(c)
             c.sort_order = i
             c.sku = (ch.get("sku") or "").strip() or None
+            # JANの付け替え。GS1に登録済みの番号を使いたいことがある。
+            # 台帳にある番号だけ許し、外れた番号は取り消しにする
+            new_jan = (ch.get("jan") or "").strip()
+            if new_jan and new_jan != (c.jan or ""):
+                j = db.query(JanCode).filter(JanCode.code == new_jan).first()
+                if j is None:
+                    raise HTTPException(400, f"{new_jan} は台帳にありません")
+                if j.sku and j.sku != c.sku:
+                    raise HTTPException(
+                        400, f"{new_jan} はすでに {j.sku} で使われています")
+                old_jan = c.jan
+                c.jan = new_jan
+                j.sku = c.sku
+                j.status = "used"
+                if old_jan:
+                    o = (db.query(JanCode)
+                         .filter(JanCode.code == old_jan).first())
+                    if o is not None:
+                        # 一度Amazonへ送った番号は再利用しない
+                        o.status = "void"
+                        o.sku = None
+                        o.note = ((o.note + " ／ ") if o.note else "")                             + f"{c.sku} から外した（別の番号に付け替え）"
             c.title = ch.get("title")
             c.axis1 = ch.get("axis1")
             c.axis2 = ch.get("axis2")
