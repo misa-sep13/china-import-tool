@@ -26,6 +26,7 @@ from app.models.amazon_listing import (
     AmazonListing, AmazonListingChild, AmazonListingImage,
 )
 from app.services import amazon_listing_sync as sync
+from app.services import listing_prompt
 from app.services import amazon_api
 
 router = APIRouter(prefix="/amazon-listings", tags=["amazon-listings"])
@@ -48,6 +49,8 @@ class ListingIn(BaseModel):
     weight: Optional[float] = None
     rival_asin: Optional[str] = None
     attrs: Optional[dict] = None
+    must_kw: Optional[str] = None       # ② 商品説明に入れる必須キーワード
+    diff_points: Optional[str] = None   # 自社の差別化ポイント
     parent_sku: Optional[str] = None
     variation_theme: Optional[str] = None
     axis1_label: Optional[str] = None
@@ -325,7 +328,8 @@ def update_listing(listing_id: int, body: ListingIn,
     # 出品原稿はシートを正とするので、こちらで直したぶんも書き戻す。
     # そうしないと、シートを開いたときに古い内容に戻って見える
     draft = {k: v for k, v in data.items()
-             if k in ("title", "keywords", "description")}
+             if k in ("title", "keywords", "description",
+                      "must_kw", "diff_points")}
     if "bullets" in data:
         draft["description"] = "\n".join(
             [str(b) for b in (data["bullets"] or []) if str(b).strip()])
@@ -1088,6 +1092,8 @@ _DRAFT_KEYS = {
     "title": "titleParent",
     "keywords": "kwDraft",
     "description": "listingBullets",
+    "must_kw": "kwSpec",
+    "diff_points": "diffPoints",
 }
 
 
@@ -1158,6 +1164,8 @@ def _read_sheet_draft(src: dict) -> dict:
         "keywords": src.get("keywords") or "",
         "bullets": src.get("bullets") or [],
         "description": src.get("description") or "",
+        "must_kw": src.get("must_kw") or "",
+        "diff_points": src.get("diff_points") or "",
     }
 
 
@@ -1201,3 +1209,62 @@ def _pull_children(db: Session, row: AmazonListing, src: dict) -> None:
     for c in kids[len(sheet_kids):]:
         if not c.jan:
             db.delete(c)
+
+
+# ---------- 商品説明のプロンプトと検査 ----------
+
+@router.post("/{listing_id:int}/desc-prompt")
+def desc_prompt(listing_id: int, short: bool = False,
+                db: Session = Depends(get_db)):
+    """商品説明（5行）を作らせるプロンプトを組み立てる。
+
+    シートの「④ 商品説明プロンプトをコピー」と同じもの。
+    ChatGPTなどに貼り、返ってきた5行を「商品の要点」に貼ってもらう。
+    """
+    row = db.get(AmazonListing, listing_id)
+    if not row:
+        raise HTTPException(404, "ありません")
+
+    src = None
+    for c in sync.candidates(_sheet(db), all_status=True):
+        if c["research_id"] == row.research_id:
+            src = c
+            break
+    if src is None:
+        raise HTTPException(404, "元のリサーチがシートにありません")
+
+    # 子のタイトルは、この画面で直したぶんを使う
+    kids = (db.query(AmazonListingChild)
+            .filter(AmazonListingChild.listing_id == row.id)
+            .order_by(AmazonListingChild.sort_order).all())
+    if kids:
+        src = dict(src)
+        src["children"] = [{"title": c.title or ""} for c in kids]
+
+    ids = [c.get("row_id") for c in (src.get("rows") or []) if c.get("row_id")]
+    text = listing_prompt.build(
+        src, must_kw=src.get("must_kw") or "",
+        diff=src.get("diff_points") or "",
+        notes=_notes_for(db, ids), short=short)
+    if not text:
+        return {"ok": False, "error": "まず商品タイトルを入れてください"}
+    return {"ok": True, "prompt": text, "length": len(text)}
+
+
+class LinesIn(BaseModel):
+    text: str
+
+
+@router.post("/{listing_id:int}/check-lines")
+def check_lines(listing_id: int, body: LinesIn,
+                db: Session = Depends(get_db)):
+    """貼ってもらった5行を検査する。シートの「✅ チェックする」と同じ観点。"""
+    row = db.get(AmazonListing, listing_id)
+    if not row:
+        raise HTTPException(404, "ありません")
+    must = ""
+    for c in sync.candidates(_sheet(db), all_status=True):
+        if c["research_id"] == row.research_id:
+            must = c.get("must_kw") or ""
+            break
+    return listing_prompt.check_lines(body.text, must_kw=must)

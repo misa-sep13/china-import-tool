@@ -189,6 +189,8 @@ def extract(research: dict, settings: dict) -> dict:
         "bullets": bullets[:5],
         "description": (research.get("listingBullets") or "").strip(),
         "diff_points": (research.get("diffPoints") or "").strip(),
+        # ② 商品説明に入れる必須キーワード。プロンプトに差し込む
+        "must_kw": (research.get("kwSpec") or "").strip(),
 
         # 候補商品の行ID。調査メモ（商品仕様・レビュー）を引くのに使う
         "rows": [{"row_id": r.get("id"), "asin": (r.get("asin") or "").strip()}

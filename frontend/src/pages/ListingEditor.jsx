@@ -55,6 +55,7 @@ export default function ListingEditor({ listingId, onBack }) {
         description: d.description, brand: d.brand, price: d.price,
         len_a: d.len_a, len_b: d.len_b, len_c: d.len_c, weight: d.weight,
         rival_asin: d.rival_asin, attrs: d.attrs,
+        must_kw: d.must_kw, diff_points: d.diff_points,
         parent_sku: d.parent_sku,
         variation_theme: d.variation_theme,
         axis1_label: d.axis1_label, axis2_label: d.axis2_label,
@@ -110,6 +111,42 @@ export default function ListingEditor({ listingId, onBack }) {
           && !confirm('いまの商品タイトルを下書きで置き換えますか？')) return
       set('title', r.data.title)
       setMsg(`${r.data.length}字で作りました。ここから手で直してください`)
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  // ④ 商品説明のプロンプト。押すとコピーされ、ChatGPTなどに貼る。
+  // 返ってきた5行を「商品の要点」に貼って ✅ で確かめる、という流れ
+  const [lineCheck, setLineCheck] = useState(null)
+  const [promptText, setPromptText] = useState('')
+  const copyPrompt = async (short) => {
+    if (dirty.current && !(await save())) return
+    setBusy(true); setErr(''); setMsg('')
+    try {
+      const r = await api.post(
+        `/amazon-listings/${listingId}/desc-prompt?short=${short ? 1 : 0}`)
+      if (!r.data.ok) { setErr(r.data.error); return }
+      try {
+        await navigator.clipboard.writeText(r.data.prompt)
+        setMsg(`${short ? '同じチャットで続ける版を' : ''}`
+          + `コピーしました（${r.data.length.toLocaleString('ja-JP')}文字）。`
+          + 'ChatGPTなどに貼り、返ってきた5行を下の「商品の要点」に貼ってください')
+      } catch {
+        // クリップボードが使えないブラウザ。選んでコピーできるように出す
+        setPromptText(r.data.prompt)
+      }
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  const checkLines = async () => {
+    setBusy(true); setErr('')
+    try {
+      const r = await api.post(`/amazon-listings/${listingId}/check-lines`,
+        { text: (d.bullets || []).join('\n') })
+      setLineCheck(r.data)
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }
@@ -271,7 +308,75 @@ export default function ListingEditor({ listingId, onBack }) {
           </div>
         </div>
 
+        {/* ② 商品説明に入れる必須キーワード。プロンプトに差し込まれる */}
+        <div style={{ marginBottom: 10 }}>
+          <span style={label}>
+            商品説明に入れる必須キーワード（プロンプトに差し込まれます）
+          </span>
+          <textarea style={{ ...input, minHeight: 44 }} value={d.must_kw || ''}
+            onChange={e => set('must_kw', e.target.value)}
+            placeholder="本文に自然に織り込む語。タイトルと重なって構いません" />
+        </div>
+
+        {/* ④ 商品説明のプロンプト。ここから5行を作る */}
+        <div style={{ marginBottom: 10 }}>
+          <span style={label}>
+            自社の差別化ポイント（競合との違い・改良点を事実だけ）
+          </span>
+          <textarea style={{ ...input, minHeight: 52 }}
+            value={d.diff_points || ''}
+            onChange={e => set('diff_points', e.target.value)}
+            placeholder="例：割れにくい個包装ケース入り／3枚セットで洗い替えに便利／日本語説明書付き。空欄でも作れますが、その場合AIは自社の改良点を知らないまま書きます" />
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center',
+            marginTop: 6, flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" style={{ fontSize: 12 }}
+              onClick={() => copyPrompt(false)} disabled={busy}>
+              📋 商品説明プロンプトをコピー
+            </button>
+            <button className="btn btn-secondary" style={{ fontSize: 12 }}
+              onClick={() => copyPrompt(true)} disabled={busy}
+              title="分析用プロンプトを貼ったのと同じチャットで続けて頼むとき用。競合の仕様・レビューを再掲しません">
+              📋 同じチャットで続ける版
+            </button>
+            <span style={{ fontSize: 11, color: C.sub }}>
+              返ってきた5行を、下の「商品の要点」に貼ってください
+            </span>
+          </div>
+          {promptText && (
+            <textarea readOnly style={{ ...input, minHeight: 120, marginTop: 6,
+              fontSize: 11, background: C.soft }} value={promptText}
+              onFocus={e => e.target.select()} />
+          )}
+        </div>
+
         <Bullets value={d.bullets || []} onChange={v => set('bullets', v)} />
+
+        {/* ⑤ 貼った5行の検査 */}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center',
+          marginTop: -4, marginBottom: 10, flexWrap: 'wrap' }}>
+          <button className="btn btn-secondary" style={{ fontSize: 12 }}
+            onClick={checkLines} disabled={busy}>
+            ✅ チェックする
+          </button>
+          {lineCheck && (
+            <span style={{ fontSize: 11,
+              color: lineCheck.ok ? C.good : C.warn, fontWeight: 700 }}>
+              {lineCheck.ok ? '問題ありません' : `${lineCheck.problems.length}件`}
+            </span>
+          )}
+        </div>
+        {lineCheck && !lineCheck.ok && (
+          <div style={{ background: '#fffbeb', border: '1px solid #fde68a',
+            borderRadius: 6, padding: 9, marginBottom: 10, fontSize: 12,
+            color: '#92400e' }}>
+            {lineCheck.problems.map((t, i) => <div key={i}>・{t}</div>)}
+            {(lineCheck.lines || []).filter(l => l.problems.length).map(l => (
+              <div key={l.no} style={{ marginTop: 3 }}>
+                {l.no}行目: {l.problems.join(' ／ ')}
+              </div>
+            ))}
+          </div>
+        )}
 
         <div>
           <span style={label}>商品説明</span>
