@@ -507,6 +507,32 @@
   .an-body .reg-panel input.reg-jan{width:140px;}
   .an-body .reg-panel input.reg-brand{width:180px;}
   .reg-unit{font-size:11px;color:var(--ink-2);margin-right:6px;}
+  .reg-sec{font-size:11.5px;font-weight:800;color:var(--brand);
+    margin-top:6px;padding-top:8px;border-top:1px solid var(--line);}
+  .reg-part{display:flex;flex-direction:column;gap:7px;}
+  .reg-sub{font-size:11.5px;font-weight:700;color:var(--ink-2);margin-top:4px;}
+  .reg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:9px;}
+  .reg-cell{display:flex;flex-direction:column;gap:3px;}
+  .reg-cap{font-size:11px;font-weight:700;color:var(--ink-2);
+    display:flex;align-items:center;gap:6px;}
+  .reg-cap button{margin-left:auto;font-size:10px;padding:1px 6px;}
+  .reg-hint{font-size:10.5px;color:var(--ink-2);line-height:1.5;}
+  .reg-hint.warn{color:var(--warn);font-weight:700;}
+  .reg-auto{font-size:11px;color:var(--ink-2);display:flex;flex-wrap:wrap;
+    gap:4px 14px;align-items:center;}
+  .reg-auto b{color:var(--ok,#15803d);width:100%;}
+  .reg-autoitem{white-space:nowrap;}
+  .reg-imgs{display:flex;gap:9px;flex-wrap:wrap;align-items:flex-start;}
+  .reg-img{position:relative;width:86px;display:flex;flex-direction:column;gap:3px;}
+  .reg-img img{width:86px;height:86px;object-fit:contain;
+    border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--surface);}
+  .reg-img.add{width:86px;height:86px;border:1px dashed var(--line-2);
+    border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center;
+    cursor:pointer;font-size:11px;color:var(--ink-2);text-align:center;
+    background:var(--surface-2);}
+  .reg-main{position:absolute;top:0;left:0;background:var(--brand);color:#fff;
+    font-size:9.5px;padding:1px 5px;border-bottom-right-radius:5px;}
+  .an-body .reg-panel button.mini.on{border-color:var(--brand);color:var(--brand);font-weight:700;}
   .reg-out{display:flex;flex-direction:column;gap:6px;}
   .reg-check{border:1px solid var(--line);border-radius:var(--r-sm);
     padding:7px 9px;font-size:11.5px;background:var(--surface-2);}
@@ -5926,6 +5952,8 @@ if(FIREBASE_CONFIG.databaseURL){
 
     function num(v){ const n = parseFloat(v); return Number.isFinite(n) ? n : null; }
 
+    let lastNeed = [];        // 検証で分かった、足りない項目
+
     function draw(){
       panel.innerHTML = '';
       if(!data) return;
@@ -6023,6 +6051,54 @@ if(FIREBASE_CONFIG.databaseURL){
         })));
       }
 
+      // --- 商品画像 ---
+      panel.appendChild(el('div', 'reg-sec', '商品画像'));
+      const imgBox = el('div', 'reg-part');
+      panel.appendChild(imgBox);
+      async function reloadImages(){
+        data = await regApi('/' + data.id);
+        drawImages(imgBox, data, reloadImages);
+      }
+      drawImages(imgBox, data, reloadImages);
+
+      // --- よく聞かれる項目（全商品に共通）---
+      panel.appendChild(el('div', 'reg-sec', 'よく聞かれる項目（全商品に共通）'));
+      const comBox = el('div', 'reg-part');
+      panel.appendChild(comBox);
+      loadCommon().then(c => drawCommon(comBox, c)).catch(() => {});
+
+      // --- 商品タイプごとの必要な項目。検証を押すと並ぶ ---
+      panel.appendChild(el('div', 'reg-sec', 'この商品タイプで必要な項目'));
+      const needBox = el('div', 'reg-part');
+      needBox.appendChild(el('span', 'an-note',
+        '「🔎 Amazonで検証する」を押すと、足りない項目がここに出ます'));
+      panel.appendChild(needBox);
+
+      // 検証で分かった「足りない項目」を並べる。
+      // 直したらすぐ保存し、カテゴリに覚えさせることもできる
+      function showNeed(){
+        if(!lastNeed.length) return;
+        drawNeed(needBox, data, lastNeed,
+          attrs => { data.attrs = attrs; put('attrs', attrs); },
+          async () => {
+            await flush();
+            try{
+              await regApi('/product-type-memo/' + data.product_type,
+                {method: 'PUT', body: JSON.stringify({values: data.attrs || {}})});
+              opStatus.textContent = data.product_type + ' で覚えました';
+            }catch(e){ opStatus.textContent = String(e.message || e); }
+          },
+          async (name, kind) => {
+            try{
+              await regApi('/product-type-memo/' + data.product_type,
+                {method: 'PUT', body: JSON.stringify(
+                  {values: data.attrs || {}, kinds: {[name]: kind}})});
+              lastNeed = lastNeed.map(f => f.name === name ? Object.assign({}, f, {kind: kind}) : f);
+              showNeed();
+            }catch(e){ opStatus.textContent = String(e.message || e); }
+          });
+      }
+
       // --- 進めるボタン ---
       const ops = el('div', 'an-row');
       const prep = el('button', 'mini', '出品の準備（商品タイプ・SKU・JAN）');
@@ -6055,6 +6131,8 @@ if(FIREBASE_CONFIG.databaseURL){
           await flush();
           const v = await regApi('/' + data.id + '/validate', {method: 'POST'});
           drawValidate(out, v);
+          lastNeed = v.need || [];
+          showNeed();
           opStatus.textContent = '';
         }catch(e){ opStatus.textContent = String(e.message || e); }
         finally{ val.disabled = false; }
@@ -6075,6 +6153,237 @@ if(FIREBASE_CONFIG.databaseURL){
         finally{ sub.disabled = false; }
       });
     }
+  }
+
+
+  // ---- ⑦ よく聞かれる項目（全商品に共通）--------------------------------
+  //
+  // 「電池が必要ですか」のように、商品タイプが違ってもほぼ必ず聞かれる項目。
+  // 1度入れれば全商品に効くので、サーバー側の設定に持たせている。
+  let commonCache = null;
+  async function loadCommon(){
+    if(commonCache) return commonCache;
+    commonCache = await regApi('/common-attrs');
+    return commonCache;
+  }
+
+  function drawCommon(box, common){
+    box.innerHTML = '';
+    const wrap = el('div', 'reg-grid');
+    (common.fields || []).forEach(f => {
+      const cell = el('div', 'reg-cell');
+      cell.appendChild(el('div', 'reg-cap', f.label));
+      const sel = document.createElement('select');
+      if(f.type === 'bool'){
+        [['false', 'いいえ'], ['true', 'はい']].forEach(([v, l]) => {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = l; sel.appendChild(o);
+        });
+        sel.value = common.values[f.name] ? 'true' : 'false';
+      }else{
+        (f.choices || []).forEach(c => {
+          const [v, l] = Array.isArray(c) ? c : [c.value, c.label];
+          const o = document.createElement('option');
+          o.value = v; o.textContent = l; sel.appendChild(o);
+        });
+        sel.value = common.values[f.name] || '';
+      }
+      sel.addEventListener('change', async () => {
+        const vals = Object.assign({}, common.values);
+        vals[f.name] = f.type === 'bool' ? (sel.value === 'true') : sel.value;
+        common.values = vals;
+        try{
+          commonCache = await regApi('/common-attrs',
+            {method: 'PUT', body: JSON.stringify({values: vals})});
+        }catch(e){ /* 次に開いたときに入れ直せばよい */ }
+      });
+      cell.appendChild(sel);
+      wrap.appendChild(cell);
+    });
+    box.appendChild(wrap);
+  }
+
+  // ---- ⑦ 商品タイプごとの必要な項目 -------------------------------------
+  //
+  // 検証で「足りない」と言われたものが並ぶ。
+  //   自動で入る／共通の設定から  … 入力は要らない。値だけ出す
+  //   このカテゴリで覚える        … 1度入れれば次から自動
+  //   商品ごとに入れる            … 毎回入れる
+  function drawNeed(box, data, need, onChange, onRemember, onFlip){
+    box.innerHTML = '';
+    if(!need || !need.length) return;
+    const attrs = Object.assign({}, data.attrs || {});
+
+    const auto = need.filter(f => f.kind === 'auto' || f.kind === 'common');
+    if(auto.length){
+      const d = el('div', 'reg-auto');
+      d.appendChild(el('b', null, '自動で入ります（入力不要）'));
+      auto.forEach(f => {
+        let v = f.auto_value;
+        if(v && typeof v === 'object') v = v.length + '×' + v.width + '×' + v.height + ' cm';
+        d.appendChild(el('span', 'reg-autoitem',
+          f.label + ' ' + (v == null ? '—' : v)
+          + (f.kind === 'common' ? '（共通）' : '')));
+      });
+      box.appendChild(d);
+    }
+
+    [['type', 'このカテゴリで覚える（次から自動で入ります）'],
+     ['item', '商品ごとに入れる（覚えません）']].forEach(([kind, title]) => {
+      const list = need.filter(f => f.kind === kind);
+      if(!list.length) return;
+      box.appendChild(el('div', 'reg-sub', title));
+      const grid = el('div', 'reg-grid');
+      list.forEach(f => {
+        const cell = el('div', 'reg-cell');
+        const cap = el('div', 'reg-cap', f.label);
+        const flip = el('button', 'mini', kind === 'type' ? '→ 毎回' : '→ 覚える');
+        flip.dataset.writes = '1';
+        flip.addEventListener('click', () =>
+          onFlip(f.name, kind === 'type' ? 'item' : 'type'));
+        cap.appendChild(flip);
+        cell.appendChild(cap);
+
+        let input;
+        if(f.type === 'select' && (f.choices || []).length){
+          input = document.createElement('select');
+          const blank = document.createElement('option');
+          blank.value = ''; blank.textContent = '（選ぶ）';
+          input.appendChild(blank);
+          f.choices.forEach(c => {
+            const [v, l] = Array.isArray(c) ? c : [c.value, c.label];
+            const o = document.createElement('option');
+            o.value = v; o.textContent = l; input.appendChild(o);
+          });
+        }else{
+          input = document.createElement('input');
+          input.type = 'text';
+        }
+        input.value = attrs[f.name] == null ? '' : attrs[f.name];
+        input.addEventListener('change', () => {
+          attrs[f.name] = input.value;
+          onChange(attrs);
+        });
+        cell.appendChild(input);
+
+        if(f.suggest){
+          const b = el('button', 'mini', f.suggest + ' を入れる');
+          b.dataset.writes = '1';
+          b.addEventListener('click', () => {
+            input.value = f.suggest;
+            attrs[f.name] = f.suggest;
+            onChange(attrs);
+          });
+          const line = el('div', 'reg-hint');
+          line.appendChild(el('span', null, '読み取り: '));
+          line.appendChild(b);
+          cell.appendChild(line);
+        }else if(f.suggest_note){
+          cell.appendChild(el('div', 'reg-hint warn', f.suggest_note));
+        }
+        if(f.description){
+          cell.appendChild(el('div', 'reg-hint', f.description.slice(0, 70)));
+        }
+        grid.appendChild(cell);
+      });
+      box.appendChild(grid);
+    });
+
+    const row = el('div', 'an-row');
+    const save = el('button', 'mini', '💾 このカテゴリで覚える');
+    save.dataset.writes = '1';
+    save.addEventListener('click', () => onRemember());
+    row.appendChild(save);
+    row.appendChild(el('span', 'an-note',
+      '「このカテゴリで覚える」に入っているものだけ保存します'));
+    box.appendChild(row);
+  }
+
+  // ---- ⑦ 商品画像 --------------------------------------------------------
+  //
+  // Amazonは画像をURLで取りに来るので、サーバーに預けて公開URLで読ませる。
+  // バリエーションは色ごとに分けられる（入れていない子は共通を使う）。
+  function drawImages(box, data, reload){
+    box.innerHTML = '';
+    let target = null;                 // null＝共通
+    const kids = (data.children || []).filter(c => c.id);
+    const imgs = data.images || [];
+    const base = API_BASE.replace(/\/api$/, '');
+
+    if(kids.length > 1){
+      const tabs = el('div', 'an-row');
+      [{id: null, label: '共通'}].concat(
+        kids.map(c => ({id: c.id, label: c.axis1 || c.sku || '（色なし）'}))
+      ).forEach(t => {
+        const n = imgs.filter(i => (i.child_id == null ? null : i.child_id) === t.id).length;
+        const b = el('button', 'mini' + (target === t.id ? ' on' : ''),
+                     t.label + ' ' + n + '枚');
+        b.addEventListener('click', () => { target = t.id; render(); });
+        tabs.appendChild(b);
+      });
+      tabs.appendChild(el('span', 'an-note',
+        '色ごとに入れていないものは「共通」を使います'));
+      box.appendChild(tabs);
+    }
+
+    const strip = el('div', 'reg-imgs');
+    box.appendChild(strip);
+    const file = document.createElement('input');
+    file.type = 'file'; file.accept = 'image/*'; file.multiple = true;
+    file.style.display = 'none';
+    box.appendChild(file);
+
+    async function upload(files){
+      const list = [...files].filter(f => f.type.indexOf('image/') === 0);
+      if(!list.length) return;
+      for(const f of list){
+        const fd = new FormData();
+        fd.append('file', f);
+        await fetch(API_BASE + '/amazon-listings/' + data.id + '/images'
+          + (target ? '?child_id=' + target : ''),
+          {method: 'POST', headers: apiHeaders(), body: fd});
+      }
+      await reload();
+    }
+    file.addEventListener('change', () => { upload(file.files); file.value = ''; });
+
+    function render(){
+      strip.innerHTML = '';
+      const mine = (data.images || []).filter(
+        i => (i.child_id == null ? null : i.child_id) === target);
+      mine.forEach((im, i) => {
+        const cell = el('div', 'reg-img');
+        const img = document.createElement('img');
+        img.src = base + im.url;
+        cell.appendChild(img);
+        if(i === 0) cell.appendChild(el('span', 'reg-main', 'メイン'));
+        const del = el('button', 'mini danger', '削除');
+        del.dataset.writes = '1';
+        del.addEventListener('click', async () => {
+          if(!confirm('この画像を消しますか？')) return;
+          await fetch(API_BASE + '/amazon-listings/images/' + im.id,
+            {method: 'DELETE', headers: apiHeaders()});
+          await reload();
+        });
+        cell.appendChild(del);
+        strip.appendChild(cell);
+      });
+      const add = el('div', 'reg-img add', '＋ 画像を追加');
+      add.addEventListener('click', () => file.click());
+      strip.appendChild(add);
+      // タブの選択を出し直す
+      const tabs = box.querySelector('.an-row');
+      if(tabs){
+        [...tabs.querySelectorAll('button')].forEach((b, n) => {
+          const id = n === 0 ? null : kids[n - 1].id;
+          b.classList.toggle('on', target === id);
+        });
+      }
+    }
+    render();
+
+    box.addEventListener('dragover', e => e.preventDefault());
+    box.addEventListener('drop', e => { e.preventDefault(); upload(e.dataTransfer.files); });
   }
 
   // 検証の結果を出す。足りない項目はその場で入れられるようにする
