@@ -103,6 +103,9 @@ class AmazonResearchSettings(Base):
     # ブランド登録（Amazonブランド登録）が済んだか。
     # 済むまで自社ブランド名では弾かれるので、「ノーブランド」で出す
     brand_ready = Column(Boolean, default=False)
+    # どのカテゴリでもだいたい聞かれる項目の既定値（JSON）。
+    # 商品ごとに入れ直さなくて済むよう、ここに1度だけ入れておく
+    common_attrs = Column(Text)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 

@@ -677,6 +677,61 @@ def _brand_for(db: Session, row: AmazonListing) -> str:
     return NO_BRAND
 
 
+# ---------- どのカテゴリでもだいたい聞かれる項目 ----------
+#
+# 「電池が必要な商品ですか？」のように、商品タイプが違ってもほぼ必ず
+# required に入る項目がある。商品ごとに入れ直すのは手間なので、
+# 設定に既定値を1度だけ持たせ、出品のたびに差し込む。
+#
+# 商品ごとに変えたいときは、その商品の必須項目で上書きできる
+# （商品側の値のほうが優先される）。
+
+COMMON_FIELDS = [
+    {"name": "batteries_required", "label": "電池・バッテリーが必要な商品ですか？",
+     "type": "bool", "default": "false"},
+    {"name": "batteries_included", "label": "電池・バッテリーは同梱されていますか？",
+     "type": "bool", "default": "false"},
+    {"name": "country_of_origin", "label": "原産国",
+     "type": "select", "default": "CN",
+     "choices": [["CN", "中国"], ["JP", "日本"], ["VN", "ベトナム"],
+                 ["KR", "韓国"], ["TW", "台湾"], ["US", "アメリカ"]]},
+    {"name": "supplier_declared_dg_hz_regulation", "label": "危険物の該当性",
+     "type": "select", "default": "not_applicable",
+     "choices": [["not_applicable", "該当なし"],
+                 ["ghs", "GHS（化学品）"],
+                 ["storage", "保管の規制あり"],
+                 ["transportation", "輸送の規制あり"]]},
+]
+
+_COMMON_DEFAULTS = {f["name"]: f["default"] for f in COMMON_FIELDS}
+_COMMON_TYPE = {f["name"]: f["type"] for f in COMMON_FIELDS}
+
+
+def _typed(name: str, value):
+    """Amazonへ送る形にそろえる。真偽値を文字列のまま送ると弾かれる。"""
+    if _COMMON_TYPE.get(name) == "bool":
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ("true", "1", "yes", "はい")
+    return value
+
+
+def common_attrs(db: Session) -> dict:
+    """設定に入っている既定値。未設定なら初期値を使う。"""
+    st = db.query(AmazonResearchSettings).first()
+    saved = {}
+    if st is not None and st.common_attrs:
+        try:
+            v = json.loads(st.common_attrs)
+            if isinstance(v, dict):
+                saved = v
+        except (ValueError, TypeError):
+            pass
+    out = dict(_COMMON_DEFAULTS)
+    out.update({k: v for k, v in saved.items() if v not in (None, "")})
+    return {k: _typed(k, v) for k, v in out.items()}
+
+
 def _public_base() -> str:
     """Amazonが画像を取りに来るときの土台となるURL。"""
     import os
@@ -706,7 +761,11 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
     これまで送れていなかった検索キーワード・三辺・重量もここで入れる。
     """
     mp = amazon_api._RESEARCH_MP
-    extra = _loads(row.attrs, {}) or {}
+    # 共通の既定値を土台に、商品ごとの値で上書きする
+    extra = dict(common_attrs(db))
+    extra.update({k: _typed(k, v)
+                  for k, v in (_loads(row.attrs, {}) or {}).items()
+                  if v not in (None, "")})
 
     def one(v, **kw):
         return [{"value": v, "marketplace_id": mp, **kw}]
@@ -758,11 +817,6 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
             "marketplace_id": mp, "value": row.weight, "unit": "kilograms",
         }]
 
-    # 危険物の該当性。日本ではほぼ全カテゴリで必須。
-    # 画面で選んでいなければ「該当なし」で送る
-    if "supplier_declared_dg_hz_regulation" not in extra:
-        a["supplier_declared_dg_hz_regulation"] = one("not_applicable")
-
     # 画像。この子ぶんが無ければ親の画像を使う
     base = _public_base()
     if base:
@@ -798,7 +852,7 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
 
     # 商品タイプごとの必須項目。画面で入れてもらったもの
     for k, v in extra.items():
-        if v is None or str(v).strip() == "":
+        if v is None or (isinstance(v, str) and not v.strip()):
             continue
         a[k] = one(v)
     return a
@@ -813,7 +867,10 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
     （軸が無いのにテーマだけ送ると弾かれるため）。
     """
     mp = amazon_api._RESEARCH_MP
-    extra = _loads(row.attrs, {}) or {}
+    extra = dict(common_attrs(db)) if db is not None else {}
+    extra.update({k: _typed(k, v)
+                  for k, v in (_loads(row.attrs, {}) or {}).items()
+                  if v not in (None, "")})
 
     def one(v, **kw):
         return [{"value": v, "marketplace_id": mp, **kw}]
@@ -836,9 +893,6 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
                              for b in bullets[:5] if str(b).strip()]
     if (row.keywords or "").strip():
         a["generic_keyword"] = one(row.keywords.strip())
-    if "supplier_declared_dg_hz_regulation" not in extra:
-        a["supplier_declared_dg_hz_regulation"] = one("not_applicable")
-
     # 親にも画像を付ける。共通のものを使う（無ければ子の1枚目）
     base = _public_base()
     if db is not None and base:
@@ -857,7 +911,7 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
                     for u in urls[1:9]]
 
     for k, v in extra.items():
-        if v is None or str(v).strip() == "":
+        if v is None or (isinstance(v, str) and not v.strip()):
             continue
         a[k] = one(v)
     return a
@@ -1334,3 +1388,27 @@ def check_lines(listing_id: int, body: LinesIn,
             must = c.get("must_kw") or ""
             break
     return listing_prompt.check_lines(body.text, must_kw=must)
+
+
+@router.get("/common-attrs")
+def get_common_attrs(db: Session = Depends(get_db)):
+    """どのカテゴリでもだいたい聞かれる項目の既定値。"""
+    return {"fields": COMMON_FIELDS, "values": common_attrs(db)}
+
+
+class CommonAttrsIn(BaseModel):
+    values: dict
+
+
+@router.put("/common-attrs")
+def put_common_attrs(body: CommonAttrsIn, db: Session = Depends(get_db)):
+    """既定値を保存する。全商品に効く。"""
+    st = db.query(AmazonResearchSettings).first()
+    if st is None:
+        st = AmazonResearchSettings(id=1)
+        db.add(st)
+    keep = {k: v for k, v in (body.values or {}).items()
+            if k in _COMMON_DEFAULTS}
+    st.common_attrs = json.dumps(keep, ensure_ascii=False)
+    db.commit()
+    return {"values": common_attrs(db)}

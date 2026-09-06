@@ -323,6 +323,9 @@ def _migrate():
         # 動作確認のための出品。JANを本番ぶんとして数えない
         ("amazon_listings","is_test",
          "ALTER TABLE amazon_listings ADD COLUMN is_test BOOLEAN DEFAULT FALSE"),
+        # どのカテゴリでもだいたい聞かれる項目の既定値
+        ("amazon_research_settings","common_attrs",
+         "ALTER TABLE amazon_research_settings ADD COLUMN common_attrs TEXT"),
     ]
 
     inspector = inspect(engine)

@@ -24,11 +24,29 @@ export default function ListingEditor({ listingId, onBack }) {
   const [kwLimit, setKwLimit] = useState(500)  // 検索キーワードの上限（バイト）
   const dirty = useRef(false)
 
+  // どのカテゴリでもだいたい聞かれる項目。全商品に効く既定値
+  const [common, setCommon] = useState(null)
+
   useEffect(() => {
     api.get('/amazon-listings/next-sku')
       .then(r => setNextSku((r.data.next || [])[0] || ''))
       .catch(() => {})
+    api.get('/amazon-listings/common-attrs')
+      .then(r => setCommon(r.data))
+      .catch(() => {})
   }, [])
+
+  const saveCommon = async (values) => {
+    setCommon(c => ({ ...c, values }))
+    try {
+      await api.put('/amazon-listings/common-attrs', { values })
+      const c2 = await api.get(`/amazon-listings/${listingId}/check`)
+      setProblems(c2.data.problems || [])
+      setBlocking(c2.data.blocking || [])
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    }
+  }
 
   const load = useCallback(async () => {
     setErr('')
@@ -446,6 +464,40 @@ export default function ListingEditor({ listingId, onBack }) {
           )}
         </div>
       </section>
+
+      {/* ---- どのカテゴリでもだいたい聞かれる項目 ---- */}
+      {common && (
+        <section style={{ ...card, marginBottom: 10 }}>
+          <H t="よく聞かれる項目（全商品に共通）"
+            note="どのカテゴリでもほぼ必ず required に入るものです。ここで1度入れておけば、以後の商品にも同じ値が入ります" />
+          <div style={{ display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+            gap: 10 }}>
+            {common.fields.map(f => (
+              <div key={f.name}>
+                <span style={label}>{f.label}</span>
+                {f.type === 'bool' ? (
+                  <select style={input}
+                    value={common.values[f.name] ? 'true' : 'false'}
+                    onChange={e => saveCommon({ ...common.values,
+                      [f.name]: e.target.value === 'true' })}>
+                    <option value="false">いいえ</option>
+                    <option value="true">はい</option>
+                  </select>
+                ) : (
+                  <select style={input} value={common.values[f.name] || ''}
+                    onChange={e => saveCommon({ ...common.values,
+                      [f.name]: e.target.value })}>
+                    {(f.choices || []).map(([v, l]) => (
+                      <option key={v} value={v}>{l}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ---- バリエーションとSKU ---- */}
       <Variations d={d} set={set} nextSku={nextSku} />
