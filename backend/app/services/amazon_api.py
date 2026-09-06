@@ -1770,20 +1770,27 @@ def _strip_html(text: str) -> str:
 
 
 def submit_listing(sku: str, product_type: str, attributes: dict,
-                   issue_locale: str = "ja_JP") -> dict:
+                   issue_locale: str = "ja_JP", validate_only: bool = False) -> dict:
     """1商品をAmazonへ出品する。
 
     PUTなので、同じSKUへもう一度送ると差し替えになる。新規も更新も
     同じ呼び方でよい。
 
+    validate_only=True なら実際には出品せず、Amazonに中身だけ見てもらう。
+    何が足りないかを先に知るために使う（カテゴリごとの必須項目は
+    数が多く、先に網羅できないため）。
+
     戻り値には Amazon が返した問題点（issues）をそのまま入れる。
     何が足りないかは、それを見ないと分からない。
     """
     token = _get_access_token()
-    params = urllib.parse.urlencode({
+    q = {
         "marketplaceIds": _RESEARCH_MP,
         "issueLocale": issue_locale,
-    })
+    }
+    if validate_only:
+        q["mode"] = "VALIDATION_PREVIEW"
+    params = urllib.parse.urlencode(q)
     url = (f"https://sellingpartnerapi-fe.amazon.com/listings/2021-08-01/items/"
            f"{_seller_id()}/{urllib.parse.quote(sku)}?{params}")
     body = json.dumps({

@@ -21,6 +21,7 @@ from app.models.amazon_research import (
     AmazonResearchSheet, AmazonResearchSettings, JanCode,
 )
 from app.models.amazon_research_page import AmazonResearchPage
+from app.models.amazon_product_type_memo import AmazonProductTypeMemo
 from app.models.product import Product
 from app.models.amazon_listing import (
     AmazonListing, AmazonListingChild, AmazonListingImage,
@@ -765,8 +766,10 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
     これまで送れていなかった検索キーワード・三辺・重量もここで入れる。
     """
     mp = amazon_api._RESEARCH_MP
-    # 共通の既定値を土台に、商品ごとの値で上書きする
+    # 共通 → カテゴリで覚えたもの → 商品ごと の順に重ねる。
+    # 後のほうが強い（商品ごとの値が最優先）
     extra = dict(common_attrs(db))
+    extra.update(memo_values(db, row.product_type))
     extra.update({k: _typed(k, v)
                   for k, v in (_loads(row.attrs, {}) or {}).items()
                   if v not in (None, "")})
@@ -879,6 +882,8 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
     """
     mp = amazon_api._RESEARCH_MP
     extra = dict(common_attrs(db)) if db is not None else {}
+    if db is not None:
+        extra.update(memo_values(db, row.product_type))
     extra.update({k: _typed(k, v)
                   for k, v in (_loads(row.attrs, {}) or {}).items()
                   if v not in (None, "")})
@@ -1423,3 +1428,180 @@ def put_common_attrs(body: CommonAttrsIn, db: Session = Depends(get_db)):
     st.common_attrs = json.dumps(keep, ensure_ascii=False)
     db.commit()
     return {"values": common_attrs(db)}
+
+
+# ---------- カテゴリごとに覚える ----------
+#
+# Amazonの商品タイプは数百あり、必須項目を先に網羅するのは現実的でない。
+# 「検証を押す → 足りない項目が出る → 入れる → 覚える」を繰り返し、
+# 同じカテゴリの2件目からは入力が要らないようにする。
+#
+# Amazonが返す issues には、足りない属性の名前が attributeNames で入る。
+# 文言だけだと拾えないので、そこを見る。
+
+def _memo_of(db: Session, product_type: str) -> AmazonProductTypeMemo:
+    pt = (product_type or "").strip().upper()
+    if not pt:
+        return None
+    row = (db.query(AmazonProductTypeMemo)
+           .filter(AmazonProductTypeMemo.product_type == pt).first())
+    if row is None:
+        row = AmazonProductTypeMemo(product_type=pt)
+        db.add(row)
+        db.flush()
+    return row
+
+
+def memo_values(db: Session, product_type: str) -> dict:
+    """そのカテゴリで覚えている入力値。"""
+    row = (db.query(AmazonProductTypeMemo)
+           .filter(AmazonProductTypeMemo.product_type ==
+                   (product_type or "").strip().upper()).first())
+    if row is None or not row.values:
+        return {}
+    try:
+        v = json.loads(row.values)
+        return v if isinstance(v, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+def _asked_from(issues: list) -> list:
+    """Amazonの指摘から、足りない属性の名前を拾う。"""
+    out = []
+    for i in (issues or []):
+        if not isinstance(i, dict):
+            continue
+        for n in (i.get("attributeNames") or []):
+            n = str(n).strip()
+            if n and n not in out:
+                out.append(n)
+    return out
+
+
+def _remember_asked(db: Session, product_type: str, issues: list) -> list:
+    """聞かれた項目をカテゴリに貯める。次回は先回りして欄を出せる。"""
+    asked = _asked_from(issues)
+    if not asked:
+        return []
+    row = _memo_of(db, product_type)
+    if row is None:
+        return []
+    try:
+        have = json.loads(row.asked) if row.asked else []
+        have = have if isinstance(have, list) else []
+    except (ValueError, TypeError):
+        have = []
+    added = [a for a in asked if a not in have]
+    if added:
+        row.asked = json.dumps(have + added, ensure_ascii=False)
+    return added
+
+
+@router.get("/product-type-memo/{product_type}")
+def get_memo(product_type: str, db: Session = Depends(get_db)):
+    """そのカテゴリで覚えている値と、これまでに聞かれた項目。"""
+    pt = (product_type or "").strip().upper()
+    row = (db.query(AmazonProductTypeMemo)
+           .filter(AmazonProductTypeMemo.product_type == pt).first())
+    if row is None:
+        return {"product_type": pt, "values": {}, "asked": [], "used_count": 0}
+    def jl(v, d):
+        try:
+            x = json.loads(v) if v else d
+            return x if isinstance(x, type(d)) else d
+        except (ValueError, TypeError):
+            return d
+    return {"product_type": pt, "display_name": row.display_name,
+            "values": jl(row.values, {}), "asked": jl(row.asked, []),
+            "used_count": row.used_count or 0,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None}
+
+
+class MemoIn(BaseModel):
+    values: Optional[dict] = None
+    display_name: Optional[str] = None
+
+
+@router.put("/product-type-memo/{product_type}")
+def put_memo(product_type: str, body: MemoIn, db: Session = Depends(get_db)):
+    """このカテゴリで毎回同じになる値を覚えさせる。"""
+    row = _memo_of(db, (product_type or "").upper())
+    if row is None:
+        raise HTTPException(400, "商品タイプがありません")
+    if body.display_name:
+        row.display_name = body.display_name
+    if body.values is not None:
+        keep = {k: v for k, v in body.values.items()
+                if v not in (None, "") and k not in _COMMON_DEFAULTS}
+        row.values = json.dumps(keep, ensure_ascii=False)
+    db.commit()
+    return get_memo(product_type, db)
+
+
+@router.post("/{listing_id:int}/validate")
+def validate(listing_id: int, db: Session = Depends(get_db)):
+    """Amazonに中身だけ見てもらう。出品はしない。
+
+    カテゴリごとの必須項目は数が多く、先に網羅できない。
+    ここで「足りない」と言われたものを覚えておき、
+    同じカテゴリの2件目からは先回りして欄を出す。
+    """
+    row = db.get(AmazonListing, listing_id)
+    if not row:
+        raise HTTPException(404, "ありません")
+    if not row.product_type:
+        raise HTTPException(400, "先に「出品の準備」を押してください")
+
+    kids = (db.query(AmazonListingChild)
+            .filter(AmazonListingChild.listing_id == row.id)
+            .order_by(AmazonListingChild.sort_order).all())
+    if not kids:
+        raise HTTPException(400, "出品するSKUがありません")
+
+    has_variation = len(kids) > 1
+    parent_sku = ((row.parent_sku or "").strip()
+                  or (kids[0].sku or "").split("_")[0]
+                  or f"a{row.id:02d}")
+
+    checked = []
+    asked_all = []
+
+    def run(sku, attrs, kind):
+        if not sku:
+            return
+        r = amazon_api.submit_listing(sku, row.product_type, attrs,
+                                      validate_only=True)
+        issues = r.get("issues") or []
+        added = _remember_asked(db, row.product_type, issues)
+        asked_all.extend(a for a in added if a not in asked_all)
+        checked.append({
+            "kind": kind, "sku": sku, "ok": bool(r.get("ok")),
+            "status": r.get("status"), "error": r.get("error"),
+            "issues": [{"message": i.get("message"),
+                        "severity": i.get("severity"),
+                        "attributes": i.get("attributeNames") or []}
+                       for i in issues if isinstance(i, dict)],
+        })
+
+    run(parent_sku, _parent_attributes(row, has_variation, db), "親")
+    for c in kids:
+        run(c.sku, _attributes(row, c, db, parent_sku=parent_sku),
+            "子" if has_variation else "単品")
+
+    db.commit()
+
+    # 足りないと言われた項目を、入力欄として出せる形にする
+    schema = amazon_api.fetch_product_type_schema(row.product_type)
+    by_name = {f["name"]: f for f in (schema.get("fields") or [])}
+    memo = get_memo(row.product_type, db)
+    need = []
+    for n in memo["asked"]:
+        f = by_name.get(n) or {"name": n, "label": n, "type": "text",
+                               "choices": []}
+        need.append(f)
+
+    return {"checked": checked,
+            "newly_asked": asked_all,
+            "need": need,
+            "memo": memo}

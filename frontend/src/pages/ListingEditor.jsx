@@ -164,6 +164,39 @@ export default function ListingEditor({ listingId, onBack }) {
     } finally { setBusy(false) }
   }
 
+  // Amazonに中身だけ見てもらう。出品はしない。
+  // 「足りない」と言われた項目はカテゴリごとに覚え、次から先回りして出す
+  const [valid, setValid] = useState(null)
+  const validate = async () => {
+    if (dirty.current && !(await save())) return
+    setBusy(true); setErr(''); setMsg(''); setValid(null)
+    try {
+      const r = await api.post(`/amazon-listings/${listingId}/validate`)
+      setValid(r.data)
+      setFields(r.data.need || [])
+      const n = (r.data.newly_asked || []).length
+      setMsg(n
+        ? `Amazonから${n}件の項目を新しく聞かれました。`
+          + '下に欄を出したので入れてください（このカテゴリで覚えます）'
+        : 'Amazonから新しく聞かれた項目はありません')
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  // このカテゴリで毎回同じになる値を覚えさせる
+  const rememberForType = async () => {
+    setBusy(true); setErr('')
+    try {
+      await api.put(`/amazon-listings/product-type-memo/${d.product_type}`,
+        { values: d.attrs || {} })
+      setMsg(`${d.product_type} の入力値を覚えました。`
+        + '同じカテゴリの次の商品からは自動で入ります')
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
   const checkLines = async () => {
     setBusy(true); setErr('')
     try {
@@ -474,6 +507,39 @@ export default function ListingEditor({ listingId, onBack }) {
         </div>
       </section>
 
+      {/* ---- Amazonの検証の結果 ---- */}
+      {valid && (
+        <section style={{ ...card, marginBottom: 10 }}>
+          <H t="Amazonの検証の結果"
+            note="出品はしていません。ここで出た指摘を埋めれば、そのまま出せます" />
+          {valid.checked.map((v, i) => (
+            <div key={i} style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600,
+                color: v.ok ? C.good : C.bad }}>
+                {v.kind} ／ {v.sku} … {v.ok ? '問題なし' : `${v.issues.length}件の指摘`}
+              </div>
+              {v.error && <div style={{ fontSize: 11, color: C.bad }}>
+                {String(v.error).slice(0, 300)}</div>}
+              {v.issues.map((is, n) => (
+                <div key={n} style={{ fontSize: 11, marginLeft: 10,
+                  color: is.severity === 'ERROR' ? C.bad : C.warn }}>
+                  ・{is.message}
+                  {is.attributes.length ? (
+                    <span style={{ color: C.sub }}> [{is.attributes.join(', ')}]</span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ))}
+          {(valid.memo?.used_count > 0 || valid.memo?.asked?.length > 0) && (
+            <div style={{ fontSize: 11, color: C.sub, marginTop: 6 }}>
+              このカテゴリ（{valid.memo.product_type}）でこれまでに聞かれた項目:{' '}
+              {valid.memo.asked.length}件
+            </div>
+          )}
+        </section>
+      )}
+
       {/* ---- どのカテゴリでもだいたい聞かれる項目 ---- */}
       {common && (
         <section style={{ ...card, marginBottom: 10 }}>
@@ -518,7 +584,8 @@ export default function ListingEditor({ listingId, onBack }) {
       {/* ---- 商品タイプごとの必須項目 ---- */}
       {fields && fields.length > 0 && (
         <section style={{ ...card, marginBottom: 10 }}>
-          <H t="この商品タイプで必要な項目" />
+          <H t={`この商品タイプで必要な項目（${d.product_type || ''}）`}
+            note="Amazonに聞かれたものが並びます。毎回同じになる値は「このカテゴリで覚える」を押すと、次の商品から自動で入ります" />
           <div style={{ display: 'grid',
             gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
             {fields.map(f => (
@@ -539,6 +606,16 @@ export default function ListingEditor({ listingId, onBack }) {
               </div>
             ))}
           </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center',
+            marginTop: 10, flexWrap: 'wrap' }}>
+            <button className="btn btn-secondary" style={{ fontSize: 12 }}
+              onClick={rememberForType} disabled={busy || !d.product_type}>
+              💾 このカテゴリで覚える
+            </button>
+            <span style={{ fontSize: 11, color: C.sub }}>
+              素材・カラーなど商品ごとに変わるものは覚えさせないでください
+            </span>
+          </div>
         </section>
       )}
       {fields && !fields.length && (
@@ -550,6 +627,11 @@ export default function ListingEditor({ listingId, onBack }) {
       {/* ---- 送信 ---- */}
       <section style={{ ...card, marginBottom: 30, display: 'flex',
         gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button className="btn btn-secondary" onClick={validate}
+          disabled={busy || !d.product_type}
+          title="Amazonに中身だけ見てもらいます。出品はしません">
+          🔎 Amazonで検証する
+        </button>
         <button className="btn btn-secondary" onClick={() => submit(true)}
           disabled={busy}>
           送る中身を見る（送信しません）
