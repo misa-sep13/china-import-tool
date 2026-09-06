@@ -517,18 +517,22 @@ function Variations({ d, set, nextSku }) {
           画面全体が横に伸びてしまう。grid の minmax(0,1fr) で包んで防ぐ */}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)' }}>
       <div style={{ overflowX: 'auto' }}>
+        {/* 列幅の指定を効かせるため table-layout を固定にする。
+            自動だと中身の長さで勝手に配られ、SKU欄ばかり広がってしまう */}
         <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse',
-          minWidth: 640 }}>
+          tableLayout: 'fixed', minWidth: 720 }}>
           <thead>
             <tr style={{ color: C.sub, textAlign: 'left' }}>
-              <th style={th}>SKU</th>
-              <th style={th}>JAN</th>
+              {/* SKUとJANは桁数が決まっているので幅を固定し、
+                  残りを商品タイトルに回す（ここが一番読みたい列） */}
+              <th style={{ ...th, width: 108 }}>SKU</th>
+              <th style={{ ...th, width: 108 }}>JAN</th>
               <th style={th}>商品タイトル</th>
-              {many && <th style={{ ...th, width: 110 }}>{a1}</th>}
-              {many && two && <th style={{ ...th, width: 110 }}>{a2}</th>}
-              <th style={{ ...th, width: 86 }}>価格</th>
-              <th style={{ ...th, width: 74 }}>状態</th>
-              <th style={{ ...th, width: 30 }}></th>
+              {many && <th style={{ ...th, width: 96 }}>{a1}</th>}
+              {many && two && <th style={{ ...th, width: 96 }}>{a2}</th>}
+              <th style={{ ...th, width: 72 }}>価格</th>
+              <th style={{ ...th, width: 58 }}>状態</th>
+              <th style={{ ...th, width: 28 }}></th>
             </tr>
           </thead>
           <tbody>
@@ -543,7 +547,8 @@ function Variations({ d, set, nextSku }) {
                     onChange={e => putKid(i, 'sku', e.target.value.trim())} />
                 </td>
                 <td style={td}>
-                  <span style={{ color: c.jan ? C.key : C.sub }}>
+                  <span style={{ color: c.jan ? C.key : C.sub, fontSize: 11.5,
+                    whiteSpace: 'nowrap' }}>
                     {c.jan || '（準備で発番）'}
                   </span>
                 </td>
@@ -554,7 +559,8 @@ function Variations({ d, set, nextSku }) {
                 {many && (
                   <td style={td}>
                     <input style={{ ...input, fontSize: 12 }} value={c.axis1 || ''}
-                      placeholder="ブラック ／ 2個/ブラック"
+                      placeholder="ブラック"
+                      title="色の値。個数違いは 2個/ブラック のように書きます"
                       onChange={e => putKid(i, 'axis1', e.target.value)} />
                   </td>
                 )}
