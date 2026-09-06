@@ -100,6 +100,9 @@ class AmazonResearchSettings(Base):
     # 後ろに連番を付けて13桁のJANにする（採番の実体は JanCode 台帳）
     gs1_prefix = Column(String)            # 例: 4570001（7桁）/ 456901234（9桁）
     brand_name = Column(String)            # 出品時のブランド名
+    # ブランド登録（Amazonブランド登録）が済んだか。
+    # 済むまで自社ブランド名では弾かれるので、「ノーブランド」で出す
+    brand_ready = Column(Boolean, default=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 

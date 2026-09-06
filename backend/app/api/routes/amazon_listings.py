@@ -56,6 +56,7 @@ class ListingIn(BaseModel):
     axis1_label: Optional[str] = None
     axis2_label: Optional[str] = None
     status: Optional[str] = None
+    is_test: Optional[bool] = None
     children: Optional[list] = None      # [{id?, sku, title, axis1, axis2, price}]
 
 
@@ -119,6 +120,7 @@ def _out(row: AmazonListing, db: Session, src: dict = None) -> dict:
         "review_rate": row.review_rate, "profit_rate": row.profit_rate,
         "rival_image": row.rival_image,
         "status": row.status,
+        "is_test": bool(row.is_test),
         "synced_at": row.synced_at.isoformat() if row.synced_at else None,
         "children": [_child_out(c) for c in kids],
         "images": [_image_out(i) for i in imgs],
@@ -458,7 +460,7 @@ def public_image(token: str, db: Session = Depends(get_db)):
 
 # ---------- 出品の準備 ----------
 
-def _issue_jan(db: Session, sku: str, name: str) -> str:
+def _issue_jan(db: Session, sku: str, name: str, test: bool = False) -> str:
     """JANを1つ発番して台帳に残す。amazon_research 側と同じ採番。
 
     バリエーションでは子の数だけ続けて呼ぶ。台帳に書き込む前に次を採ると
@@ -474,7 +476,9 @@ def _issue_jan(db: Session, sku: str, name: str) -> str:
     seq = (last.item_seq or 0) + 1 if last else 1
     code = _make_jan(prefix, seq)
     db.add(JanCode(code=code, item_seq=seq, sku=sku or None,
-                   name=name or None, status="issued"))
+                   name=name or None,
+                   status="test" if test else "issued",
+                   note="動作確認のための出品" if test else None))
     db.flush()
     return code
 
@@ -555,7 +559,8 @@ def prepare(listing_id: int, db: Session = Depends(get_db)):
     issued = []
     for c in kids:
         if not c.jan:
-            c.jan = _issue_jan(db, c.sku, c.title or row.title or "")
+            c.jan = _issue_jan(db, c.sku, c.title or row.title or "",
+                               test=bool(row.is_test))
             issued.append({"sku": c.sku, "jan": c.jan})
 
     if row.status == "draft":
@@ -590,7 +595,16 @@ def _problems(row: AmazonListing, db: Session) -> list:
         p.append(f"商品タイトルが長すぎます（{len(row.title)}字）")
     if not row.product_type:
         p.append("商品タイプがありません。「出品の準備」を押してください")
-    if not (row.brand or "").strip():
+    st = db.query(AmazonResearchSettings).first()
+    if st is None or not st.brand_ready:
+        p.append("ブランド登録がまだなので「ノーブランド」で出します"
+                 "（自社ブランド名では弾かれます）")
+        # ブランド名がタイトルに残っていると、ノーブランドと食い違って弾かれる
+        own = ((st.brand_name if st else "") or "").strip()
+        if own and own.lower() in (row.title or "").lower():
+            p.append(f"商品タイトルに「{own}」が入っています。"
+                     "ノーブランドで出す間は外してください")
+    elif not (row.brand or st.brand_name or "").strip():
         p.append("ブランド名がありません")
     if not row.price:
         p.append("価格がありません")
@@ -631,6 +645,18 @@ def _problems(row: AmazonListing, db: Session) -> list:
 
 # ---------- Amazonへ送る ----------
 
+# ブランド登録（Amazonブランド登録）が済むまで、自社ブランド名では弾かれる。
+# 済むまでは「ノーブランド」で出す。設定の brand_ready で切り替える。
+NO_BRAND = "ノーブランド"
+
+
+def _brand_for(db: Session, row: AmazonListing) -> str:
+    st = db.query(AmazonResearchSettings).first()
+    if st is not None and st.brand_ready:
+        return (row.brand or st.brand_name or "").strip()
+    return NO_BRAND
+
+
 def _public_base() -> str:
     """Amazonが画像を取りに来るときの土台となるURL。"""
     import os
@@ -667,8 +693,9 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
 
     a = {}
     a["item_name"] = one((child.title or row.title or "").strip())
-    if row.brand:
-        a["brand"] = one(row.brand)
+    brand = _brand_for(db, row)
+    if brand:
+        a["brand"] = one(brand)
     if row.description:
         a["product_description"] = one(row.description)
 
@@ -757,7 +784,8 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
     return a
 
 
-def _parent_attributes(row: AmazonListing, has_variation: bool = True) -> dict:
+def _parent_attributes(row: AmazonListing, has_variation: bool = True,
+                       db: Session = None) -> dict:
     """親。売り物ではないので価格も在庫も付けない。
 
     Amazonは単品でも親子で作るのが推奨なので、バリエーションが無くても
@@ -777,8 +805,9 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True) -> dict:
     }
     if has_variation:
         a["variation_theme"] = [{"marketplace_id": mp, "name": VARIATION_THEME}]
-    if row.brand:
-        a["brand"] = one(row.brand)
+    brand = _brand_for(db, row) if db is not None else (row.brand or "")
+    if brand:
+        a["brand"] = one(brand)
     if row.description:
         a["product_description"] = one(row.description)
     bullets = _loads(row.bullets, [])
@@ -829,8 +858,11 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
                 "product_type": row.product_type,
                 "problems": problems, "sent": []}
 
-        # 画像なしは警告どまり。それ以外が残っていたら本番送信はしない
-        blocking = [p for p in problems if "画像がありません" not in p]
+        # 画像なしとブランドの案内は警告どまり。
+        # それ以外が残っていたら本番送信はしない
+        skip = ("画像がありません", "ノーブランド")
+        blocking = [p for p in problems
+                    if not any(k in p for k in skip)]
         if blocking and not body.dry_run:
             item["ok"] = False
             item["error"] = "足りないところがあるので送っていません"
@@ -841,7 +873,7 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
                       or (kids[0].sku or "").split("_")[0]
                       or f"a{row.id:02d}")
         # 親を先に出す。親が失敗したら子は送らない（親のいない子は弾かれる）
-        attrs = _parent_attributes(row, has_variation)
+        attrs = _parent_attributes(row, has_variation, db)
         rec = {"sku": parent_sku, "kind": "親", "attributes": attrs}
         if body.dry_run:
             rec["dry_run"] = True

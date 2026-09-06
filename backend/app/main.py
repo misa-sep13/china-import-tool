@@ -317,6 +317,12 @@ def _migrate():
         # 発番したJANをGS1へ届け出たか
         ("jan_codes","gs1_registered_at",
          "ALTER TABLE jan_codes ADD COLUMN gs1_registered_at TIMESTAMP"),
+        # ブランド登録が済むまでは「ノーブランド」で出す
+        ("amazon_research_settings","brand_ready",
+         "ALTER TABLE amazon_research_settings ADD COLUMN brand_ready BOOLEAN DEFAULT FALSE"),
+        # 動作確認のための出品。JANを本番ぶんとして数えない
+        ("amazon_listings","is_test",
+         "ALTER TABLE amazon_listings ADD COLUMN is_test BOOLEAN DEFAULT FALSE"),
     ]
 
     inspector = inspect(engine)

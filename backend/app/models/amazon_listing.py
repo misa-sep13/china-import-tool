@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean
 from sqlalchemy.sql import func
 from app.core.database import Base
 
@@ -55,6 +55,9 @@ class AmazonListing(Base):
     profit_rate   = Column(Float)
     rival_image   = Column(Text)
 
+    # 動作確認のための出品。JANを本番ぶんとして数えず、
+    # GS1への届け出にも載せない
+    is_test     = Column(Boolean, default=False)
     status      = Column(String, default="draft", index=True)  # draft/ready/submitted/live/failed
     synced_at   = Column(DateTime(timezone=True), nullable=True)  # 最後にシートから取り込んだ時刻
     created_at  = Column(DateTime(timezone=True), server_default=func.now())

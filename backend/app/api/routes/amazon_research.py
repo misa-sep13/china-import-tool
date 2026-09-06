@@ -44,6 +44,7 @@ def research_asin(asin: str, price: Optional[float] = None):
 class SettingsIn(BaseModel):
     gs1_prefix: Optional[str] = None
     brand_name: Optional[str] = None
+    brand_ready: Optional[bool] = None
     exchange_rate: Optional[float] = None
     rate_adjust: Optional[float] = None
     china_fixed: Optional[float] = None
@@ -83,6 +84,7 @@ def _settings_out(s: AmazonResearchSettings) -> dict:
         "rate_updated_at": s.rate_updated_at.isoformat() if s.rate_updated_at else None,
         "gs1_prefix": s.gs1_prefix,
         "brand_name": s.brand_name,
+        "brand_ready": bool(s.brand_ready),
     }
 
 
@@ -96,7 +98,7 @@ def update_settings(data: SettingsIn, db: Session = Depends(get_db)):
     s = _get_settings(db)
     for f in ("exchange_rate", "rate_adjust", "china_fixed", "tariff_rate",
               "pack_factor", "ship_yuan", "ship_mode", "customs_fee_jpy",
-              "gs1_prefix", "brand_name"):
+              "gs1_prefix", "brand_name", "brand_ready"):
         v = getattr(data, f, None)
         if v is not None:
             setattr(s, f, v)
@@ -985,10 +987,10 @@ _GS1_COL = {
 @router.get("/jan/gs1-pending")
 def gs1_pending(db: Session = Depends(get_db)):
     """GS1へまだ届け出ていないJANの件数と一覧。"""
-    # 取り消した番号（void）は届け出ない
+    # 取り消した番号（void）と、動作確認用（test）は届け出ない
     rows = (db.query(JanCode)
             .filter(JanCode.gs1_registered_at.is_(None),
-                    JanCode.status != "void")
+                    JanCode.status.notin_(["void", "test"]))
             .order_by(JanCode.item_seq).all())
     return {
         "count": len(rows),
@@ -1010,7 +1012,7 @@ def gs1_export(db: Session = Depends(get_db)):
 
     rows = (db.query(JanCode)
             .filter(JanCode.gs1_registered_at.is_(None),
-                    JanCode.status != "void")
+                    JanCode.status.notin_(["void", "test"]))
             .order_by(JanCode.item_seq).all())
     if not rows:
         raise HTTPException(400, "未登録のJANはありません")
@@ -1059,7 +1061,7 @@ class Gs1DoneIn(BaseModel):
 def gs1_done(body: Gs1DoneIn, db: Session = Depends(get_db)):
     """GS1へ届け出たものに印を付ける。"""
     q = db.query(JanCode).filter(JanCode.gs1_registered_at.is_(None),
-                                 JanCode.status != "void")
+                                 JanCode.status.notin_(["void", "test"]))
     if body.codes:
         q = q.filter(JanCode.code.in_(body.codes))
     rows = q.all()

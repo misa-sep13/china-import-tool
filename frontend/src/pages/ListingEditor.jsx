@@ -56,7 +56,7 @@ export default function ListingEditor({ listingId, onBack }) {
         len_a: d.len_a, len_b: d.len_b, len_c: d.len_c, weight: d.weight,
         rival_asin: d.rival_asin, attrs: d.attrs,
         must_kw: d.must_kw, diff_points: d.diff_points,
-        parent_sku: d.parent_sku,
+        parent_sku: d.parent_sku, is_test: d.is_test,
         variation_theme: d.variation_theme,
         axis1_label: d.axis1_label, axis2_label: d.axis2_label,
         children: (d.children || []).map(c => ({
@@ -207,6 +207,15 @@ export default function ListingEditor({ listingId, onBack }) {
         <button className="btn btn-secondary" onClick={resync} disabled={busy}>
           シートから取り込み直す
         </button>
+        {/* 動作確認のための出品。JANを本番ぶんとして数えず、
+            GS1への届け出にも載せない */}
+        <label style={{ fontSize: 12, color: C.sub, display: 'flex',
+          alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}
+          title="動作確認のための出品。発番したJANは台帳でテスト扱いになり、GS1への届け出には載りません">
+          <input type="checkbox" checked={!!d.is_test}
+            onChange={e => set('is_test', e.target.checked)} />
+          テスト出品
+        </label>
         <button className="btn btn-primary" onClick={() => save()} disabled={busy}>
           保存
         </button>
@@ -392,8 +401,14 @@ export default function ListingEditor({ listingId, onBack }) {
         <H t="出品の中身" />
         <div style={{ display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
-          <F l="ブランド名" v={d.brand} on={v => set('brand', v)}
-            ph="Aqualiora" />
+          <div>
+            <span style={label}>ブランド名</span>
+            <input style={input} value={d.brand ?? ''} placeholder="Aqualiora"
+              onChange={e => set('brand', e.target.value)} />
+            <div style={{ fontSize: 11, color: C.warn, marginTop: 3 }}>
+              ブランド登録が済むまで「ノーブランド」で出します
+            </div>
+          </div>
           <F l="価格（円）" v={d.price} on={v => set('price', v ? +v : null)}
             type="number" />
           <F l="参考にする競合ASIN" v={d.rival_asin}
