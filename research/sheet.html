@@ -494,6 +494,25 @@
   .an-body select{padding:6px 8px;border:1px solid var(--line-2);border-radius:var(--r-sm);
     font-size:12px;font-family:inherit;background:var(--surface);max-width:340px;color:var(--ink);}
   .an-body > label{font-size:11.5px;color:var(--ink-2);font-weight:700;margin-bottom:-6px;}
+  /* ⑦ 商品登録 */
+  .reg-box{display:flex;flex-direction:column;gap:8px;}
+  .reg-panel{display:flex;flex-direction:column;gap:7px;
+    border:1px solid var(--line);border-radius:var(--r);
+    background:var(--surface);padding:11px 13px;}
+  .reg-line{align-items:center;}
+  .reg-lead{flex:0 0 92px;font-size:11.5px;font-weight:700;color:var(--ink-2);}
+  .an-body .reg-panel input.reg-num{width:66px;text-align:right;}
+  .an-body .reg-panel input.reg-num2{width:84px;text-align:right;}
+  .an-body .reg-panel input.reg-sku{width:130px;}
+  .an-body .reg-panel input.reg-jan{width:140px;}
+  .an-body .reg-panel input.reg-brand{width:180px;}
+  .reg-unit{font-size:11px;color:var(--ink-2);margin-right:6px;}
+  .reg-out{display:flex;flex-direction:column;gap:6px;}
+  .reg-check{border:1px solid var(--line);border-radius:var(--r-sm);
+    padding:7px 9px;font-size:11.5px;background:var(--surface-2);}
+  .reg-check b.ok{color:var(--ok,#15803d);}
+  .reg-check b.ng{color:var(--warn);}
+  .reg-issue{color:var(--ink-2);margin-left:8px;line-height:1.6;}
   .an-status{font-size:11.5px;color:var(--ink-2);}
   .an-status.warn{color:var(--warn);font-weight:800;}
 
@@ -5802,11 +5821,290 @@ if(FIREBASE_CONFIG.databaseURL){
     iBtn.addEventListener('click', () => copyImage(false));
     iBtn2.addEventListener('click', () => copyImage(true));
 
+    // ---- ⑦ 商品登録（Amazon）----------------------------------------
+    //
+    // ここまでで作った出品原稿を、そのままAmazonへ出すところ。
+    // 別の画面に移らず、同じ流れで最後まで進められるようにしてある。
+    //
+    // 中身は一元管理のサーバー（/api/amazon-listings）とやり取りする。
+    // 配布版（一元管理の外）では使えないので、その旨だけ出す。
+    const rLabel = el('label', null, '⑦ 商品登録（Amazon）');
+    rLabel.classList.add('an-sep');
+    body.appendChild(rLabel);
+
+    const rBox = el('div', 'reg-box');
+    body.appendChild(rBox);
+
+    if(!API_BASE){
+      rBox.appendChild(el('div', 'an-note',
+        '一元管理の画面から開くと、ここからAmazonへ出品できます。'));
+    }else{
+      buildRegister(rBox, research);
+    }
+
     edRefresh();
     // 鍵の状態を最後に反映する（全部の欄と道具が出来上がってから）
     applyLock();
     return box;
   }
+
+  // ---- ⑦ 商品登録の中身 --------------------------------------------------
+  //
+  // 一元管理のサーバー（/api/amazon-listings）とやり取りする。
+  // 「商品登録をはじめる」を押すと登録レコードを作り、そのあとは
+  //   梱包サイズ → 出品の準備（商品タイプ・SKU・JAN）→ 必要な項目
+  //   → 画像 → 検証 → 出品
+  // の順に進む。押すまで何も作らないので、リサーチ中の枠でも邪魔にならない。
+
+  async function regApi(path, opt){
+    const res = await fetch(API_BASE + '/amazon-listings' + path,
+      Object.assign({}, opt, {
+        headers: Object.assign(
+          {'Content-Type': 'application/json'}, apiHeaders(),
+          (opt || {}).headers || {}),
+      }));
+    const j = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(j.detail || ('HTTP ' + res.status));
+    return j;
+  }
+
+  function buildRegister(box, research){
+    let data = null;              // サーバーから読んだ登録の中身
+    const status = el('span', 'an-status');
+
+    const head = el('div', 'an-row');
+    const startBtn = el('button', 'primary', '🅰 Amazonに商品登録する');
+    startBtn.dataset.writes = '1';
+    head.appendChild(startBtn);
+    head.appendChild(status);
+    box.appendChild(head);
+
+    const panel = el('div', 'reg-panel');
+    panel.style.display = 'none';
+    box.appendChild(panel);
+
+    startBtn.addEventListener('click', async () => {
+      startBtn.disabled = true;
+      status.textContent = '用意しています…';
+      try{
+        data = await regApi('/sync/' + encodeURIComponent(research.id),
+                            {method: 'POST'});
+        panel.style.display = 'block';
+        startBtn.style.display = 'none';
+        status.textContent = '';
+        draw();
+      }catch(e){
+        status.textContent = String(e.message || e);
+        status.classList.add('warn');
+      }finally{ startBtn.disabled = false; }
+    });
+
+    // 保存はまとめて。打つたびに送ると重いので、少し待ってから
+    let saveTimer = null;
+    const pending = {};
+    function put(field, value){
+      pending[field] = value;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(flush, 800);
+    }
+    async function flush(){
+      clearTimeout(saveTimer);
+      const body = Object.assign({}, pending);
+      Object.keys(pending).forEach(k => delete pending[k]);
+      if(!Object.keys(body).length) return;
+      try{
+        data = await regApi('/' + data.id,
+          {method: 'PUT', body: JSON.stringify(body)});
+        status.textContent = '保存しました';
+        status.classList.remove('warn');
+        setTimeout(() => { if(status.textContent === '保存しました') status.textContent = ''; }, 2000);
+      }catch(e){
+        status.textContent = String(e.message || e);
+        status.classList.add('warn');
+      }
+    }
+
+    function num(v){ const n = parseFloat(v); return Number.isFinite(n) ? n : null; }
+
+    function draw(){
+      panel.innerHTML = '';
+      if(!data) return;
+
+      // --- 梱包サイズ。表から自動で入るが、自社実測があれば上書きできる ---
+      const dRow = el('div', 'an-row reg-line');
+      dRow.appendChild(el('span', 'reg-lead', '梱包サイズ'));
+      [['len_a', '長辺'], ['len_b', '中辺'], ['len_c', '短辺']].forEach(([k, lab]) => {
+        const i = document.createElement('input');
+        i.type = 'text'; i.className = 'reg-num'; i.placeholder = lab;
+        i.value = data[k] == null ? '' : data[k];
+        i.addEventListener('input', () => put(k, num(i.value)));
+        dRow.appendChild(i);
+        dRow.appendChild(el('span', 'reg-unit', 'cm'));
+      });
+      const w = document.createElement('input');
+      w.type = 'text'; w.className = 'reg-num'; w.placeholder = '重量';
+      w.value = data.weight == null ? '' : data.weight;
+      w.addEventListener('input', () => put('weight', num(w.value)));
+      dRow.appendChild(w);
+      dRow.appendChild(el('span', 'reg-unit', 'kg'));
+      dRow.appendChild(el('span', 'an-note', '競合の値。自社実測があれば上書き'));
+      panel.appendChild(dRow);
+
+      // --- 価格・ブランド・出荷方法 ---
+      const pRow = el('div', 'an-row reg-line');
+      pRow.appendChild(el('span', 'reg-lead', '価格・出荷'));
+      const price = document.createElement('input');
+      price.type = 'text'; price.className = 'reg-num2'; price.placeholder = '売価';
+      price.value = data.price == null ? '' : data.price;
+      price.addEventListener('input', () => put('price', num(price.value)));
+      pRow.appendChild(price);
+      pRow.appendChild(el('span', 'reg-unit', '円'));
+
+      const ful = document.createElement('select');
+      [['fba', 'FBA（Amazonから出荷）'], ['merchant', '自己発送']].forEach(([v, l]) => {
+        const o = document.createElement('option');
+        o.value = v; o.textContent = l; ful.appendChild(o);
+      });
+      ful.value = data.fulfillment || 'merchant';
+      ful.addEventListener('change', () => put('fulfillment', ful.value));
+      pRow.appendChild(ful);
+
+      const brand = document.createElement('input');
+      brand.type = 'text'; brand.placeholder = 'ブランド名（空でOK）';
+      brand.className = 'reg-brand';
+      brand.value = data.brand || '';
+      brand.addEventListener('input', () => put('brand', brand.value));
+      pRow.appendChild(brand);
+      panel.appendChild(pRow);
+
+      // --- 出品するSKU ---
+      const sHead = el('div', 'an-row reg-line');
+      sHead.appendChild(el('span', 'reg-lead', '出品するSKU'));
+      const pSku = document.createElement('input');
+      pSku.type = 'text'; pSku.className = 'reg-sku';
+      pSku.placeholder = '親SKU';
+      pSku.value = data.parent_sku || '';
+      pSku.addEventListener('input', () => put('parent_sku', pSku.value.trim()));
+      sHead.appendChild(el('span', 'an-note', '親'));
+      sHead.appendChild(pSku);
+      sHead.appendChild(el('span', 'an-note',
+        '単品でも親を作ります（Amazonの推奨）'));
+      panel.appendChild(sHead);
+
+      (data.children || []).forEach((c, i) => {
+        const line = el('div', 'an-row reg-line');
+        line.appendChild(el('span', 'reg-lead', ''));
+        line.appendChild(el('span', 'an-note', '子'));
+        const sku = document.createElement('input');
+        sku.type = 'text'; sku.className = 'reg-sku';
+        sku.placeholder = '（準備で採番）';
+        sku.value = c.sku || '';
+        sku.addEventListener('input', () => { c.sku = sku.value.trim(); putKids(); });
+        line.appendChild(sku);
+        const jan = document.createElement('input');
+        jan.type = 'text'; jan.className = 'reg-jan';
+        jan.placeholder = '（準備で発番）';
+        jan.value = c.jan || '';
+        jan.title = '台帳にある番号に付け替えられます';
+        jan.addEventListener('change', () => { c.jan = jan.value.trim(); putKids(); });
+        line.appendChild(jan);
+        line.appendChild(el('span', 'an-note', (c.axis1 || '') || '（色なし）'));
+        if(c.status && c.status !== 'draft'){
+          line.appendChild(el('span', 'an-note',
+            {submitted: '送信済', failed: '失敗', live: '公開中'}[c.status] || c.status));
+        }
+        panel.appendChild(line);
+      });
+
+      function putKids(){
+        put('children', (data.children || []).map(c => ({
+          id: c.id, sku: c.sku, jan: c.jan, title: c.title,
+          axis1: c.axis1, price: c.price,
+        })));
+      }
+
+      // --- 進めるボタン ---
+      const ops = el('div', 'an-row');
+      const prep = el('button', 'mini', '出品の準備（商品タイプ・SKU・JAN）');
+      prep.dataset.writes = '1';
+      const val = el('button', 'mini', '🔎 Amazonで検証する');
+      const sub = el('button', 'primary', 'Amazonへ出品する');
+      sub.dataset.writes = '1';
+      const opStatus = el('span', 'an-status');
+      [prep, val, sub, opStatus].forEach(x => ops.appendChild(x));
+      panel.appendChild(ops);
+
+      const out = el('div', 'reg-out');
+      panel.appendChild(out);
+
+      prep.addEventListener('click', async () => {
+        prep.disabled = true; opStatus.textContent = '調べています…';
+        try{
+          await flush();
+          data = await regApi('/' + data.id + '/prepare', {method: 'POST'});
+          opStatus.textContent = '商品タイプ ' + (data.product_type || '')
+            + '。SKUとJANを用意しました';
+          draw();
+        }catch(e){ opStatus.textContent = String(e.message || e); }
+        finally{ prep.disabled = false; }
+      });
+
+      val.addEventListener('click', async () => {
+        val.disabled = true; opStatus.textContent = 'Amazonに見てもらっています…';
+        try{
+          await flush();
+          const v = await regApi('/' + data.id + '/validate', {method: 'POST'});
+          drawValidate(out, v);
+          opStatus.textContent = '';
+        }catch(e){ opStatus.textContent = String(e.message || e); }
+        finally{ val.disabled = false; }
+      });
+
+      sub.addEventListener('click', async () => {
+        if(!confirm('Amazonへ出品します。よろしいですか？')) return;
+        sub.disabled = true; opStatus.textContent = '送っています…';
+        try{
+          await flush();
+          const r = await regApi('/submit', {method: 'POST',
+            body: JSON.stringify({listing_ids: [data.id], dry_run: false})});
+          drawSubmit(out, r.results[0]);
+          opStatus.textContent = '';
+          data = await regApi('/' + data.id);
+          draw();
+        }catch(e){ opStatus.textContent = String(e.message || e); }
+        finally{ sub.disabled = false; }
+      });
+    }
+  }
+
+  // 検証の結果を出す。足りない項目はその場で入れられるようにする
+  function drawValidate(out, v){
+    out.innerHTML = '';
+    (v.checked || []).forEach(x => {
+      const d = el('div', 'reg-check');
+      d.appendChild(el('b', x.ok ? 'ok' : 'ng',
+        x.kind + ' ' + x.sku + '：' + (x.ok ? '問題なし' : x.status)));
+      (x.issues || []).forEach(i => {
+        d.appendChild(el('div', 'reg-issue', '・' + i.message));
+      });
+      out.appendChild(d);
+    });
+  }
+
+  function drawSubmit(out, r){
+    out.innerHTML = '';
+    (r.sent || []).forEach(x => {
+      const d = el('div', 'reg-check');
+      d.appendChild(el('b', x.ok ? 'ok' : 'ng',
+        x.kind + ' ' + x.sku + '：' + (x.status || (x.ok ? 'OK' : '失敗'))));
+      (x.issues || []).forEach(i => {
+        d.appendChild(el('div', 'reg-issue', '・' + i.message));
+      });
+      if(x.error) d.appendChild(el('div', 'reg-issue', String(x.error).slice(0, 300)));
+      out.appendChild(d);
+    });
+  }
+
 
   // ---- .docx の書き出し（外部ライブラリなし）----------------------------
   // docxは「XMLを数枚入れたZIP」なので、無圧縮ZIPを自前で組めばライブラリは要らない。
