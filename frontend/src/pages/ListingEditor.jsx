@@ -644,16 +644,41 @@ export default function ListingEditor({ listingId, onBack }) {
                         </button>
                       </span>
                       {f.type === 'select' && (f.choices || []).length ? (
-                        <select style={input} value={(d.attrs || {})[f.name] || ''}
+                        <select style={input} value={(d.attrs || {})[f.name] ?? ''}
                           onChange={e => set('attrs',
                             { ...(d.attrs || {}), [f.name]: e.target.value })}>
                           <option value="">（選ぶ）</option>
-                          {f.choices.map(c => <option key={c} value={c}>{c}</option>)}
+                          {f.choices.map(c => {
+                            const v = typeof c === 'object' ? c.value : c
+                            const l = typeof c === 'object' ? c.label : c
+                            return <option key={String(v)} value={v}>{l}</option>
+                          })}
                         </select>
                       ) : (
                         <input style={input} value={(d.attrs || {})[f.name] || ''}
                           onChange={e => set('attrs',
                             { ...(d.attrs || {}), [f.name]: e.target.value })} />
+                      )}
+                      {f.suggest && (
+                        <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>
+                          商品説明から読み取り:{' '}
+                          <button className="btn btn-secondary"
+                            style={{ fontSize: 11, padding: '0 6px' }}
+                            onClick={() => set('attrs',
+                              { ...(d.attrs || {}), [f.name]: f.suggest })}>
+                            {f.suggest} を入れる
+                          </button>
+                          {f.suggest_from && (
+                            <span style={{ color: C.line }}>
+                              {' '}（元: {f.suggest_from}）
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {f.description && (
+                        <div style={{ fontSize: 10, color: C.line, marginTop: 2 }}>
+                          {f.description.slice(0, 90)}
+                        </div>
                       )}
                     </div>
                   ))}

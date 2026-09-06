@@ -700,6 +700,8 @@ COMMON_FIELDS = [
      "type": "select", "default": "CN",
      "choices": [["CN", "中国"], ["JP", "日本"], ["VN", "ベトナム"],
                  ["KR", "韓国"], ["TW", "台湾"], ["US", "アメリカ"]]},
+    {"name": "is_exclusive_product", "label": "Amazon.co.jp限定商品ですか？",
+     "type": "bool", "default": "false"},
     {"name": "supplier_declared_dg_hz_regulation", "label": "危険物の該当性",
      "type": "select", "default": "not_applicable",
      "choices": [["not_applicable", "該当なし"],
@@ -753,6 +755,7 @@ _AUTO_ATTRS = {
     "part_number": "sku",        # メーカー型番 ＝ SKU
     "model_number": "sku",       # 品番・型番 ＝ SKU
     "manufacturer": "brand",     # メーカー名 ＝ ブランド名
+    "list_price": "price",       # メーカー希望小売価格 ＝ 売価
 }
 
 # 商品ごとに変わるもの。名前に含まれていたら item と見なす
@@ -790,11 +793,77 @@ def auto_attr_values(db: Session, row, child=None) -> dict:
     out = {}
     sku = (child.sku if child is not None else None) or row.parent_sku or ""
     brand = _brand_for(db, row)
+    price = (child.price if child is not None and child.price else row.price)
     for name, src in _AUTO_ATTRS.items():
-        v = sku if src == "sku" else brand
+        v = {"sku": sku, "brand": brand, "price": price}.get(src)
         if v:
             out[name] = v
     return out
+
+
+# ---------- 商品そのものの寸法を読み取る ----------
+#
+# Amazonが聞いてくる「品目寸法（L×W×H）」は、商品そのものの大きさ。
+# SP-APIから取れるのは梱包サイズなので、そのままでは使えない。
+# 競合の商品仕様・商品画像の文字・商品説明に書かれていることが多いので、
+# そこから拾って下書きにする（合っているかは人が見る）。
+
+# 「33.1 x 13.1 x 4 cm」「33.1×13.1×4cm」など
+_U = r"(?:cm|センチ|mm|ミリ)"
+_DIM3 = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(" + _U + r")?\s*[×xX✕*]\s*"
+    r"(\d+(?:\.\d+)?)\s*(" + _U + r")?\s*[×xX✕*]\s*"
+    r"(\d+(?:\.\d+)?)\s*(" + _U + r")?", re.I)
+
+# 「高さ 約31cm」「幅：25cm」など、1つずつ書いてあるとき
+_DIM1 = {
+    "length": re.compile(r"(?:長さ|奥行き?|全長)\s*[:：]?\s*約?\s*(\d+(?:\.\d+)?)\s*(cm|センチ|mm|ミリ)", re.I),
+    "width":  re.compile(r"(?:幅|横)\s*[:：]?\s*約?\s*(\d+(?:\.\d+)?)\s*(cm|センチ|mm|ミリ)", re.I),
+    "height": re.compile(r"(?:高さ|縦)\s*[:：]?\s*約?\s*(\d+(?:\.\d+)?)\s*(cm|センチ|mm|ミリ)", re.I),
+}
+
+
+def _to_cm(v: float, unit: str) -> float:
+    if (unit or "").lower() in ("mm", "ミリ"):
+        return round(v / 10, 2)
+    return round(v, 2)
+
+
+def read_dimensions(texts: list) -> dict:
+    """文章から商品そのものの寸法を拾う。見つからなければ空。
+
+    3辺まとめて書いてある形を優先し、無ければ1つずつ拾う。
+    """
+    for t in texts:
+        if not t:
+            continue
+        m = _DIM3.search(t)
+        if m:
+            # 単位は数値ごとに付くことも、最後に1つだけのこともある
+            units = [m.group(2), m.group(4), m.group(6)]
+            last = next((u for u in reversed(units) if u), "cm")
+            vals = [float(m.group(i)) for i in (1, 3, 5)]
+            a, b, c = (_to_cm(v, units[i] or last) for i, v in enumerate(vals))
+            # 大きい順に 長さ・幅・高さ とする
+            a, b, c = sorted([a, b, c], reverse=True)
+            return {"length": a, "width": b, "height": c,
+                    "unit": "centimeters", "source": m.group(0).strip()}
+
+    got, src = {}, []
+    for t in texts:
+        if not t:
+            continue
+        for key, rx in _DIM1.items():
+            if key in got:
+                continue
+            m = rx.search(t)
+            if m:
+                got[key] = _to_cm(float(m.group(1)), m.group(2))
+                src.append(m.group(0).strip())
+    if got:
+        got["unit"] = "centimeters"
+        got["source"] = " / ".join(src)
+    return got
 
 
 def _public_base() -> str:
@@ -1689,6 +1758,23 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
     memo = get_memo(row.product_type, db)
     kinds = memo.get("kinds") or {}
     auto = auto_attr_values(db, row, kids[0] if kids else None)
+
+    # 商品そのものの寸法。競合の商品仕様・画像の文字・商品説明から拾う。
+    # SP-APIで取れるのは梱包サイズなので、そのままでは使えない
+    src2 = None
+    for c in sync.candidates(_sheet(db), all_status=True):
+        if c["research_id"] == row.research_id:
+            src2 = c
+            break
+    texts = []
+    if src2:
+        notes = _notes_for(db, [x.get("row_id") for x in (src2.get("rows") or [])
+                                if x.get("row_id")])
+        for n in notes.values():
+            texts += [n.get("spec"), n.get("imgtext")]
+    texts.append(row.description)
+    dims = read_dimensions(texts)
+
     need = []
     for n in memo["asked"]:
         f = dict(by_name.get(n) or {"name": n, "label": n, "type": "text",
@@ -1696,9 +1782,17 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
         f["kind"] = attr_kind(n, kinds)
         if f["kind"] == "auto":
             f["auto_value"] = auto.get(n)
+        # 寸法は読み取れたものを下書きとして添える
+        if n == "item_length_width_height" and dims:
+            f["suggest"] = (f"{dims.get('length','')}×{dims.get('width','')}"
+                            f"×{dims.get('height','')} cm")
+            f["suggest_from"] = dims.get("source")
+            f["suggest_values"] = {k: v for k, v in dims.items()
+                                   if k in ("length", "width", "height")}
         need.append(f)
 
     return {"checked": checked,
             "newly_asked": asked_all,
             "need": need,
+            "dimensions": dims,
             "memo": memo}
