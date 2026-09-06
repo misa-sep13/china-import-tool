@@ -757,6 +757,7 @@ _AUTO_ATTRS = {
     "manufacturer": "brand",     # メーカー名 ＝ ブランド名
     "model_name": "brand",       # モデル ＝ ブランド名
     "list_price": "price",       # メーカー希望小売価格 ＝ 売価
+    "item_length_width_height": "dims",   # 品目寸法 ＝ 表の三辺
 }
 
 # 商品ごとに変わるもの。名前に含まれていたら item と見なす
@@ -795,8 +796,13 @@ def auto_attr_values(db: Session, row, child=None) -> dict:
     sku = (child.sku if child is not None else None) or row.parent_sku or ""
     brand = _brand_for(db, row)
     price = (child.price if child is not None and child.price else row.price)
+    # 品目寸法。表の三辺（長い順に 長さ・幅・高さ）をそのまま使う
+    dims = None
+    if all([row.len_a, row.len_b, row.len_c]):
+        a, b, c = sorted([row.len_a, row.len_b, row.len_c], reverse=True)
+        dims = {"length": a, "width": b, "height": c}
     for name, src in _AUTO_ATTRS.items():
-        v = {"sku": sku, "brand": brand, "price": price}.get(src)
+        v = {"sku": sku, "brand": brand, "price": price, "dims": dims}.get(src)
         if v:
             out[name] = v
     return out
@@ -865,6 +871,21 @@ def read_dimensions(texts: list) -> dict:
         got["unit"] = "centimeters"
         got["source"] = " / ".join(src)
     return got
+
+
+def _wrap_attr(name: str, value, mp: str) -> list:
+    """attributes に入れる形にする。
+
+    ふつうは {"value": …} でよいが、品目寸法のように
+    枝ごとに値と単位を持つものは、その形で送る。
+    """
+    if name == "item_length_width_height" and isinstance(value, dict):
+        one = {"marketplace_id": mp}
+        for k in ("length", "width", "height"):
+            if value.get(k):
+                one[k] = {"value": float(value[k]), "unit": "centimeters"}
+        return [one]
+    return [{"value": value, "marketplace_id": mp}]
 
 
 def _public_base() -> str:
@@ -999,7 +1020,7 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
     for k, v in extra.items():
         if v is None or (isinstance(v, str) and not v.strip()):
             continue
-        a[k] = one(v)
+        a[k] = _wrap_attr(k, v, mp)
     return a
 
 
@@ -1061,7 +1082,7 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
     for k, v in extra.items():
         if v is None or (isinstance(v, str) and not v.strip()):
             continue
-        a[k] = one(v)
+        a[k] = _wrap_attr(k, v, mp)
     return a
 
 

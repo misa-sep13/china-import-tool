@@ -607,12 +607,18 @@ export default function ListingEditor({ listingId, onBack }) {
                 自動で入ります（入力不要）
               </div>
               <div style={{ fontSize: 12, color: C.sub }}>
-                {fields.filter(f => f.kind === 'auto').map(f => (
-                  <span key={f.name} style={{ marginRight: 12 }}>
-                    {f.label}
-                    <b style={{ color: C.text }}> {f.auto_value || '—'}</b>
-                  </span>
-                ))}
+                {fields.filter(f => f.kind === 'auto').map(f => {
+                  const v = f.auto_value
+                  const t = v && typeof v === 'object'
+                    ? `${v.length}×${v.width}×${v.height} cm`
+                    : (v || '—')
+                  return (
+                    <span key={f.name} style={{ marginRight: 12 }}>
+                      {f.label}
+                      <b style={{ color: C.text }}> {t}</b>
+                    </span>
+                  )
+                })}
               </div>
             </div>
           )}
