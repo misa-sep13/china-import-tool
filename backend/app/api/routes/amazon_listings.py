@@ -755,6 +755,7 @@ _AUTO_ATTRS = {
     "part_number": "sku",        # メーカー型番 ＝ SKU
     "model_number": "sku",       # 品番・型番 ＝ SKU
     "manufacturer": "brand",     # メーカー名 ＝ ブランド名
+    "model_name": "brand",       # モデル ＝ ブランド名
     "list_price": "price",       # メーカー希望小売価格 ＝ 売価
 }
 

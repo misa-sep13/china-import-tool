@@ -669,14 +669,15 @@ export default function ListingEditor({ listingId, onBack }) {
                             {f.suggest} を入れる
                           </button>
                           {f.suggest_from && (
-                            <span style={{ color: C.line }}>
+                            <span style={{ color: C.sub }}>
                               {' '}（元: {f.suggest_from}）
                             </span>
                           )}
                         </div>
                       )}
                       {f.description && (
-                        <div style={{ fontSize: 10, color: C.line, marginTop: 2 }}>
+                        <div style={{ fontSize: 11, color: C.sub, marginTop: 3,
+                          lineHeight: 1.4 }}>
                           {f.description.slice(0, 90)}
                         </div>
                       )}

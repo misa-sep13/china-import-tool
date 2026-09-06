@@ -1675,11 +1675,25 @@ def fetch_product_type_schema(product_type: str) -> dict:
         p = props.get(key) or {}
         items = (p.get("items") or {})
         inner = (items.get("properties") or {}).get("value") or {}
-        enum = inner.get("enum") or items.get("enum") or p.get("enum")
-        # enum は 'jp_parallel_import' のような生の値。
-        # 隣の enumNames に日本語の名前があるので、あれば一緒に返す
-        names = (inner.get("enumNames") or items.get("enumNames")
-                 or p.get("enumNames") or [])
+        # 選択肢は value.enum に直接あることも、value.anyOf の中の
+        # 「enum を持つほう」に入っていることもある（自由入力も許す項目）。
+        # 後者を見ていなかったため、素材や対象のお客様が
+        # 「プルダウンから選択」と書いてあるのに欄がただの入力になっていた。
+        def pick_enum(node):
+            if not isinstance(node, dict):
+                return None, []
+            if node.get("enum"):
+                return node["enum"], node.get("enumNames") or []
+            for br in (node.get("anyOf") or node.get("oneOf") or []):
+                if isinstance(br, dict) and br.get("enum"):
+                    return br["enum"], br.get("enumNames") or []
+            return None, []
+
+        enum, names = pick_enum(inner)
+        if not enum:
+            enum, names = pick_enum(items)
+        if not enum:
+            enum, names = pick_enum(p)
         choices = []
         for i, v in enumerate((enum or [])[:200]):
             label = names[i] if i < len(names) else None
