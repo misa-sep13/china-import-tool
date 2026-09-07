@@ -38,13 +38,18 @@
   .btn.blue{background:var(--accent2);color:#fff}
   .btn.ghost{background:#fff;border:1px solid var(--line)}
   .btn:disabled{opacity:.45;cursor:not-allowed}
-  .sellers{border:1px solid var(--line);border-radius:8px;max-height:320px;overflow-y:auto}
+  .sellers{border:1px solid var(--line);border-radius:8px;max-height:320px;
+    overflow-y:auto;overflow-x:hidden}
   .srow{display:flex;align-items:center;gap:7px;padding:6px 8px;border-bottom:1px solid #f0f1f4;
+    max-width:100%;
         cursor:pointer;font-size:12px}
   .srow:last-child{border-bottom:0}
   .srow:hover{background:#f8f9fb}
   .srow.on{background:#fff4ec}
-  .srow .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* min-width:0 が無いと、flexの既定(min-width:auto)で名前の長さまで縮まない。
+     「Luce Luce （横浜本店…）【当日便可能】…」のような65文字の店名で
+     行が横に伸び、一覧に横スクロールが出ていた */
+  .srow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .srow .ct{color:var(--sub);font-size:11px;flex:0 0 auto}
   .dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:#d1d5db}
   .dot.ok{background:var(--ok)} .dot.blocked{background:var(--bad)}

@@ -60,6 +60,9 @@ def list_sellers(
             "last_status": r.last_status, "last_note": r.last_note,
             "last_run_by": r.last_run_by,
             "product_count": r.product_count or 0,
+            # 画面は hit_count という名前で読む（配布版のローカルサーバーに合わせてある）。
+            # 名前が違うと常に0と表示され、どのセラーに商品があるか分からなくなる
+            "hit_count": r.product_count or 0,
         } for r in rows],
         "folders": folders,
         "total": len(rows),
@@ -262,14 +265,34 @@ def list_products(
         rows = [r for r in rows if k in (r.title or "").lower()
                 or k in (r.asin or "").lower()]
 
+    # 画面のプルダウンが送ってくる値（price / sales / reviews / rating / new …）と、
+    # 配布版のサーバーが使っていた値（price_desc / rev_asc …）の両方を受ける。
+    # 名前が合わないものは既定に落ちるため、レビュー順に変えても並びが
+    # 変わらない状態になっていた。
+    #
+    # 未取得（None）は「小さい」ではなく最後に置く。0件と混ざると、
+    # 取れていないだけの商品が「狙い目」の先頭に来てしまう。
+    BIG = 10 ** 9
+
+    def _ts(r):
+        return r.last_seen.timestamp() if r.last_seen else 0
+
     key = {
+        "price": lambda r: -(r.price or 0),
         "price_desc": lambda r: -(r.price or 0),
-        "price_asc": lambda r: (r.price or 0),
+        "price_asc": lambda r: (r.price if r.price is not None else BIG),
+        "sales": lambda r: -(r.sales_min or 0),
         "sales_desc": lambda r: -(r.sales_min or 0),
-        "sales_asc": lambda r: (r.sales_min or 0),
-        "rev_asc": lambda r: (r.reviews if r.reviews is not None else 10 ** 9),
+        "sales_asc": lambda r: (r.sales_min if r.sales_min is not None else BIG),
+        "reviews": lambda r: (r.reviews if r.reviews is not None else BIG),
+        "rev_asc": lambda r: (r.reviews if r.reviews is not None else BIG),
         "rev_desc": lambda r: -(r.reviews or 0),
-        "rank_asc": lambda r: (r.rank if r.rank is not None else 10 ** 9),
+        "rating_asc": lambda r: (r.rating if r.rating is not None else BIG),
+        "rating": lambda r: -(r.rating or 0),
+        "rating_desc": lambda r: -(r.rating or 0),
+        "new": lambda r: -_ts(r),
+        "rank": lambda r: (r.rank if r.rank is not None else BIG),
+        "rank_asc": lambda r: (r.rank if r.rank is not None else BIG),
     }.get(sort, lambda r: -(r.price or 0))
     rows.sort(key=key)
 
