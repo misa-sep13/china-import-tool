@@ -530,7 +530,9 @@ async function poll(){
     $("#progTitle").textContent =
         s.state==="captcha" ? "⚠ 画像認証が出ました。ブラウザの窓で認証してください"
       : s.state==="cooldown"? `⏸ ブロックされました。${s.wait_sec||0}秒待っています`
-      : on ? "巡回中…" : "終了";
+      : on ? (s.phase || "巡回中…")   // ブックマーク取り込みもここを通るので、
+                                       // 「巡回中」と決め打ちしない
+      : "終了";
     $("#progRight").textContent = tot ? `${idx} / ${tot} 件` : "";
     $("#progSeller").textContent = s.seller ? `いま: ${s.seller}` : "";
     $("#progNote").textContent =
