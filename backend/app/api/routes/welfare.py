@@ -915,6 +915,46 @@ def backfill_work_instruction_products(db: Session = Depends(get_db)):
     return {"ok": True, "checked": len(rows), "updated": updated}
 
 
+@router.post("/work-instructions/rematch")
+def rematch_work_instructions(db: Session = Depends(get_db)):
+    """未反映の荷受けを、いまの商品マスタでもう一度照合し直す。
+
+    照合は行を作るときに1回だけ走る。あとから商品を登録したり、
+    URLの空白を直したり、照合の規則を直しても、既に取り込んだ行は
+    古いままになる。ファイルを取り込み直しても、重複防止で行が
+    作られないので直らない（実際にここで詰まった）。
+
+    在庫へ反映済みの行は触らない。反映後に紐づけを変えると、
+    どの商品の在庫を増やしたのか分からなくなるため。
+    """
+    by_url_spec, unique_url, by_url_all = _product_indexes(db)
+    rows = (db.query(WelfareWorkInstruction)
+            .filter(WelfareWorkInstruction.is_reflected == False).all())
+    changed = []
+    for row in rows:
+        product, how = _match_product({
+            "buy_url": row.buy_url,
+            "supplier_spec": row.supplier_spec or row.color or "",
+            "color": row.color or "",
+            "size": row.size or "",
+        }, by_url_spec, unique_url, by_url_all)
+        if not product or product.id == row.product_id:
+            continue
+        before = row.sku
+        row.product_id = product.id
+        row.sku = product.sku
+        row.name_jp = product.name
+        row.unit_per_set = _unit_per_set(product)
+        if row.units and row.unit_per_set:
+            row.qty = row.units // row.unit_per_set
+            row.remaining_qty = (row.remaining_units or row.units) // row.unit_per_set
+        changed.append({"id": row.id, "before": before, "after": product.sku,
+                        "name": product.name, "units": row.units,
+                        "qty": row.qty, "how": how})
+    db.commit()
+    return {"ok": True, "checked": len(rows), "changed": changed}
+
+
 class WelfareWorkBatchUpdateSheet(BaseModel):
     old_sheet: str
     new_sheet: str
