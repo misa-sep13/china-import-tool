@@ -157,3 +157,16 @@ class WelfarePackingOrder(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class WelfareSetting(Base):
+    """就労支援まわりの小さな設定。
+
+    項目が増えるたびに列を足すほどのものではないので、キーと値で持つ。
+    いまは作業依頼の候補をどこから出すか（packing_hide_before）だけ。
+    """
+    __tablename__ = "welfare_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(String)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

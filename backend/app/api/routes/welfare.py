@@ -13,7 +13,7 @@ from app.core.database import get_db
 from app.models.rakuten_product import RakutenProduct
 from app.models.welfare import (
     WelfareInventoryItem, WelfareInventoryMovement, WelfareWorkInstruction,
-    WelfarePackingTask, WelfarePackingOrder,
+    WelfarePackingTask, WelfarePackingOrder, WelfareSetting,
 )
 
 
@@ -1584,6 +1584,12 @@ def packing_order_candidates(
     単品数 ÷ 換算（1セットの入数）で既にセット数へ直してあるので、
     ここで入数を割り直すと二重になる。
     """
+    # 過去の便は別で管理済みなので候補に出さない。
+    # 荷受けの記録（指示・残・入荷日）はそのまま残す。
+    hide = db.query(WelfareSetting).filter(
+        WelfareSetting.key == "packing_hide_before").first()
+    hide_before = (hide.value or "").strip() if hide else ""
+
     tasks = db.query(WelfarePackingTask).filter(
         WelfarePackingTask.is_active == True).all()
     task_by_code = {}
@@ -1632,6 +1638,9 @@ def packing_order_candidates(
         ts = r.created_at or r.updated_at
         label = f"{ts.month}/{ts.day}" if ts else "(日付なし)"
         if batch and label != batch:
+            continue
+        # 指定日以前の便は出さない（別で管理済みの分）
+        if hide_before and ts and ts.strftime("%Y-%m-%d") <= hide_before:
             continue
         # 「作業」を含む指示だけが対象（保管だけの行は再梱包しない）
         if "作業" not in str(r.instruction or ""):
@@ -1700,3 +1709,34 @@ def packing_order_candidates(
         # 便を指定して呼ばれたときは、その便の中身をそのまま使えるようにする
         "candidates": batches[0]["items"] if (batch and batches) else [],
     }
+
+
+class PackingHideBeforeIn(BaseModel):
+    # "YYYY-MM-DD"。この日以前に取り込んだ便は作業依頼の候補に出さない。
+    # 空にすると全部出る（元に戻す）
+    date: Optional[str] = None
+
+
+@router.get("/packing-orders/hide-before")
+def get_packing_hide_before(db: Session = Depends(get_db)):
+    row = db.query(WelfareSetting).filter(
+        WelfareSetting.key == "packing_hide_before").first()
+    return {"date": (row.value if row else "") or ""}
+
+
+@router.put("/packing-orders/hide-before")
+def set_packing_hide_before(data: PackingHideBeforeIn, db: Session = Depends(get_db)):
+    """作業依頼の候補をどこから出すかを決める。
+
+    過去分をスプレッドシートで管理していて、ここに出す必要がないときに使う。
+    荷受けの記録には触らないので、あとから日付を戻せば元どおり出る。
+    """
+    value = (data.date or "").strip()
+    row = db.query(WelfareSetting).filter(
+        WelfareSetting.key == "packing_hide_before").first()
+    if not row:
+        row = WelfareSetting(key="packing_hide_before")
+        db.add(row)
+    row.value = value
+    db.commit()
+    return {"ok": True, "date": value}
