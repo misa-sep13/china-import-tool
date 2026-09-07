@@ -467,14 +467,14 @@
   .research-status select[data-st="listed"]{background-color:#7c3aed;border-color:#7c3aed;}
   .research-status select[data-st="rejected"]{background-color:#6b7280;border-color:#6b7280;}
   /* ステータスの枠色。中身は暗くせず、左端の色帯だけで工程が分かるようにする。
-     ボツだけ軽くグレーにする（読めなくなるほど落とさない） */
+     不採用だけ軽くグレーにする（読めなくなるほど落とさない） */
   .research.st-adopted{border-color:#93b4e8;background:#f3f7fe;box-shadow:inset 4px 0 0 #2563eb;}
   .research.st-ordered{border-color:#5da983;background:#f2f9f5;box-shadow:inset 4px 0 0 #2f9e63;}
   .research.st-imaged{border-color:#d9aa6b;background:#fdf8f0;box-shadow:inset 4px 0 0 #b45309;}
   .research.st-listed{border-color:#b5a1e0;background:#f8f5fe;box-shadow:inset 4px 0 0 #7c3aed;}
   .research.st-rejected{border-color:#d6d6d6;background:#f5f5f5;}
   .research.st-rejected > *:not(.research-head){opacity:.75;filter:grayscale(.6);}
-  /* ツールバーの絞り込み（すべて〜ボツ） */
+  /* ツールバーの絞り込み（すべて〜不採用） */
   .status-filter{display:inline-flex;border:1px solid #cfd8e3;border-radius:6px;overflow:hidden;}
   .status-filter button{border:none;border-radius:0;padding:7px 10px;font-size:12px;background:#fff;}
   .status-filter button + button{border-left:1px solid #e3e9f1;}
@@ -1082,7 +1082,7 @@
     <li><b>リサーチ名</b>は見出しをクリックで編集。商品が複数見つかったら<b>「＋ 候補商品を追加」</b>で行を増やします。</li>
     <li><b>1688の3列（1688 URL・1688単価・オプション代）は1行目の内容を他の行へ配れます</b>――1行目の下の<b>「↓ 下の行すべてに反映」</b>、2行目以降の<b>「⤒ 1行目をコピー」</b>。コピー先は上書きされます。</li>
     <li><b>1688 URL</b>は「＋ URLを追加」で何件でも。URLを入れると欄の下に「開く ↗」「コピー」「〇〇で発注」が出ます。「〇〇で発注」は代行業者でその1688商品のページを開きます（URLが複数のときは①②…で対応が分かります）。業者名と行き先はHTML先頭の <code>AGENT</code> で決まります。</li>
-    <li>各リサーチ枠の左上の「↑↓」で、枠ごと表示順を入れ替えられます。枠の見出しのプルダウンで工程のステータス（<b>リサーチ中→発注済み→画像依頼済み→商品登録済み</b>、ほかに<b>ボツ</b>）を付けられ、枠の色が変わります（発注済み=緑／画像依頼済み=茶／商品登録済み=紫／ボツ=薄いグレー。どれも中身はそのまま読めます）。上のツールバーの同じ並びのタブで絞り込んで見られます。</li>
+    <li>各リサーチ枠の左上の「↑↓」で、枠ごと表示順を入れ替えられます。枠の見出しのプルダウンで工程のステータス（<b>リサーチ中→採用→発注済み→画像依頼済み→商品登録済み</b>、ほかに<b>不採用</b>）を付けられ、枠の色が変わります（採用=青／発注済み=緑／画像依頼済み=茶／商品登録済み=紫／不採用=薄いグレー。どれも中身はそのまま読めます）。上のツールバーの同じ並びのタブで絞り込んで見られます。</li>
     <li><b>勝てる要素</b>は欄をクリックして当てはまるものを複数チェック（各項目の下に説明が出ます）。</li>
     <li>入力内容は<b>自動保存</b>されます。作業を終えるときは念のため<b>「CSVエクスポート」</b>で控えを保存しておくと安心です。</li>
     <li class="sp-only"><b>ASINを入れると自動で取り込みます</b>（このPC専用）。ボタンを押す必要はありません。入力が終わって少し待つと、色の付いていない欄が埋まり、ASIN欄の下に<b>✓ 取り込みました</b>と出ます。<b>すでに手で入れてある欄は勝手に書き換えません</b>。値が違うときは<b>🔄 ○項目が変わりました</b>と出るので、カーソルを合わせて「売価：2,980 → 3,455」のように中身を確認し、<b>押せば新しい値に入れ替え、✕なら今の値のまま</b>にできます（売価が動いたときの気付きに使えます）。ASINを別の商品に差し替えたときは、古い値は残さず丸ごと入れ替えます。</li>
@@ -1143,7 +1143,7 @@
     <button data-f="ordered">発注済み</button>
     <button data-f="imaged">画像依頼済み</button>
     <button data-f="listed">商品登録済み</button>
-    <button data-f="rejected">ボツ</button>
+    <button data-f="rejected">不採用</button>
   </span>
   <button id="csvBtn">CSVエクスポート</button>
   <button id="printBtn">印刷 / PDF保存</button>
@@ -1991,7 +1991,7 @@ if(FIREBASE_CONFIG.databaseURL){
   const localWasEmpty = !savedState;
   let state = savedState || {researches:[defaultResearch()], settings: defaultSettings()};
   // ---- ステータス（工程）の定義 ----
-  // リサーチ中 / 採用 / 発注済み / 画像依頼済み / 商品登録済み / ボツ。
+  // リサーチ中 / 採用 / 発注済み / 画像依頼済み / 商品登録済み / 不採用。
   // 工程を足すときはここに1行足すだけ（枠の切替・絞り込み・CSV・
   // 読み込み時の正規化が全部ここを見る）。
   //
@@ -2003,7 +2003,7 @@ if(FIREBASE_CONFIG.databaseURL){
     ['ordered', '発注済み'],
     ['imaged', '画像依頼済み'],
     ['listed', '商品登録済み'],
-    ['rejected', 'ボツ']
+    ['rejected', '不採用']
   ];
   // 「採用」以降が商品登録タブに出る。仕入れを決めた時点で登録の準備を
   // 始められるよう、発注より前に置いてある
@@ -2087,7 +2087,7 @@ if(FIREBASE_CONFIG.databaseURL){
       if(!r.id) r.id = uid();
       if(r.comment === undefined || r.comment === null) r.comment = '';
       // 枠のステータス。adopted=採用 / ordered=発注済み / imaged=画像依頼済み /
-      // listed=商品登録済み / rejected=ボツ / それ以外はリサーチ中('')
+      // listed=商品登録済み / rejected=不採用 / それ以外はリサーチ中('')
       //
       // 工程を足したときは STATUS_DEFS だけでなく、ここにも足すこと。
       // 入れ忘れると、読み込むたびに空へ戻されて保存が効かなくなる
@@ -7072,7 +7072,7 @@ if(FIREBASE_CONFIG.databaseURL){
     mv.appendChild(moveDn);
     head.appendChild(mv);
 
-    // 枠のステータス。工程（リサーチ中→発注済み→画像依頼済み→商品登録済み、ボツ）が
+    // 枠のステータス。工程（リサーチ中→採用→発注済み→画像依頼済み→商品登録済み、不採用）が
     // 増えたので、ボタンを並べずプルダウン1個で切り替える。色＝ツールバーの絞り込みと同じ。
     const stBox = el('div', 'research-status');
     const stSel = document.createElement('select');
