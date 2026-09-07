@@ -19,7 +19,7 @@ ADOPTED_STATUS = {"adopted", "ordered", "imaged", "listed"}
 STATUS_LABEL = {
     "": "リサーチ中", "active": "リサーチ中", "adopted": "採用",
     "ordered": "発注済み", "imaged": "画像依頼済み",
-    "listed": "商品登録済み", "rejected": "ボツ",
+    "listed": "商品登録済み", "rejected": "不採用",
 }
 
 # タオタロウの代行オプション（1販売単位あたり・元）。
