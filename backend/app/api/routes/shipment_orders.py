@@ -84,12 +84,17 @@ def debug_match_score(buy_url: str, color: str = "", size: str = "", unit_price_
         detail["color_norm"] = color_n
         detail["combo1"] = combo1
         detail["combo2"] = combo2
-        if spec_n and color_n and spec_n == color_n:
+        # 本番の照合（score_product）と同じ順番・同じ点にしておく。
+        # ここがずれていると、調べたときの点数が実際と食い違って迷う
+        if spec_n and color_n and size_n and spec_n in {combo1, combo2}:
+            score += 40
+            detail["spec_branch"] = "combo"
+        elif spec_n and color_n and spec_n == color_n:
             score += 35
             detail["spec_branch"] = "exact"
-        elif spec_n and color_n and size_n and spec_n in {combo1, combo2}:
+        elif spec_n and size_n and spec_n == size_n:
             score += 35
-            detail["spec_branch"] = "combo"
+            detail["spec_branch"] = "size"
         elif spec_n and color_n and (spec_n in color_n or color_n in spec_n):
             score += 18
             detail["spec_branch"] = "partial"
@@ -268,14 +273,21 @@ def match_products(items: List[dict], db: Session = Depends(get_db)):
         # （例: 色欄が空でサイズ欄に"蓝色12粒"のように色名込みで入っている）。
         # 色欄だけで判定すると常に不一致になり単価だけが決め手になってしまうため、
         # サイズ欄単独でもspecと突き合わせる。
-        if spec and color and spec == color:
-            score += 35
-        elif spec and size and spec == size:
-            score += 35
-        elif spec and color and size and spec in {
+        #
+        # 色とサイズの両方が一致するほうを、色だけの一致より強く採る。
+        # 同じ1688URLに、色だけを仕様に持つ商品（レビュー特典など）と
+        # 色＋サイズを持つ商品が並ぶと、同点になって決まらなくなる。
+        # 実際 y104_gold（香槟色、30*30cm-拷边加厚）と
+        # review_cloth_gold（香槟色）が80点で並び、紐づかなかった。
+        # 2項目一致は1項目一致より確かなので、点を高くする。
+        if spec and color and size and spec in {
             _norm_text(f"{item.get('color', '')}、{item.get('size', '')}"),
             _norm_text(f"{item.get('color', '')} {item.get('size', '')}"),
         }:
+            score += 40
+        elif spec and color and spec == color:
+            score += 35
+        elif spec and size and spec == size:
             score += 35
         elif spec and color and (spec in color or color in spec):
             score += 18
