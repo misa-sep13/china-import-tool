@@ -973,9 +973,24 @@ export default function WelfareInventoryPage() {
                           }} />
                         </td>
                         <td style={{ ...instructionCellStyle(instruction), padding: 6 }}>
+                          {/* datalistは入力中の文字で候補を絞る。「保管」が入ったままだと
+                              「戻し」が候補に出ず、選べなくなる（実際に選べなかった）。
+                              触った瞬間に空にして全候補を出し、選ばずに離れたら元へ戻す。
+                              自由入力（「戻し3個」など）は今までどおりできる */}
                           <input
                             list="work-instruction-options"
                             value={instruction}
+                            onFocus={e => {
+                              if (WORK_INSTRUCTION_OPTIONS.includes(instruction)) {
+                                e.target.dataset.prev = instruction
+                                updateWorkDraft(row, { instruction: '' })
+                              }
+                            }}
+                            onBlur={e => {
+                              const prev = e.target.dataset.prev
+                              if (prev && !e.target.value) updateWorkDraft(row, { instruction: prev })
+                              delete e.target.dataset.prev
+                            }}
                             onChange={e => updateWorkDraft(row, { instruction: e.target.value })}
                             style={{ width: 112, minWidth: 0, background: 'transparent', border: '1px solid #cbd5e1', borderRadius: 6 }}
                           />
