@@ -2440,6 +2440,8 @@ def _calc_tariff_tax(
         international_freight=data.international_freight,
         permit_cols_by_index={idx: data.items[idx].permit_col for idx, _ in items_with_totals},
         columns=columns,
+        # 実際に払った納税額へ合わせて配る（欄の合計には端数が残っているため）
+        actual_total_tax_jpy=data.import_tax_jpy or 0,
     )
 
 

@@ -762,6 +762,7 @@ def calc_tariff_tax(
     international_freight: float,
     permit_cols_by_index: dict[int, int | None],
     columns: list,
+    actual_total_tax_jpy: float = 0.0,
 ) -> dict[int, dict]:
     """税率別計算: 各商品インデックスに対する関税・消費税・地方消費税を返す。
 
@@ -840,4 +841,26 @@ def calc_tariff_tax(
             "col_no": col["col_no"],
             "hs_code": col.get("hs_code", ""),
         }
+
+    # 欄ごとの税額には端数が残っているが、実際の納税額は税目ごとに
+    # 100円単位へ切り捨てられるので、欄の合計とは一致しない
+    # （実測で欄の合計25,537円に対し納税額合計25,400円。差137円）。
+    # 払っていない額を原価に乗せないよう、実際に払った額へ合わせ直す。
+    # 欄の金額は「どの商品にいくら配るか」の比率としてだけ使う。
+    if actual_total_tax_jpy and result:
+        raw = sum(r["total_tax_jpy"] for r in result.values())
+        if raw > 0 and abs(raw - actual_total_tax_jpy) >= 1:
+            f = actual_total_tax_jpy / raw
+            for r in result.values():
+                r["duty_jpy"] = round(r["duty_jpy"] * f)
+                r["consumption_tax_jpy"] = round(r["consumption_tax_jpy"] * f)
+                r["local_tax_jpy"] = round(r["local_tax_jpy"] * f)
+                r["total_tax_jpy"] = (r["duty_jpy"] + r["consumption_tax_jpy"]
+                                      + r["local_tax_jpy"])
+            # 1円単位の丸めで合計がずれるぶんは、いちばん金額の大きい行で吸収する
+            diff = round(actual_total_tax_jpy) - sum(r["total_tax_jpy"] for r in result.values())
+            if diff:
+                k = max(result, key=lambda i: result[i]["total_tax_jpy"])
+                result[k]["consumption_tax_jpy"] += diff
+                result[k]["total_tax_jpy"] += diff
     return result
