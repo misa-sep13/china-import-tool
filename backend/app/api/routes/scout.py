@@ -334,7 +334,9 @@ def scout_status(db: Session = Depends(get_db)):
     if cur and cur.status == "running":
         phase = f"手元のPCで{label}を実行中（{cur.taken_by or '実行中'}）"
     elif cur:
-        phase = f"{label}を依頼しました。手元のPCが拾うのを待っています"
+        waited = int((datetime.now(timezone.utc) - cur.created_at).total_seconds() // 60)             if cur.created_at else 0
+        phase = (f"{label}を依頼しました。手元のPCが拾うのを待っています"
+                 + (f"（{waited}分経過。常駐が動いていないかもしれません）" if waited >= 2 else ""))
     else:
         phase = ""
     prog = {}
@@ -600,12 +602,40 @@ class CrawlIn(BaseModel):
 _KIND_LABEL = {"crawl": "巡回", "bookmarks": "ブックマークの取り込み"}
 
 
+# 拾われないまま残った依頼を、いつまでも「実行中」に見せない。
+# 手元のPCが起動していない・ボタンからの起動をブラウザが弾いた、といった
+# ときに依頼だけが残り、画面のボタンが押せなくなる（実際に起きた）。
+_PENDING_LIMIT_MIN = 15        # 誰も拾わないまま
+_RUNNING_LIMIT_MIN = 60 * 8    # 走り出したまま終わらない（全社巡回で1時間半）
+
+
+def _expire_stale(db: Session):
+    now = datetime.now(timezone.utc)
+    rows = (db.query(ScoutCrawlRequest)
+            .filter(ScoutCrawlRequest.status.in_(["pending", "running"])).all())
+    changed = False
+    for r in rows:
+        started = r.taken_at or r.created_at
+        if not started:
+            continue
+        limit = _RUNNING_LIMIT_MIN if r.status == "running" else _PENDING_LIMIT_MIN
+        if (now - started).total_seconds() > limit * 60:
+            r.status = "canceled"
+            r.finished_at = now
+            r.message = ("手元のPCが受け取らないまま時間が過ぎたので取り消しました"
+                         if r.status else None)
+            changed = True
+    if changed:
+        db.commit()
+
+
 def _active_request(db: Session, kind: Optional[str] = None):
     """まだ終わっていない依頼。二重に積まないために使う。
 
     kind を渡すとその種類だけを見る。巡回とブックマーク取り込みは
     別々の作業なので、片方が動いていても、もう片方は依頼できてよい。
     """
+    _expire_stale(db)
     q = db.query(ScoutCrawlRequest).filter(
         ScoutCrawlRequest.status.in_(["pending", "running"]))
     if kind:
