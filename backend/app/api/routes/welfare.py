@@ -1534,8 +1534,9 @@ def packing_order_candidates(
     作業マスタは商品ページ単位（y48）なので、rakuten_item_url で寄せる。
     同じ作業に当たる荷受け行は1つにまとめる（色違いをまとめて何セット作るか）。
 
-    セット数は 残数 ÷ 1セットの数。割り切れない分は切り捨てる
-    （足りない分で1セット作れないため）。
+    セット数は荷受けの「残」をそのまま使う。残は取り込み時に
+    単品数 ÷ 換算（1セットの入数）で既にセット数へ直してあるので、
+    ここで入数を割り直すと二重になる。
     """
     tasks = db.query(WelfarePackingTask).filter(
         WelfarePackingTask.is_active == True).all()
@@ -1621,8 +1622,10 @@ def packing_order_candidates(
 
     by_batch: dict[str, dict] = {}
     for e in grouped.values():
-        per = e["set_qty"] or 1
-        e["suggested_set_count"] = int(e["remaining_qty"] // per) if per > 0 else 0
+        # 荷受けの「残」はすでにセット数へ換算済み（残(単品) ÷ 換算 = 残(セット)）。
+        # ここでさらに1セットの入数で割ると二重に割ることになる。
+        # 例: ガーゼ 2400枚 → 残200セット。これを12で割って16になっていた
+        e["suggested_set_count"] = int(e["remaining_qty"])
         e["suggested_amount"] = round(e["suggested_set_count"] * (e["unit_price"] or 0), 2)
         b = by_batch.setdefault(e["batch"], {
             "batch": e["batch"],
