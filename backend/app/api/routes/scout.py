@@ -337,13 +337,32 @@ def scout_status(db: Session = Depends(get_db)):
         phase = f"{label}を依頼しました。手元のPCが拾うのを待っています"
     else:
         phase = ""
+    prog = {}
+    if cur and cur.progress:
+        try:
+            prog = json.loads(cur.progress)
+        except Exception:
+            prog = {}
+    # 実行中は、手元から届いた進み具合をそのまま画面へ渡す
+    # （画面は index/total/seller/done/blocked/state/wait_sec/log を見る）
+    elapsed = None
+    if cur and cur.taken_at:
+        elapsed = int((datetime.now(timezone.utc) - cur.taken_at).total_seconds())
     return {
         "running": bool(cur),
         "phase": phase,
-        "done": 0,
-        "total": 0,
-        "current": "",
-        "blocked": len([s for s in sellers if s.last_status == "blocked"]),
+        "index": prog.get("index", 0),
+        "seller": prog.get("seller", ""),
+        "state": prog.get("state", ""),
+        "wait_sec": prog.get("wait_sec", 0),
+        "log": prog.get("log", ""),
+        "elapsed_sec": elapsed,
+        "run_by": (cur.taken_by or "") if cur else "",
+        "done": prog.get("done", 0),
+        "total": prog.get("total", 0),
+        "current": prog.get("seller", ""),
+        "blocked": prog.get("blocked",
+                            len([s for s in sellers if s.last_status == "blocked"])),
         "last_run_at": latest.isoformat() if latest else None,
         # 画面上部の「セラー〇件 / 商品〇件」がここを見ている
         "seller_total": len(sellers),
@@ -660,6 +679,42 @@ def take_crawl_request(run_by: str = "", db: Session = Depends(get_db)):
                         "kind": req.kind or "crawl",
                         "params": json.loads(req.params or "{}"),
                         "requested_by": req.requested_by or ""}}
+
+
+class CrawlProgressIn(BaseModel):
+    """手元のPCから送られてくる進み具合。画面の進行バーがそのまま使う。"""
+    total: Optional[int] = None       # 何社回るか
+    index: Optional[int] = None       # いま何社目か
+    seller: Optional[str] = None      # いま見ているセラー名
+    done: Optional[int] = None        # 取得できた数
+    blocked: Optional[int] = None     # ブロックされた数
+    state: Optional[str] = None       # cooldown / captcha など
+    wait_sec: Optional[int] = None    # 待っている秒数
+    log: Optional[str] = None         # 直近の記録（末尾だけ）
+
+
+@router.post("/crawl-request/{req_id}/progress")
+def report_progress(req_id: int, data: CrawlProgressIn, db: Session = Depends(get_db)):
+    """巡回中の進み具合を受け取る。
+
+    巡回は手元のPCで走るので、こちらからは中が見えない。
+    外注さんに回してもらっている間、依頼した側が様子を見られるようにする。
+    """
+    req = db.query(ScoutCrawlRequest).filter(ScoutCrawlRequest.id == req_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="依頼が見つかりません")
+    cur = {}
+    if req.progress:
+        try:
+            cur = json.loads(req.progress)
+        except Exception:
+            cur = {}
+    cur.update(data.model_dump(exclude_none=True))
+    cur["at"] = datetime.now(timezone.utc).isoformat()
+    req.progress = json.dumps(cur, ensure_ascii=False)
+    db.commit()
+    # 途中で中止されたら、手元に知らせて止めてもらう
+    return {"ok": True, "canceled": req.status == "canceled"}
 
 
 class CrawlDoneIn(BaseModel):

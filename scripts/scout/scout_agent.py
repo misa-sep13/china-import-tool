@@ -17,6 +17,7 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -84,6 +85,82 @@ def build_args(params):
     return args
 
 
+# 巡回スクリプトが出す行から進み具合を読み取る。
+#   [12/289] 店の名前 (A1XXXX)
+#   走行 #7: 289 件を巡回します
+#   ブロックされました。60秒待って温め直します
+# 画面はこれを進行バーに使う。手元で走らせている間、依頼した側からは
+# 中が見えないので、ここで拾って送る。
+_RE_IDX = re.compile(r"\[(\d+)/(\d+)\]\s*(.*?)\s*\(([A-Z0-9]{10,20})\)\s*$")
+_RE_TOTAL = re.compile(r"走行\s*#\d+:\s*(\d+)\s*件")
+_RE_WAIT = re.compile(r"ブロックされました。(\d+)秒")
+
+
+def _parse_line(line, st):
+    """1行を見て進み具合を更新する。送るべきなら True を返す。"""
+    body = line[9:] if len(line) > 9 and line[2] == ":" and line[5] == ":" else line
+    st["log"] = (st.get("log", "") + line + "\n")[-1500:]
+
+    m = _RE_IDX.search(body)
+    if m:
+        st["index"], st["total"] = int(m.group(1)), int(m.group(2))
+        st["seller"] = m.group(3) or m.group(4)
+        st["state"] = ""
+        st["wait_sec"] = 0
+        return True
+    m = _RE_TOTAL.search(body)
+    if m:
+        st["total"] = int(m.group(1))
+        return True
+    m = _RE_WAIT.search(body)
+    if m:
+        st["state"], st["wait_sec"] = "cooldown", int(m.group(1))
+        st["blocked"] = st.get("blocked", 0) + 1
+        return True
+    if "CAPTCHA" in body:
+        st["state"] = "captcha"
+        return True
+    if body.lstrip().startswith("→"):        # 1社ぶんの結果が出た
+        st["done"] = st.get("done", 0) + 1
+        return True
+    return False
+
+
+def _run_and_report(cmd, base, token, req_id):
+    """巡回を動かしながら、進み具合を送り続ける。
+
+    subprocess.call だと終わるまで何も分からない。1行ずつ読んで、
+    手元の画面に出しつつ、数秒おきにサーバーへ送る。
+    """
+    st = {"index": 0, "total": 0, "done": 0, "blocked": 0, "seller": "", "log": ""}
+    last_sent = 0.0
+
+    def send():
+        try:
+            r = api(base, f"/scout/crawl-request/{req_id}/progress", token, "POST",
+                    {k: v for k, v in st.items() if v is not None}, timeout=20)
+            return bool(r.get("canceled"))
+        except Exception:
+            return False          # 送れなくても巡回そのものは続ける
+
+    proc = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, bufsize=1,
+                            encoding="utf-8", errors="replace")
+    for line in proc.stdout:
+        line = line.rstrip("\n")
+        print(line, flush=True)              # 手元の画面には今までどおり出す
+        changed = _parse_line(line, st)
+        if changed and time.time() - last_sent > 5:
+            last_sent = time.time()
+            if send():
+                log("画面から中止されました。止めます")
+                proc.terminate()
+                break
+    proc.wait()
+    send()
+    return proc.returncode
+
+
 def run_one(base, token, run_by, req):
     req_id = req["id"]
     kind = req.get("kind") or "crawl"
@@ -106,7 +183,8 @@ def run_one(base, token, run_by, req):
 
     ok, message = True, None
     try:
-        rc = subprocess.call(cmd, cwd=HERE)
+        rc = (subprocess.call(cmd, cwd=HERE) if kind == "bookmarks"
+              else _run_and_report(cmd, base, token, req_id))
         label = KIND_LABEL.get(kind, kind)
         if rc != 0:
             ok = False

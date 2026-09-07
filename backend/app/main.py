@@ -234,6 +234,7 @@ def _migrate():
         ("welfare_inventory_movements","shipment_no", "ALTER TABLE welfare_inventory_movements ADD COLUMN shipment_no VARCHAR"),
         ("scout_baskets","register_requested_at", "ALTER TABLE scout_baskets ADD COLUMN register_requested_at TIMESTAMP WITH TIME ZONE"),
         ("scout_crawl_requests","kind", "ALTER TABLE scout_crawl_requests ADD COLUMN kind VARCHAR DEFAULT 'crawl'"),
+        ("scout_crawl_requests","progress", "ALTER TABLE scout_crawl_requests ADD COLUMN progress TEXT"),
         ("amazon_research_settings","gs1_prefix", "ALTER TABLE amazon_research_settings ADD COLUMN gs1_prefix VARCHAR"),
         ("amazon_research_settings","brand_name", "ALTER TABLE amazon_research_settings ADD COLUMN brand_name VARCHAR"),
         # 販促品／レビュー特典フラグ。楽天に出品していないのでRMS push・発注推奨・
