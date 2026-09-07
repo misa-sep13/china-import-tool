@@ -106,7 +106,10 @@
   th{background:#fafbfc;color:var(--sub);font-size:11px;position:sticky;top:0}
   td img{width:44px;height:44px;object-fit:contain}
   tr:hover td{background:#fafbfc}
-  .empty{text-align:center;color:var(--sub);padding:60px 0}
+  /* 「該当なし」の表示。div でしか使わないので要素名で絞る。
+     .empty だけだと、出品なしの印 <span class="dot empty"> にも当たり、
+     上下60pxの余白が付いてセラー一覧の行が間延びしていた */
+  div.empty{text-align:center;color:var(--sub);padding:60px 0}
   .toast{position:fixed;right:18px;bottom:18px;background:#111827;color:#fff;padding:10px 15px;
          border-radius:8px;font-size:12px;opacity:0;transition:.25s;pointer-events:none;z-index:99}
   .toast.show{opacity:1}
