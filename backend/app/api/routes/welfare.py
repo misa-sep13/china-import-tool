@@ -194,6 +194,17 @@ def _product_indexes(db: Session):
 def _match_product(row: dict, by_url_spec: dict, unique_url: dict, by_url_all: dict | None = None):
     url = _norm_url(row.get("buy_url"))
     spec = (row.get("supplier_spec") or "").strip()
+    size = (row.get("size") or "").strip()
+    color = (row.get("color") or "").strip()
+    # 色とサイズの両方が一致するものを先に見る。
+    # 同じ1688URLに、色だけを仕様に持つ商品（レビュー特典など）と
+    # 色＋サイズを持つ商品が並ぶと、色だけで先に当たってしまう。
+    # 実際「香槟色 / 30*30cm-拷边加厚」の200枚が、4枚セット(y104_gold)ではなく
+    # レビュー特典の1枚もの(review_cloth_gold)に紐づいた。
+    for combo in (f"{spec}、{size}", f"{color}、{size}"):
+        combo = combo.strip("、 ")
+        if url and combo and (url, combo) in by_url_spec:
+            return by_url_spec[(url, combo)], "url+spec"
     if url and spec and (url, spec) in by_url_spec:
         return by_url_spec[(url, spec)], "url+spec"
     if url and url in unique_url:
