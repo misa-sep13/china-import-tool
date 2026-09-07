@@ -21,9 +21,15 @@ router = APIRouter(prefix="/welfare", tags=["welfare"])
 
 
 def _norm_url(url: str | None) -> str:
+    """照合用にURLを揃える。
+
+    前後の空白を必ず落とす。商品マスタに貼り付けたURLの先頭へ空白が
+    紛れ込むことがあり、これを残すと同じ商品でも別のURLとして扱われ、
+    荷受けが紐づかなくなる（実際 y136 の3色がそれで未照合になった）。
+    """
     if not url:
         return ""
-    return str(url).split("?")[0].rstrip("/").lower()
+    return str(url).strip().split("?")[0].strip().rstrip("/").lower()
 
 
 def _unit_per_set(product: RakutenProduct | None) -> int:
