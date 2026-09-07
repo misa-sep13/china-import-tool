@@ -1968,6 +1968,25 @@ if(FIREBASE_CONFIG.databaseURL){
   // 中継サーバーに控えがあれば自動で戻す（中身がある場合は勝手に上書きしない）。
   const localWasEmpty = !savedState;
   let state = savedState || {researches:[defaultResearch()], settings: defaultSettings()};
+  // ---- ステータス（工程）の定義 ----
+  // リサーチ中 / 採用 / 発注済み / 画像依頼済み / 商品登録済み / ボツ。
+  // 工程を足すときはここに1行足すだけ（枠の切替・絞り込み・CSV・
+  // 読み込み時の正規化が全部ここを見る）。
+  //
+  // normalize より前に置くこと。const は巻き上げられないので、
+  // 後ろに置くと読み込みの時点で落ちる。
+  const STATUS_DEFS = [
+    ['active', 'リサーチ中'],
+    ['adopted', '採用'],
+    ['ordered', '発注済み'],
+    ['imaged', '画像依頼済み'],
+    ['listed', '商品登録済み'],
+    ['rejected', 'ボツ']
+  ];
+  // 「採用」以降が商品登録タブに出る。仕入れを決めた時点で登録の準備を
+  // 始められるよう、発注より前に置いてある
+  const ADOPTED_STATUSES = ['adopted', 'ordered', 'imaged', 'listed'];
+
   normalize(state);
 
   // Firebaseから来たデータは空配列がundefinedに化けるので、必ず形を整えてから使う。
@@ -2045,9 +2064,12 @@ if(FIREBASE_CONFIG.databaseURL){
       });
       if(!r.id) r.id = uid();
       if(r.comment === undefined || r.comment === null) r.comment = '';
-      // 枠のステータス。ordered=発注済み / imaged=画像依頼済み / listed=商品登録済み /
-      // rejected=ボツ / それ以外はリサーチ中('')
-      if(['ordered','imaged','listed','rejected'].indexOf(r.status) < 0) r.status = '';
+      // 枠のステータス。adopted=採用 / ordered=発注済み / imaged=画像依頼済み /
+      // listed=商品登録済み / rejected=ボツ / それ以外はリサーチ中('')
+      //
+      // 工程を足したときは STATUS_DEFS だけでなく、ここにも足すこと。
+      // 入れ忘れると、読み込むたびに空へ戻されて保存が効かなくなる
+      if(STATUS_DEFS.every(([v]) => v !== r.status)) r.status = '';
     });
     return s;
   }
@@ -7638,19 +7660,8 @@ if(FIREBASE_CONFIG.databaseURL){
     return wrap;
   }
 
-  // ---- ステータス絞り込み（すべて / リサーチ中 / 発注済み / 画像依頼済み / 商品登録済み / ボツ） ----
-  // 工程を足すときは STATUS_DEFS に1行足すだけ（枠の切替・絞り込み・CSVが全部ここを見る）。
-  const STATUS_DEFS = [
-    ['active', 'リサーチ中'],
-    ['adopted', '採用'],
-    ['ordered', '発注済み'],
-    ['imaged', '画像依頼済み'],
-    ['listed', '商品登録済み'],
-    ['rejected', 'ボツ']
-  ];
-  // 「採用」以降が商品登録タブに出る。仕入れを決めた時点で登録の準備を
-  // 始められるよう、発注より前に置いてある
-  const ADOPTED_STATUSES = ['adopted', 'ordered', 'imaged', 'listed'];
+  // ---- ステータス絞り込み ----
+  // 定義（STATUS_DEFS）は normalize より前に置いてある。
   const STATUS_LABEL = Object.fromEntries(STATUS_DEFS);
   // 絞り込みは端末ごとの見え方なので共有stateではなくlocalStorageに持つ。
   const FILTER_KEY = 'arsStatusFilter:' + WORKSPACE;
