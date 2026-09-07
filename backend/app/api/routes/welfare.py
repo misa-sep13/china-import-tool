@@ -1622,6 +1622,15 @@ def packing_order_candidates(
 
     by_batch: dict[str, dict] = {}
     for e in grouped.values():
+        # 作業マスタは商品ページ単位（y47）なので、色違いが1件にまとまる。
+        # 「キッチンタオル4枚セット」だけでは何色を作るのか分からないので、
+        # 荷受けの商品名（色が入っている）ごとの内訳を添える。
+        by_name: dict[str, int] = {}
+        for sc in e["sources"]:
+            nm = (sc.get("name_jp") or sc.get("sku") or "").strip()
+            by_name[nm] = by_name.get(nm, 0) + (sc.get("remaining_qty") or 0)
+        e["breakdown"] = [{"name": k, "qty": v} for k, v in by_name.items()]
+        e["breakdown_label"] = "／".join(f"{k} {v}" for k, v in by_name.items())
         # 荷受けの「残」はすでにセット数へ換算済み（残(単品) ÷ 換算 = 残(セット)）。
         # ここでさらに1セットの入数で割ると二重に割ることになる。
         # 例: ガーゼ 2400枚 → 残200セット。これを12で割って16になっていた

@@ -242,8 +242,10 @@ export default function WelfarePackingAdmin() {
                               </td>
                               <td style={{ padding: '8px 10px' }}>
                                 <div style={{ fontWeight: 600 }}>{x.task_name}</div>
-                                <div style={{ fontSize: 11, color: '#94a3b8' }}>
-                                  {x.sources.length}件の荷受けから
+                                {/* 作業マスタは商品ページ単位なので色違いが1件にまとまる。
+                                    何色を作るのか分かるよう内訳を出す */}
+                                <div style={{ fontSize: 11, color: '#64748b' }}>
+                                  {x.breakdown_label || `${x.sources.length}件の荷受けから`}
                                 </div>
                               </td>
                               <td style={{ padding: '8px 10px' }}>{x.sku}</td>
@@ -280,6 +282,8 @@ export default function WelfarePackingAdmin() {
                             set_count: picked[x.task_id],
                             // どの便から作ったかを残す。同じ便から二重に作らないため
                             source_batch: activeBatch,
+                            // 何色を作るのかは作業名だけでは分からないので備考に残す
+                            note: x.breakdown_label || '',
                           })
                         }
                         setPicked({})
@@ -408,6 +412,8 @@ export default function WelfarePackingAdmin() {
                       <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>{r.order_date}</td>
                       <td style={{ padding: '8px 10px' }}>
                         <div style={{ fontWeight: 600 }}>{r.name_jp}</div>
+                        {/* 作業名だけでは何色か分からないので、色の内訳を出す */}
+                        {r.note && <div style={{ fontSize: 11, color: '#64748b' }}>{r.note}</div>}
                         {r.sku && <div style={{ fontSize: 11, color: '#94a3b8' }}>{r.sku}</div>}
                       </td>
                       <td style={{ padding: '8px 10px', textAlign: 'right' }}>{r.set_qty || '-'}</td>
