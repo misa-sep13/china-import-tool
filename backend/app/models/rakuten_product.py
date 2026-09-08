@@ -14,6 +14,11 @@ class RakutenProduct(Base):
     price        = Column(Float)                # 仕入れ値（元）
     spec         = Column(String)               # システム連携用SKU番号（全角48文字）
     set_size     = Column(Integer, default=1)   # セット入数
+    # タオタロウAPI発注。一度人が確かめたSKUと、いつもの検品オプションを覚える。
+    # Amazon側（products）と同じ考え方。詳しくは services/taotaro.py
+    taotaro_inspect    = Column(Text, nullable=True)
+    taotaro_product_id = Column(Integer, nullable=True)
+    taotaro_sku_id     = Column(String, nullable=True)
     # 楽天管理情報
     rakuten_item_url = Column(String)           # 在庫管理番号（社内管理用）
     rakuten_sku_id   = Column(String)           # 楽天SKU管理番号（半角32文字: y60_4_black形式）

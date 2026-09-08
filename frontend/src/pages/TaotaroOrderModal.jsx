@@ -35,7 +35,12 @@ const INSPECT = [
   ['var6', '下げ札取り外し'],
 ]
 
-export default function TaotaroOrderModal({ items, onClose, onDone }) {
+export default function TaotaroOrderModal({
+  items, onClose, onDone,
+  // 叩く先。楽天とAmazonで置き場所が違うだけで、中身も画面も同じ
+  previewUrl = '/taotaro/order-preview',
+  submitUrl = '/taotaro/order-submit',
+}) {
   const [rows, setRows] = useState(null)
   const [busy, setBusy] = useState(true)
   const [err, setErr] = useState('')
@@ -48,7 +53,7 @@ export default function TaotaroOrderModal({ items, onClose, onDone }) {
     let alive = true
     const run = async () => {
       try {
-        const r = await api.post('/taotaro/order-preview', {
+        const r = await api.post(previewUrl, {
           items: items.map(it => ({
             sku: it.sku, qty: it.qty, buy_url: it.buy_url || '',
             name: it.name || '', color: it.color || '',
@@ -72,7 +77,7 @@ export default function TaotaroOrderModal({ items, onClose, onDone }) {
     }
     run()
     return () => { alive = false }
-  }, [items])
+  }, [items, previewUrl])
 
   const patch = (i, v) => setRows(rs => rs.map((r, n) => n === i ? { ...r, ...v } : r))
 
@@ -97,7 +102,7 @@ export default function TaotaroOrderModal({ items, onClose, onDone }) {
     if (!confirm(`タオタロウへ発注します。取り消しは買付開始前しかできません。\n\n${names}\n\nよろしいですか？`)) return
     setSending(true); setErr('')
     try {
-      const r = await api.post('/taotaro/order-submit', {
+      const r = await api.post(submitUrl, {
         items: targets.map(t => ({
           sku: t.sku, qty: t.qty, buy_url: t.buy_url,
           title: t.title || t.name, platform: t.platform,

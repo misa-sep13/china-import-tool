@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import { normalizeSearch } from '../searchUtil'
+import TaotaroOrderModal from './TaotaroOrderModal'
 
 // 追跡の色。「配達完了」と「配達中」はどちらも手元へ向かっている状態なので同じ色。
 // 就労支援在庫の一覧と揃えてある
@@ -782,6 +783,8 @@ export default function RakutenOrderPage() {
   const [checkedSkus, setCheckedSkus] = useState(new Set())
   const [search, setSearch] = useState('')
   const [onlyRecommended, setOnlyRecommended] = useState(false)
+  // タオタロウへ直接発注する確認画面に渡す商品。null＝閉じている
+  const [taotaroItems, setTaotaroItems] = useState(null)
 
   const { data: allData, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['rakuten-all-products-order'],
@@ -860,6 +863,28 @@ export default function RakutenOrderPage() {
     return rows
   }
 
+  // タオタロウへ直接発注する。ここでは確認画面を開くだけで、まだ何も送らない。
+  // 実際の発注はモーダルの中で、色・サイズを目視してから行う
+  const handleTaotaroOrder = () => {
+    const targets = splitTargets()
+    if (targets.length === 0) {
+      alert('チェックした商品（発注数1以上）がありません')
+      return
+    }
+    // 航空便と船便の分け方はExcel用のもの。発注そのものは同じ商品なので、
+    // 同じSKUはまとめて1件として送る
+    const merged = new Map()
+    targets.forEach(t => merged.set(t.sku, (merged.get(t.sku) || 0) + t.qty))
+    setTaotaroItems([...merged].map(([sku, qty]) => ({ sku, qty })))
+  }
+
+  const handleTaotaroDone = () => {
+    setCheckedSkus(new Set())
+    setAirInputs({})
+    qc.invalidateQueries(['rakuten-all-products-order'])
+    qc.invalidateQueries(['rakuten-order-history'])
+  }
+
   const handleExcelDownload = async () => {
     const targets = splitTargets()
     if (targets.length === 0) {
@@ -920,6 +945,17 @@ export default function RakutenOrderPage() {
           title="チェックした行だけがExcelに書き込まれます。航空便に数を入れた分は別ファイルになります"
         >
           {downloading ? '生成中...' : `📥 発注Excel（チェックした${checkedSkus.size}件）`}
+        </button>
+        {/* Excelを作って管理画面へ上げる代わりに、APIで直接発注する。
+            色違いの発注は取り返しがつかないので、必ず確認画面を挟む */}
+        <button
+          className="btn"
+          style={{ fontSize: 13, background: checkedSkus.size > 0 ? '#e11d48' : '#cbd5e1', color: '#fff', border: 'none' }}
+          disabled={checkedSkus.size === 0}
+          onClick={handleTaotaroOrder}
+          title="チェックした行を、タオタロウのAPIで直接発注します（送る前に確認画面が出ます）"
+        >
+          {`🛒 タオタロウに発注（${checkedSkus.size}件）`}
         </button>
         {/* 航空便に振り分けた分があることを、押す前に分かるようにする */}
         {checkedSkus.size > 0 && (() => {
@@ -1235,6 +1271,17 @@ export default function RakutenOrderPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* タオタロウへ直接発注する確認画面。閉じるまで何も送らない */}
+      {taotaroItems && (
+        <TaotaroOrderModal
+          items={taotaroItems}
+          previewUrl="/rakuten/orders/taotaro-preview"
+          submitUrl="/rakuten/orders/taotaro-submit"
+          onClose={() => setTaotaroItems(null)}
+          onDone={handleTaotaroDone}
+        />
       )}
     </div>
   )

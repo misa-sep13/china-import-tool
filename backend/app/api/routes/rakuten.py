@@ -3989,3 +3989,245 @@ async def rms_debug_item_permissions(db: Session = Depends(get_db)):
         verdict = "更新系も401ではない。呼び方の問題として調べられる"
 
     return {"判定": verdict, "結果": checks}
+
+
+# ============================================================
+# タオタロウAPIで直接発注する
+# ============================================================
+#
+# これまではExcelを作って管理画面へ手で上げていた。APIで注文を作れば
+# 転記が消えるが、代わりに「どの色・どのサイズを買うか」を機械が決める
+# ことになる。違う色が届いても取り返しがつかないので、
+#   ・一度人が確かめた組み合わせは商品マスタに覚える
+#   ・自動で決められなかったものは発注せず、画面で選んでもらう
+# という形にしてある。Amazon側（api/routes/taotaro.py）と同じ考え方。
+#
+# 楽天はセット商品と付属品を展開する必要があるので、Excelと同じ論理を
+# _taotaro_rows() にまとめ、Excel出力と食い違わないようにしている。
+
+def _taotaro_rows(order_items: list, db: Session) -> list:
+    """発注リストを、1688の商品1件ずつの行にほどく。
+
+    Excel出力（/orders/excel）と同じ展開をする:
+      ・本体は set_size を掛けて仕入単位（個数）に直す
+      ・set_components / purchase_components を別の行として足す
+    構成品は本体とは別の1688商品なので、それぞれのSKUで覚える。
+    """
+    rows = []
+    for oi in order_items:
+        sku = oi.get("sku")
+        try:
+            qty = int(float(oi.get("qty", 0)))
+        except Exception:
+            qty = 0
+        if not sku or not qty:
+            continue
+        p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
+        if not p:
+            continue
+
+        # 本体行（set_componentsありかつspec空のものは、構成品だけを頼む）
+        if not (p.set_components and not (p.spec or "").strip()):
+            rows.append({
+                "sku": sku, "name": p.name or sku,
+                "buy_url": p.buy_url or "",
+                "spec": getattr(p, "supplier_spec", "") or "",
+                "qty": qty * (p.set_size or 1),
+                "note": p.notes or "",
+            })
+
+        try:
+            comps = json.loads(p.set_components or "[]")
+        except Exception:
+            comps = []
+        try:
+            pcomps = json.loads(getattr(p, "purchase_components", None) or "[]")
+        except Exception:
+            pcomps = []
+
+        for comp in comps + pcomps:
+            comp_sku = comp.get("sku")
+            comp_qty = comp.get("qty", 1)
+            comp_url = comp.get("buy_url", "")
+            comp_spec = comp.get("supplier_spec", "")
+            if not comp_url or not comp_spec:
+                c = (db.query(RakutenProduct)
+                     .filter(RakutenProduct.sku == comp_sku).first()) if comp_sku else None
+                if c and c.is_component:
+                    comp_url = comp_url or c.buy_url or ""
+                    comp_spec = comp_spec or getattr(c, "supplier_spec", "") or ""
+                elif not comp_url:
+                    continue
+            rows.append({
+                "sku": comp_sku or sku,
+                "name": comp.get("name", "") or comp_sku or "",
+                "buy_url": comp_url, "spec": comp_spec,
+                "qty": qty * comp_qty,
+                "note": comp.get("notes", "") or "",
+            })
+    return rows
+
+
+@router.post("/orders/taotaro-preview")
+def rakuten_taotaro_preview(body: dict, db: Session = Depends(get_db)):
+    """発注の下調べ。商品詳細を取り直し、SKUの候補と単価・在庫を返す。
+
+    仕様書のとおり、価格と在庫はキャッシュされるので発注の直前に取り直す。
+    ここで ok=false のものは、画面でSKUを選んでもらうまで発注できない。
+    """
+    from app.services import taotaro
+
+    out = []
+    for r in _taotaro_rows(body.get("items", []), db):
+        row = {
+            "sku": r["sku"], "name": r["name"], "qty": r["qty"],
+            "buy_url": r["buy_url"], "color": r["spec"], "size": "",
+            "ok": False, "error": "", "skus": [], "chosen": None,
+            "product_id": None, "platform": "", "title": "",
+            "min_order_quantity": 1, "remembered": False, "inspect": {},
+        }
+        p = db.query(RakutenProduct).filter(RakutenProduct.sku == r["sku"]).first()
+
+        if not r["buy_url"]:
+            row["error"] = "仕入URLがありません"
+            out.append(row)
+            continue
+        if not taotaro._platform_of(r["buy_url"]):
+            row["error"] = "1688・淘宝以外のURLです（このAPIでは発注できません）"
+            out.append(row)
+            continue
+
+        try:
+            d = taotaro.goods_detail(r["buy_url"])
+        except taotaro.TaotaroError as e:
+            # 1688で商品が消えているとサーバーエラーになる。仕様書の指示どおり
+            # リトライせず、この商品だけ飛ばす
+            row["error"] = e.message
+            out.append(row)
+            continue
+
+        row.update({
+            "product_id": d["product_id"], "platform": d["platform"],
+            "title": d.get("title_trans") or d.get("title") or "",
+            "skus": d["skus"], "min_order_quantity": d["min_order_quantity"],
+            "status": d.get("status"),
+        })
+
+        chosen = None
+        if p and p.taotaro_sku_id:
+            for s in d["skus"]:
+                if s["sku_id"] == p.taotaro_sku_id:
+                    chosen = s
+                    row["remembered"] = True
+                    break
+        if not chosen:
+            # 楽天は色とサイズが分かれておらず、中国語の仕様がそのまま入る
+            chosen = taotaro.match_sku(d["skus"], r["spec"], "", "")
+
+        if not chosen:
+            row["error"] = "色・サイズがどれに当たるか決められませんでした。選んでください"
+            out.append(row)
+            continue
+
+        row["chosen"] = chosen
+        if d.get("status") and d["status"] != "published":
+            row["error"] = f"掲載状態が {d['status']} です（購入できない可能性）"
+        elif r["qty"] < (d["min_order_quantity"] or 1):
+            row["error"] = f"最小発注数 {d['min_order_quantity']} を下回っています"
+        elif chosen.get("stock") is not None and r["qty"] > (chosen["stock"] or 0):
+            row["error"] = f"在庫 {chosen['stock']} 個を超えています"
+        else:
+            row["ok"] = True
+
+        row["inspect"] = taotaro.inspect_options(p.taotaro_inspect if p else None)
+        out.append(row)
+
+    return {"items": out,
+            "ok_count": len([x for x in out if x["ok"]]),
+            "ng_count": len([x for x in out if not x["ok"]])}
+
+
+@router.post("/orders/taotaro-submit")
+def rakuten_taotaro_submit(body: dict, db: Session = Depends(get_db)):
+    """発注を実行する。taotaro-preview で確認したものだけを渡すこと。
+
+    タオタロウには goods_list でまとめて送る。1回のリクエストで
+    まとめて作られるため、途中まで作られて失敗という状態にはならない。
+    """
+    from app.services import taotaro
+
+    items = body.get("items") or []
+    if not items:
+        raise HTTPException(status_code=400, detail="発注する商品がありません")
+
+    goods_list = []
+    for it in items:
+        try:
+            qty = int(it.get("qty") or 0)
+        except Exception:
+            qty = 0
+        if qty <= 0:
+            continue
+        g = {
+            "platform": it.get("platform"),
+            "product_id": int(it.get("product_id")),
+            "sku_id": str(it.get("sku_id")),
+            "title": it.get("title") or it.get("sku"),
+            "url": it.get("buy_url"),
+            "quantity": qty,
+            # 自社SKUを入れておくと、配送依頼の取り込みで照合が要らなくなる
+            "out_id": it.get("sku"),
+        }
+        if it.get("remark"):
+            g["remark"] = it["remark"]
+        g.update(taotaro.inspect_options(it.get("inspect")))
+        goods_list.append(g)
+
+    if not goods_list:
+        raise HTTPException(status_code=400, detail="発注数が1以上の商品がありません")
+
+    try:
+        r = taotaro.create_orders(goods_list)
+    except taotaro.TaotaroError as e:
+        raise HTTPException(status_code=502, detail=e.message)
+
+    # 発注できたので、確かめた組み合わせと検品オプションを覚える。
+    # 次からは自動で決まり、確認画面で選び直す手間が消える
+    for it in items:
+        p = db.query(RakutenProduct).filter(RakutenProduct.sku == it.get("sku")).first()
+        if not p:
+            continue
+        if it.get("remember_sku", True):
+            p.taotaro_product_id = int(it.get("product_id"))
+            p.taotaro_sku_id = str(it.get("sku_id"))
+        if it.get("remember_inspect"):
+            p.taotaro_inspect = json.dumps(
+                taotaro.inspect_options(it.get("inspect")), ensure_ascii=False)
+
+    # 発注履歴に残す。Excel出力のときと同じ形にしておく。
+    # 数量は仕入単位（個数）に展開済みなので、割り切れるときだけ販売単位へ戻す
+    ordered_at = date.today()
+    recorded = 0
+    for it in items:
+        p = db.query(RakutenProduct).filter(RakutenProduct.sku == it.get("sku")).first()
+        if not p:
+            continue
+        has_pending = db.query(RakutenOrderHistory).filter(
+            RakutenOrderHistory.sku == p.sku,
+            RakutenOrderHistory.is_deleted == False,
+            RakutenOrderHistory.is_delivered == False,
+        ).first() is not None
+        qty = int(it.get("qty") or 0)
+        unit = p.set_size or 1
+        db.add(RakutenOrderHistory(
+            sku=p.sku, name=p.name,
+            qty=qty // unit if unit > 1 and qty % unit == 0 else qty,
+            stage=2 if has_pending else 1,
+            ordered_at=ordered_at,
+            memo="タオタロウAPIで発注",
+        ))
+        recorded += 1
+    db.commit()
+
+    return {"ordered": len(goods_list), "oids": r.get("oids") or [],
+            "recorded": recorded}
