@@ -494,7 +494,15 @@ _COLOR_SAME = {
     "オレンジ": "橙", "パープル": "紫", "グレー": "灰", "ブラウン": "棕",
     "ベージュ": "米", "ゴールド": "金", "シルバー": "银", "カーキ": "卡其",
     "クリア": "透明", "ローズレッド": "玫红", "アイボリー": "象牙",
+    "肌の色": "肤", "肌色": "肤",
 }
+
+# 数量の単位。訳が「12カプセル」、商品マスタが「12粒」のように
+# 同じものを別の言葉で書いている。数字だけ残るよう単位を落とす
+_UNIT_WORDS = [
+    "カプセル", "錠剤", "錠", "個入り", "個", "粒", "枚", "セット", "組",
+    "pcs", "pc", "set",
+]
 
 _HAN_SAME = {
     "藍": "蓝", "灰": "灰", "緑": "绿", "紅": "红", "黒": "黑", "白": "白",
@@ -560,13 +568,32 @@ def _label_parts(label: str) -> list:
     return out
 
 
+def _drop_units(s: str) -> str:
+    """数量の単位と、色名の「色」を落とす。
+
+    「蓝色12粒」と「蓝12カプセル」のように、同じものでも単位の訳語が
+    違ったり、色名に「色」が付いたり付かなかったりする。
+    数と色の字だけ残せば、同じものは同じ形になる。
+    """
+    t = str(s or "")
+    for w in sorted(_UNIT_WORDS, key=len, reverse=True):
+        t = t.replace(w, "")
+    return t.replace("色", "")
+
+
 def _fits(want: str, parts: list) -> bool:
     """欲しい断片が、ラベルのどれかに当てはまるか。
 
     表記のゆれ（「白色2粒」と「白色 2粒装」など）で完全一致しないため、
     どちらかがもう一方を含んでいれば同じとみなす。
+    単位の言い換え（粒／カプセル）も揃えてから比べる。
     """
-    return any(want == p or want in p or p in want for p in parts)
+    if any(want == p or want in p or p in want for p in parts):
+        return True
+    w = _drop_units(want)
+    if not w:
+        return False
+    return any(w == _drop_units(p) for p in parts)
 
 
 def match_sku(skus: list, color: str, size: str, spec: str = "") -> dict:

@@ -336,3 +336,39 @@ def order_cancel(order_ids: str):
     done = _call(taotaro.cancel_orders, ids)
     return {"requested": len(ids), "cancelled": done,
             "not_cancelled": [x for x in ids if x not in done]}
+
+@router.get("/debug-goods")
+def debug_goods(url: str):
+    """商品詳細が実際にどう返るかを見る（調査用）。
+
+    照合が当たらないとき、選択肢のラベルが訳だけなのか原文も来るのか、
+    商品マスタの書き方とどこが違うのかを、推測せずに確かめるため。
+    """
+    d = taotaro.goods_detail(url)
+    return {
+        "title": d.get("title"), "title_trans": d.get("title_trans"),
+        "product_id": d.get("product_id"),
+        "min_order_quantity": d.get("min_order_quantity"),
+        "skus": [{"sku_id": s["sku_id"], "label": s["label"],
+                  "label_raw": s.get("label_raw"), "stock": s.get("stock"),
+                  "price": s.get("price")}
+                 for s in (d.get("skus") or [])[:20]],
+    }
+
+
+@router.get("/debug-match-spec")
+def debug_match_spec(url: str, spec: str):
+    """商品マスタの仕様が、どの選択肢に当たるかを1件ずつ見る（調査用）。"""
+    d = taotaro.goods_detail(url)
+    chosen = taotaro.match_sku(d["skus"], spec, "", "")
+    return {
+        "spec": spec,
+        "spec_parts": taotaro._parts(spec),
+        "chosen": chosen["label"] if chosen else None,
+        "candidates": [
+            {"label": s["label"], "label_raw": s.get("label_raw"),
+             "parts": taotaro._label_parts(s["label"])
+                      + taotaro._label_parts(s.get("label_raw"))}
+            for s in (d.get("skus") or [])[:20]
+        ],
+    }
