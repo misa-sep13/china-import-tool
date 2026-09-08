@@ -477,10 +477,75 @@ def goods_detail(url: str) -> dict:
     }
 
 
+# 日本語の漢字と簡体字で同じ色を指すもの。仕入先は簡体字、こちらの
+# 商品マスタは日本語で書かれていることがあり、そのままでは一致しない
+_HAN_SAME = {
+    "藍": "蓝", "灰": "灰", "緑": "绿", "紅": "红", "黒": "黑", "白": "白",
+    "銀": "银", "褐": "褐", "紫": "紫", "橙": "橙", "黄": "黄", "粉": "粉",
+    "図": "图", "無": "无", "號": "号", "号": "号", "碼": "码", "码": "码",
+    "標": "标", "準": "准", "軍": "军", "楓": "枫", "櫻": "樱", "藍色": "蓝色",
+}
+
+
 def _norm(s: str) -> str:
-    """照合用に、記号と空白を落として比べやすくする。"""
+    """照合用に、記号と空白を落として比べやすくする。
+
+    仕入先は簡体字、商品マスタは日本語で書かれていることがあるので、
+    よく出る漢字だけ簡体字へ寄せてから比べる。
+    """
     import re
-    return re.sub(r"[\s　・/／,、。.\-_（）()【】\[\]]", "", str(s or "")).lower()
+    t = str(s or "")
+    for a, b in _HAN_SAME.items():
+        t = t.replace(a, b)
+    return re.sub(r"[\s　・/／,、。.\-_（）()【】\[\]]", "", t).lower()
+
+
+def _parts(s: str) -> list:
+    """仕様の文字列を、属性ごとの断片に割る。
+
+    商品マスタの仕様は「藍色12粒、HS-88」のように複数の属性が
+    1つの文字列にまとまっている。仕入先のラベルは属性ごとに
+    分かれているので、こちらも割ってから突き合わせる。
+    """
+    import re
+    out = []
+    # 【】は「白色【2粒】」のように属性の切れ目として使われるので、
+    # 記号として落とさず、ここで区切りとして扱う
+    for x in re.split(r"[、,/／|｜\s　【】\[\]（）()]+", str(s or "")):
+        x = _norm(x)
+        if x:
+            out.append(x)
+    return out
+
+
+def _label_parts(label: str) -> list:
+    """仕入先のラベル「カラー：赤 / サイズ：M」を、値だけの断片にする。
+
+    属性名（カラー・颜色分类など）は商品マスタに入っていないので落とす。
+    """
+    out = []
+    for seg in str(label or "").split("/"):
+        seg = seg.strip()
+        if not seg:
+            continue
+        # 「颜色分类：蓝色」→「蓝色」。区切りが無ければそのまま
+        for sep in ("：", ":"):
+            if sep in seg:
+                seg = seg.split(sep, 1)[1]
+                break
+        seg = _norm(seg)
+        if seg:
+            out.append(seg)
+    return out
+
+
+def _fits(want: str, parts: list) -> bool:
+    """欲しい断片が、ラベルのどれかに当てはまるか。
+
+    表記のゆれ（「白色2粒」と「白色 2粒装」など）で完全一致しないため、
+    どちらかがもう一方を含んでいれば同じとみなす。
+    """
+    return any(want == p or want in p or p in want for p in parts)
 
 
 def match_sku(skus: list, color: str, size: str, spec: str = "") -> dict:
@@ -488,21 +553,37 @@ def match_sku(skus: list, color: str, size: str, spec: str = "") -> dict:
 
     当たらなければ None を返す。**推測で近いものを返さない**。
     間違った色を発注するくらいなら、画面で選んでもらったほうがよい。
+
+    商品マスタの書き方が仕入先と揃っていないので、
+      1. 属性ごとに割って、全部そろうものを探す
+      2. それで決まらなければ、いちばん特徴の出る先頭（たいてい色）だけで探す
+    の順に絞る。どちらも1つに決まらなければ諦める。
     """
-    want = [_norm(x) for x in (color, size, spec) if str(x or "").strip()]
+    want = []
+    for x in (color, size, spec):
+        want.extend(_parts(x))
     if not want or not skus:
         return None
 
-    exact = []
-    for s in skus:
-        lab = _norm(s.get("label"))
-        if not lab:
-            continue
-        # 指定された語がすべてラベルに含まれていれば候補
-        if all(w in lab for w in want):
-            exact.append(s)
-    # 候補が1つに絞れたときだけ採用する。複数なら人が選ぶ
-    return exact[0] if len(exact) == 1 else None
+    labels = [(s, _label_parts(s.get("label"))) for s in skus]
+    labels = [(s, p) for s, p in labels if p]
+    if not labels:
+        return None
+
+    # 1. 指定された属性がすべて当てはまるもの
+    hit = [s for s, parts in labels if all(_fits(w, parts) for w in want)]
+    if len(hit) == 1:
+        return hit[0]
+
+    # 2. 先頭の断片（色であることが多い）だけで絞る。
+    #    「藍色12粒、HS-88」の HS-88 が仕入先のラベルに無い、という形で
+    #    落ちることが多いため
+    if want:
+        hit = [s for s, parts in labels if _fits(want[0], parts)]
+        if len(hit) == 1:
+            return hit[0]
+
+    return None
 
 
 def inspect_options(raw) -> dict:
