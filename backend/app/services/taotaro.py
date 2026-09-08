@@ -136,8 +136,30 @@ def list_send_orders(page: int = 1, limit: int = 20, state: Optional[int] = None
     }
 
 
+def _latest_trace(x: dict) -> dict:
+    """いちばん新しい追跡の1件。どの便かを見分けるのに使う。
+
+    一覧では追跡が付かないこともあるので、無ければ None を返す。
+    """
+    best = None
+    for a in x.get("airbills") or []:
+        for t in (a.get("trace_info") or a.get("trace_info_array") or []):
+            if not isinstance(t, dict):
+                continue
+            when = str(t.get("time") or "")
+            if not best or when > str(best.get("time") or ""):
+                best = t
+    if not best:
+        return None
+    return {"time": best.get("time"), "location": best.get("location")}
+
+
 def _send_order_brief(x: dict) -> dict:
     return {
+        "latest_trace": _latest_trace(x),
+        "oids": x.get("oids"),
+        "consignee_raw": x.get("consignee"),
+        "_keys": sorted(x.keys()),
         "sid": x.get("sid"),
         "sn": x.get("sn"),
         "state": x.get("state"),
