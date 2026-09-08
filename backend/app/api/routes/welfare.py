@@ -194,10 +194,23 @@ def _product_indexes(db: Session):
         by_url[url] = p
         by_url_all.setdefault(url, []).append(p)
     unique_url = {url: p for url, p in by_url.items() if url_counts.get(url) == 1}
-    return by_url_spec, unique_url, by_url_all
+    # タオタロウの out_id（自社の管理番号）で引くための索引。
+    # 発注時にSKUを入れておけば、URLや仕様からの推測が要らなくなる
+    by_sku = {}
+    for p in products:
+        if p.sku:
+            by_sku[p.sku.strip().lower()] = p
+    return by_url_spec, unique_url, by_url_all, by_sku
 
 
-def _match_product(row: dict, by_url_spec: dict, unique_url: dict, by_url_all: dict | None = None):
+def _match_product(row: dict, by_url_spec: dict, unique_url: dict,
+                   by_url_all: dict | None = None, by_sku: dict | None = None):
+    # タオタロウの out_id に自社の管理番号（SKU）が入っていれば、それが正。
+    # URLや色から推測する必要がなく、取り違えようがない
+    memo = str(row.get("customer_memo") or "").strip().lower()
+    if memo and by_sku and memo in by_sku:
+        return by_sku[memo], "out_id"
+
     url = _norm_url(row.get("buy_url"))
     spec = (row.get("supplier_spec") or "").strip()
     size = (row.get("size") or "").strip()
@@ -379,11 +392,11 @@ def list_work_instructions(q: Optional[str] = None, db: Session = Depends(get_db
 @router.post("/preview-excel")
 async def preview_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
     rows = _parse_excel(await file.read())
-    by_url_spec, unique_url, by_url_all = _product_indexes(db)
+    by_url_spec, unique_url, by_url_all, by_sku = _product_indexes(db)
     result = []
     matched = 0
     for row in rows:
-        product, match_type = _match_product(row, by_url_spec, unique_url, by_url_all)
+        product, match_type = _match_product(row, by_url_spec, unique_url, by_url_all, by_sku)
         unit = _unit_per_set(product)
         qty = row["units"] // unit
         if product:
@@ -400,6 +413,38 @@ async def preview_excel(file: UploadFile = File(...), db: Session = Depends(get_
             "remainder_units": row["units"] % unit,
         })
     return {"rows": result, "matched": matched, "unmatched": len(result) - matched}
+
+
+class WelfareTaotaroImportIn(BaseModel):
+    sid: int
+
+
+@router.post("/import-taotaro")
+def import_taotaro(data: WelfareTaotaroImportIn, db: Session = Depends(get_db)):
+    """配送依頼をタオタロウのAPIから直接取り込む。
+
+    Excelを解析する経路と同じ形に整えてから同じ処理へ渡すので、
+    照合・重複判定・指示の引き継ぎは今までどおり動く。
+    違うのは、推測の材料が増えることと便の番号が確実になること:
+      ・out_id（自社の管理番号）が入っていれば、そのSKUをそのまま使う
+      ・便は配送依頼ID(sid)で一意に決まるので、二重取り込みを確実に防げる
+    """
+    from app.services import taotaro
+    try:
+        d = taotaro.send_order_rows(data.sid)
+    except taotaro.TaotaroError as e:
+        raise HTTPException(status_code=502, detail=e.message)
+
+    rows = d.get("rows") or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="この配送依頼に明細がありません")
+    result = _import_rows(rows, db, source_file=f"taotaro:{d.get('sn') or data.sid}")
+    result["send_order"] = {
+        "sid": d.get("sid"), "sn": d.get("sn"),
+        "state_label": d.get("state_label"),
+        "count_weight": d.get("count_weight"), "fees": d.get("fees"),
+    }
+    return result
 
 
 @router.post("/import-excel")
@@ -424,7 +469,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
         _clear_welfare_data(db)
         db.flush()
 
-    by_url_spec, unique_url, by_url_all = _product_indexes(db)
+    by_url_spec, unique_url, by_url_all, by_sku = _product_indexes(db)
     now = datetime.now(timezone.utc)
     imported = 0
     unmatched = 0
@@ -471,7 +516,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
     imported_items = []
     skipped_items = []
     for row in rows:
-        product, _match_type = _match_product(row, by_url_spec, unique_url, by_url_all)
+        product, _match_type = _match_product(row, by_url_spec, unique_url, by_url_all, by_sku)
         if not product:
             unmatched += 1
             unmatched_items.append({
@@ -892,7 +937,7 @@ def update_work_instruction(instruction_id: int, data: WelfareWorkInstructionIn,
 @router.post("/work-instructions/backfill-products")
 def backfill_work_instruction_products(db: Session = Depends(get_db)):
     """product_id未設定の荷受けレコードをbuy_urlで再照合し、SKU・日本語名を埋める"""
-    by_url_spec, unique_url, by_url_all = _product_indexes(db)
+    by_url_spec, unique_url, by_url_all, by_sku = _product_indexes(db)
     rows = db.query(WelfareWorkInstruction).filter(WelfareWorkInstruction.product_id.is_(None)).all()
     updated = 0
     for row in rows:
@@ -901,7 +946,7 @@ def backfill_work_instruction_products(db: Session = Depends(get_db)):
             "supplier_spec": row.supplier_spec or row.color or "",
             "color": row.color or "",
             "size": row.size or "",
-        }, by_url_spec, unique_url, by_url_all)
+        }, by_url_spec, unique_url, by_url_all, by_sku)
         if product:
             row.product_id = product.id
             row.sku = product.sku
@@ -927,7 +972,7 @@ def rematch_work_instructions(db: Session = Depends(get_db)):
     在庫へ反映済みの行は触らない。反映後に紐づけを変えると、
     どの商品の在庫を増やしたのか分からなくなるため。
     """
-    by_url_spec, unique_url, by_url_all = _product_indexes(db)
+    by_url_spec, unique_url, by_url_all, by_sku = _product_indexes(db)
     rows = (db.query(WelfareWorkInstruction)
             .filter(WelfareWorkInstruction.is_reflected == False).all())
     changed = []
@@ -937,7 +982,7 @@ def rematch_work_instructions(db: Session = Depends(get_db)):
             "supplier_spec": row.supplier_spec or row.color or "",
             "color": row.color or "",
             "size": row.size or "",
-        }, by_url_spec, unique_url, by_url_all)
+        }, by_url_spec, unique_url, by_url_all, by_sku)
         if not product or product.id == row.product_id:
             continue
         before = row.sku

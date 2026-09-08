@@ -219,3 +219,78 @@ SEND_ORDER_STATES = {
     1: "配送依頼提出済", 6: "審査待ち", 5: "梱包作業中", 7: "お支払い待ち",
     8: "出荷待ち", 2: "出荷済み", 3: "受け取り済み", 4: "無効な配送依頼",
 }
+
+
+# ---------- 取り込み用（配送依頼Excelの代わり） ----------
+#
+# 配送依頼のExcelを解析して商品を推測していたが、色とサイズの取り違えや
+# URLの空白で紐づかない事故が続いた。APIなら
+#   ・out_id に自社の管理番号が入る（推測が要らない）
+#   ・sid で便が一意に決まる（二重取り込みの判定が確実）
+#   ・入庫日・注文ごとの中国国内送料まで取れる（Excelには無い）
+# ため、同じ形に整えて既存の取り込み処理へそのまま渡せるようにする。
+
+_COLOR_KEYS = ("颜色", "颜色分类", "颜色名称", "主色")
+_SIZE_KEYS = ("规格", "规格型号", "尺码", "尺寸", "型号")
+
+
+def _prop(props: list, keys: tuple) -> str:
+    for p in props or []:
+        if str(p.get("name") or "").strip() in keys:
+            return str(p.get("value") or "").strip()
+    return ""
+
+
+def send_order_rows(sid: int) -> dict:
+    """配送依頼1件を、Excel取り込みと同じ形の行にして返す。
+
+    既存の _import_rows / 配送依頼の照合がそのまま使える形に揃える。
+    """
+    d = get_send_order(sid)
+    rows = []
+    for o in d.get("orders") or []:
+        props = o.get("sku_props") or []
+        color = _prop(props, _COLOR_KEYS)
+        size = _prop(props, _SIZE_KEYS)
+        # 色欄が空でサイズ欄に色まで入っている商品がある（Excelでも同じ）。
+        # 照合側が両方を見るので、取れたものをそのまま渡す
+        rows.append({
+            "sheet": d.get("sn") or f"taotaro:{sid}",
+            "shipment_no": str(d.get("sid") or ""),
+            "order_date": (o.get("created_at") or "")[:10],
+            "order_no": str(o.get("oid") or ""),
+            "name_cn": o.get("title") or "",
+            "supplier_spec": color,
+            "size": size,
+            "buy_url": (o.get("url") or "").strip(),
+            "image_data_url": "",          # 画像はURLで来るので取り込み時は持たない
+            "unit_price": str(o.get("unit_price") or ""),
+            "units": int(o.get("quantity") or 0),
+            "instruction": "",
+            "note": "",
+            "remaining_units": None,
+            # ここが肝。発注時に自社SKUを入れておけば照合が要らなくなる
+            "customer_memo": str(o.get("out_id") or "").strip(),
+            # Excelには無い情報。原価計算や進捗表示に使える
+            "arrived_at": o.get("arrived_at"),
+            "state": o.get("state"),
+            "state_label": o.get("state_label"),
+            "domestic_freight_cny": o.get("send_price"),
+            "image_url": o.get("image"),
+        })
+    return {
+        "sid": d.get("sid"),
+        "sn": d.get("sn"),
+        "state": d.get("state"),
+        "state_label": d.get("state_label"),
+        "count_weight": d.get("count_weight"),
+        "fees": {
+            "send_price": d.get("send_price"),
+            "server_fee": d.get("server_fee"),
+            "freight": d.get("freight"),
+            "customs_fee": d.get("customs_fee"),
+            "remote_fee": d.get("remote_fee"),
+            "total_send_fee": d.get("total_send_fee"),
+        },
+        "rows": rows,
+    }

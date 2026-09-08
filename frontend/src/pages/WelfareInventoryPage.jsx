@@ -258,6 +258,39 @@ export default function WelfareInventoryPage() {
     }
   }, [activeTab, activeWorkDate, workDateTabs])
 
+  // タオタロウのAPIから直接取り込む。Excelを介さないので、
+  // out_id（自社の管理番号）がそのまま使え、便も配送依頼IDで一意に決まる
+  const [sendOrders, setSendOrders] = useState(null)
+  const [loadingSendOrders, setLoadingSendOrders] = useState(false)
+
+  const loadSendOrders = async () => {
+    setLoadingSendOrders(true)
+    try {
+      const r = await api.get('/taotaro/send-orders', { params: { page: 1, limit: 20 } })
+      setSendOrders(r.data.items || [])
+    } catch (e) {
+      alert('タオタロウから取得できませんでした: ' + (e.response?.data?.detail || e.message))
+      setSendOrders(null)
+    } finally {
+      setLoadingSendOrders(false)
+    }
+  }
+
+  const taotaroImport = useMutation({
+    mutationFn: (sid) => api.post('/welfare/import-taotaro', { sid }).then(r => r.data),
+    onSuccess: async (data) => {
+      setImportResult(data)
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['welfare-inventory'] }),
+        qc.invalidateQueries({ queryKey: ['welfare-movements'] }),
+        qc.invalidateQueries({ queryKey: ['welfare-work-instructions'] }),
+      ])
+      setActiveWorkDate('')
+      setSendOrders(null)
+    },
+    onError: (e) => alert('取り込めませんでした: ' + (e.response?.data?.detail || e.message)),
+  })
+
   const importMutation = useMutation({
     mutationFn: async (files) => {
       const combined = { imported: 0, work_imported: 0, unmatched: 0, imported_items: [], skipped_items: [], unmatched_items: [], file_count: files.length }
@@ -545,8 +578,53 @@ export default function WelfareInventoryPage() {
           <span style={{ color: '#64748b' }}>登録商品</span>
           <strong style={{ fontSize: 18 }}>{items.length}</strong>
         </div>
+        <button className="btn btn-secondary" onClick={loadSendOrders} disabled={loadingSendOrders}>
+          {loadingSendOrders ? '取得中…' : 'タオタロウから取込'}
+        </button>
         <input ref={fileRef} type="file" accept=".xlsx,.xls" multiple style={{ display: 'none' }} onChange={handleFile} />
       </div>
+
+      {sendOrders && (
+        <div className="card" style={{ marginBottom: 16, padding: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+            <b style={{ fontSize: 14 }}>タオタロウの配送依頼</b>
+            <span style={{ fontSize: 12, color: '#64748b' }}>
+              取り込む便を選んでください。Excelは不要です
+            </span>
+            <button className="btn btn-sm btn-secondary" style={{ marginLeft: 'auto', fontSize: 12 }}
+              onClick={() => setSendOrders(null)}>閉じる</button>
+          </div>
+          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+            <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+              <thead><tr style={{ background: '#f8fafc' }}>
+                {['配送依頼No', '状態', '重量', '費用(元)', '更新', ''].map(h => (
+                  <th key={h} style={{ padding: '6px 10px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {sendOrders.map(x => (
+                  <tr key={x.sid} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '6px 10px' }}>{x.sn || x.sid}</td>
+                    <td style={{ padding: '6px 10px' }}>{x.state_label}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'right' }}>
+                      {x.count_weight ? `${x.count_weight}kg` : '—'}
+                    </td>
+                    <td style={{ padding: '6px 10px', textAlign: 'right' }}>{x.total_send_fee}</td>
+                    <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                      {String(x.updated_at || '').slice(0, 10)}
+                    </td>
+                    <td style={{ padding: '6px 10px' }}>
+                      <button className="btn btn-sm btn-primary" style={{ fontSize: 12 }}
+                        disabled={taotaroImport.isPending}
+                        onClick={() => taotaroImport.mutate(x.sid)}>取り込む</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <button
