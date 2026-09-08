@@ -87,3 +87,20 @@ def awaiting_payment():
         "total_cny": round(sum((x.get("total_send_fee") or 0) for x in items), 2),
         "items": items,
     }
+
+
+@router.get("/debug-line")
+def debug_line():
+    """一覧の明細にどの項目が入っているかを見る（調査用）。"""
+    from app.services.taotaro import _request
+    d = _request("/api/v1/send-orders", {"page": 1, "limit": 1})
+    items = d.get("items") or []
+    if not items:
+        return {"detail": "配送依頼がありません"}
+    orders = items[0].get("orders") or []
+    if not orders:
+        return {"send_order_keys": sorted(items[0].keys()), "orders": 0}
+    o = orders[0]
+    return {"order_keys": sorted(o.keys()),
+            "sample": {k: str(v)[:80] for k, v in o.items()
+                       if k in ("goods_url", "url", "good_skus", "goods_name", "out_id")}}
