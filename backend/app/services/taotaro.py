@@ -155,16 +155,23 @@ def _latest_trace(x: dict) -> dict:
 
 
 def _summary(x: dict) -> dict:
-    """便の中身のあらまし。番号だけではどの便か分からないので添える。"""
+    """便の中身のあらまし。番号だけではどの便か分からないので添える。
+
+    商品名は原文（中国語）のままだと読みにくいので、呼び出し側で
+    自社の商品名に置き換えられるよう、照合の材料も一緒に返す。
+    """
     orders = x.get("orders") or []
-    titles = []
+    lines = []
     for o in orders:
-        t = (o.get("goods_name_trans") or o.get("goods_name") or "").strip()
-        if t and t not in titles:
-            titles.append(t[:24])
-        if len(titles) >= 3:
-            break
-    return {"order_count": len(orders), "titles": titles}
+        props = o.get("good_skus") or []
+        lines.append({
+            "buy_url": (o.get("goods_url") or o.get("url") or "").strip(),
+            "supplier_spec": _prop(props, _COLOR_KEYS),
+            "size": _prop(props, _SIZE_KEYS),
+            "customer_memo": str(o.get("out_id") or "").strip(),
+            "name_cn": (o.get("goods_name_trans") or o.get("goods_name") or "").strip(),
+        })
+    return {"order_count": len(orders), "lines": lines}
 
 
 def _send_order_brief(x: dict) -> dict:
@@ -174,7 +181,7 @@ def _send_order_brief(x: dict) -> dict:
         "latest_trace": _latest_trace(x),
         "tracking_url": x.get("shipping_website_url"),
         "order_count": sm["order_count"],
-        "titles": sm["titles"],
+        "lines": sm["lines"],
         "sid": x.get("sid"),
         "sn": x.get("sn"),
         "state": x.get("state"),

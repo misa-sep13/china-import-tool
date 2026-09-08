@@ -94,6 +94,14 @@ const instructionCellStyle = (value) => {
   return { background: '#fff' }
 }
 
+// 追跡の色。「配達完了」と「配達中」はどちらも手元に来ている状態なので同じ色。
+// それ以外は今までどおり控えめな灰色にする
+const traceColor = (text) => {
+  const t = String(text || '')
+  if (t.includes('配達完了') || t.includes('配達中')) return '#15803d'
+  return '#64748b'
+}
+
 const imageThumb = (src) => (
   src ? <img src={src} alt="" style={{ width: 42, height: 42, objectFit: 'cover', borderRadius: 4, display: 'block' }} /> : '-'
 )
@@ -609,7 +617,8 @@ export default function WelfareInventoryPage() {
                       {/* 番号と金額だけではどの便か分からないので、
                           いちばん新しい追跡を添える */}
                       {x.latest_trace && (
-                        <div style={{ fontSize: 11, color: '#64748b' }}>
+                        <div style={{ fontSize: 11, fontWeight: 600,
+                                      color: traceColor(x.latest_trace.location) }}>
                           {x.latest_trace.location}
                           <span style={{ color: '#94a3b8' }}>
                             {' '}{String(x.latest_trace.time || '').slice(0, 16)}

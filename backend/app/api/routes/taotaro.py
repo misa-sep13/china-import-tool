@@ -9,8 +9,10 @@
 """
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
 
+from app.core.database import get_db
 from app.services import taotaro
 
 router = APIRouter(prefix="/taotaro", tags=["taotaro"])
@@ -32,16 +34,41 @@ def ping():
     return _call(taotaro.ping)
 
 
+def _to_our_names(items: list, db: Session) -> None:
+    """中身の商品名を自社の日本語名に置き換える。
+
+    原文（中国語）のままでは、どの便か見分けるのが難しい。
+    荷受けの取り込みと同じ照合を使うので、同じ商品なら同じ名前になる。
+    照合できなかった行は原文のまま残す（消すと中身が分からなくなる）。
+    """
+    from app.api.routes.welfare import _match_product, _product_indexes
+    by_url_spec, unique_url, by_url_all, by_sku = _product_indexes(db)
+    for x in items:
+        names = []
+        for line in x.pop("lines", []) or []:
+            product, _ = _match_product(line, by_url_spec, unique_url, by_url_all, by_sku)
+            name = (product.name if product else "") or line.get("name_cn") or ""
+            name = name.strip()
+            if name and name not in names:
+                names.append(name[:26])
+            if len(names) >= 3:
+                break
+        x["titles"] = names
+
+
 @router.get("/send-orders")
 def list_send_orders(
     page: int = 1,
     limit: int = Query(20, ge=1, le=100),
     state: Optional[int] = None,
     keyword: str = "",
+    db: Session = Depends(get_db),
 ):
     """配送依頼の一覧。state=7 がお支払い待ち。"""
-    return _call(taotaro.list_send_orders, page=page, limit=limit,
-                 state=state, keyword=keyword)
+    d = _call(taotaro.list_send_orders, page=page, limit=limit,
+              state=state, keyword=keyword)
+    _to_our_names(d.get("items") or [], db)
+    return d
 
 
 @router.get("/send-orders/{sid:int}")
