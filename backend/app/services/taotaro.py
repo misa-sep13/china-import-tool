@@ -154,12 +154,27 @@ def _latest_trace(x: dict) -> dict:
     return {"time": best.get("time"), "location": best.get("location")}
 
 
+def _summary(x: dict) -> dict:
+    """便の中身のあらまし。番号だけではどの便か分からないので添える。"""
+    orders = x.get("orders") or []
+    titles = []
+    for o in orders:
+        t = (o.get("goods_name_trans") or o.get("goods_name") or "").strip()
+        if t and t not in titles:
+            titles.append(t[:24])
+        if len(titles) >= 3:
+            break
+    return {"order_count": len(orders), "titles": titles}
+
+
 def _send_order_brief(x: dict) -> dict:
+    sm = _summary(x)
     return {
+        # どの便か見分けるための情報。番号と金額だけでは判断できない
         "latest_trace": _latest_trace(x),
-        "oids": x.get("oids"),
-        "consignee_raw": x.get("consignee"),
-        "_keys": sorted(x.keys()),
+        "tracking_url": x.get("shipping_website_url"),
+        "order_count": sm["order_count"],
+        "titles": sm["titles"],
         "sid": x.get("sid"),
         "sn": x.get("sn"),
         "state": x.get("state"),

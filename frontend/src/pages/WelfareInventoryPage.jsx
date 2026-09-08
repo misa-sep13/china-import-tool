@@ -597,15 +597,33 @@ export default function WelfareInventoryPage() {
           <div style={{ maxHeight: 320, overflowY: 'auto' }}>
             <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
               <thead><tr style={{ background: '#f8fafc' }}>
-                {['配送依頼No', '状態', '重量', '費用(元)', '更新', ''].map(h => (
+                {['配送依頼No', '状態', '中身', '重量', '費用(元)', '更新', ''].map(h => (
                   <th key={h} style={{ padding: '6px 10px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr></thead>
               <tbody>
                 {sendOrders.map(x => (
                   <tr key={x.sid} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '6px 10px' }}>{x.sn || x.sid}</td>
+                    <td style={{ padding: '6px 10px' }}>
+                      <div>{x.sn || x.sid}</div>
+                      {/* 番号と金額だけではどの便か分からないので、
+                          いちばん新しい追跡を添える */}
+                      {x.latest_trace && (
+                        <div style={{ fontSize: 11, color: '#64748b' }}>
+                          {x.latest_trace.location}
+                          <span style={{ color: '#94a3b8' }}>
+                            {' '}{String(x.latest_trace.time || '').slice(0, 16)}
+                          </span>
+                        </div>
+                      )}
+                    </td>
                     <td style={{ padding: '6px 10px' }}>{x.state_label}</td>
+                    <td style={{ padding: '6px 10px', maxWidth: 320 }}>
+                      <div style={{ fontSize: 12 }}>{(x.titles || []).join('／')}</div>
+                      {x.order_count > 0 && (
+                        <div style={{ fontSize: 11, color: '#94a3b8' }}>{x.order_count}明細</div>
+                      )}
+                    </td>
                     <td style={{ padding: '6px 10px', textAlign: 'right' }}>
                       {x.count_weight ? `${x.count_weight}kg` : '—'}
                     </td>
