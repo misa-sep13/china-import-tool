@@ -441,12 +441,16 @@ def goods_detail(url: str) -> dict:
     """
     d = _request("/api/v1/goods/detail", {"url": (url or "").strip()})
     skus = []
+    # 画面に出すのは訳（読みやすい）。ただし訳語は商品マスタの書き方と
+    # 揃わないことが多いので、照合には原文も使う。両方持たせておく
     names = d.get("props_list_trans") or d.get("props_list") or {}
+    raw_names = d.get("props_list") or {}
     imgs = d.get("props_img") or {}
     for s in d.get("skus") or []:
         # properties は "0:0;1:1" の形。props_list を引くと日本語になる
         keys = [k for k in str(s.get("properties") or "").split(";") if k]
         parts = [str(names.get(k) or k) for k in keys]
+        raw_parts = [str(raw_names.get(k) or k) for k in keys]
         img = ""
         for k in keys:
             if imgs.get(k):
@@ -455,6 +459,8 @@ def goods_detail(url: str) -> dict:
         skus.append({
             "sku_id": str(s.get("sku_id") or ""),
             "label": " / ".join(parts),
+            # 中国語の原文。照合に使う（画面には出さない）
+            "label_raw": " / ".join(raw_parts),
             "properties": s.get("properties"),
             # offer_price（仕入価格）が本来の発注単価。無ければ price
             "price": s.get("offer_price") if s.get("offer_price") is not None
@@ -479,6 +485,17 @@ def goods_detail(url: str) -> dict:
 
 # 日本語の漢字と簡体字で同じ色を指すもの。仕入先は簡体字、こちらの
 # 商品マスタは日本語で書かれていることがあり、そのままでは一致しない
+# 訳が「ブルー」、商品マスタが「藍色」のように、同じ色でも書き方が違う。
+# よく使う色だけ、漢字の色名へ寄せてから比べる
+_COLOR_SAME = {
+    "ブルー": "蓝", "ネイビー": "藏青", "ダークブルー": "深蓝",
+    "ホワイト": "白", "ブラック": "黑", "レッド": "红", "ピンク": "粉",
+    "グリーン": "绿", "ダークグリーン": "深绿", "イエロー": "黄",
+    "オレンジ": "橙", "パープル": "紫", "グレー": "灰", "ブラウン": "棕",
+    "ベージュ": "米", "ゴールド": "金", "シルバー": "银", "カーキ": "卡其",
+    "クリア": "透明", "ローズレッド": "玫红", "アイボリー": "象牙",
+}
+
 _HAN_SAME = {
     "藍": "蓝", "灰": "灰", "緑": "绿", "紅": "红", "黒": "黑", "白": "白",
     "銀": "银", "褐": "褐", "紫": "紫", "橙": "橙", "黄": "黄", "粉": "粉",
@@ -495,6 +512,10 @@ def _norm(s: str) -> str:
     """
     import re
     t = str(s or "")
+    # 長い名前から先に置き換える。「ダークブルー」が「ブルー」で
+    # 先に潰れないようにするため
+    for a in sorted(_COLOR_SAME, key=len, reverse=True):
+        t = t.replace(a, _COLOR_SAME[a])
     for a, b in _HAN_SAME.items():
         t = t.replace(a, b)
     return re.sub(r"[\s　・/／,、。.\-_（）()【】\[\]]", "", t).lower()
@@ -565,21 +586,30 @@ def match_sku(skus: list, color: str, size: str, spec: str = "") -> dict:
     if not want or not skus:
         return None
 
-    labels = [(s, _label_parts(s.get("label"))) for s in skus]
-    labels = [(s, p) for s, p in labels if p]
+    # 訳と原文の両方を候補にする。どちらかで当たればよい
+    labels = []
+    for s in skus:
+        parts = _label_parts(s.get("label")) + _label_parts(s.get("label_raw"))
+        if parts:
+            labels.append((s, parts))
     if not labels:
         return None
 
-    # 1. 指定された属性がすべて当てはまるもの
-    hit = [s for s, parts in labels if all(_fits(w, parts) for w in want)]
-    if len(hit) == 1:
-        return hit[0]
+    # 完全一致を先に見る。部分一致だけで絞ると、「蓝色」を探したときに
+    # 「深蓝色（ダークブルー）」まで拾ってしまい、決まらなくなる
+    def exact(w, parts):
+        return any(w == p for p in parts)
 
-    # 2. 先頭の断片（色であることが多い）だけで絞る。
-    #    「藍色12粒、HS-88」の HS-88 が仕入先のラベルに無い、という形で
-    #    落ちることが多いため
-    if want:
-        hit = [s for s, parts in labels if _fits(want[0], parts)]
+    for test in (exact, _fits):
+        # 1. 指定された属性がすべて当てはまるもの
+        hit = [s for s, parts in labels if all(test(w, parts) for w in want)]
+        if len(hit) == 1:
+            return hit[0]
+
+        # 2. 先頭の断片（色であることが多い）だけで絞る。
+        #    「藍色12粒、HS-88」の HS-88 が仕入先のラベルに無い、という形で
+        #    落ちることが多いため
+        hit = [s for s, parts in labels if test(want[0], parts)]
         if len(hit) == 1:
             return hit[0]
 
