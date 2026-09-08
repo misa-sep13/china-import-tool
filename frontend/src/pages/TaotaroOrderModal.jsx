@@ -64,7 +64,9 @@ export default function TaotaroOrderModal({
         setRows(r.data.items.map(x => ({
           ...x,
           skuId: (x.chosen && x.chosen.sku_id) || '',
-          remark: '',
+          // 商品マスタの備考をそのまま入れておく。「ケースのみ購入」など、
+          // 現場に伝えないと違うものが届く指示が書かれている
+          remark: x.note || '',
           inspect: x.inspect || {},
           rememberInspect: false,
           send: x.ok,
@@ -216,10 +218,15 @@ function Row({ r, i, patch, pickSku }) {
         <input type="checkbox" checked={!!r.send} disabled={ng}
           onChange={e => patch(i, { send: e.target.checked })}
           style={{ ...check, marginTop: 3 }} />
+        {/* 仕入先の画像は読めないことがある（URLが無い・画像だけ弾かれる）。
+            壊れた絵が出ると誤解を招くので、読めなければ枠ごと消す */}
         {r.chosen && r.chosen.image
-          ? <img src={r.chosen.image} alt="" style={{
-              width: 44, height: 44, objectFit: 'contain',
-              border: `1px solid ${C.line}`, borderRadius: 4 }} />
+          ? <img src={r.chosen.image} alt="" loading="lazy"
+              referrerPolicy="no-referrer"
+              onError={e => { e.currentTarget.style.display = 'none' }}
+              style={{
+                width: 44, height: 44, objectFit: 'contain', flexShrink: 0,
+                border: `1px solid ${C.line}`, borderRadius: 4 }} />
           : null}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
@@ -259,6 +266,16 @@ function Row({ r, i, patch, pickSku }) {
             </div>
           )}
 
+          {/* 備考は開かないと見えないと、伝え忘れに気づけない。
+              マスタに書いてあるものは畳まずに出す */}
+          {r.remark && (
+            <div style={{ fontSize: 12, color: C.warn, marginTop: 5,
+              background: '#fffbeb', border: '1px solid #fde68a',
+              borderRadius: 5, padding: '4px 7px' }}>
+              📝 備考として送ります：{r.remark}
+            </div>
+          )}
+
           <button onClick={() => setOpen(o => !o)} style={{
             marginTop: 6, fontSize: 11, color: C.key, background: 'none',
             border: 'none', padding: 0, cursor: 'pointer',
@@ -290,7 +307,7 @@ function Row({ r, i, patch, pickSku }) {
                 onChange={e => patch(i, { inspect: { ...r.inspect, var7: e.target.value } })}
                 style={{ width: '100%', marginTop: 8, fontSize: 12, padding: '6px 8px',
                   border: `1px solid ${C.line}`, borderRadius: 5, boxSizing: 'border-box' }} />
-              <input type="text" placeholder="この発注だけの備考"
+              <input type="text" placeholder="タオタロウへ伝える備考（商品マスタの備考が入っています）"
                 value={r.remark}
                 onChange={e => patch(i, { remark: e.target.value })}
                 style={{ width: '100%', marginTop: 6, fontSize: 12, padding: '6px 8px',

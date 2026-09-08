@@ -4085,6 +4085,9 @@ def rakuten_taotaro_preview(body: dict, db: Session = Depends(get_db)):
             "ok": False, "error": "", "skus": [], "chosen": None,
             "product_id": None, "platform": "", "title": "",
             "min_order_quantity": 1, "remembered": False, "inspect": {},
+            # 商品マスタの備考。「ケースのみ購入」のように現場へ伝えないと
+            # 困ることが書いてあるので、そのまま発注の備考へ持っていく
+            "note": r.get("note") or "",
         }
         p = db.query(RakutenProduct).filter(RakutenProduct.sku == r["sku"]).first()
 

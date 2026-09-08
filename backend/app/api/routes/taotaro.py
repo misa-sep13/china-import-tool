@@ -160,14 +160,17 @@ def order_preview(req: PreviewRequest, db: Session = Depends(get_db)):
     """
     out = []
     for it in req.items:
+        product = db.query(Product).filter(Product.sku == it.sku).first()
         row = {
             "sku": it.sku, "name": it.name, "qty": it.qty,
             "buy_url": it.buy_url, "color": it.color, "size": it.size,
             "ok": False, "error": "", "skus": [], "chosen": None,
             "product_id": None, "platform": "", "title": "",
             "min_order_quantity": 1, "remembered": False,
+            # 商品マスタの備考。現場へ伝えないと困ることが書いてあるので、
+            # そのまま発注の備考へ持っていく
+            "note": (product.note if product else "") or "",
         }
-        product = db.query(Product).filter(Product.sku == it.sku).first()
         url = (it.buy_url or (product.buy_url if product else "") or "").strip()
         if not url:
             row["error"] = "仕入URLがありません"

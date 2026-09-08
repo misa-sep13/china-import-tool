@@ -451,11 +451,21 @@ def goods_detail(url: str) -> dict:
         keys = [k for k in str(s.get("properties") or "").split(";") if k]
         parts = [str(names.get(k) or k) for k in keys]
         raw_parts = [str(raw_names.get(k) or k) for k in keys]
+        # 属性ごとの画像。色の属性にだけ付いていることが多いので、
+        # 見つかった最初のものを使う。無ければ商品の1枚目で代える
         img = ""
         for k in keys:
             if imgs.get(k):
                 img = imgs[k]
                 break
+        if not img:
+            pics = d.get("item_pics") or []
+            img = pics[0] if pics else ""
+        # 「//img.alicdn.com/...」の形で返ることがある。そのままでは
+        # 画面から読めないので、httpsを補う
+        img = str(img or "").strip()
+        if img.startswith("//"):
+            img = "https:" + img
         skus.append({
             "sku_id": str(s.get("sku_id") or ""),
             "label": " / ".join(parts),
