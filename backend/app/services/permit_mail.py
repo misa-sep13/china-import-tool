@@ -125,10 +125,22 @@ def _connect():
         im = imaplib.IMAP4_SSL(c["imap_host"], c["imap_port"],
                                ssl_context=ssl.create_default_context(),
                                timeout=60)
-        im.login(c["user"], c["password"])
     except Exception as e:
         raise PermitMailError(
             f"メールサーバーに繋がりませんでした（{type(e).__name__}）")
+
+    # メールソフト側が「暗号化されたパスワード認証」になっているサーバーだと、
+    # 通常のログインを拒むことがある。その場合はCRAM-MD5で入り直す。
+    # どちらもSSLの中なので、通信そのものは暗号化されている
+    try:
+        im.login(c["user"], c["password"])
+    except Exception as first:
+        try:
+            im.login_cram_md5(c["user"], c["password"])
+        except Exception:
+            raise PermitMailError(
+                f"メールにログインできませんでした（{first}）。"
+                "IMAP_HOST とユーザー名・パスワードをご確認ください")
     return im
 
 
