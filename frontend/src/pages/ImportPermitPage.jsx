@@ -38,6 +38,7 @@ export default function ImportPermitPage() {
   const [year, setYear] = useState('')
   const [month, setMonth] = useState('')
   const [days, setDays] = useState(60)
+  const [folder, setFolder] = useState(null)   // null=まだ既定を決めていない
   const [result, setResult] = useState(null)
   const [candidates, setCandidates] = useState(null)
   const [checking, setChecking] = useState(false)
@@ -45,6 +46,21 @@ export default function ImportPermitPage() {
   const params = {}
   if (year) params.year = Number(year)
   if (month) params.month = Number(month)
+
+  // メールのフォルダ。振り分けていると受信トレイには残らないので選べるようにする
+  const { data: folderData } = useQuery({
+    queryKey: ['permit-folders'],
+    queryFn: () => api.get('/import-permits/folders').then(r => r.data),
+    retry: false,
+  })
+  const folders = (folderData?.items || []).filter(f => !f.skip)
+
+  // 「輸入許可書」のようなフォルダがあれば最初から選んでおく。
+  // 毎回選び直させると、選び忘れて0件になって迷う
+  if (folder === null && folders.length > 0) {
+    const hit = folders.find(f => /許可書|許可通知|permit/i.test(f.label))
+    setFolder(hit ? hit.raw : '')
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['import-permits', year, month],
@@ -55,7 +71,7 @@ export default function ImportPermitPage() {
   const reload = () => qc.invalidateQueries({ queryKey: ['import-permits'] })
 
   const fetchMail = useMutation({
-    mutationFn: () => api.post('/import-permits/fetch-mail', { days }).then(r => r.data),
+    mutationFn: () => api.post('/import-permits/fetch-mail', { days, folder: folder || '' }).then(r => r.data),
     onSuccess: (d) => { setResult(d); setCandidates(null); reload() },
     onError: (e) => alert('取り込めませんでした: ' + (e.response?.data?.detail || e.message)),
   })
@@ -89,7 +105,7 @@ export default function ImportPermitPage() {
   async function showCandidates() {
     setChecking(true)
     try {
-      const r = await api.get('/import-permits/scan-candidates', { params: { days } })
+      const r = await api.get('/import-permits/scan-candidates', { params: { days, folder: folder || '' } })
       setCandidates(r.data.items || [])
     } catch (e) {
       alert('受信箱を見られませんでした: ' + (e.response?.data?.detail || e.message))
@@ -110,6 +126,12 @@ export default function ImportPermitPage() {
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <select value={folder ?? ''} onChange={e => setFolder(e.target.value)}
+            style={{ padding: '6px 10px', maxWidth: 220 }}>
+            <option value="">受信トレイ</option>
+            {folders.map(f => <option key={f.raw} value={f.raw}>{f.label}</option>)}
+            <option value="*">すべてのフォルダ（時間がかかります）</option>
+          </select>
           <select value={days} onChange={e => setDays(Number(e.target.value))}
             style={{ padding: '6px 10px' }}>
             {SPANS.map(s => <option key={s.days} value={s.days}>{s.label}</option>)}
@@ -140,12 +162,11 @@ export default function ImportPermitPage() {
             {result.added}件を取り込みました
             {result.skipped > 0 && `（取り込み済み ${result.skipped}件はそのまま）`}
             {result.scanned === 0 && '。許可書らしいPDFが見つかりませんでした'}
-            {result.scanned === 0 && (
-              <button className="btn btn-sm btn-secondary" style={{ marginLeft: 10, fontSize: 12 }}
-                onClick={showCandidates} disabled={checking}>
-                {checking ? '確認中…' : '受信箱にある添付を見る'}
-              </button>
-            )}
+            {/* 拾えたときも、取りこぼしが無いか確かめられるよう常に出す */}
+            <button className="btn btn-sm btn-secondary" style={{ marginLeft: 10, fontSize: 12 }}
+              onClick={showCandidates} disabled={checking}>
+              {checking ? '確認中…' : 'このフォルダの添付を全部見る'}
+            </button>
           </div>
         )}
         {(result?.drive_errors || []).length > 0 && (
@@ -169,11 +190,12 @@ export default function ImportPermitPage() {
             ? <div style={{ fontSize: 13, color: '#94a3b8' }}>この期間にPDFの添付はありませんでした。</div>
             : (
               <table style={{ width: '100%', fontSize: 12 }}>
-                <thead><tr>{['日付', '差出人', '件名', '添付', '判定', '中身の先頭'].map(h =>
+                <thead><tr>{['フォルダ', '日付', '差出人', '件名', '添付', '判定', '中身の先頭'].map(h =>
                   <th key={h} style={{ textAlign: 'left', padding: '4px 8px' }}>{h}</th>)}</tr></thead>
                 <tbody>
                   {candidates.map((c, i) => (
                     <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>{c.folder}</td>
                       <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>{c.date}</td>
                       <td style={{ padding: '4px 8px', maxWidth: 180, overflow: 'hidden' }}>{c.from}</td>
                       <td style={{ padding: '4px 8px', maxWidth: 220, overflow: 'hidden' }}>{c.subject}</td>

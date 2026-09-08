@@ -86,9 +86,20 @@ def _matches(p: ImportPermit, year, month) -> bool:
     return True
 
 
+@router.get("/folders")
+def folders():
+    """メールのフォルダ一覧。振り分けている場合に選んでもらう。"""
+    try:
+        return {"items": permit_mail.list_folders()}
+    except permit_mail.PermitMailError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 class FetchIn(BaseModel):
     days: int = 60
     to_drive: bool = False
+    # 空なら受信トレイ、"*" ならごみ箱などを除く全フォルダ
+    folder: str = ""
 
 
 @router.post("/fetch-mail")
@@ -99,7 +110,7 @@ def fetch_mail(data: FetchIn, db: Session = Depends(get_db)):
     何度押しても増えないので、迷ったら押してよい。
     """
     try:
-        found = permit_mail.scan(days=data.days)
+        found = permit_mail.scan(days=data.days, folder=data.folder)
     except permit_mail.PermitMailError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -137,10 +148,10 @@ def fetch_mail(data: FetchIn, db: Session = Depends(get_db)):
 
 
 @router.get("/scan-candidates")
-def scan_candidates(days: int = 60):
-    """受信箱にあるPDF添付を並べる（拾えなかったときの調査用）。"""
+def scan_candidates(days: int = 60, folder: str = ""):
+    """PDFの添付を並べる（拾えなかったときの調査用）。"""
     try:
-        return {"items": permit_mail.scan_candidates(days=days)}
+        return {"items": permit_mail.scan_candidates(days=days, folder=folder)}
     except permit_mail.PermitMailError as e:
         raise HTTPException(status_code=502, detail=str(e))
 

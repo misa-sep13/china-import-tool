@@ -21,10 +21,19 @@ from email.header import decode_header, make_header
 
 from app.services import mailer
 
-# 受信箱。振り分けて別フォルダに入れている場合だけ環境変数で変える
+# 既定の見に行き先。画面から選べるので、ふだんはこのままでよい
 FOLDER = os.environ.get("IMAP_PERMIT_FOLDER", "INBOX")
-# 1回で見るメールの上限。多すぎると取り込みに時間がかかりRenderが切る
+# 1フォルダで見るメールの上限。多すぎると取り込みに時間がかかりRenderが切る
 MAX_MESSAGES = 400
+# 「すべてのフォルダ」を指定したときの1フォルダあたりの上限。
+# 受信トレイが数千通あるので、全部見に行くと終わらない
+MAX_MESSAGES_ALL = 150
+ALL = "*"
+
+# 許可書が入っているはずのないフォルダ。全部見るときに飛ばす
+_SKIP_ATTRS = ("\\noselect", "\\trash", "\\junk", "\\drafts", "\\sent", "\\all")
+_SKIP_WORDS = ("ごみ箱", "迷惑", "下書き", "送信済", "アーカイブ",
+               "trash", "junk", "spam", "draft", "sent", "archive")
 
 
 class PermitMailError(Exception):
@@ -144,18 +153,100 @@ def _connect():
     return im
 
 
-def _open(im, readonly=True):
-    if im.select(f'"{FOLDER}"', readonly=readonly)[0] != "OK":
-        raise PermitMailError(f"メールの受信箱が開けませんでした（{FOLDER}）")
+def _utf7_decode(name: str) -> str:
+    """IMAPのフォルダ名を日本語に戻す。
+
+    IMAPは「変形UTF-7」という古い方式で日本語のフォルダ名を持つ。
+    そのまま画面に出すと &ZgSMTA- のような文字列になって選べない。
+    """
+    out, i = [], 0
+    while i < len(name):
+        if name[i] != "&":
+            out.append(name[i])
+            i += 1
+            continue
+        j = name.find("-", i)
+        if j < 0:
+            out.append(name[i])
+            i += 1
+            continue
+        chunk = name[i + 1:j]
+        if not chunk:
+            out.append("&")                     # &- は & そのもの
+        else:
+            try:
+                out.append(("+" + chunk.replace(",", "/") + "-")
+                           .encode("ascii").decode("utf-7"))
+            except Exception:
+                out.append(name[i:j + 1])       # 読めなければそのまま出す
+        i = j + 1
+    return "".join(out)
 
 
-def _recent_nums(im, days: int):
+def list_folders():
+    """メールのフォルダ一覧。画面で選んでもらうため。
+
+    選択に使う名前（raw）は、サーバーが返したものをそのまま持つ。
+    こちらで組み立て直すと、変形UTF-7の変換で取りこぼす。
+    """
+    im = _connect()
+    try:
+        typ, boxes = im.list()
+        if typ != "OK":
+            raise PermitMailError("フォルダの一覧を取得できませんでした")
+        out = []
+        for b in boxes or []:
+            line = b.decode(errors="replace") if isinstance(b, bytes) else str(b)
+            raw = mailer._list_name(line)
+            if not raw:
+                continue
+            label = _utf7_decode(raw)
+            attrs = line[:line.find(")") + 1].lower()
+            skip = (any(a in attrs for a in _SKIP_ATTRS)
+                    or any(w in label.lower() for w in _SKIP_WORDS))
+            out.append({"raw": raw, "label": label, "skip": skip})
+        return out
+    finally:
+        try:
+            im.logout()
+        except Exception:
+            pass
+
+
+def _targets(im, folder):
+    """見に行くフォルダを決める。"""
+    if folder and folder != ALL:
+        return [folder]
+    if folder != ALL:
+        return [FOLDER]
+    typ, boxes = im.list()
+    out = []
+    for b in boxes or []:
+        line = b.decode(errors="replace") if isinstance(b, bytes) else str(b)
+        raw = mailer._list_name(line)
+        if not raw:
+            continue
+        label = _utf7_decode(raw).lower()
+        attrs = line[:line.find(")") + 1].lower()
+        if any(a in attrs for a in _SKIP_ATTRS) or any(w in label for w in _SKIP_WORDS):
+            continue
+        out.append(raw)
+    return out or [FOLDER]
+
+
+def _open(im, folder, readonly=True):
+    if im.select(f'"{folder}"', readonly=readonly)[0] != "OK":
+        raise PermitMailError(
+            f"フォルダを開けませんでした（{_utf7_decode(folder)}）")
+
+
+def _recent_nums(im, days: int, cap: int = MAX_MESSAGES):
     since = (datetime.now() - timedelta(days=max(1, days))).strftime("%d-%b-%Y")
     typ, data = im.search(None, "SINCE", since)
     if typ != "OK":
         raise PermitMailError("メールの検索に失敗しました")
     # 新しいものから見る。古いぶんは日数を伸ばして取り直せる
-    return (data[0] or b"").split()[-MAX_MESSAGES:][::-1]
+    return (data[0] or b"").split()[-cap:][::-1]
 
 
 def _pdf_attachments(msg):
@@ -219,19 +310,36 @@ def _fetch_message(im, num, prefilter=True):
         return None
 
 
-def scan(days: int = 60):
-    """受信箱を見て、輸入許可書らしいPDFを返す。保存はしない。
+def _walk(im, folder, days, cap, handle):
+    """1フォルダぶんを見る。開けないフォルダは飛ばす。
+
+    権限の無いフォルダや、一覧には出るが実体の無いものがある。
+    そこで止めると他のフォルダまで見られなくなるので、黙って次へ進む。
+    """
+    try:
+        _open(im, folder)
+    except PermitMailError:
+        return
+    for num in _recent_nums(im, days, cap):
+        msg = _fetch_message(im, num)
+        if msg is None:
+            continue
+        handle(msg, folder)
+
+
+def scan(days: int = 60, folder: str = None):
+    """メールを見て、輸入許可書らしいPDFを返す。保存はしない。
 
     戻り値は取り込み側がそのままDBへ入れられる形にしてある。
+    folder に ALL("*") を渡すと、ごみ箱などを除く全フォルダを見る。
     """
     im = _connect()
     found = []
     try:
-        _open(im)
-        for num in _recent_nums(im, days):
-            msg = _fetch_message(im, num)
-            if msg is None:
-                continue
+        targets = _targets(im, folder)
+        cap = MAX_MESSAGES_ALL if len(targets) > 1 else MAX_MESSAGES
+
+        def handle(msg, box):
             h = _headers(msg)
             for name, data_bytes in _pdf_attachments(msg):
                 parsed = parse_permit_pdf(data_bytes)
@@ -251,6 +359,9 @@ def scan(days: int = 60):
                     "mail_from": h["from"],
                     "mail_date": h["date"],
                 })
+
+        for box in targets:
+            _walk(im, box, days, cap, handle)
     finally:
         try:
             im.logout()
@@ -259,8 +370,8 @@ def scan(days: int = 60):
     return found
 
 
-def scan_candidates(days: int = 60):
-    """受信箱のPDF添付を、許可書かどうかに関わらず並べる（調査用）。
+def scan_candidates(days: int = 60, folder: str = None):
+    """PDFの添付を、許可書かどうかに関わらず並べる（調査用）。
 
     自動で拾えなかったときに、何を見て何を落としたのかが分からないと
     直しようがない。件名と添付名だけを返し、本体は持たない。
@@ -268,15 +379,15 @@ def scan_candidates(days: int = 60):
     im = _connect()
     out = []
     try:
-        _open(im)
-        for num in _recent_nums(im, days):
-            msg = _fetch_message(im, num)
-            if msg is None:
-                continue
+        targets = _targets(im, folder)
+        cap = MAX_MESSAGES_ALL if len(targets) > 1 else MAX_MESSAGES
+
+        def handle(msg, box):
             h = _headers(msg)
             for name, data_bytes in _pdf_attachments(msg):
                 text = _pdf_text(data_bytes)
                 out.append({
+                    "folder": _utf7_decode(box),
                     "subject": h["subject"],
                     "from": h["from"],
                     "date": h["date"],
@@ -286,6 +397,9 @@ def scan_candidates(days: int = 60):
                     # 拾えなかったときに、何のPDFだったのかが分かる程度に
                     "text_head": (text or "")[:120].replace("\n", " "),
                 })
+
+        for box in targets:
+            _walk(im, box, days, cap, handle)
     finally:
         try:
             im.logout()
