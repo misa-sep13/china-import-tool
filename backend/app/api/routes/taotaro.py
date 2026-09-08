@@ -89,6 +89,27 @@ def awaiting_payment():
     }
 
 
+@router.get("/debug-match")
+def debug_match(sid: int, db: Session = Depends(get_db)):
+    """一覧の明細が自社商品に当たるかを1行ずつ見る（調査用）。"""
+    from app.api.routes.welfare import _match_product, _product_indexes
+    from app.services.taotaro import _request, _summary
+    d = _request("/api/v1/send-orders", {"page": 1, "limit": 100, "sid": sid})
+    items = [x for x in (d.get("items") or []) if x.get("sid") == sid]
+    if not items:
+        return {"detail": f"sid={sid} が一覧に見つかりません"}
+    idx = _product_indexes(db)
+    out = []
+    for line in _summary(items[0])["lines"][:8]:
+        product, how = _match_product(line, *idx)
+        out.append({
+            "url": line["buy_url"][:60], "spec": line["supplier_spec"],
+            "size": line["size"][:34], "memo": line["customer_memo"],
+            "matched": product.sku if product else None, "how": how,
+        })
+    return {"sid": sid, "lines": out}
+
+
 @router.get("/debug-line")
 def debug_line():
     """一覧の明細にどの項目が入っているかを見る（調査用）。"""
