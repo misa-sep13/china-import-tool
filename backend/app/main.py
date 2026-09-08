@@ -19,6 +19,7 @@ from app.api.routes import auth as auth_routes
 from app.api.routes import activity_log as activity_log_routes
 from app.api.routes import research as research_routes
 from app.api.routes import product_drafts as product_draft_routes
+from app.api.routes import import_permits as import_permit_routes
 from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
 from app.models import price_log as price_log_models
@@ -49,6 +50,7 @@ from app.models import product_draft as product_draft_models
 from app.models import amazon_listing as amazon_listing_models
 from app.models import amazon_research_page as amazon_research_page_models
 from app.models import amazon_product_type_memo as amazon_product_type_memo_models
+from app.models import import_permit as import_permit_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -1405,6 +1407,7 @@ app.include_router(amazon_research.router, prefix="/api")
 app.include_router(amazon_listings.router, prefix="/api")
 app.include_router(scout.router, prefix="/api")
 app.include_router(taotaro.router, prefix="/api")
+app.include_router(import_permit_routes.router, prefix="/api")
 app.include_router(research_routes.router, prefix="/api")
 app.include_router(wholesale.router, prefix="/api")
 app.include_router(product_draft_routes.router, prefix="/api")
