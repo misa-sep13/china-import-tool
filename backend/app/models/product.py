@@ -45,6 +45,15 @@ class Product(Base):
     price_auto_adjust = Column(Boolean, default=True)   # 価格自動調整対象
     price_max = Column(Float, nullable=True)            # 上限価格（円）
     category = Column(String, default='標準')             # 区分: 標準/ファッション/大型
+    # ---- タオタロウAPI発注用 ----
+    # 検品オプション（var1〜var7,var10）。注文作成時にしか指定できず、
+    # 買付が始まると変更できないため、商品ごとに「いつもの検品」を覚えておく。
+    # JSON文字列 '{"var1":1,"var2":1,"var7":"色ムラを弾く"}'
+    taotaro_inspect = Column(Text, nullable=True)
+    # 一度照合できたSKUを覚えておく。商品詳細APIは色・サイズの表記ゆれが多く、
+    # 毎回自動で当てにいくと取り違える。人が確認したものを次から使う
+    taotaro_product_id = Column(Integer, nullable=True)
+    taotaro_sku_id = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

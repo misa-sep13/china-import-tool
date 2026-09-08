@@ -397,3 +397,183 @@ def send_order_shipment(sid: int) -> dict:
         "state_label": d.get("state_label"),
         "items": items,
     }
+
+
+# ---------- 発注（注文の作成） ----------
+#
+# これまではExcelを作って管理画面へ手で上げていた。APIで直接作れば
+# 転記が消えるが、代わりに「どのSKU（色・サイズ）を買うか」を機械が
+# 決めることになる。ここを間違えると違う色が届くので、
+#   ・一度人が確認した組み合わせは商品マスタに覚える
+#   ・自動で決められなかったものは発注せず、画面で選んでもらう
+# という形にしてある。黙って推測で発注はしない。
+
+# 検品オプション。var8/var9/var11/var12 は仕様書上「使用しない」
+INSPECT_FLAGS = {
+    "var1": "オプション検品・アパレル検品",
+    "var10": "全量開封検品",
+    "var2": "OPP袋交換",
+    "var3": "織ネーム取り外し",
+    "var4": "織ネーム縫い付け",
+    "var5": "下げ札取り付け",
+    "var6": "下げ札取り外し",
+}
+INSPECT_TEXT = {"var7": "その他のご要望"}
+
+
+def _platform_of(url: str) -> str:
+    """URLから仕入元を見分ける。仕様書の platform に渡す値。"""
+    u = (url or "").lower()
+    if "1688.com" in u:
+        return "1688"
+    if "taobao.com" in u or "tmall.com" in u:
+        return "taobao"
+    return ""
+
+
+def goods_detail(url: str) -> dict:
+    """商品詳細。product_id と sku_id はここからしか取れない。
+
+    仕様書の注意:
+      ・淘宝で商品が無いと 400。1688で無い場合はサーバーエラーになることが
+        あるため、リトライせずスキップする実装が推奨されている
+      ・価格と在庫はキャッシュされるので、発注の直前に取り直す
+    """
+    d = _request("/api/v1/goods/detail", {"url": (url or "").strip()})
+    skus = []
+    names = d.get("props_list_trans") or d.get("props_list") or {}
+    imgs = d.get("props_img") or {}
+    for s in d.get("skus") or []:
+        # properties は "0:0;1:1" の形。props_list を引くと日本語になる
+        keys = [k for k in str(s.get("properties") or "").split(";") if k]
+        parts = [str(names.get(k) or k) for k in keys]
+        img = ""
+        for k in keys:
+            if imgs.get(k):
+                img = imgs[k]
+                break
+        skus.append({
+            "sku_id": str(s.get("sku_id") or ""),
+            "label": " / ".join(parts),
+            "properties": s.get("properties"),
+            # offer_price（仕入価格）が本来の発注単価。無ければ price
+            "price": s.get("offer_price") if s.get("offer_price") is not None
+                     else s.get("price"),
+            "list_price": s.get("price"),
+            "stock": s.get("quantity"),
+            "image": img,
+        })
+    return {
+        "product_id": d.get("product_id"),
+        "platform": d.get("platform") or _platform_of(url),
+        "title": d.get("title"),
+        "title_trans": d.get("title_trans") or d.get("title"),
+        "status": d.get("status"),
+        "min_order_quantity": d.get("min_order_quantity") or 1,
+        "price_range": d.get("price_range") or [],
+        "location": d.get("location"),
+        "images": d.get("item_pics") or [],
+        "skus": skus,
+    }
+
+
+def _norm(s: str) -> str:
+    """照合用に、記号と空白を落として比べやすくする。"""
+    import re
+    return re.sub(r"[\s　・/／,、。.\-_（）()【】\[\]]", "", str(s or "")).lower()
+
+
+def match_sku(skus: list, color: str, size: str, spec: str = "") -> dict:
+    """色・サイズから、どのSKUかを当てる。
+
+    当たらなければ None を返す。**推測で近いものを返さない**。
+    間違った色を発注するくらいなら、画面で選んでもらったほうがよい。
+    """
+    want = [_norm(x) for x in (color, size, spec) if str(x or "").strip()]
+    if not want or not skus:
+        return None
+
+    exact = []
+    for s in skus:
+        lab = _norm(s.get("label"))
+        if not lab:
+            continue
+        # 指定された語がすべてラベルに含まれていれば候補
+        if all(w in lab for w in want):
+            exact.append(s)
+    # 候補が1つに絞れたときだけ採用する。複数なら人が選ぶ
+    return exact[0] if len(exact) == 1 else None
+
+
+def inspect_options(raw) -> dict:
+    """商品マスタに覚えた検品オプションを、リクエストに載せる形にする。"""
+    import json as _json
+    if isinstance(raw, str):
+        try:
+            raw = _json.loads(raw or "{}")
+        except Exception:
+            return {}
+    out = {}
+    for k in INSPECT_FLAGS:
+        if raw and raw.get(k):
+            out[k] = 1
+    for k in INSPECT_TEXT:
+        v = str((raw or {}).get(k) or "").strip()
+        if v:
+            out[k] = v
+    return out
+
+
+def create_orders(goods_list: list) -> dict:
+    """注文を作成する。goods_list は1件以上。
+
+    仕様書に data の中身の記載が無いため、返ってきた形から注文IDを
+    拾えるだけ拾う。拾えなくても「作成された」ことは code=200 で分かるので、
+    IDが取れない場合は out_id で照会し直せるようにしている。
+    """
+    if not goods_list:
+        raise TaotaroError("発注する商品がありません")
+    data = _request("/api/v1/orders", body={"goods_list": goods_list},
+                    method="POST")
+    return {"oids": _pick_oids(data), "raw": data}
+
+
+def _pick_oids(data) -> list:
+    """応答から注文IDらしきものを集める。形が違っても落ちないようにする。"""
+    out = []
+
+    def walk(x):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                if k in ("oid", "order_id", "id") and isinstance(v, (int, str)):
+                    s = str(v).strip()
+                    if s and s not in out:
+                        out.append(s)
+                else:
+                    walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk(data)
+    return out
+
+
+def find_orders_by_out_id(out_id: str, limit: int = 20) -> list:
+    """自社の管理番号で注文を探す。作成直後の確認に使う。"""
+    d = _request("/api/v1/orders", {"page": 1, "limit": limit,
+                                    "out_id": (out_id or "").strip()})
+    return [_order_brief(o) for o in (d.get("items") or [])]
+
+
+def cancel_orders(order_ids: list) -> list:
+    """買付開始前の注文を取り消す。実際に消えたIDが返る。
+
+    渡した数より少ないことがある（買付が始まっていた分）ので、
+    呼び出し側で件数を突き合わせること。
+    """
+    ids = ",".join([str(x).strip() for x in order_ids if str(x).strip()])
+    if not ids:
+        raise TaotaroError("取り消す注文がありません")
+    d = _request("/api/v1/orders/cancel", body={"order_ids": ids}, method="POST")
+    return [str(x) for x in (d.get("order_ids") or [])]

@@ -229,6 +229,10 @@ def _migrate():
         ("order_history","status",            "ALTER TABLE order_history ADD COLUMN status VARCHAR DEFAULT 'ordered'"),
         ("order_history","arrived_at",        "ALTER TABLE order_history ADD COLUMN arrived_at TIMESTAMP"),
         ("order_history","taotaro_order_id",  "ALTER TABLE order_history ADD COLUMN taotaro_order_id VARCHAR"),
+        # タオタロウAPI発注。検品オプションと、一度確認できたSKUを商品ごとに覚える
+        ("products","taotaro_inspect",    "ALTER TABLE products ADD COLUMN taotaro_inspect TEXT"),
+        ("products","taotaro_product_id", "ALTER TABLE products ADD COLUMN taotaro_product_id INTEGER"),
+        ("products","taotaro_sku_id",     "ALTER TABLE products ADD COLUMN taotaro_sku_id VARCHAR"),
         # 就労支援荷受けの在庫反映済みフラグ（荷受け処理後に残の数量だけ在庫化するため）
         ("welfare_work_instructions","is_reflected", "ALTER TABLE welfare_work_instructions ADD COLUMN is_reflected BOOLEAN DEFAULT FALSE"),
         ("welfare_work_instructions","reflected_at", "ALTER TABLE welfare_work_instructions ADD COLUMN reflected_at TIMESTAMP WITH TIME ZONE"),

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import { normalizeSearch } from '../searchUtil'
+import TaotaroOrderModal from './TaotaroOrderModal'
 
 const POLL_INTERVAL = 3000 // 3秒ごとにポーリング
 
@@ -16,6 +17,8 @@ export default function OrderPage() {
   const [justOrdered, setJustOrdered] = useState(new Set())
   const [search, setSearch] = useState('')
   const [onlyRecommended, setOnlyRecommended] = useState(true)
+  // タオタロウへ直接発注する確認画面に渡す商品。null＝閉じている
+  const [taotaroItems, setTaotaroItems] = useState(null)
 
   // バックグラウンドジョブ管理
   const [jobId, setJobId] = useState(null)
@@ -250,6 +253,27 @@ export default function OrderPage() {
     }
   }
 
+  // タオタロウへ直接発注する。ここでは確認画面を開くだけで、まだ何も送らない。
+  // 実際の発注はモーダルの中で、色・サイズを目視してから行う
+  const handleTaotaroOrder = () => {
+    const targets = allItems.filter(item => currentSelected.has(item.product_id) && item.qty > 0)
+    if (!targets.length) { setError('選択された商品がないか、発注数が0です'); return }
+    setError('')
+    setTaotaroItems(targets)
+  }
+
+  // 発注できた分を、Excel出力のときと同じように画面へ反映する
+  const handleTaotaroDone = (done) => {
+    const bySku = new Map(done.map(d => [d.sku, d.qty]))
+    const updates = allItems
+      .filter(it => bySku.has(it.sku))
+      .map(it => ({ product_id: it.product_id, qty: bySku.get(it.sku) }))
+    qc.invalidateQueries(['orderHistory'])
+    applyOrderedLocally(updates)
+    setQtyOverrides({})
+    setSelected(null)
+  }
+
   const recordOrder = async (item) => {
     if (!item.qty || item.qty <= 0) { setError('発注数が0です'); return }
     setOrdering(item.product_id)
@@ -332,6 +356,14 @@ export default function OrderPage() {
               {items.length > 0 && (
                 <button className="btn btn-success" onClick={handleExport} disabled={exporting}>
                   {exporting ? '生成中...' : `📥 Excelダウンロード（${selectedItems.length}件）`}
+                </button>
+              )}
+              {/* Excelを作って管理画面へ上げる代わりに、APIで直接発注する。
+                  色違いの発注は取り返しがつかないので、必ず確認画面を挟む */}
+              {items.length > 0 && (
+                <button className="btn btn-primary" onClick={handleTaotaroOrder}
+                  disabled={exporting || !selectedItems.length}>
+                  {`🛒 タオタロウに発注（${selectedItems.length}件）`}
                 </button>
               )}
             </div>
@@ -676,6 +708,15 @@ export default function OrderPage() {
           )}
         </div>
         </>
+      )}
+
+      {/* タオタロウへ直接発注する確認画面。閉じるまで何も送らない */}
+      {taotaroItems && (
+        <TaotaroOrderModal
+          items={taotaroItems}
+          onClose={() => setTaotaroItems(null)}
+          onDone={handleTaotaroDone}
+        />
       )}
     </div>
   )
