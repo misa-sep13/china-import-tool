@@ -579,16 +579,17 @@ export default function WelfareInventoryPage() {
           onChange={e => setSearch(e.target.value)}
           placeholder="SKU・商品名・仕様で検索"
         />
-        <button className="btn btn-primary" onClick={() => fileRef.current?.click()} disabled={importMutation.isPending}>
+        {/* ふだんはAPIから取り込む。Excelは繋がらないときの控えなので目立たせない */}
+        <button className="btn btn-primary" onClick={loadSendOrders} disabled={loadingSendOrders}>
+          {loadingSendOrders ? '取得中…' : 'タオタロウから取込'}
+        </button>
+        <button className="btn btn-secondary" onClick={() => fileRef.current?.click()} disabled={importMutation.isPending}>
           Excel取込
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 8, background: '#fff', border: '1px solid #e2e8f0', fontSize: 13 }}>
           <span style={{ color: '#64748b' }}>登録商品</span>
           <strong style={{ fontSize: 18 }}>{items.length}</strong>
         </div>
-        <button className="btn btn-secondary" onClick={loadSendOrders} disabled={loadingSendOrders}>
-          {loadingSendOrders ? '取得中…' : 'タオタロウから取込'}
-        </button>
         <input ref={fileRef} type="file" accept=".xlsx,.xls" multiple style={{ display: 'none' }} onChange={handleFile} />
       </div>
 
