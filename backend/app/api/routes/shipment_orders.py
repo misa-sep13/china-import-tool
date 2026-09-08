@@ -223,6 +223,39 @@ async def parse_excel(file: UploadFile = File(...)):
     }
 
 
+class TaotaroParseIn(BaseModel):
+    sid: int
+
+
+@router.post("/parse-taotaro")
+def parse_taotaro(data: TaotaroParseIn, db: Session = Depends(get_db)):
+    """配送依頼をタオタロウのAPIから直接読む（Excelの代わり）。
+
+    戻り値の形は parse-excel と同じなので、このあとの照合・保存・
+    入荷反映はそのまま動く。Excelを介さないぶん、
+      ・お客様管理番号（out_id）が必ず入るので色とサイズの取り違えが起きない
+      ・同じ便を二度取り込もうとしていれば、ここで気づける
+    """
+    from app.services import taotaro
+    try:
+        d = taotaro.send_order_shipment(data.sid)
+    except taotaro.TaotaroError as e:
+        raise HTTPException(status_code=502, detail=e.message)
+    if not d.get("items"):
+        raise HTTPException(status_code=404, detail="この配送依頼に明細がありません")
+
+    # 取り込み済みの便をもう一度入れると在庫が二重に増える。
+    # 止めはしない（分納で同じ番号が続くことがある）が、画面で警告できるようにする
+    dup = None
+    if d.get("order_no"):
+        dup = (db.query(ShipmentOrder)
+               .filter(ShipmentOrder.order_no == d["order_no"])
+               .order_by(ShipmentOrder.created_at.desc()).first())
+    d["duplicate_of"] = ({"id": dup.id, "shipped_date": dup.shipped_date,
+                          "status": dup.status} if dup else None)
+    return d
+
+
 @router.post("/match")
 def match_products(items: List[dict], db: Session = Depends(get_db)):
     """配送依頼明細を楽天商品マスタと照合して照合結果を返す"""

@@ -3,6 +3,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import { normalizeSearch } from '../searchUtil'
 
+// 追跡の色。「配達完了」と「配達中」はどちらも手元へ向かっている状態なので同じ色。
+// 就労支援在庫の一覧と揃えてある
+const shipTraceColor = (text) => {
+  const t = String(text || '')
+  if (t.includes('配達完了') || t.includes('配達中')) return '#15803d'
+  return '#64748b'
+}
+
 /* ===================== 配送依頼タブ ===================== */
 function ShipmentTab() {
   const qc = useQueryClient()
@@ -123,6 +131,43 @@ function ShipmentTab() {
     api.get('/rakuten/products/').then(r => setAllProducts(r.data)).catch(() => {})
     loadPastOrders()
   }, [])
+
+  // ---- タオタロウのAPIから直接取り込む ----
+  // Excelを介さないので、お客様管理番号がそのまま使えて色とサイズの
+  // 取り違えが起きない。Excelの取り込みは繋がらないときの控えとして残す
+  const [sendOrders, setSendOrders] = useState(null)
+  const [loadingSendOrders, setLoadingSendOrders] = useState(false)
+
+  async function loadSendOrders() {
+    setLoadingSendOrders(true)
+    try {
+      const r = await api.get('/taotaro/send-orders', { params: { page: 1, limit: 20 } })
+      setSendOrders(r.data.items || [])
+    } catch (e) {
+      alert('タオタロウから取得できませんでした: ' + (e.response?.data?.detail || e.message))
+      setSendOrders(null)
+    } finally {
+      setLoadingSendOrders(false)
+    }
+  }
+
+  async function processTaotaro(sid) {
+    setUploading(true)
+    setParsed(null); setMatched([]); setUnmatched([]); setDone(false); setReceiveResult(null); setNote('')
+    setQueueTotal(0); setFileQueue([])
+    try {
+      const res = await api.post('/shipment-orders/parse-taotaro', { sid })
+      setParsed(res.data)
+      const matchRes = await api.post('/shipment-orders/match', res.data.items)
+      setMatched(matchRes.data.matched)
+      setUnmatched(matchRes.data.unmatched)
+      setSendOrders(null)
+    } catch (e) {
+      alert('読み込みエラー: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setUploading(false)
+    }
+  }
 
   async function processFile(file) {
     setUploading(true)
@@ -455,12 +500,21 @@ function ShipmentTab() {
               )}
 
               <div className="card" style={{ marginBottom: 16 }}>
-                <h3 style={{ marginBottom: 12 }}>配送依頼ファイル（send-order-list.xls）</h3>
-                <input type="file" accept=".xlsx,.xls" multiple onChange={handleFile} disabled={uploading} />
-                <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 6 }}>
-                  複数ファイルをまとめて選択できます（1件ずつ内容確認・保存してから自動で次へ進みます）
+                <h3 style={{ marginBottom: 12 }}>配送依頼を取り込む</h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  {/* ふだんはAPIから取り込む。Excelは繋がらないときの控えなので目立たせない */}
+                  <button className="btn btn-primary" onClick={loadSendOrders} disabled={loadingSendOrders || uploading}>
+                    {loadingSendOrders ? '取得中…' : 'タオタロウから取込'}
+                  </button>
+                  <span style={{ fontSize: 12, color: '#94a3b8' }}>
+                    Excel取込（控え）:
+                  </span>
+                  <input type="file" accept=".xlsx,.xls" multiple onChange={handleFile} disabled={uploading} />
+                  {uploading && <span style={{ color: '#888' }}>読み込み・照合中...</span>}
                 </div>
-                {uploading && <span style={{ marginLeft: 12, color: '#888' }}>読み込み・照合中...</span>}
+                <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 6 }}>
+                  Excelは複数ファイルをまとめて選択できます（1件ずつ内容確認・保存してから自動で次へ進みます）
+                </div>
                 {queueTotal > 1 && (
                   <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, color: '#2563eb' }}>
                     配送依頼 {queueTotal - fileQueue.length}/{queueTotal}件目
@@ -468,15 +522,86 @@ function ShipmentTab() {
                 )}
               </div>
 
+              {sendOrders && (
+                <div className="card" style={{ marginBottom: 16, padding: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                    <b style={{ fontSize: 14 }}>タオタロウの配送依頼</b>
+                    <span style={{ fontSize: 12, color: '#64748b' }}>
+                      取り込む便を選んでください。Excelは不要です
+                    </span>
+                    <button className="btn btn-sm btn-secondary" style={{ marginLeft: 'auto', fontSize: 12 }}
+                      onClick={() => setSendOrders(null)}>閉じる</button>
+                  </div>
+                  <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+                    <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+                      <thead><tr style={{ background: '#f8fafc' }}>
+                        {['配送依頼No', '状態', '中身', '重量', '費用(元)', '更新', ''].map(h => (
+                          <th key={h} style={{ padding: '6px 10px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody>
+                        {sendOrders.map(x => (
+                          <tr key={x.sid} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                            <td style={{ padding: '6px 10px' }}>
+                              <div>{x.sn || x.sid}</div>
+                              {/* 番号と金額だけではどの便か分からないので、
+                                  いちばん新しい追跡を添える */}
+                              {x.latest_trace && (
+                                <div style={{ fontSize: 11, fontWeight: 600,
+                                              color: shipTraceColor(x.latest_trace.location) }}>
+                                  {x.latest_trace.location}
+                                  <span style={{ color: '#94a3b8' }}>
+                                    {' '}{String(x.latest_trace.time || '').slice(0, 16)}
+                                  </span>
+                                </div>
+                              )}
+                            </td>
+                            <td style={{ padding: '6px 10px' }}>{x.state_label}</td>
+                            <td style={{ padding: '6px 10px', maxWidth: 320 }}>
+                              <div style={{ fontSize: 12 }}>{(x.titles || []).join('／')}</div>
+                              {x.order_count > 0 && (
+                                <div style={{ fontSize: 11, color: '#94a3b8' }}>{x.order_count}明細</div>
+                              )}
+                            </td>
+                            <td style={{ padding: '6px 10px', textAlign: 'right' }}>
+                              {x.count_weight ? `${x.count_weight}kg` : '—'}
+                            </td>
+                            <td style={{ padding: '6px 10px', textAlign: 'right' }}>{x.total_send_fee}</td>
+                            <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                              {String(x.updated_at || '').slice(0, 10)}
+                            </td>
+                            <td style={{ padding: '6px 10px' }}>
+                              <button className="btn btn-sm btn-primary" style={{ fontSize: 12 }}
+                                disabled={uploading}
+                                onClick={() => processTaotaro(x.sid)}>取り込む</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               {parsed && (
                 <>
                   <div className="card" style={{ marginBottom: 16 }}>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, fontSize: 13 }}>
-                      <div><b>追跡番号:</b> {parsed.tracking_no}</div>
-                      <div><b>出荷日:</b> {parsed.shipped_date}</div>
-                      <div><b>箱数:</b> {parsed.box_count}</div>
+                      <div><b>追跡番号:</b> {parsed.tracking_no || '—'}</div>
+                      <div><b>出荷日:</b> {parsed.shipped_date || '—'}</div>
+                      <div><b>配送依頼No:</b> {parsed.order_no || '—'}</div>
                       <div><b>重量:</b> {parsed.total_weight_kg}kg</div>
                     </div>
+                    {/* 同じ便を二度入れると在庫が二重に増える。分納で番号が続くこともあるので
+                        止めはせず、気づけるようにだけしておく */}
+                    {parsed.duplicate_of && (
+                      <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 6,
+                                    background: '#fef3c7', color: '#92400e', fontSize: 13, fontWeight: 600 }}>
+                        この配送依頼No（{parsed.order_no}）は取り込み済みです（
+                        {parsed.duplicate_of.shipped_date || '日付なし'}／{parsed.duplicate_of.status}）。
+                        分納で分かれて届いた場合を除き、そのまま進めると在庫が二重に増えます。
+                      </div>
+                    )}
                     <div className="form-group" style={{ marginTop: 12 }}>
                       <label>メモ</label>
                       <input value={note} onChange={e => setNote(e.target.value)} />

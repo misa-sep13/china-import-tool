@@ -338,3 +338,62 @@ def send_order_rows(sid: int) -> dict:
         },
         "rows": rows,
     }
+
+
+def _shipped_date(d: dict) -> str:
+    """出荷日。APIに専用の項目が無いので、いちばん古い追跡（中国側の集荷）を使う。
+
+    Excelの「出荷日」に当たるものが仕様書に無い。追跡の最初の記録が
+    実際に荷物が動き出した日なので、これがいちばん近い。
+    追跡がまだ付いていない便（出荷待ちなど）は更新日で代える。
+    """
+    times = []
+    for a in d.get("airbills") or []:
+        for t in (a.get("trace_info") or a.get("trace_info_array") or []):
+            if isinstance(t, dict) and t.get("time"):
+                times.append(str(t["time"]))
+    if times:
+        return min(times)[:10].replace("/", "-")
+    return str(d.get("updated_at") or d.get("created_at") or "")[:10]
+
+
+def _tracking_no(d: dict) -> str:
+    """追跡番号。分割発送だと複数あるので、まとめて1つの文字列にする。"""
+    nos = [str(a.get("express_no") or "").strip()
+           for a in d.get("airbills") or []]
+    return ",".join([n for n in nos if n])
+
+
+def send_order_shipment(sid: int) -> dict:
+    """配送依頼1件を、楽天発注管理の配送依頼Excelと同じ形にして返す。
+
+    parse-excel の戻り値に合わせてあるので、そのあとの照合・保存・
+    入荷反映は今までどおり動く。Excelと違うのは:
+      ・お客様管理番号（out_id）が必ず入る。色とサイズの取り違えが起きない
+      ・URLに余計な空白や改行が入らない
+      ・箱数はAPIに無いので0。必要なら画面で入れてもらう
+    """
+    d = get_send_order(sid)
+    items = []
+    for o in d.get("orders") or []:
+        props = o.get("sku_props") or []
+        items.append({
+            # 中国語の原文より訳のほうが画面で分かりやすい。照合には使わない
+            "name_cn": (o.get("title_trans") or o.get("title") or "").strip(),
+            "color": _prop(props, _COLOR_KEYS),
+            "size": _prop(props, _SIZE_KEYS),
+            "buy_url": (o.get("url") or "").strip(),
+            "unit_price_cny": float(o.get("unit_price") or 0),
+            "qty": int(o.get("quantity") or 0),
+            "customer_memo": str(o.get("out_id") or "").strip(),
+        })
+    return {
+        "shipped_date": _shipped_date(d),
+        "tracking_no": _tracking_no(d),
+        "order_no": str(d.get("sn") or d.get("sid") or ""),
+        "box_count": 0,          # 仕様書に箱数が無い
+        "total_weight_kg": float(d.get("count_weight") or 0),
+        "sid": d.get("sid"),
+        "state_label": d.get("state_label"),
+        "items": items,
+    }
