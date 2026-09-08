@@ -4005,6 +4005,20 @@ async def rms_debug_item_permissions(db: Session = Depends(get_db)):
 # 楽天はセット商品と付属品を展開する必要があるので、Excelと同じ論理を
 # _taotaro_rows() にまとめ、Excel出力と食い違わないようにしている。
 
+def _join_notes(*parts) -> str:
+    """現場へ渡す指示をひとつにまとめる。
+
+    Excelでは「お客様専用メモ」と「備考」に分かれているが、APIの備考は
+    1つしかない。どちらも読んでもらう必要があるので、続けて入れる。
+    """
+    out = []
+    for x in parts:
+        x = str(x or "").strip()
+        if x and x not in out:
+            out.append(x)
+    return " / ".join(out)
+
+
 def _taotaro_rows(order_items: list, db: Session) -> list:
     """発注リストを、1688の商品1件ずつの行にほどく。
 
@@ -4033,7 +4047,9 @@ def _taotaro_rows(order_items: list, db: Session) -> list:
                 "buy_url": p.buy_url or "",
                 "spec": getattr(p, "supplier_spec", "") or "",
                 "qty": qty * (p.set_size or 1),
-                "note": p.notes or "",
+                # Excelは「お客様専用メモ」と「備考」の両方を出している。
+                # どちらも現場への指示なので、まとめて備考として送る
+                "note": _join_notes(p.customer_memo, p.notes),
             })
 
         try:
@@ -4063,7 +4079,7 @@ def _taotaro_rows(order_items: list, db: Session) -> list:
                 "name": comp.get("name", "") or comp_sku or "",
                 "buy_url": comp_url, "spec": comp_spec,
                 "qty": qty * comp_qty,
-                "note": comp.get("notes", "") or "",
+                "note": _join_notes(comp.get("customer_memo"), comp.get("notes")),
             })
     return rows
 

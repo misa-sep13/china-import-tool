@@ -257,6 +257,16 @@ function Row({ r, i, patch, pickSku }) {
               <span style={{ fontSize: 12, color: C.sub }}>
                 マスタ: {r.color || '—'} / {r.size || '—'}
               </span>
+              {/* 表示はタオタロウの取込画面と同じ中国語にしてある。
+                  読みづらいときのために訳を添える */}
+              {(() => {
+                const s = (r.skus || []).find(x => x.sku_id === r.skuId)
+                return s && s.label_ja && s.label_ja !== s.label
+                  ? <span style={{ fontSize: 11, color: C.sub, width: '100%' }}>
+                      訳: {s.label_ja}
+                    </span>
+                  : null
+              })()}
             </div>
           )}
 

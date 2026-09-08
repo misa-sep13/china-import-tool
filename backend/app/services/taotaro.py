@@ -466,10 +466,20 @@ def goods_detail(url: str) -> dict:
         img = str(img or "").strip()
         if img.startswith("//"):
             img = "https:" + img
+        # 画面に出すのは中国語の原文。タオタロウのExcel取込画面が
+        # 「颜色：灰色；规格：30*30cm-拷边加厚；」と中国語で出るので、
+        # 同じ書き方にしておかないと同じものかどうか見比べられない。
+        # 原文が無い商品だけ訳で代える
+        # 区切りもタオタロウの取込画面に合わせる（全角のコロンと semicolon）
+        raw_label = "；".join([x.replace(":", "：") for x in raw_parts if x])
+        if raw_label:
+            raw_label += "；"
         skus.append({
             "sku_id": str(s.get("sku_id") or ""),
-            "label": " / ".join(parts),
-            # 中国語の原文。照合に使う（画面には出さない）
+            "label": raw_label or " / ".join(parts),
+            # 訳。原文だけでは分からないときの手がかりに残す
+            "label_ja": " / ".join(parts),
+            # 照合用の原文
             "label_raw": " / ".join(raw_parts),
             "properties": s.get("properties"),
             # offer_price（仕入価格）が本来の発注単価。無ければ price
