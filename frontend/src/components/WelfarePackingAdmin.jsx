@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import initialTasks from '../data/welfarePackingTasks.json'
@@ -400,8 +400,26 @@ export default function WelfarePackingAdmin() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map(r => (
-                    <tr key={r.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  {rows.map((r, i) => (
+                    <Fragment key={r.id}>
+                    {/* 日付ごとにまとめて出す。どの日に頼んだ分か
+                        ひと目で分かるよう、変わり目に見出しを入れる */}
+                    {(i === 0 || rows[i - 1].order_date !== r.order_date) && (
+                      <tr style={{ background: '#f1f5f9' }}>
+                        <td colSpan={9} style={{
+                          padding: '6px 10px', fontSize: 12, fontWeight: 700,
+                          color: '#334155', borderTop: '1px solid #e2e8f0',
+                        }}>
+                          {r.order_date}
+                          <span style={{ fontWeight: 400, color: '#64748b', marginLeft: 8 }}>
+                            {rows.filter(x => x.order_date === r.order_date).length}件
+                            ／ {rows.filter(x => x.order_date === r.order_date)
+                                 .reduce((n, x) => n + (x.set_count || 0), 0)}セット
+                          </span>
+                        </td>
+                      </tr>
+                    )}
+                    <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
                       <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                         <input type="number" defaultValue={r.priority ?? ''} style={{ width: 56 }}
                           onBlur={e => {
@@ -448,6 +466,7 @@ export default function WelfarePackingAdmin() {
                         </button>
                       </td>
                     </tr>
+                    </Fragment>
                   ))}
                 </tbody>
                 <tfoot>

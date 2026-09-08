@@ -1299,8 +1299,9 @@ def list_packing_orders(
 ):
     """作業依頼を返す。month(YYYY-MM)で絞ると請求の単位になる。
 
-    並びは 優先順位 → 依頼日。優先順位が空の行は後ろに送る
-    （就労支援さんは上から順に作業するため）。
+    並びは 依頼日の新しい順 → その日の中で優先順位。
+    日ごとにまとまっていないと、いつ頼んだ分なのか追えなくなる。
+    優先順位が空の行はその日の後ろに送る（上から順に作業するため）。
     """
     q = db.query(WelfarePackingOrder)
     if month:
@@ -1308,11 +1309,14 @@ def list_packing_orders(
     if status:
         q = q.filter(WelfarePackingOrder.status == status)
     rows = q.all()
+    # 日付は新しい順、同じ日の中は優先順位の小さい順。
+    # 日付だけ逆向きにしたいので、いったん日付で並べてから優先順位で並べ直す
+    # （Pythonの sort は安定なので、後の並べ替えで前の順序が保たれる）
     rows.sort(key=lambda r: (
         r.priority if r.priority is not None else 9999,
-        r.order_date or "",
         r.id,
     ))
+    rows.sort(key=lambda r: (r.order_date or ""), reverse=True)
 
     items = [_packing_out(r) for r in rows]
     total = round(sum(r.amount or 0 for r in rows), 2)
