@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     SP_API_AWS_SECRET_KEY: Optional[str] = None
     SP_API_ROLE_ARN: Optional[str] = None
     SP_API_MARKETPLACE: str = "JP"
+    # タオタロウ（代理購入）のAPI。トークンは "ID|シークレット" の形で、
+    # 縦棒を含めた全体で1つ。発注権限そのものなのでサーバー側だけで持つ
+    TAOTARO_API_TOKEN: Optional[str] = None
+    TAOTARO_API_BASE: str = "https://api.yiwutaro.com"
     # 出品に使う。セラーセントラルの「出品用アカウント情報」に出ている出品者ID
     SP_API_SELLER_ID: Optional[str] = None
 
