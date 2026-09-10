@@ -590,9 +590,8 @@ def prepare(listing_id: int, db: Session = Depends(get_db)):
 
     # SKUは「a」＋連番（a01, a02, …）が親。子はその下に付ける。
     # Amazonは単品でも親子で作るのが推奨とされているので、親は常に作る。
-    # 区切りはハイフンで統一する。
-    #   単品          a05（親） / a05-1（子）
-    #   バリエーション a06（親） / a06-black・a06-s（子）
+    #   単品          a05（親） / a05_1（子）
+    #   バリエーション a06（親） / a06_black・a06_s（子）
     #
     # すでにSKUのある子がいれば、その頭を引き継ぐ。番号を採り直すと
     # 発番済みのJANとの結びつきがずれるため。
@@ -600,7 +599,7 @@ def prepare(listing_id: int, db: Session = Depends(get_db)):
     if not head:
         for c in kids:
             if (c.sku or "").strip():
-                head = _sku_head(c.sku)
+                head = c.sku.strip().split("_")[0]
                 break
     if not head:
         head = next_sku(db, "a")[0]
@@ -614,11 +613,11 @@ def prepare(listing_id: int, db: Session = Depends(get_db)):
         # 単品は _1。バリエーションは軸の値から作り、作れなければ連番
         suf = "1" if single else (sku_suffix(c.axis1) or sku_suffix(c.axis2)
                                   or str(i + 1))
-        cand = f"{head}-{suf}"
+        cand = f"{head}_{suf}"
         n = i + 1
         while cand in taken:
             n += 1
-            cand = f"{head}-{suf}{n}"
+            cand = f"{head}_{suf}{n}"
         c.sku = cand
         taken.add(cand)
 
@@ -1268,7 +1267,7 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
             continue
 
         parent_sku = ((row.parent_sku or "").strip()
-                      or _sku_head(kids[0].sku)
+                      or (kids[0].sku or "").split("_")[0]
                       or f"a{row.id:02d}")
         # 親を先に出す。親が失敗したら子は送らない（親のいない子は弾かれる）
         attrs = _parent_attributes(row, has_variation, db)
@@ -1416,20 +1415,6 @@ _SIZE_WORDS = {
     "スモール": "s", "ミディアム": "m", "ラージ": "l",
     "フリー": "free", "フリーサイズ": "free",
 }
-
-
-def _sku_head(sku: str) -> str:
-    """子SKUから親の部分を取り出す（a05-black → a05）。
-
-    区切りはハイフンに統一したが、以前アンダースコアで採番したものが
-    残っている。どちらで区切られていても読めるようにする。
-    """
-    v = (sku or "").strip()
-    for sep in ("-", "_"):
-        if sep in v:
-            v = v.split(sep)[0]
-            break
-    return v
 
 
 def sku_suffix(value: str) -> str:
@@ -1907,7 +1892,7 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
 
     has_variation = len(kids) > 1
     parent_sku = ((row.parent_sku or "").strip()
-                  or _sku_head(kids[0].sku)
+                  or (kids[0].sku or "").split("_")[0]
                   or f"a{row.id:02d}")
 
     # 定義にある項目名。これに無いものは覚えない
