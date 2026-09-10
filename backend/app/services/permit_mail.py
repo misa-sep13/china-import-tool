@@ -59,9 +59,12 @@ def _pdf_text(content: bytes) -> str:
         return ""
 
 
-# 輸入許可書かどうかの判定。通関業者ごとに体裁が少し違うので、
-# どれか1つでも当たれば許可書とみなす
-_MARKERS = ("輸入許可通知書", "輸入申告事項登録", "許可年月日", "納税額合計")
+# 輸入許可書かどうかの判定。様式は通関業者・税関システムで文言が違う。
+# 実物（NACCSの輸入申告控）は「輸入許可通知書」とも「許可年月日」とも
+# 書いておらず、「輸入許可日」「税関通知欄」「納税額合計」で出てくる。
+# 手元の1通に合わせすぎると次の様式で落ちるので、どの言い方も見る。
+_MARKERS = ("輸入許可通知書", "輸入申告事項登録", "許可年月日",
+            "納税額合計", "輸入許可日", "税関通知欄", "輸入を許可します")
 
 
 def looks_like_permit(text: str) -> bool:
@@ -81,15 +84,39 @@ def _find(pattern, text, cast=str, default=None):
         return default
 
 
+# 許可の日付は様式によって呼び名が違う（「輸入許可日」「許可年月日」）
+_DATE_LABELS = r"(?:輸入許可日|許可年月日|許可日)"
+
+
 def _permit_date(text: str) -> str:
-    """許可年月日。西暦・和暦のどちらでも拾えるようにする。"""
-    m = re.search(r"許可年月日\s*[:：]?\s*(\d{4})[/\-年\.](\d{1,2})[/\-月\.](\d{1,2})", text)
+    """許可の日付。様式ごとの呼び名と、西暦・和暦の両方を拾う。"""
+    m = re.search(_DATE_LABELS + r"\s*[:：]?\s*(\d{4})[/\-年\.](\d{1,2})[/\-月\.](\d{1,2})", text)
     if m:
         return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
-    m = re.search(r"許可年月日\s*[:：]?\s*令和\s*(\d{1,2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})", text)
+    m = re.search(_DATE_LABELS + r"\s*[:：]?\s*令和\s*(\d{1,2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})", text)
     if m:
         return f"{2018 + int(m.group(1))}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
     return ""
+
+
+def _declaration_no(text: str) -> str:
+    """申告番号。
+
+    様式によっては見出しの行と値の行が分かれていて、
+      代表税番 申告種別 … 申告年月日 申告番号
+      6404 S IC [ 1 ] 1 AMAGASAKI 01 2026/09/07 315 2444 7130
+    のように、値は次の行の末尾に3桁+4桁+4桁で入る。ラベルの直後を読む
+    書き方だと、先頭の代表税番（6404）を拾ってしまう。
+    """
+    for line, nxt in zip(text.split("\n"), text.split("\n")[1:]):
+        if "申告番号" not in line:
+            continue
+        n = re.search(r"(\d{3})\s*(\d{4})\s*(\d{4})\s*$", nxt)
+        if n:
+            return "".join(n.groups())
+    # 同じ行に続けて書かれている様式
+    m = re.search(r"申告番号\s*[:：]?\s*(\d{3}\s*\d{4}\s*\d{4})", text)
+    return re.sub(r"\s", "", m.group(1)) if m else ""
 
 
 def parse_permit_pdf(content: bytes) -> dict:
@@ -117,8 +144,7 @@ def parse_permit_text(text: str) -> dict:
                  lambda x: int(x.replace(",", "")), 0)
     return {
         "is_permit": looks_like_permit(text),
-        "permit_no": _find(r"申告番号\s+([\d\s]+)", text,
-                           lambda x: x.replace(" ", ""), "") or "",
+        "permit_no": _declaration_no(text),
         "permit_date": _permit_date(text),
         "permit_cny": _find(
             r"仕入書価格\s+[A-Z]\s+-\s+CIF\s+-\s+CNY\s+-\s+([\d,\.]+)",
