@@ -158,17 +158,35 @@ export default function ImportPermitPage() {
         </div>
 
         {result && (
-          <div style={{ marginTop: 10, fontSize: 13, color: '#166534', fontWeight: 600 }}>
-            {result.added}件を取り込みました
-            {result.skipped > 0 && `（取り込み済み ${result.skipped}件はそのまま）`}
-            {result.scanned === 0 && '。許可書らしいPDFが見つかりませんでした'}
-            {/* 拾えたときも、取りこぼしが無いか確かめられるよう常に出す */}
-            <button className="btn btn-sm btn-secondary" style={{ marginLeft: 10, fontSize: 12 }}
-              onClick={showCandidates} disabled={checking}>
-              {checking ? '確認中…' : 'このフォルダの添付を全部見る'}
-            </button>
+          <div style={{ marginTop: 10, fontSize: 13 }}>
+            <span style={{ color: '#166534', fontWeight: 600 }}>
+              {result.added}件を取り込みました
+              {result.skipped > 0 && `（取り込み済み ${result.skipped}件はそのまま）`}
+            </span>
+            {/* 0件のとき、どこで止まったのかが分からないと直せない。
+                見たフォルダ・通数・添付PDFの数をそのまま出す */}
+            {result.stats && (
+              <div style={{ marginTop: 6, color: '#64748b', fontSize: 12 }}>
+                見たフォルダ: {(result.stats.folders || []).join('、') || '—'}
+                ／ メール {result.stats.messages}通
+                ／ 添付PDF {result.stats.pdfs}件
+                ／ うち許可書と判定 {result.scanned}件
+                {result.stats.unreadable > 0 && (
+                  <span style={{ color: '#b45309' }}>
+                    {' '}／ 文字が入っていないPDF {result.stats.unreadable}件
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         )}
+        {/* 拾えたときも、取りこぼしが無いか確かめられるよう常に出す */}
+        <div style={{ marginTop: 8 }}>
+          <button className="btn btn-sm btn-secondary" style={{ fontSize: 12 }}
+            onClick={showCandidates} disabled={checking}>
+            {checking ? '確認中…' : 'このフォルダの添付を全部見る'}
+          </button>
+        </div>
         {(result?.drive_errors || []).length > 0 && (
           <div style={{ marginTop: 6, fontSize: 12, color: '#b91c1c' }}>
             {result.drive_errors.join(' / ')}

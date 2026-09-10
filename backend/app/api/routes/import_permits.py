@@ -109,8 +109,9 @@ def fetch_mail(data: FetchIn, db: Session = Depends(get_db)):
     同じ添付を二度入れないよう、メールのMessage-IDと添付名で見分ける。
     何度押しても増えないので、迷ったら押してよい。
     """
+    stats = {}
     try:
-        found = permit_mail.scan(days=data.days, folder=data.folder)
+        found = permit_mail.scan(days=data.days, folder=data.folder, stats=stats)
     except permit_mail.PermitMailError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -144,6 +145,8 @@ def fetch_mail(data: FetchIn, db: Session = Depends(get_db)):
         "skipped": len(found) - len(added),
         "items": [_brief(p) for p in added],
         "drive_errors": drive_errors,
+        # 0件だったときに、どこで止まったかが分かるように
+        "stats": stats,
     }
 
 

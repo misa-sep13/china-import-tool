@@ -93,13 +93,20 @@ def _permit_date(text: str) -> str:
 
 
 def parse_permit_pdf(content: bytes) -> dict:
-    """許可書PDFから金額などを読み取る。読めない項目は0や空で返す。
+    """許可書PDFから金額などを読み取る。読めない項目は0や空で返す。"""
+    return parse_permit_text(_pdf_text(content))
+
+
+def parse_permit_text(text: str) -> dict:
+    """文字起こし済みの許可書から金額などを読み取る。
 
     仕入管理の取り込みと同じ読み方に揃えてある。ここで読めた値は
     一覧に出して見分けるためのもので、原価の按分はこれまでどおり
     仕入管理側の解析結果を使う（二重に持って食い違わせない）。
+
+    文字起こしはPDF1つにつき1回で済ませたいので、本文を受け取る形に
+    分けてある（取り込み時は判定と読み取りの両方で使う）。
     """
-    text = _pdf_text(content)
     total = _find(r"納税額合計\s*[\\¥￥]?\s*([\d,]+)", text,
                   lambda x: int(x.replace(",", "")), 0)
     duty = _find(r"関税\s*[\\¥￥]\s*([\d,]+)", text,
@@ -319,30 +326,45 @@ def _walk(im, folder, days, cap, handle):
     try:
         _open(im, folder)
     except PermitMailError:
-        return
+        return 0
+    seen = 0
     for num in _recent_nums(im, days, cap):
         msg = _fetch_message(im, num)
         if msg is None:
             continue
+        seen += 1
         handle(msg, folder)
+    return seen
 
 
-def scan(days: int = 60, folder: str = None):
+def scan(days: int = 60, folder: str = None, stats: dict = None):
     """メールを見て、輸入許可書らしいPDFを返す。保存はしない。
 
     戻り値は取り込み側がそのままDBへ入れられる形にしてある。
     folder に ALL("*") を渡すと、ごみ箱などを除く全フォルダを見る。
+
+    stats に辞書を渡すと、どこまで進んだかを入れて返す。0件だったときに
+    「フォルダが違う」のか「添付が読めない」のか「許可書と判定できない」のか
+    が分からないと直しようがないため。
     """
     im = _connect()
     found = []
+    stats = stats if stats is not None else {}
+    stats.update({"folders": [], "messages": 0, "pdfs": 0, "unreadable": 0})
     try:
         targets = _targets(im, folder)
         cap = MAX_MESSAGES_ALL if len(targets) > 1 else MAX_MESSAGES
+        stats["folders"] = [_utf7_decode(t) for t in targets]
 
         def handle(msg, box):
             h = _headers(msg)
             for name, data_bytes in _pdf_attachments(msg):
-                parsed = parse_permit_pdf(data_bytes)
+                stats["pdfs"] += 1
+                text = _pdf_text(data_bytes)
+                if not text.strip():
+                    # 画像だけのPDF。文字が入っていないので中身で判定できない
+                    stats["unreadable"] += 1
+                parsed = parse_permit_text(text)
                 if not parsed.pop("is_permit"):
                     continue
                 found.append({
@@ -361,7 +383,7 @@ def scan(days: int = 60, folder: str = None):
                 })
 
         for box in targets:
-            _walk(im, box, days, cap, handle)
+            stats["messages"] += _walk(im, box, days, cap, handle)
     finally:
         try:
             im.logout()
