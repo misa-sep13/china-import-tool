@@ -2362,32 +2362,50 @@ def rakuten_invoice_from_taotaro(data: RakutenTaotaroInvoiceIn,
         （Excelの箱シートがあるときだけ重量按分できる）
     """
     from app.services import taotaro
+    # 就労支援の荷受けと同じ形の行を作り、同じ照合を使う。
+    # URLだけで引くと、同じURLの色違いが区別できず取りこぼす
+    # （実際この経路で28明細中19件が未照合になった）。
+    # 荷受け側は色とサイズも見て照合しており、同じ便で全件当たっている
+    from app.api.routes.welfare import _match_product, _product_indexes
     try:
-        d = taotaro.get_send_order(data.sid)
+        d = taotaro.send_order_rows(data.sid)
     except taotaro.TaotaroError as e:
         raise HTTPException(502, e.message)
 
+    fees = d.get("fees") or {}
+
     def f(key):
         try:
-            return float(d.get(key) or 0)
+            return float(fees.get(key) or 0)
         except (TypeError, ValueError):
             return 0.0
 
+    idx = _product_indexes(db)
     items = []
-    for o in d.get("orders") or []:
-        qty = int(o.get("quantity") or 0)
-        price = float(o.get("unit_price") or 0)
+    matched = unmatched = 0
+    for row in d.get("rows") or []:
+        qty = int(row.get("units") or 0)
+        try:
+            price = float(row.get("unit_price") or 0)
+        except (TypeError, ValueError):
+            price = 0.0
         if qty <= 0 or price <= 0:
             continue
+        product, how = _match_product(row, *idx)
+        if product:
+            matched += 1
+        else:
+            unmatched += 1
         items.append({
-            "sku": str(o.get("out_id") or "").strip(),
-            "name_jp": (o.get("title_trans") or o.get("title") or "").strip(),
+            "sku": product.sku if product else "",
+            "name_jp": (product.name if product else "") or row.get("name_cn") or "",
             "qty": qty,
             "unit_price_cny": price,
             "total_price_cny": round(qty * price, 2),
-            "buy_url": (o.get("url") or "").strip(),
-            "asin_memo": str(o.get("oid") or ""),
-            "goods_id": str(o.get("oid") or ""),
+            "buy_url": (row.get("buy_url") or "").strip(),
+            # どうやって当たったかを残す。あとで取り違えを追える
+            "asin_memo": f"{row.get('order_no') or ''}{'（' + how + '）' if how else ''}",
+            "goods_id": str(row.get("order_no") or ""),
         })
     if not items:
         raise HTTPException(404, "この配送依頼に明細がありません")
@@ -2396,31 +2414,13 @@ def rakuten_invoice_from_taotaro(data: RakutenTaotaroInvoiceIn,
     # 同じ扱いにしているので、そこに合わせる
     domestic = f("send_price") + f("server_fee") + f("customs_fee") + f("remote_fee")
 
-    unique_by_url = _rakuten_products_by_unique_url(db)
-    matched = unmatched = 0
-    for item in items:
-        if item["sku"] and db.query(RakutenProduct).filter(
-                RakutenProduct.sku == item["sku"],
-                RakutenProduct.is_active == True).first():
-            matched += 1
-            continue
-        # out_id が空か、マスタに無いSKUのときだけURLで引く
-        product = unique_by_url.get(_url_key(item.get("buy_url", "")))
-        if product:
-            original = item["sku"] or item["asin_memo"]
-            item["sku"] = product.sku
-            item["name_jp"] = product.name or item["name_jp"]
-            item["asin_memo"] = f"{original} -> {product.sku}"
-            matched += 1
-        else:
-            item["sku"] = ""
-            unmatched += 1
-
+    goods_cny = round(sum(i["total_price_cny"] for i in items), 2)
     return {
         "invoice_no": d.get("sn") or str(d.get("sid") or ""),
         "domestic_freight": round(domestic, 2),
         "added_value": round(f("server_fee"), 2),
         "international_freight": round(f("freight"), 2),
+        "goods_cny": goods_cny,
         "items": items,
         # 箱ごとの重量はAPIに無い。重量按分はできないので金額比に落ちる
         "box_data": None,
@@ -2435,12 +2435,7 @@ def rakuten_invoice_from_taotaro(data: RakutenTaotaroInvoiceIn,
             "state_label": d.get("state_label"),
             "count_weight": d.get("count_weight"),
             "delivery_name": d.get("delivery_name"),
-            "fees": {"send_price": d.get("send_price"),
-                     "server_fee": d.get("server_fee"),
-                     "freight": d.get("freight"),
-                     "customs_fee": d.get("customs_fee"),
-                     "remote_fee": d.get("remote_fee"),
-                     "total_send_fee": d.get("total_send_fee")},
+            "fees": fees,
         },
     }
 
