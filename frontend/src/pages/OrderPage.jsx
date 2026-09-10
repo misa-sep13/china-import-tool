@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import { normalizeSearch } from '../searchUtil'
+
+const SORT_OPTIONS = { numeric: true, sensitivity: 'base' }
 import TaotaroOrderModal from './TaotaroOrderModal'
 
 const POLL_INTERVAL = 3000 // 3秒ごとにポーリング
@@ -116,6 +118,10 @@ export default function OrderPage() {
     const q = normalizeSearch(search)
     return normalizeSearch(item.sku || '').includes(q) || normalizeSearch(item.name || '').includes(q)
   })
+    // SKU順に並べる。並びが毎回変わると、どこまで見たか分からなくなる。
+    // numeric を付けて y48 → y91 → y114 の順にする（文字だけで比べると
+    // y114 が y48 より前に来て、探すときに見つけられない）
+    .sort((a, b) => (a.sku || '').localeCompare(b.sku || '', 'ja', SORT_OPTIONS))
 
   const recommendedCount = allItems.filter(i => i.needs_order).length
 
