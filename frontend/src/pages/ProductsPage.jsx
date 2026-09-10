@@ -420,6 +420,16 @@ export default function ProductsPage() {
                       APIの発注はこの値を使う。楽天マスタと同じ意味 */}
                   <label>単価（元）</label>
                   <input type="number" step="0.01" {...f('price')} />
+                  {/* 手で入れると円と間違えやすい。元は1桁〜十数元のことが
+                      多いので、円らしい値なら気づけるようにする */}
+                  {form.price > 0 && (
+                    <div style={{ fontSize: 11, marginTop: 3,
+                      color: Number(form.price) >= 100 ? '#b45309' : '#64748b' }}>
+                      {Number(form.price) >= 100
+                        ? `≒ ${Math.round(Number(form.price) * 21).toLocaleString()}円　円で入れていませんか？`
+                        : `≒ ${Math.round(Number(form.price) * 21).toLocaleString()}円`}
+                    </div>
+                  )}
                 </div>
                 <div className="form-group">
                   {/* 送料・輸入税まで含んだ1個あたりの原価。利益計算に使う */}

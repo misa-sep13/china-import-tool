@@ -276,6 +276,27 @@ function Row({ r, i, patch, pickSku }) {
             </div>
           )}
 
+          {/* 商品マスタの単価と、仕入先の実売価が大きく違うときに出す。
+              手入力で円と元を取り違えていると、ここで開きが出る */}
+          {(() => {
+            const s = (r.skus || []).find(x => x.sku_id === r.skuId)
+            const mine = Number(r.master_price || 0)
+            const real = Number((s && s.price) || 0)
+            if (!mine || !real) return null
+            const gap = mine / real
+            if (gap < 3 && gap > 0.34) return null
+            return (
+              <div style={{ fontSize: 12, color: C.warn, marginTop: 5,
+                background: '#fffbeb', border: '1px solid #fde68a',
+                borderRadius: 5, padding: '4px 7px' }}>
+                マスタの単価 {mine} 元 に対し、仕入先は {real} 元です。
+                {gap >= 3 && '　円で入れていませんか？'}
+                　発注はマスタの数量だけを使うので発注自体は通りますが、
+                残高の見積もりがずれます
+              </div>
+            )
+          })()}
+
           {/* 備考は開かないと見えないと、伝え忘れに気づけない。
               マスタに書いてあるものは畳まずに出す */}
           {r.remark && (

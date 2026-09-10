@@ -204,6 +204,9 @@ def order_preview(req: PreviewRequest, db: Session = Depends(get_db)):
             # 商品マスタの備考。現場へ伝えないと困ることが書いてあるので、
             # そのまま発注の備考へ持っていく。Excelは「お客様専用メモ」と
             # 「備考」の両方を出しているので、どちらも入れる
+            # 商品マスタの単価（元）。仕入先の実売価と大きく違えば、
+            # 円で入れてしまっている可能性がある
+            "master_price": (product.price if product else None),
             "note": " / ".join([x for x in [
                 str((product.customer_memo if product else "") or "").strip(),
                 str((product.note if product else "") or "").strip(),

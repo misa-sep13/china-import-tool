@@ -4327,6 +4327,9 @@ def rakuten_taotaro_preview(body: dict, db: Session = Depends(get_db)):
             # 商品マスタの備考。「ケースのみ購入」のように現場へ伝えないと
             # 困ることが書いてあるので、そのまま発注の備考へ持っていく
             "note": r.get("note") or "",
+            # 商品マスタの単価（元）。仕入先の実売価と大きく違えば、
+            # 円で入れてしまっている可能性がある
+            "master_price": (p.price if p else None),
         }
         p = db.query(RakutenProduct).filter(RakutenProduct.sku == r["sku"]).first()
 
