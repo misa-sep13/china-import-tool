@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import api, { mediaUrl } from '../api/client'
 import WelfarePackingAdmin from '../components/WelfarePackingAdmin'
+import { matchesQuery as hit } from '../searchUtil'
 
 const fmtDate = (v) => {
   if (!v) return '-'
@@ -197,16 +198,21 @@ export default function WelfareInventoryPage() {
   }
 
   const { data: rawItems = [], isLoading } = useQuery({
-    queryKey: ['welfare-inventory', search],
-    queryFn: () => api.get('/welfare/inventory', { params: search ? { q: search } : {} }).then(r => r.data),
+    // 絞り込みはサーバーに投げない。1文字打つたびに全件を取り直すことになり、
+    // 荷受け661KB＋在庫85KBが毎回流れていた（Supabaseの無料枠を使い切った原因のひとつ）。
+    // どちらも全件が手元にあるので、絞り込みはここで行う
+    queryKey: ['welfare-inventory'],
+    queryFn: () => api.get('/welfare/inventory').then(r => r.data),
   })
 
   const items = useMemo(() => {
+    const list = rawItems.filter(r =>
+      hit(search, [r.sku, r.name_jp, r.name_cn, r.supplier_spec]))
     if (inventorySort === 'sku') {
-      return [...rawItems].sort((a, b) => (a.sku || '').localeCompare(b.sku || '', 'ja', JA_SORT_OPTIONS))
+      return [...list].sort((a, b) => (a.sku || '').localeCompare(b.sku || '', 'ja', JA_SORT_OPTIONS))
     }
-    return rawItems
-  }, [rawItems, inventorySort])
+    return list
+  }, [rawItems, inventorySort, search])
 
   const { data: movements = [] } = useQuery({
     queryKey: ['welfare-movements'],
@@ -214,8 +220,8 @@ export default function WelfareInventoryPage() {
   })
 
   const { data: workInstructions = [], isLoading: workLoading } = useQuery({
-    queryKey: ['welfare-work-instructions', search],
-    queryFn: () => api.get('/welfare/work-instructions', { params: search ? { q: search } : {} }).then(r => r.data),
+    queryKey: ['welfare-work-instructions'],
+    queryFn: () => api.get('/welfare/work-instructions').then(r => r.data),
   })
 
   const pendingWorkDeleteIds = useMemo(
@@ -224,8 +230,11 @@ export default function WelfareInventoryPage() {
   )
 
   const activeWorkInstructions = useMemo(
-    () => workInstructions.filter(row => !pendingWorkDeleteIds.has(row.id)),
-    [pendingWorkDeleteIds, workInstructions]
+    () => workInstructions.filter(row =>
+      !pendingWorkDeleteIds.has(row.id)
+      && hit(search, [row.sku, row.name_jp, row.source_product_name,
+                      row.color, row.size, row.supplier_spec, row.source_order_no])),
+    [pendingWorkDeleteIds, workInstructions, search]
   )
 
   const workDateTabs = useMemo(() => {

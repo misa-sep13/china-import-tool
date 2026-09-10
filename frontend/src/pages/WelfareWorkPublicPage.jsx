@@ -4,6 +4,7 @@ import api, { mediaUrl } from '../api/client'
 import { useWelfareVersion } from '../api/welfareVersion'
 import WelfarePackingOrders from '../components/WelfarePackingOrders'
 import WelfareInventoryPublic from '../components/WelfareInventoryPublic'
+import { matchesQuery as hit } from '../searchUtil'
 
 const fmtDate = (v) => {
   if (!v) return ''
@@ -80,16 +81,18 @@ export default function WelfareWorkPublicPage() {
   const version = useWelfareVersion('work')
 
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ['welfare-work-public', search, version],
-    queryFn: () => api.get('/welfare/work-instructions', {
-      params: search ? { q: search } : {},
-    }).then(r => r.data),
+    // 絞り込みはサーバーに投げない。1文字打つたびに661KBを取り直すことになる
+    queryKey: ['welfare-work-public', version],
+    queryFn: () => api.get('/welfare/work-instructions').then(r => r.data),
     staleTime: Infinity,
   })
 
   const visibleRows = useMemo(
-    () => rows.filter(r => workRemainingQty(r) > 0),
-    [rows]
+    () => rows.filter(r => workRemainingQty(r) > 0 && hit(search, [
+      r.sku, r.name_jp, r.source_product_name,
+      r.color, r.size, r.supplier_spec, r.source_order_no,
+    ])),
+    [rows, search]
   )
 
   const workDateTabs = useMemo(() => {
