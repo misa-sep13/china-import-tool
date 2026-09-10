@@ -132,7 +132,9 @@ def _run_analytics_job(job_id: str, days: int):
             fba_fee_unit = p.fba_fee
             fba_fee      = (fba_fee_unit or 0) * normal_units
             amazon_fee   = round(normal_revenue * (p.amazon_fee_rate or amazon_fee_rate), 0)
-            cost_jpy     = round((p.price or 0) * normal_units, 0)
+            # 原価は円（cost_jpy）。price は発注用の単価（元）なので、
+            # そのまま掛けると利益が実際よりずっと低く出る
+            cost_jpy     = round((p.cost_jpy or 0) * normal_units, 0)
             total_cost   = fba_fee + amazon_fee + cost_jpy
             profit       = round(normal_revenue - total_cost, 0)
             profit_rate  = round(profit / normal_revenue * 100, 1) if normal_revenue > 0 else 0

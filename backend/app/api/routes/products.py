@@ -306,7 +306,9 @@ def export_t4s_cost(db: Session = Depends(get_db)):
 
     # 行3以降: 商品データ
     for row_idx, p in enumerate(products, 3):
-        cost_jpy = round(p.price or 0)
+        # Tool4Sellerのコスト欄は円。price は発注用の単価（元）なので、
+        # そのまま入れると桁が合わない。円の原価（cost_jpy）を使う
+        cost_jpy = round(p.cost_jpy or 0)
         ws.cell(row=row_idx, column=1, value=SELLER_ACCOUNT)
         ws.cell(row=row_idx, column=2, value=SHOP_NAME)
         ws.cell(row=row_idx, column=3, value=SELLER_ID)

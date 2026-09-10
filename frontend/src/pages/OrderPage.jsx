@@ -325,8 +325,9 @@ export default function OrderPage() {
 
   // 件数・合計も「表示中か否か」ではなくチェック状態を基準にする
   const selectedItems = allItems.filter(item => currentSelected.has(item.product_id) && item.qty > 0)
-  // 選んだぶんの仕入額（元）。中国国内送料や手数料は含まないので、
-  // ぴったりではなく「明らかに足りない」ときの目安として使う
+  // 選んだぶんの仕入額（元）。price は「単価（元）」で、
+  // 仕入原価（円）の cost_jpy とは別物。中国国内送料や手数料は
+  // 含まないので、ぴったりではなく「明らかに足りない」ときの目安
   const selectedCny = selectedItems.reduce(
     (a, i) => a + (Number(i.price || i.unit_price_cny || 0) * Number(i.qty || 0)), 0)
   // 単価が入っていない商品は合計に乗らない。気づかないまま

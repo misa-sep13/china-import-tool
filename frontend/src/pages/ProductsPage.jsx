@@ -7,7 +7,8 @@ const CATEGORIES = ['標準', 'ファッション', '大型']
 
 const EMPTY = {
   sku: '', fnsku: '', asin: '', name: '', buy_url: '', photo_url: '',
-  color: '', size: '', spec: '', customer_memo: '', price: '', repack: '', note: '',
+  color: '', size: '', spec: '', customer_memo: '', price: '', cost_jpy: '',
+  repack: '', note: '',
   set_size: 1, extra_stock: 0, amazon_fee_rate: 0.1, category: '標準',
 }
 const EDITABLE_FIELDS = Object.keys(EMPTY)
@@ -24,6 +25,7 @@ const buildFormData = (source) => {
     data[key] = source[key] ?? ''
   })
   data.price = toNumber(source.price, 0)
+  data.cost_jpy = toNumber(source.cost_jpy, 0)
   data.set_size = Math.max(1, Math.trunc(toNumber(source.set_size, 1)))
   data.extra_stock = Math.max(0, Math.trunc(toNumber(source.extra_stock, 0)))
   data.amazon_fee_rate = toNumber(source.amazon_fee_rate, 0.1)
@@ -54,10 +56,13 @@ const compareProducts = (a, b) => {
 }
 
 function calcProfit(p) {
-  if (!p.selling_price || !p.price) return null
+  // 原価は円（cost_jpy）。price は発注用の単価（元）なので、
+  // そのまま引くと桁がまるで合わない
+  const cost = p.cost_jpy
+  if (!p.selling_price || !cost) return null
   const amazonFee = p.selling_price * (p.amazon_fee_rate ?? 0.1)
   const fbaFee = p.fba_fee ?? 0
-  const profit = p.selling_price - p.price - amazonFee - fbaFee
+  const profit = p.selling_price - cost - amazonFee - fbaFee
   const rate = profit / p.selling_price
   return { profit: Math.round(profit), rate: (rate * 100).toFixed(1) }
 }
@@ -272,6 +277,7 @@ export default function ProductsPage() {
                   <th>区分</th>
                   <th>仕様</th>
                   <th>お客様専用メモ</th>
+                  <th style={{ textAlign: 'right' }}>単価(元)</th>
                   <th style={{ textAlign: 'right' }}>仕入原価(円)</th>
                   <th style={{ textAlign: 'right' }}>販売価格(円)</th>
                   <th style={{ textAlign: 'right' }}>FBA手数料</th>
@@ -337,7 +343,12 @@ export default function ProductsPage() {
                       <td style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: '#666' }} title={p.customer_memo}>
                         {p.customer_memo || <span style={{ color: '#bbb' }}>-</span>}
                       </td>
-                      <td style={{ textAlign: 'right' }}>{p.price ? `¥${Math.round(p.price).toLocaleString()}` : '-'}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        {p.price ? `${p.price.toLocaleString()} 元` : <span style={{ color: '#bbb' }}>-</span>}
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        {p.cost_jpy ? `¥${Math.round(p.cost_jpy).toLocaleString()}` : <span style={{ color: '#bbb' }}>-</span>}
+                      </td>
                       <td style={{ textAlign: 'right' }}>
                         {p.selling_price ? `¥${p.selling_price.toLocaleString()}` : <span style={{ color: '#bbb' }}>未取得</span>}
                       </td>
@@ -405,8 +416,16 @@ export default function ProductsPage() {
                   </select>
                 </div>
                 <div className="form-group">
-                  <label>仕入原価(円)※インボイスから自動計算</label>
+                  {/* タオタロウへ発注するときの単価。Excelの単価欄と
+                      APIの発注はこの値を使う。楽天マスタと同じ意味 */}
+                  <label>単価（元）</label>
                   <input type="number" step="0.01" {...f('price')} />
+                </div>
+                <div className="form-group">
+                  {/* 送料・輸入税まで含んだ1個あたりの原価。利益計算に使う */}
+                  <label>仕入原価（円）</label>
+                  <input type="number" step="1" {...f('cost_jpy')}
+                    placeholder="インボイス取込で自動入力" />
                 </div>
                 <div className="form-group">
                   <label>セット数</label>
