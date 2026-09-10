@@ -2335,6 +2335,143 @@ async def rakuten_parse_pdf(file: UploadFile = File(...)):
     }
 
 
+class RakutenTaotaroInvoiceIn(BaseModel):
+    sid: int
+
+
+def _guess_method(name: str) -> str:
+    """配送方法の名前から船便か航空便かを推測する。確実ではないので初期値だけ。"""
+    n = (name or "")
+    if any(k in n for k in ("船", "海", "SEA", "sea", "Sea")):
+        return "sea"
+    if any(k in n for k in ("航空", "空運", "AIR", "air", "Air")):
+        return "air"
+    return "sea"
+
+
+@router.post("/invoices/from-taotaro")
+def rakuten_invoice_from_taotaro(data: RakutenTaotaroInvoiceIn,
+                                 db: Session = Depends(get_db)):
+    """インボイスExcelの代わりに、タオタロウのAPIから明細と費用を取る。
+
+    戻り値は parse-excel と同じ形なので、このあとの計算・保存はそのまま動く。
+    Excelと違うのは:
+      ・out_id（自社の管理番号）が入るので、SKUの推測が要らない
+      ・費用が見積もりではなく確定値で入る
+      ・箱ごとの重量が無いので、国際送料は金額比で配る
+        （Excelの箱シートがあるときだけ重量按分できる）
+    """
+    from app.services import taotaro
+    try:
+        d = taotaro.get_send_order(data.sid)
+    except taotaro.TaotaroError as e:
+        raise HTTPException(502, e.message)
+
+    def f(key):
+        try:
+            return float(d.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    items = []
+    for o in d.get("orders") or []:
+        qty = int(o.get("quantity") or 0)
+        price = float(o.get("unit_price") or 0)
+        if qty <= 0 or price <= 0:
+            continue
+        items.append({
+            "sku": str(o.get("out_id") or "").strip(),
+            "name_jp": (o.get("title_trans") or o.get("title") or "").strip(),
+            "qty": qty,
+            "unit_price_cny": price,
+            "total_price_cny": round(qty * price, 2),
+            "buy_url": (o.get("url") or "").strip(),
+            "asin_memo": str(o.get("oid") or ""),
+            "goods_id": str(o.get("oid") or ""),
+        })
+    if not items:
+        raise HTTPException(404, "この配送依頼に明細がありません")
+
+    # 国内側の費用はまとめて金額比で配る。Excelでも国内送料と加工費(Added Value)を
+    # 同じ扱いにしているので、そこに合わせる
+    domestic = f("send_price") + f("server_fee") + f("customs_fee") + f("remote_fee")
+
+    unique_by_url = _rakuten_products_by_unique_url(db)
+    matched = unmatched = 0
+    for item in items:
+        if item["sku"] and db.query(RakutenProduct).filter(
+                RakutenProduct.sku == item["sku"],
+                RakutenProduct.is_active == True).first():
+            matched += 1
+            continue
+        # out_id が空か、マスタに無いSKUのときだけURLで引く
+        product = unique_by_url.get(_url_key(item.get("buy_url", "")))
+        if product:
+            original = item["sku"] or item["asin_memo"]
+            item["sku"] = product.sku
+            item["name_jp"] = product.name or item["name_jp"]
+            item["asin_memo"] = f"{original} -> {product.sku}"
+            matched += 1
+        else:
+            item["sku"] = ""
+            unmatched += 1
+
+    return {
+        "invoice_no": d.get("sn") or str(d.get("sid") or ""),
+        "domestic_freight": round(domestic, 2),
+        "added_value": round(f("server_fee"), 2),
+        "international_freight": round(f("freight"), 2),
+        "items": items,
+        # 箱ごとの重量はAPIに無い。重量按分はできないので金額比に落ちる
+        "box_data": None,
+        "has_box_data": False,
+        "shipping_method": _guess_method(d.get("delivery_name")),
+        "customs_fee_sea_jpy": invoice_calc.CUSTOMS_FEE_SEA_JPY,
+        "matched": matched,
+        "unmatched": unmatched,
+        # 画面で内訳を見せるため。合計は total_send_fee と一致する
+        "taotaro": {
+            "sid": d.get("sid"), "sn": d.get("sn"),
+            "state_label": d.get("state_label"),
+            "count_weight": d.get("count_weight"),
+            "delivery_name": d.get("delivery_name"),
+            "fees": {"send_price": d.get("send_price"),
+                     "server_fee": d.get("server_fee"),
+                     "freight": d.get("freight"),
+                     "customs_fee": d.get("customs_fee"),
+                     "remote_fee": d.get("remote_fee"),
+                     "total_send_fee": d.get("total_send_fee")},
+        },
+    }
+
+
+@router.get("/invoices/stored-permit/{permit_id}")
+def rakuten_stored_permit(permit_id: int, db: Session = Depends(get_db)):
+    """保管してある輸入許可書を読む。
+
+    戻り値は parse-pdf と同じ形。メールから自動で貯めているので、
+    毎回ファイルを探して添付する必要がなくなる。
+    """
+    from app.models.import_permit import ImportPermit
+    row = (db.query(ImportPermit)
+           .filter(ImportPermit.id == permit_id).first())
+    if not row or not row.pdf:
+        raise HTTPException(404, "保管された許可書が見つかりません")
+    if (row.kind or "permit") != "permit":
+        raise HTTPException(400, "これは輸入許可書ではありません（請求書です）")
+    text = _permit_text(row.pdf)
+    values = _permit_values(text)
+    return {
+        "import_tax_jpy": values["import_tax_jpy"],
+        "exchange_rate": values["exchange_rate"],
+        "tax_breakdown": values["tax_breakdown"],
+        "permit_columns": _parse_permit_columns(text),
+        "permit_no": row.permit_no,
+        "permit_date": row.permit_date,
+        "permit_cny": row.permit_cny,
+    }
+
+
 @router.post("/invoices/parse-excel")
 async def rakuten_parse_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """タオタロウ形式ExcelをパースしてSKU・単価を返す"""

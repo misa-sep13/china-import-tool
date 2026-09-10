@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import api from '../api/client'
 
 const COL_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899']
@@ -44,6 +44,73 @@ export default function RakutenInvoicePage() {
   function reset() {
     setValidation(null); setParsed(null); setPdfResult(null); setCalculated(null); setSaved(null)
     setForm({ invoice_no: '', invoice_date: '', exchange_rate: 20.0, domestic_freight: 0, international_freight: 0, import_tax_jpy: 0 })
+  }
+
+  // ---- ファイルを使わない取り込み ----
+  // インボイスはタオタロウのAPI、許可書は保管してあるものを使う。
+  // 中身は同じ形にしてあるので、このあとの計算・保存はExcel経路と同じ道を通る。
+  const [apiSid, setApiSid] = useState('')
+  const [apiPermitId, setApiPermitId] = useState('')
+  const [apiLoading, setApiLoading] = useState(false)
+  const [apiInfo, setApiInfo] = useState(null)
+  const [sendOrders, setSendOrders] = useState([])
+  const [storedPermits, setStoredPermits] = useState([])
+
+  useEffect(() => {
+    // どちらも無ければカードは出るが選べないだけ。エラーにはしない
+    api.get('/taotaro/send-orders', { params: { page: 1, limit: 20 } })
+      .then(r => setSendOrders(r.data.items || [])).catch(() => {})
+    api.get('/import-permits/', { params: { kind: 'permit' } })
+      .then(r => setStoredPermits(r.data.items || [])).catch(() => {})
+  }, [])
+
+  async function handleApiLoad() {
+    if (!apiSid || !apiPermitId) return
+    setApiLoading(true)
+    reset()
+    setApiInfo(null)
+    try {
+      const invRes = await api.post('/rakuten/invoices/from-taotaro', { sid: Number(apiSid) })
+      setParsed(invRes.data)
+      setApiInfo(invRes.data.taotaro || null)
+      if (invRes.data.shipping_method) setShippingMethod(invRes.data.shipping_method)
+      try {
+        const pRes = await api.get('/rakuten/products')
+        setProducts(pRes.data || [])
+      } catch { /* SKU候補が出ないだけなので続行 */ }
+
+      const pdfRes = await api.get(`/rakuten/invoices/stored-permit/${apiPermitId}`)
+      setPdfResult(pdfRes.data)
+      setUseTariff((pdfRes.data.permit_columns || []).length > 0)
+      setForm(f => ({
+        ...f,
+        invoice_no: invRes.data.invoice_no || '',
+        domestic_freight: invRes.data.domestic_freight || 0,
+        international_freight: invRes.data.international_freight || 0,
+        import_tax_jpy: pdfRes.data.import_tax_jpy || 0,
+        ...(pdfRes.data.exchange_rate ? { exchange_rate: pdfRes.data.exchange_rate } : {}),
+      }))
+
+      // Excel経路の「整合性チェック」と同じ確認を、こちらでも必ず出す。
+      // 別の便の許可書を選ぶ事故がいちばん怖いので、金額で突き合わせる
+      const invCny = (invRes.data.items || [])
+        .reduce((a, i) => a + Number(i.total_price_cny || 0), 0)
+      const permitCny = Number(pdfRes.data.permit_cny || 0)
+      const diff = Math.round(Math.abs(invCny - permitCny) * 100) / 100
+      setValidation({
+        ok: permitCny > 0 ? diff <= 1 : true,
+        invoice_cny: Math.round(invCny * 100) / 100,
+        permit_cny: permitCny,
+        diff,
+        message: permitCny > 0
+          ? '金額が合いません。便と許可書の組み合わせをご確認ください'
+          : '許可書からCNY金額を読めなかったので、突き合わせは省略しました',
+      })
+    } catch (err) {
+      alert('読み込みエラー: ' + (err.response?.data?.detail || err.message))
+    } finally {
+      setApiLoading(false)
+    }
   }
 
   async function handleValidate() {
@@ -153,9 +220,81 @@ export default function RakutenInvoicePage() {
     <div>
       <h2 style={{ marginBottom: 24 }}>楽天 仕入管理（原価計算）</h2>
 
+      {/* ファイルを使わない取り込み。
+          インボイスはタオタロウのAPIから、許可書は保管してあるものから選ぶ。
+          Excelの経路は「箱ごとの重量で国際送料を配りたいとき」に残してある */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginBottom: 6 }}>タオタロウ＋保管済みの許可書から取り込む</h3>
+        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
+          ファイルの用意は要りません。便と許可書を選んで「読み込む」を押してください。
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <div className="form-group">
+            <label>配送依頼（インボイスの代わり）</label>
+            <select value={apiSid} onChange={e => { setApiSid(e.target.value); reset() }}
+              style={{ width: '100%', padding: '6px 8px' }}>
+              <option value="">選んでください</option>
+              {sendOrders.map(x => (
+                <option key={x.sid} value={x.sid}>
+                  {x.sn || x.sid}　{x.state_label}　{x.total_send_fee}元
+                  {x.count_weight ? `　${x.count_weight}kg` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>輸入許可書（保管済み）</label>
+            <select value={apiPermitId} onChange={e => { setApiPermitId(e.target.value); reset() }}
+              style={{ width: '100%', padding: '6px 8px' }}>
+              <option value="">選んでください</option>
+              {storedPermits.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.permit_date || p.mail_date || '日付なし'}
+                  {p.permit_no || '(番号なし)'}　¥{(p.total_tax || 0).toLocaleString()}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div style={{ marginTop: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button className="btn btn-primary" onClick={handleApiLoad}
+            disabled={apiLoading || !apiSid || !apiPermitId}>
+            {apiLoading ? '読み込み中…' : '読み込む'}
+          </button>
+          {storedPermits.length === 0 && (
+            <span style={{ fontSize: 12, color: '#b45309' }}>
+              保管された許可書がありません。「輸入許可書」の画面で先に取り込んでください
+            </span>
+          )}
+        </div>
+        {apiInfo && (
+          <div style={{ marginTop: 12, fontSize: 13, color: '#475569' }}>
+            <div>
+              <b>{apiInfo.sn}</b>　{apiInfo.state_label}　{apiInfo.delivery_name || ''}
+              {apiInfo.count_weight ? `　課金重量 ${apiInfo.count_weight}kg` : ''}
+            </div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>
+              中国国内 {apiInfo.fees?.send_price}元／代行 {apiInfo.fees?.server_fee}元／
+              国際 {apiInfo.fees?.freight}元／通関 {apiInfo.fees?.customs_fee}元／
+              遠隔地 {apiInfo.fees?.remote_fee}元
+              <b>合計 {apiInfo.fees?.total_send_fee}元</b>
+            </div>
+            {/* Excelの箱シートが無いので重量按分ができない。黙って金額比にすると
+                同じ便でも経路によって原価が変わるため、はっきり出す */}
+            <div style={{ fontSize: 12, marginTop: 4, color: '#b45309' }}>
+              ※国際送料は金額比で配ります（箱ごとの重量はAPIから取れないため）。
+              重量で配りたいときは、下のExcelの経路をお使いください。
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* ファイル選択 */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <h3 style={{ marginBottom: 16 }}>ファイル選択（2つセットでアップロード）</h3>
+        <h3 style={{ marginBottom: 6 }}>ファイルから取り込む（箱ごとの重量で配りたいとき）</h3>
+        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
+          インボイスに箱シートが付いていれば、国際送料を実測重量で配れます。
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div className="form-group">
             <label>インボイス（.xlsx）</label>
