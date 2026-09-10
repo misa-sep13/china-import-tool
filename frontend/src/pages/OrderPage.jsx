@@ -329,6 +329,10 @@ export default function OrderPage() {
   // ぴったりではなく「明らかに足りない」ときの目安として使う
   const selectedCny = selectedItems.reduce(
     (a, i) => a + (Number(i.price || i.unit_price_cny || 0) * Number(i.qty || 0)), 0)
+  // 単価が入っていない商品は合計に乗らない。気づかないまま
+  // 「足りている」と読んでしまうので、件数を出して分かるようにする
+  const noPriceCount = selectedItems.filter(
+    i => !Number(i.price || i.unit_price_cny || 0)).length
   const lowBalance = balance?.money != null && selectedCny > 0
     && Number(balance.money) < selectedCny
   const isLoading = jobStatus === 'running' || jobStatus === 'idle'
@@ -394,6 +398,19 @@ export default function OrderPage() {
                   color: lowBalance ? '#b91c1c' : '#475569',
                   fontWeight: lowBalance ? 700 : 400 }}>
                   残高 {Number(balance.money).toLocaleString('ja-JP')} 元
+                  {/* 「足りない」とだけ出ても確かめようがないので、
+                      いくらと見比べたのかを併せて出す。単価が入っていない
+                      商品があると、ここが実際より小さく出る */}
+                  {selectedCny > 0 && (
+                    <span style={{ fontWeight: 400 }}>
+                      　／ 選択 {Math.round(selectedCny).toLocaleString('ja-JP')} 元
+                      {noPriceCount > 0 && (
+                        <span style={{ color: '#b45309' }}>
+                          （単価未入力 {noPriceCount}件を除く）
+                        </span>
+                      )}
+                    </span>
+                  )}
                   {lowBalance && '　※発注額に足りません'}
                 </span>
               )}
