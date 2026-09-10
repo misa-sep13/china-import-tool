@@ -2280,12 +2280,33 @@ def _find_invoice_product(db: Session, item: RakutenInvoiceItemIn):
     return matched[0] if len(matched) == 1 else None
 
 
+async def _permit_bytes(permit_file, permit_id, db) -> bytes:
+    """許可書のPDFを、アップロードか保管済みかのどちらかから取る。"""
+    if permit_file is not None:
+        return await permit_file.read()
+    if permit_id:
+        from app.models.import_permit import ImportPermit
+        row = db.query(ImportPermit).filter(ImportPermit.id == permit_id).first()
+        if not row or not row.pdf:
+            raise HTTPException(404, "保管された許可書が見つかりません")
+        if (row.kind or "permit") != "permit":
+            raise HTTPException(400, "これは輸入許可書ではありません（請求書です）")
+        return row.pdf
+    raise HTTPException(400, "輸入許可書を選んでください")
+
+
 @router.post("/invoices/validate-pair")
 async def rakuten_validate_pair(
     invoice_file: UploadFile = File(...),
-    permit_file: UploadFile = File(...),
+    permit_file: Optional[UploadFile] = File(None),
+    permit_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
 ):
-    """インボイスXLSと輸入許可書PDFのCNY合計が一致するか検証する"""
+    """インボイスXLSと輸入許可書のCNY合計が一致するか検証する。
+
+    許可書はアップロードでも、保管してあるもの（permit_id）でもよい。
+    メールから自動で貯めているので、ふだんは選ぶだけで済む。
+    """
     import openpyxl
     inv_content = await invoice_file.read()
     try:
@@ -2297,7 +2318,7 @@ async def rakuten_validate_pair(
     goods_cny = sum((item["total_price_cny"] or item["qty"] * item["unit_price_cny"]) for item in parsed["items"])
     with_fees = goods_cny + (parsed["domestic_freight"] or 0) + (parsed["international_freight"] or 0)
 
-    permit_content = await permit_file.read()
+    permit_content = await _permit_bytes(permit_file, permit_id, db)
     permit = _permit_values(_permit_text(permit_content))
     permit_cny = permit["permit_cny"]
 

@@ -49,6 +49,7 @@ export default function RakutenInvoicePage() {
   // ---- ファイルを使わない取り込み ----
   // インボイスはタオタロウのAPI、許可書は保管してあるものを使う。
   // 中身は同じ形にしてあるので、このあとの計算・保存はExcel経路と同じ道を通る。
+  const [filePermitId, setFilePermitId] = useState('')
   const [apiSid, setApiSid] = useState('')
   const [apiPermitId, setApiPermitId] = useState('')
   const [apiLoading, setApiLoading] = useState(false)
@@ -114,8 +115,8 @@ export default function RakutenInvoicePage() {
   }
 
   async function handleValidate() {
-    if (!invoiceFile || !permitFile) {
-      alert('インボイスと輸入許可書の両方を選択してください')
+    if (!invoiceFile || (!permitFile && !filePermitId)) {
+      alert('インボイスと輸入許可書の両方を選んでください')
       return
     }
     setValidating(true)
@@ -123,7 +124,8 @@ export default function RakutenInvoicePage() {
     try {
       const fd1 = new FormData()
       fd1.append('invoice_file', invoiceFile)
-      fd1.append('permit_file', permitFile)
+      if (permitFile) fd1.append('permit_file', permitFile)
+      else fd1.append('permit_id', filePermitId)
       const vRes = await api.post('/rakuten/invoices/validate-pair', fd1)
       setValidation(vRes.data)
       if (!vRes.data.ok) return
@@ -145,9 +147,14 @@ export default function RakutenInvoicePage() {
         international_freight: invRes.data.international_freight || 0,
       }))
 
-      const fd3 = new FormData()
-      fd3.append('file', permitFile)
-      const pdfRes = await api.post('/rakuten/invoices/parse-pdf', fd3)
+      let pdfRes
+      if (permitFile) {
+        const fd3 = new FormData()
+        fd3.append('file', permitFile)
+        pdfRes = await api.post('/rakuten/invoices/parse-pdf', fd3)
+      } else {
+        pdfRes = await api.get(`/rakuten/invoices/stored-permit/${filePermitId}`)
+      }
       setPdfResult(pdfRes.data)
       setForm(f => ({
         ...f,
@@ -302,14 +309,30 @@ export default function RakutenInvoicePage() {
               onChange={e => { setInvoiceFile(e.target.files[0]); reset() }} />
           </div>
           <div className="form-group">
-            <label>輸入許可書（.pdf）</label>
+            <label>輸入許可書</label>
+            {/* メールから自動で貯めているので、ふだんは選ぶだけでよい。
+                まだ保管されていない便のためにアップロードも残す */}
+            <select value={filePermitId}
+              onChange={e => { setFilePermitId(e.target.value); setPermitFile(null); reset() }}
+              style={{ width: '100%', padding: '6px 8px', marginBottom: 6 }}>
+              <option value="">保管済みから選ぶ…</option>
+              {storedPermits.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.permit_date || p.mail_date || '日付なし'}　{p.permit_no || '(番号なし)'}
+                  　¥{(p.total_tax || 0).toLocaleString()}
+                </option>
+              ))}
+            </select>
             <input type="file" accept=".pdf"
-              onChange={e => { setPermitFile(e.target.files[0]); reset() }} />
+              onChange={e => { setPermitFile(e.target.files[0]); setFilePermitId(''); reset() }} />
+            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
+              保管済みを選んだときはファイルの選択は要りません
+            </div>
           </div>
         </div>
         <div style={{ marginTop: 16 }}>
           <button className="btn btn-primary" onClick={handleValidate}
-            disabled={validating || !invoiceFile || !permitFile}>
+            disabled={validating || !invoiceFile || (!permitFile && !filePermitId)}>
             {validating ? '照合中...' : '整合性チェック＆読み込み'}
           </button>
         </div>
