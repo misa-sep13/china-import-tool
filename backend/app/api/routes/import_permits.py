@@ -56,6 +56,25 @@ def _sort_date(p: ImportPermit) -> str:
     return p.permit_date or p.mail_date or ""
 
 
+def _dedupe(rows: list) -> list:
+    """申告番号が同じものは1つにする。
+
+    同じ許可書が2通のメール（送付と再送）で届くことがあり、そのまま貯めると
+    税理士へ渡すZIPに同じPDFが2つ入る。古いほう（先に取り込んだもの）を残す。
+    番号を読めなかったものは、別物として全部残す（消すより多いほうが安全）。
+    """
+    seen, out = set(), []
+    for p in sorted(rows, key=lambda x: x.id):
+        no = (p.permit_no or "").strip()
+        key = ((p.kind or "permit"), no)
+        if no and key in seen:
+            continue
+        if no:
+            seen.add(key)
+        out.append(p)
+    return out
+
+
 def _rows(db: Session):
     """一覧用。PDF本体は読まない。
 
@@ -71,11 +90,14 @@ def list_permits(year: Optional[int] = None, month: Optional[int] = None,
     rows = _rows(db)
     rows = [p for p in rows if _matches(p, year, month)
             and (not kind or (p.kind or "permit") == kind)]
+    keep = {p.id for p in _dedupe(rows)}
     rows.sort(key=lambda p: (_sort_date(p) or "0000", p.id), reverse=True)
     return {
-        "items": [_brief(p) for p in rows],
-        "total_tax": sum(int(p.total_tax or 0) for p in rows
+        "items": [dict(_brief(p), duplicate=p.id not in keep) for p in rows],
+        # 合計は重複を除いた数字。二重に足すと税額が合わなくなる
+        "total_tax": sum(int(p.total_tax or 0) for p in _dedupe(rows)
                          if (p.kind or "permit") == "permit"),
+        "duplicates": len(rows) - len(keep),
         "counts": {"permit": sum(1 for p in rows if (p.kind or "permit") == "permit"),
                    "invoice": sum(1 for p in rows if p.kind == "invoice")},
         "drive_ready": google_drive.is_configured(),
@@ -123,12 +145,21 @@ def fetch_mail(data: FetchIn, db: Session = Depends(get_db)):
     known = {(p.mail_message_id, p.filename)
              for p in db.query(ImportPermit.mail_message_id,
                                ImportPermit.filename).all()}
+    # 同じ許可書が別のメールで再送されることがある。添付が違っても
+    # 申告番号が同じなら同じ書類なので入れない
+    known_no = {(p.permit_no or "").strip()
+                for p in db.query(ImportPermit.permit_no)
+                .filter(ImportPermit.kind == "permit").all()
+                if (p.permit_no or "").strip()}
     added, drive_errors = [], []
     for row in found:
         key = (row["mail_message_id"], row["filename"])
-        if key in known:
+        no = (row.get("permit_no") or "").strip()
+        if key in known or (no and no in known_no):
             continue
         known.add(key)
+        if no:
+            known_no.add(no)
         p = ImportPermit(**row)
         db.add(p)
         db.flush()
@@ -287,8 +318,8 @@ def download_pdf(permit_id: int, db: Session = Depends(get_db)):
 def download_zip(year: Optional[int] = None, month: Optional[int] = None,
                  kind: Optional[str] = None, db: Session = Depends(get_db)):
     """まとめて書き出す。税理士へ渡すのはこれ1つで足りる。"""
-    rows = [p for p in _rows(db) if _matches(p, year, month)
-            and (not kind or (p.kind or "permit") == kind)]
+    rows = _dedupe([p for p in _rows(db) if _matches(p, year, month)
+                    and (not kind or (p.kind or "permit") == kind)])
     if not rows:
         raise HTTPException(status_code=404, detail="対象の許可書がありません")
     rows.sort(key=_sort_date)

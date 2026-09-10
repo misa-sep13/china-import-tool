@@ -269,6 +269,11 @@ ${notReady.join(`
           <span style={{ fontSize: 13, color: '#64748b' }}>
             {items.length}件（許可書 {data?.counts?.permit || 0} ／ 請求書 {data?.counts?.invoice || 0}）
             ／ 納税額合計 <b>{yen(data?.total_tax)}</b>
+            {data?.duplicates > 0 && (
+              <span style={{ marginLeft: 8, color: '#b45309' }}>
+                ／ 重複 {data.duplicates}件（ZIPと合計からは除いています）
+              </span>
+            )}
           </span>
           <button className="btn btn-primary" style={{ marginLeft: 'auto' }}
             disabled={items.length === 0}
@@ -293,6 +298,12 @@ ${notReady.join(`
                       color: p.kind === 'invoice' ? '#92400e' : '#1e40af' }}>
                       {p.kind === 'invoice' ? '請求書' : '許可書'}
                     </span>
+                    {/* 同じ許可書が2通のメールで届いたもの。ZIPと合計からは外してある */}
+                    {p.duplicate && (
+                      <span style={{ marginLeft: 4, fontSize: 11, fontWeight: 700,
+                        padding: '1px 5px', borderRadius: 3,
+                        background: '#fee2e2', color: '#b91c1c' }}>重複</span>
+                    )}
                   </td>
                   <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
                     {p.permit_date || <span style={{ color: '#b45309' }}>{p.mail_date || '—'}（推定）</span>}
