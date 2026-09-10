@@ -379,8 +379,11 @@ def list_inventory(q: Optional[str] = None, db: Session = Depends(get_db)):
     # Supabaseの無料枠をすぐ使い切る。持っているかどうかだけを別に聞く
     rows = query.options(defer(WelfareInventoryItem.image_data_url)).order_by(
         WelfareInventoryItem.remaining_qty.desc(), WelfareInventoryItem.sku.asc()).all()
-    have = {i for (i,) in db.query(WelfareInventoryItem.id)
-            .filter(WelfareInventoryItem.image_data_url.isnot(None)).all()}
+    # 空文字が入っている行がある。NULLだけを外すと「画像あり」と見てしまい、
+    # 開いたときに404になって画面が欠けたように見える
+    have = {i for (i,) in db.query(WelfareInventoryItem.id).filter(
+        WelfareInventoryItem.image_data_url.isnot(None),
+        WelfareInventoryItem.image_data_url != "").all()}
     pids = [r.product_id for r in rows if r.product_id]
     products = {p.id: p for p in db.query(RakutenProduct).filter(RakutenProduct.id.in_(pids)).all()} if pids else {}
     result = []
@@ -450,8 +453,9 @@ def list_work_instructions(q: Optional[str] = None, db: Session = Depends(get_db
         WelfareWorkInstruction.order_date.desc(),
         WelfareWorkInstruction.id.desc(),
     ).limit(2000).all()
-    have = {i for (i,) in db.query(WelfareWorkInstruction.id)
-            .filter(WelfareWorkInstruction.image_data_url.isnot(None)).all()}
+    have = {i for (i,) in db.query(WelfareWorkInstruction.id).filter(
+        WelfareWorkInstruction.image_data_url.isnot(None),
+        WelfareWorkInstruction.image_data_url != "").all()}
     pids = [r.product_id for r in rows if r.product_id]
     products = {p.id: p for p in db.query(RakutenProduct).filter(RakutenProduct.id.in_(pids)).all()} if pids else {}
     result = []
