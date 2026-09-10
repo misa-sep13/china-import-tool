@@ -452,6 +452,15 @@ export default function RakutenInvoicePage() {
       {parsed && validation?.ok && (
         <div className="card" style={{ marginBottom: 16 }}>
           <h3 style={{ marginBottom: 4 }}>明細（SKU照合）</h3>
+          {/* インボイスの商品名が英語名だけの行は、同じ便の明細から埋めている。
+              勝手に決まったように見えると不安なので、何件そうしたかを出す */}
+          {parsed.filled_from_taotaro > 0 && (
+            <div style={{ fontSize: 12, color: '#166534', marginBottom: 6 }}>
+              うち{parsed.filled_from_taotaro}件は、インボイスだけでは決められなかったため
+              同じ便のタオタロウ明細から当てました（商品名の右に「便の明細から」と出ます）。
+              念のためご確認ください。
+            </div>
+          )}
           <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
             商品リンクURLで自動照合済み。楽天商品はSKUを選択してください。
             <span style={{ color: '#d97706', fontWeight: 600 }}> Amazon品など対象外の行は空欄のままでOK</span>です。計算・保存時にスキップされます。

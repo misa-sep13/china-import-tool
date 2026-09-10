@@ -2370,6 +2370,72 @@ def _guess_method(name: str) -> str:
     return "sea"
 
 
+def _fill_unmatched_from_taotaro(parsed: dict, db: Session) -> int:
+    """インボイスで照合できなかった行を、同じ便のタオタロウ明細で埋める。
+
+    インボイスの商品名は「Box」「Seat cushion」のように英語名だけのことがあり、
+    URLも色違いで共通なので、インボイス単体では商品を決められない。
+    同じ便の明細をAPIから取れば、色とサイズまで見て照合できる
+    （実際この便では28明細すべて当たっている）。
+
+    数量とURLが同じ行が複数あるときは、まだ使われていない商品から順に割り当てる。
+    そうしないと、先に当たっている色をもう一度当ててしまう
+    （例: 4折りクッションのブルーとグレーは同じURL・同じ数量・同じ単価）。
+    """
+    from app.services import taotaro
+    from app.api.routes.welfare import _match_product, _product_indexes
+
+    todo = [i for i in parsed["items"] if not i.get("sku")]
+    if not todo or not taotaro.is_configured():
+        return 0
+
+    sn = (parsed.get("invoice_no") or "").strip()
+    if not sn:
+        return 0
+    try:
+        found = taotaro.list_send_orders(page=1, limit=20, keyword=sn)
+        sid = next((x.get("sid") for x in (found.get("items") or [])
+                    if str(x.get("sn") or "") == sn), None)
+        if not sid:
+            return 0
+        rows = (taotaro.send_order_rows(sid) or {}).get("rows") or []
+    except taotaro.TaotaroError:
+        # APIが使えなくても、これまでどおり手で選べる。ここで止めない
+        return 0
+
+    idx = _product_indexes(db)
+    pool: dict = {}
+    for row in rows:
+        product, _ = _match_product(row, *idx)
+        if not product:
+            continue
+        key = (_url_key(row.get("buy_url") or ""), int(row.get("units") or 0))
+        pool.setdefault(key, []).append(product)
+
+    # すでにインボイス側で当たっているぶんは、その分だけ候補から外す
+    for item in parsed["items"]:
+        if not item.get("sku"):
+            continue
+        key = (_url_key(item.get("buy_url") or ""), int(item.get("qty") or 0))
+        for p in pool.get(key, []):
+            if p.sku == item["sku"]:
+                pool[key].remove(p)
+                break
+
+    filled = 0
+    for item in todo:
+        key = (_url_key(item.get("buy_url") or ""), int(item.get("qty") or 0))
+        cands = pool.get(key) or []
+        if not cands:
+            continue
+        product = cands.pop(0)
+        item["sku"] = product.sku
+        item["name_jp"] = product.name or item.get("name_jp") or ""
+        item["asin_memo"] = f"{item.get('asin_memo') or ''} -> {product.sku}（便の明細から）"
+        filled += 1
+    return filled
+
+
 @router.post("/invoices/from-taotaro")
 def rakuten_invoice_from_taotaro(data: RakutenTaotaroInvoiceIn,
                                  db: Session = Depends(get_db)):
@@ -2576,8 +2642,12 @@ async def rakuten_parse_excel(file: UploadFile = File(...), db: Session = Depend
             item["sku"] = ""
             unmatched += 1
 
-    parsed["matched"] = matched
-    parsed["unmatched"] = unmatched
+    # インボイスだけでは決められなかった行を、同じ便のタオタロウ明細で埋める。
+    # 商品名が「Box」のような英語名だけの行がここで当たる
+    filled = _fill_unmatched_from_taotaro(parsed, db)
+    parsed["matched"] = matched + filled
+    parsed["unmatched"] = unmatched - filled
+    parsed["filled_from_taotaro"] = filled
     return parsed
 
 def _calc_tariff_tax(
