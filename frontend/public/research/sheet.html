@@ -1117,7 +1117,7 @@
     <li><b>③ 商品タイトル</b>＝<b>「✨ 親タイトルの下書きを作る」</b>を押すと、<b>ブランド名／メインキーワード／関連ワード／サイズ・数量・色</b>の順で<b>65字程度</b>にまとめた下書きができます（<b>75字まではOK</b>）（語はサジェストと競合タイトルの多い順から選び、<b>競合のブランド名と禁止語は入れません</b>）。押したいポイントがあれば横の欄に入れると<b>【立てて入る】</b>のようにブランド名の次に挟みます。作ったあとは手で直してください。<b>親が1行、バリエーションは「子」を追加</b>して1行ずつ書きます（子にはバリエーションテーマの名称も入れます）。<b>行ごとに字数・禁止語・同じ語の3回以上の重複を自動チェック</b>します（重複はAmazonの商品仕様エラーの原因になります）。下の整えるボタンは<b>最後に触った行</b>に効き、「対象：子（カラー ブラック）」のようにどこに効くかが出ます。</li>
     <li><b>④ 商品説明プロンプト</b>＝押すとプロンプトがコピーされます。タイトル・必須キーワード・<b>競合の商品仕様とレビュー</b>・<b>自社の差別化ポイント</b>が自動で差し込まれます。差別化ポイントの欄には、セット数・梱包・付属品など<b>自社で実際にやっている改良を事実だけ</b>書いてください（1688のページは改良前のベース商品なので、書かないとAIには見えません。書いた内容だけが「自社の強み」として使われ、書いていない改良を勝手に主張しないルールが自動で付きます）。<b>表の1688 URLと競合のAmazonページURLも入る</b>ので、<b>Claude in Chrome</b> のようにブラウザを開けるAIに貼れば、1688ページと競合の画像を見てから書かせられます。ChatGPTなどURLを開けない相手に貼るときは、これまでどおり<b>1688のページを画像で添付</b>してください。「商品画像の文字」カードで取得してあれば、競合画像のキャッチコピーもプロンプトに自動で入ります。<b>「📋 同じチャットで続ける版」</b>＝分析用プロンプトを貼ったチャットで続けて頼むとき用。競合の仕様・レビューを再掲せず、上の分析を根拠に書かせるので短くなります。</li>
     <li><b>⑤ できた5行</b>＝ChatGPTの回答を貼り付けると<b>そのまま保存されます</b>（次に開いても残ります）。<b>「✅ チェックする」</b>で、行数・各行の字数（120〜130字）・【見出し】の有無・必須キーワードの使用漏れ・3回以上の重複・禁止語をまとめて判定します。</li>
-    <li><b>⑥ 画像作成指示書のプロンプト</b>＝デザイナーに渡す指示書をChatGPTに作らせるためのものです。<b>手で入れるのは「ターゲット顧客」と「商品画像の色合い（トンマナ）」の2つだけ</b>。この2つも思いつかなければ<b>「🤖 この2つをAIに考えてもらう」</b>を押してプロンプトをコピーし、ChatGPTの答えを<b>どちらかの欄にそのまま貼るだけで、2つの欄に自動で振り分けます</b>。残りの商品タイトル・商品説明文・バリエーション・1688リンク（表の1688 URL列）・ライバル（競合の商品名とAmazonリンク）・競合の仕様とレビューは<b>シートから自動で入ります</b>。自社の強み（HTML先頭の <code>SELLER_STRENGTHS</code> に書いた項目）は固定で入り、④で書いた<b>自社の差別化ポイント</b>も比較表とアピールポイントに反映されます。<b>1688 URLと競合のAmazonページURLはプロンプト本文にも入る</b>ので、<b>Claude in Chrome</b> のようにブラウザを開けるAIに貼れば、1688のページと<b>競合の画像の作り（1枚目の見せ方・サブ画像の順番・A+）</b>を見てから構成案を作らせられます。ChatGPTなどURLを開けない相手に貼るときは、こちらも<b>1688のページを画像で添付</b>してください。返ってきた構成案を下の欄に貼り、<b>「📄 Wordで書き出す」</b>を押すと、<b>先頭に「■この商品について」</b>（SKU（親）・中国語名・<b>カラー別のSKU</b>・<b>画像素材の1688 URL</b>・参考URL・商品補足）が入り、そのあとに■の項目と構成案が続く<b>.docxファイル</b>がダウンロードされます。デザイナーが最初に必要なものを頭にまとめてあるので、そのまま渡せます（カラー別のSKUは⑦の商品登録で採番したものが自動で入ります）（ファイル名は「日付_商品名60字程度」。ブランド名は自動で外し、単語の切れ目で切ります）。そのままデザイナーへ渡せます。「商品画像の文字」カードで取得してあれば、競合画像のキャッチコピーもプロンプトに自動で入ります。<b>「📋 同じチャットで続ける版」</b>も④と同じで、分析用プロンプトのチャットで続けるときに使います。</li>
+    <li><b>⑥ 画像作成指示書のプロンプト</b>＝デザイナーに渡す指示書をChatGPTに作らせるためのものです。<b>手で入れるのは「ターゲット顧客」と「商品画像の色合い（トンマナ）」の2つだけ</b>。この2つも思いつかなければ<b>「🤖 この2つをAIに考えてもらう」</b>を押してプロンプトをコピーし、ChatGPTの答えを<b>どちらかの欄にそのまま貼るだけで、2つの欄に自動で振り分けます</b>。残りの商品タイトル・商品説明文・バリエーション・1688リンク（表の1688 URL列）・ライバル（競合の商品名とAmazonリンク）・競合の仕様とレビューは<b>シートから自動で入ります</b>。自社の強み（HTML先頭の <code>SELLER_STRENGTHS</code> に書いた項目）は固定で入り、④で書いた<b>自社の差別化ポイント</b>も比較表とアピールポイントに反映されます。<b>1688 URLと競合のAmazonページURLはプロンプト本文にも入る</b>ので、<b>Claude in Chrome</b> のようにブラウザを開けるAIに貼れば、1688のページと<b>競合の画像の作り（1枚目の見せ方・サブ画像の順番・A+）</b>を見てから構成案を作らせられます。ChatGPTなどURLを開けない相手に貼るときは、こちらも<b>1688のページを画像で添付</b>してください。返ってきた構成案を下の欄に貼り、<b>「📄 Wordで書き出す」</b>を押すと、<b>先頭に「■この商品について」</b>（SKU（親）・中国語名・<b>カラー別のSKU</b>・<b>画像素材の1688 URL</b>・参考URL・商品補足）が入り、そのあとに■の項目と構成案が続く<b>.docxファイル</b>がダウンロードされます。デザイナーが最初に必要なものを頭にまとめてあるので、そのまま渡せます（カラー別のSKUは⑦の商品登録で採番したものが自動で入ります）。<b>「💬 Chatworkで送る」</b>＝同じWordを、選んだルームへそのまま送ります。送り先は一度選べば次回も覚えています。送ると相手に通知が飛ぶので、押すと確認が出ます（Chatworkの設定が入っていない環境ではボタンは出ません）（ファイル名は「日付_商品名60字程度」。ブランド名は自動で外し、単語の切れ目で切ります）。そのままデザイナーへ渡せます。「商品画像の文字」カードで取得してあれば、競合画像のキャッチコピーもプロンプトに自動で入ります。<b>「📋 同じチャットで続ける版」</b>も④と同じで、分析用プロンプトのチャットで続けるときに使います。</li>
   </ul>
 
   <h4>キーワードの整え方（①の編集ボタン）</h4>
@@ -5814,9 +5814,17 @@ if(FIREBASE_CONFIG.databaseURL){
 
     const dRow = el('div', 'an-row');
     const dBtn = el('button', 'primary', '📄 Wordで書き出す（デザイナーへ渡す）');
+    const cwBtn = el('button', 'primary', '💬 Chatworkで送る');
+    const cwSel = document.createElement('select');
+    cwSel.className = 'reg-sku';
+    cwSel.title = '送り先のルーム';
     const dClear = el('button', 'mini danger', '🧹 クリア');
     const dStatus = el('span', 'an-status');
-    dRow.appendChild(dBtn); dRow.appendChild(dClear); dRow.appendChild(dStatus);
+    // Chatworkの設定が入っているときだけ出す。未設定の環境では今までどおり
+    cwBtn.style.display = 'none';
+    cwSel.style.display = 'none';
+    dRow.appendChild(dBtn); dRow.appendChild(cwSel); dRow.appendChild(cwBtn);
+    dRow.appendChild(dClear); dRow.appendChild(dStatus);
     body.appendChild(dRow);
 
     dClear.addEventListener('click', () => {
@@ -5825,7 +5833,9 @@ if(FIREBASE_CONFIG.databaseURL){
       gTa.value = ''; dStatus.textContent = '消しました'; edSave();
     });
 
-    dBtn.addEventListener('click', () => {
+    // 書き出しと送信で同じものを作る。片方だけ直して中身がずれると、
+    // 「渡したWordと手元のWordが違う」という一番困る事故になる
+    function buildGuideDoc(){
       const guide = gTa.value.trim();
       // ■の項目は常にシートの値で付ける。AIに写させると書き換え・写し間違いが混ざるので、
       // プロンプトには■ブロック自体を載せない。古い回答が■付きで貼られていたら構成案の手前で切る。
@@ -5841,15 +5851,89 @@ if(FIREBASE_CONFIG.databaseURL){
       const d = new Date();
       const ymd = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
         + '-' + String(d.getDate()).padStart(2, '0');
-      const name = ymd + '_' + (title || '画像作成指示書') + '.docx';
+      return {guide: guide, lines: lines,
+              name: ymd + '_' + (title || '画像作成指示書') + '.docx'};
+    }
+
+    dBtn.addEventListener('click', () => {
+      const doc = buildGuideDoc();
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(docxBlob(lines));
-      a.download = name;
+      a.href = URL.createObjectURL(docxBlob(doc.lines));
+      a.download = doc.name;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 3000);
-      dStatus.textContent = '書き出しました：' + name
-        + (!guide ? '　※中身が空なので、■の項目だけのファイルです' : '');
-      dStatus.classList.toggle('warn', !guide);
+      dStatus.textContent = '書き出しました：' + doc.name
+        + (!doc.guide ? '　※中身が空なので、■の項目だけのファイルです' : '');
+      dStatus.classList.toggle('warn', !doc.guide);
+    });
+
+    // ---- Chatworkへ送る --------------------------------------------------
+    const CW_ROOM_KEY = 'ars_chatwork_room';
+    if(API_BASE){
+      fetch(API_BASE + '/chatwork/status', {headers: apiHeaders()})
+        .then(r => r.json())
+        .then(st => {
+          if(!st || !st.configured) return;
+          cwBtn.style.display = '';
+          cwSel.style.display = '';
+          const opt0 = document.createElement('option');
+          opt0.value = ''; opt0.textContent = '送り先を選ぶ…';
+          cwSel.appendChild(opt0);
+          return fetch(API_BASE + '/chatwork/rooms', {headers: apiHeaders()})
+            .then(r => r.json())
+            .then(d => {
+              (d.items || []).forEach(x => {
+                const o = document.createElement('option');
+                o.value = String(x.room_id);
+                o.textContent = x.name + (x.can_post ? '' : '（書き込み不可）');
+                if(!x.can_post) o.disabled = true;
+                cwSel.appendChild(o);
+              });
+              // 前回選んだ相手を覚えておく。毎回選ばせると送り先を間違える
+              const saved = localStorage.getItem(CW_ROOM_KEY)
+                || d.default_room_id || st.default_room_id || '';
+              if(saved) cwSel.value = String(saved);
+            });
+        })
+        .catch(() => { /* 未設定・未デプロイなら黙って出さない */ });
+    }
+
+    cwSel.addEventListener('change', () => {
+      if(cwSel.value) localStorage.setItem(CW_ROOM_KEY, cwSel.value);
+    });
+
+    cwBtn.addEventListener('click', async () => {
+      const room = cwSel.value;
+      if(!room){ dStatus.textContent = '送り先のルームを選んでください';
+                 dStatus.classList.add('warn'); return; }
+      const doc = buildGuideDoc();
+      const roomName = cwSel.options[cwSel.selectedIndex].textContent;
+      // 送ると相手に通知が飛ぶ。取り消しづらいので必ず確認を挟む
+      if(!confirm('Chatworkへ送ります。\n\n送り先：' + roomName
+                  + '\nファイル：' + doc.name
+                  + (!doc.guide ? '\n\n※構成案が空です。■の項目だけのファイルになります' : '')
+                  + '\n\nよろしいですか？')) return;
+      cwBtn.disabled = true;
+      dStatus.classList.remove('warn');
+      dStatus.textContent = '送っています…';
+      try{
+        const fd = new FormData();
+        fd.append('room_id', room);
+        fd.append('file', docxBlob(doc.lines), doc.name);
+        fd.append('message', '画像作成指示書をお送りします。\n' + doc.name);
+        const h = {};
+        if(AUTH_TOKEN) h['Authorization'] = 'Bearer ' + AUTH_TOKEN;
+        const res = await fetch(API_BASE + '/chatwork/send-file',
+          {method: 'POST', headers: h, body: fd});
+        const j = await res.json().catch(() => ({}));
+        if(!res.ok) throw new Error(j.detail || ('HTTP ' + res.status));
+        dStatus.textContent = '送りました：' + roomName + '　' + doc.name;
+      }catch(e){
+        dStatus.textContent = '送れませんでした：' + (e.message || e);
+        dStatus.classList.add('warn');
+      }finally{
+        cwBtn.disabled = false;
+      }
     });
 
     [perTa, toneTa].forEach(t => t.addEventListener('input', () => { edSave(); }));

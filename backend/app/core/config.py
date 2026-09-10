@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     ADS_API_CLIENT_SECRET: Optional[str] = None
     ADS_API_REFRESH_TOKEN: Optional[str] = None
 
+    # Chatwork。画像作成指示書を外注さんへそのまま送るのに使う。
+    # トークンはそのアカウントとして書き込める権限そのものなのでサーバー側だけで持つ
+    CHATWORK_API_TOKEN: Optional[str] = None
+    CHATWORK_API_BASE: str = "https://api.chatwork.com/v2"
+    # よく使う送り先。画面で選んだものが優先される
+    CHATWORK_DEFAULT_ROOM_ID: Optional[str] = None
+
     # 楽天ウェブサービス（IchibaItem/Search、SEO順位チェック用）
     RAKUTEN_APP_ID: Optional[str] = None
     RAKUTEN_ACCESS_KEY: Optional[str] = None
