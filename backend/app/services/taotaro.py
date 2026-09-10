@@ -735,3 +735,111 @@ def cancel_orders(order_ids: list) -> list:
         raise TaotaroError("取り消す注文がありません")
     d = _request("/api/v1/orders/cancel", body={"order_ids": ids}, method="POST")
     return [str(x) for x in (d.get("order_ids") or [])]
+
+
+# ---------- 残高・入出金・請求書 ----------
+
+
+def balance() -> dict:
+    """残高。発注の前に足りているか見るためのもの。"""
+    d = _request("/api/v1/account/balance")
+    return {
+        "money": d.get("money"),
+        "currency": d.get("currency") or "CNY",
+        "updated_at": _ts(d.get("updated_at")),
+    }
+
+
+# 取引種別のうち、仕入原価として按分に回すもの。
+# 「商品購入」は注文ごと、配送費は便ごとに出るので、集計の単位が違う
+def _txn(x: dict) -> dict:
+    money = x.get("money")
+    return {
+        "id": x.get("id"),
+        "at": _ts(x.get("add_time")),
+        # debit=引落（マイナス）、credit=入金
+        "kind": x.get("kind"),
+        "action": x.get("action_name"),
+        "money": money,
+        "balance_after": x.get("account_money"),
+        "exchange_rate": x.get("exchange_rate"),
+        "exchange_money": x.get("exchange_money"),
+        # ここが肝。明細が注文・配送依頼に1対1で紐づくので突合できる
+        "oid": x.get("oid"),
+        "sid": x.get("sid"),
+        "sn": x.get("sn"),
+        "product_total_price": x.get("product_total_price"),
+        "service_charge": x.get("service_charge"),
+        "remark": x.get("remark"),
+    }
+
+
+def transactions(page: int = 1, limit: int = 50,
+                 start_time: Optional[int] = None,
+                 end_time: Optional[int] = None) -> dict:
+    """入出金明細。会計との突合と、便ごとの実額を取るのに使う。"""
+    d = _request("/api/v1/account/transactions", {
+        "page": page, "limit": limit,
+        "start_time": start_time, "end_time": end_time,
+    })
+    return {
+        "items": [_txn(x) for x in (d.get("items") or [])],
+        "page": d.get("page") or page,
+        "has_more_pages": bool(d.get("has_more_pages")),
+    }
+
+
+def transactions_for(sid: int, max_pages: int = 6) -> list:
+    """ある配送依頼に紐づく明細だけを集める。
+
+    絞り込みの条件が仕様書に無いので、新しいほうから何ページか見て
+    sid が一致するものを拾う。便は新しいものを扱うことがほとんどなので、
+    これで足りる（見つからなければページを増やす）。
+    """
+    out = []
+    for page in range(1, max_pages + 1):
+        d = transactions(page=page, limit=100)
+        for x in d["items"]:
+            if str(x.get("sid") or "") == str(sid):
+                out.append(x)
+        if not d["has_more_pages"]:
+            break
+    return out
+
+
+def invoice(sid: int) -> dict:
+    """請求書PDFのダウンロード先。
+
+    URLは期限付きなので、受け取ったらすぐ落として自社側で保管する
+    （仕様書にもそう書かれている）。まだ生成されていないことがあるので、
+    status を見て呼び出し側で分ける。
+    """
+    d = _request(f"/api/v1/send-orders/{int(sid)}/invoice")
+    inv = d.get("invoice") or {}
+    return {
+        "ready": int(inv.get("status") or 0) == 200,
+        "status": inv.get("status"),
+        "message": inv.get("msg") or "",
+        "url": inv.get("url") or "",
+        "expires_in": inv.get("exp"),
+        "shipping_info": d.get("shipping_info") or [],
+    }
+
+
+def invoice_pdf(sid: int) -> tuple:
+    """請求書PDFの中身を取ってくる。(ファイル名, bytes) を返す。"""
+    import urllib.request
+
+    inv = invoice(sid)
+    if not inv["ready"] or not inv["url"]:
+        raise TaotaroError(inv["message"] or "請求書がまだ発行されていません")
+    try:
+        req = urllib.request.Request(inv["url"], headers={
+            "User-Agent": "china-import-tool/1.0"})
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as res:
+            raw = res.read()
+    except Exception as e:
+        raise TaotaroError(f"請求書を取得できませんでした（{type(e).__name__}）")
+    if not raw:
+        raise TaotaroError("請求書が空でした")
+    return (f"{sid}.pdf", raw)

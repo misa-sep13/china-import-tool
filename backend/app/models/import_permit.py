@@ -22,6 +22,9 @@ class ImportPermit(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    # permit=輸入許可書 / invoice=タオタロウの請求書。
+    # 税理士へは両方まとめて渡すので、同じ棚に入れて種別で分ける
+    kind = Column(String, index=True, default="permit")
 
     # 許可書から読み取った値。読めなければ空のまま（原本は残る）
     permit_no = Column(String, index=True)          # 申告番号

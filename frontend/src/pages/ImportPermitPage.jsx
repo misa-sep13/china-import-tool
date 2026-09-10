@@ -70,6 +70,25 @@ export default function ImportPermitPage() {
 
   const reload = () => qc.invalidateQueries({ queryKey: ['import-permits'] })
 
+  // タオタロウの請求書。許可書と同じ棚に入れて、税理士へまとめて渡せるようにする
+  const fetchInvoices = useMutation({
+    mutationFn: () => api.post('/import-permits/fetch-taotaro-invoices', { limit: 20 })
+      .then(r => r.data),
+    onSuccess: (d) => {
+      setResult(null); setCandidates(null); reload()
+      const notReady = d.not_ready || []
+      // 出荷前の便は請求書がまだ無い。失敗ではないので、名前を並べて知らせる
+      alert(`請求書を${d.added}件取り込みました`
+        + (d.skipped ? `（取り込み済み ${d.skipped}件はそのまま）` : '')
+        + (notReady.length ? `
+
+まだ発行されていない便：
+${notReady.join(`
+`)}` : ''))
+    },
+    onError: (e) => alert('取り込めませんでした: ' + (e.response?.data?.detail || e.message)),
+  })
+
   const fetchMail = useMutation({
     mutationFn: () => api.post('/import-permits/fetch-mail', { days, folder: folder || '' }).then(r => r.data),
     onSuccess: (d) => { setResult(d); setCandidates(null); reload() },
@@ -120,7 +139,7 @@ export default function ImportPermitPage() {
     <div>
       <h2 style={{ marginBottom: 4 }}>輸入許可書</h2>
       <div style={{ fontSize: 13, color: '#64748b', marginBottom: 16 }}>
-        卸発注で使っているメールから許可書のPDFを拾って保管します。
+        卸発注で使っているメールから輸入許可書を、タオタロウのAPIから請求書を拾って保管します。
         税理士へ渡すときは、まとめてZIPで書き出してください。
       </div>
 
@@ -140,8 +159,12 @@ export default function ImportPermitPage() {
             disabled={fetchMail.isPending}>
             {fetchMail.isPending ? 'メールを見ています…' : 'メールから取り込む'}
           </button>
+          <button className="btn btn-secondary" onClick={() => fetchInvoices.mutate()}
+            disabled={fetchInvoices.isPending}>
+            {fetchInvoices.isPending ? '取得中…' : 'タオタロウの請求書を取り込む'}
+          </button>
           <span style={{ fontSize: 12, color: '#94a3b8' }}>
-            同じ許可書は何度押しても増えません
+            同じものは何度押しても増えません
           </span>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <button className="btn btn-secondary"
@@ -244,7 +267,8 @@ export default function ImportPermitPage() {
               <option key={m} value={m}>{m}月</option>)}
           </select>
           <span style={{ fontSize: 13, color: '#64748b' }}>
-            {items.length}件 ／ 納税額合計 <b>{yen(data?.total_tax)}</b>
+            {items.length}件（許可書 {data?.counts?.permit || 0} ／ 請求書 {data?.counts?.invoice || 0}）
+            ／ 納税額合計 <b>{yen(data?.total_tax)}</b>
           </span>
           <button className="btn btn-primary" style={{ marginLeft: 'auto' }}
             disabled={items.length === 0}
@@ -256,12 +280,20 @@ export default function ImportPermitPage() {
         {isLoading ? <div style={{ color: '#94a3b8' }}>読み込み中…</div> : (
           <table style={{ width: '100%', fontSize: 13 }}>
             <thead><tr style={{ background: '#f8fafc' }}>
-              {['許可年月日', '申告番号', '納税額', '関税', '消費税', '仕入書(元)', 'レート', 'メール', ''].map(h =>
+              {['種別', '日付', '番号', '納税額', '関税', '消費税', '仕入書(元)', 'レート', '出どころ', ''].map(h =>
                 <th key={h} style={{ textAlign: 'left', padding: '6px 8px', whiteSpace: 'nowrap' }}>{h}</th>)}
             </tr></thead>
             <tbody>
               {items.map(p => (
                 <tr key={p.id} style={{ borderTop: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: '1px 6px',
+                      borderRadius: 3,
+                      background: p.kind === 'invoice' ? '#fef3c7' : '#dbeafe',
+                      color: p.kind === 'invoice' ? '#92400e' : '#1e40af' }}>
+                      {p.kind === 'invoice' ? '請求書' : '許可書'}
+                    </span>
+                  </td>
                   <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
                     {p.permit_date || <span style={{ color: '#b45309' }}>{p.mail_date || '—'}（推定）</span>}
                   </td>
@@ -275,7 +307,9 @@ export default function ImportPermitPage() {
                   <td style={{ padding: '6px 8px', textAlign: 'right' }}>{p.exchange_rate || '—'}</td>
                   <td style={{ padding: '6px 8px', maxWidth: 260 }}>
                     <div style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {p.source === 'upload' ? '手で追加' : p.mail_subject || '—'}
+                      {p.source === 'upload' ? '手で追加'
+                      : p.source === 'taotaro' ? 'タオタロウ'
+                      : p.mail_subject || '—'}
                     </div>
                     <div style={{ fontSize: 11, color: '#94a3b8' }}>{p.filename}・{kb(p.size_bytes)}</div>
                   </td>
@@ -296,7 +330,7 @@ export default function ImportPermitPage() {
                 </tr>
               ))}
               {items.length === 0 && (
-                <tr><td colSpan={9} style={{ padding: 16, color: '#94a3b8' }}>
+                <tr><td colSpan={10} style={{ padding: 16, color: '#94a3b8' }}>
                   まだ1件もありません。「メールから取り込む」を押してください。
                 </td></tr>
               )}

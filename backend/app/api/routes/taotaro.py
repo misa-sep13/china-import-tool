@@ -92,6 +92,40 @@ def awaiting_payment():
     }
 
 
+@router.get("/balance")
+def balance():
+    """残高。発注の前に足りているか見るためのもの。"""
+    if not taotaro.is_configured():
+        return {"ok": False, "detail": "トークンが未設定です（TAOTARO_API_TOKEN）"}
+    return _call(taotaro.balance)
+
+
+@router.get("/transactions")
+def transactions(page: int = 1, limit: int = Query(50, ge=1, le=100)):
+    """入出金明細。会計との突合に使う。"""
+    return _call(taotaro.transactions, page=page, limit=limit)
+
+
+@router.get("/send-orders/{sid:int}/transactions")
+def send_order_transactions(sid: int):
+    """ある便に紐づく入出金明細。実際に引き落とされた額が分かる。
+
+    配送依頼の詳細に出る費用は見積もりの内訳で、値引きや調整が入ると
+    実際の引落と食い違う。原価に載せるのは引き落とされたほうなので、
+    こちらも取れるようにしておく。
+    """
+    items = _call(taotaro.transactions_for, sid)
+    total = sum(float(x.get("money") or 0) for x in items)
+    return {"sid": sid, "count": len(items),
+            "total_money": round(total, 2), "items": items}
+
+
+@router.get("/send-orders/{sid:int}/invoice")
+def send_order_invoice(sid: int):
+    """請求書の発行状況とダウンロード先。URLは期限付き。"""
+    return _call(taotaro.invoice, sid)
+
+
 @router.get("/debug-match")
 def debug_match(sid: int, db: Session = Depends(get_db)):
     """一覧の明細が自社商品に当たるかを1行ずつ見る（調査用）。"""

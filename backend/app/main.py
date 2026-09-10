@@ -62,6 +62,7 @@ def _migrate():
     Base.metadata.create_all(bind=engine)
 
     migrations = [
+        ("import_permits","kind",                "ALTER TABLE import_permits ADD COLUMN kind VARCHAR DEFAULT 'permit'"),
         ("products",      "selling_price",       "ALTER TABLE products ADD COLUMN selling_price FLOAT"),
         ("products",      "fba_fee",             "ALTER TABLE products ADD COLUMN fba_fee FLOAT"),
         ("products",      "amazon_fee_rate",     "ALTER TABLE products ADD COLUMN amazon_fee_rate FLOAT DEFAULT 0.1"),

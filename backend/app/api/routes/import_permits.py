@@ -26,6 +26,7 @@ router = APIRouter(prefix="/import-permits", tags=["import_permits"])
 def _brief(p: ImportPermit) -> dict:
     return {
         "id": p.id,
+        "kind": p.kind or "permit",
         "permit_no": p.permit_no,
         "permit_date": p.permit_date,
         "permit_cny": p.permit_cny,
@@ -66,13 +67,17 @@ def _rows(db: Session):
 
 @router.get("/")
 def list_permits(year: Optional[int] = None, month: Optional[int] = None,
-                 db: Session = Depends(get_db)):
+                 kind: Optional[str] = None, db: Session = Depends(get_db)):
     rows = _rows(db)
-    rows = [p for p in rows if _matches(p, year, month)]
+    rows = [p for p in rows if _matches(p, year, month)
+            and (not kind or (p.kind or "permit") == kind)]
     rows.sort(key=lambda p: (_sort_date(p) or "0000", p.id), reverse=True)
     return {
         "items": [_brief(p) for p in rows],
-        "total_tax": sum(int(p.total_tax or 0) for p in rows),
+        "total_tax": sum(int(p.total_tax or 0) for p in rows
+                         if (p.kind or "permit") == "permit"),
+        "counts": {"permit": sum(1 for p in rows if (p.kind or "permit") == "permit"),
+                   "invoice": sum(1 for p in rows if p.kind == "invoice")},
         "drive_ready": google_drive.is_configured(),
     }
 
@@ -150,6 +155,74 @@ def fetch_mail(data: FetchIn, db: Session = Depends(get_db)):
     }
 
 
+class TaotaroInvoiceIn(BaseModel):
+    # 新しいほうから何便ぶん見るか。ふだんは20で足りる
+    limit: int = 20
+
+
+@router.post("/fetch-taotaro-invoices")
+def fetch_taotaro_invoices(data: TaotaroInvoiceIn, db: Session = Depends(get_db)):
+    """タオタロウの請求書PDFを取り込む。
+
+    請求書のダウンロードURLは期限付きなので、その場で落として保管する
+    （仕様書もそう勧めている）。同じ便を二度入れないよう配送依頼IDで見分ける
+    ので、何度押しても増えない。
+    """
+    from app.services import taotaro
+    if not taotaro.is_configured():
+        raise HTTPException(status_code=502,
+                            detail="タオタロウのトークンが未設定です")
+    try:
+        d = taotaro.list_send_orders(page=1, limit=max(1, min(data.limit, 100)))
+    except taotaro.TaotaroError as e:
+        raise HTTPException(status_code=502, detail=e.message)
+
+    known = {p.mail_message_id for p in
+             db.query(ImportPermit.mail_message_id)
+             .filter(ImportPermit.kind == "invoice").all()}
+    added, skipped, not_ready = [], 0, []
+    for x in d.get("items") or []:
+        sid = x.get("sid")
+        key = f"taotaro:invoice:{sid}"
+        if not sid or key in known:
+            skipped += 1
+            continue
+        # 発行前の便は毎回ここに来る。出荷前は請求書が無いのが普通なので
+        # 失敗扱いにせず、名前だけ返して次に進む
+        if not x.get("have_invoice"):
+            not_ready.append(x.get("sn") or str(sid))
+            continue
+        try:
+            _, raw = taotaro.invoice_pdf(sid)
+        except taotaro.TaotaroError as e:
+            not_ready.append(f"{x.get('sn') or sid}（{e.message}）")
+            continue
+        known.add(key)
+        p = ImportPermit(
+            kind="invoice",
+            permit_no=str(x.get("sn") or sid),
+            # 請求書に許可日は無いので、便の更新日を日付として使う
+            permit_date=str(x.get("updated_at") or "")[:10],
+            filename=f"{x.get('sn') or sid}.pdf",
+            size_bytes=len(raw), pdf=raw, source="taotaro",
+            mail_message_id=key,
+            mail_subject=f"タオタロウ請求書 {x.get('sn') or sid}",
+            mail_from="タオタロウ",
+            mail_date=str(x.get("updated_at") or "")[:10],
+            note=(f"費用合計 {x.get('total_send_fee')}元"
+                  if x.get("total_send_fee") is not None else ""),
+        )
+        db.add(p)
+        db.flush()
+        added.append(p)
+    db.commit()
+    return {
+        "added": len(added), "skipped": skipped,
+        "not_ready": not_ready[:10],
+        "items": [_brief(p) for p in added],
+    }
+
+
 @router.get("/scan-candidates")
 def scan_candidates(days: int = 60, folder: str = ""):
     """PDFの添付を並べる（拾えなかったときの調査用）。"""
@@ -178,10 +251,14 @@ async def upload_permit(file: UploadFile = File(...),
 
 
 def _drive_name(p: ImportPermit) -> str:
-    """ドライブでの名前。日付が頭に付いていないと年度ごとに探せない。"""
+    """保存するときの名前。日付が頭に付いていないと年度ごとに探せない。
+
+    許可書と請求書が同じ棚に入るので、種別も名前に入れる。
+    """
     d = _sort_date(p) or "日付不明"
+    label = "請求書" if p.kind == "invoice" else "輸入許可書"
     no = f"_{p.permit_no}" if p.permit_no else ""
-    return f"{d}_輸入許可書{no}.pdf"
+    return f"{d}_{label}{no}.pdf"
 
 
 @router.post("/{permit_id}/to-drive")
@@ -208,9 +285,10 @@ def download_pdf(permit_id: int, db: Session = Depends(get_db)):
 
 @router.get("/zip")
 def download_zip(year: Optional[int] = None, month: Optional[int] = None,
-                 db: Session = Depends(get_db)):
+                 kind: Optional[str] = None, db: Session = Depends(get_db)):
     """まとめて書き出す。税理士へ渡すのはこれ1つで足りる。"""
-    rows = [p for p in _rows(db) if _matches(p, year, month)]
+    rows = [p for p in _rows(db) if _matches(p, year, month)
+            and (not kind or (p.kind or "permit") == kind)]
     if not rows:
         raise HTTPException(status_code=404, detail="対象の許可書がありません")
     rows.sort(key=_sort_date)

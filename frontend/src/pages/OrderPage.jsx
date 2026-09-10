@@ -125,6 +125,15 @@ export default function OrderPage() {
 
   const recommendedCount = allItems.filter(i => i.needs_order).length
 
+  // タオタロウの残高。足りないまま発注すると失敗するので先に見せる。
+  // 繋がらないときは黙って出さない（発注そのものは今までどおりできる）
+  const { data: balance } = useQuery({
+    queryKey: ['taotaro-balance'],
+    queryFn: () => api.get('/taotaro/balance').then(r => r.data),
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  })
+
   const { data: history = [] } = useQuery({
     queryKey: ['orderHistory'],
     queryFn: () => api.get('/orders/history').then(r => r.data),
@@ -316,6 +325,12 @@ export default function OrderPage() {
 
   // 件数・合計も「表示中か否か」ではなくチェック状態を基準にする
   const selectedItems = allItems.filter(item => currentSelected.has(item.product_id) && item.qty > 0)
+  // 選んだぶんの仕入額（元）。中国国内送料や手数料は含まないので、
+  // ぴったりではなく「明らかに足りない」ときの目安として使う
+  const selectedCny = selectedItems.reduce(
+    (a, i) => a + (Number(i.price || i.unit_price_cny || 0) * Number(i.qty || 0)), 0)
+  const lowBalance = balance?.money != null && selectedCny > 0
+    && Number(balance.money) < selectedCny
   const isLoading = jobStatus === 'running' || jobStatus === 'idle'
 
   const toggleBtn = (
@@ -371,6 +386,16 @@ export default function OrderPage() {
                   disabled={exporting || !selectedItems.length}>
                   {`🛒 タオタロウに発注（${selectedItems.length}件）`}
                 </button>
+              )}
+              {/* 残高が足りないと発注そのものが通らない。押す前に見えるようにする */}
+              {balance?.money != null && (
+                <span style={{ fontSize: 13, padding: '6px 10px', borderRadius: 6,
+                  background: '#f8fafc', border: '1px solid #e2e8f0',
+                  color: lowBalance ? '#b91c1c' : '#475569',
+                  fontWeight: lowBalance ? 700 : 400 }}>
+                  残高 {Number(balance.money).toLocaleString('ja-JP')} 元
+                  {lowBalance && '　※発注額に足りません'}
+                </span>
               )}
             </div>
             {error && <p className="error-msg">{error}</p>}
