@@ -652,20 +652,67 @@ function PendingReceive({ supplierId, onDone }) {
   }
   useEffect(() => { load() }, [supplierId])
 
-  const keyOf = (r) => (r.source === 'manual' ? `p${r.product_id}` : `r${r.row_id}`)
-  const entered = rows.reduce((a, r) => a + (qty[keyOf(r)] || 0), 0)
+  // 届いた荷物は発注ごとに分かれていない（マレフィオーレは特にばらけて届く）。
+  // 発注ごとに行を分けると、同じ商品が何行も並んでどれに入れるか決められない。
+  // 商品ごとにまとめて数だけ入れてもらい、割り当てはこちらで行う。
+  const groups = (() => {
+    const map = new Map()
+    for (const r of rows) {
+      const key = r.item_id != null ? `i${r.item_id}` : `n${r.name}`
+      let g = map.get(key)
+      if (!g) {
+        g = { key, name: r.name, rows: [], qty: 0, received: 0, remaining: 0,
+              orders: new Set(), first: '', manual: 0 }
+        map.set(key, g)
+      }
+      g.rows.push(r)
+      g.remaining += r.remaining_qty || 0
+      if (r.source === 'order') {
+        g.qty += r.qty || 0
+        g.received += r.received_qty || 0
+        g.orders.add(r.order_id)
+        if (r.order_date && (!g.first || r.order_date < g.first)) g.first = r.order_date
+      } else {
+        g.manual += r.remaining_qty || 0
+      }
+    }
+    return [...map.values()].sort((a, b) =>
+      (a.first || '9999').localeCompare(b.first || '9999') || a.name.localeCompare(b.name))
+  })()
+
+  const entered = groups.reduce((a, g) => a + (qty[g.key] || 0), 0)
+
+  // 入れた数を古い発注から順に割り当てる。古い順に消さないと、
+  // 先に出した発注がいつまでも残って完了しない
+  const allocate = (g, n) => {
+    const ordered = g.rows.filter(r => r.source === 'order').sort((a, b) =>
+      (a.order_date || '').localeCompare(b.order_date || '') || (a.row_id - b.row_id))
+    const manual = g.rows.filter(r => r.source === 'manual')
+    const out = []
+    let left = n
+    for (const r of [...ordered, ...manual]) {
+      if (left <= 0) break
+      const take = Math.min(left, r.remaining_qty || 0)
+      if (take <= 0) continue
+      left -= take
+      out.push(r.source === 'manual'
+        ? { product_id: r.product_id, received_qty: take }
+        : { row_id: r.row_id, received_qty: take })
+    }
+    return out
+  }
 
   const receive = async () => {
-    const items = rows
-      .filter(r => (qty[keyOf(r)] || 0) > 0)
-      .map(r => (r.source === 'manual'
-        ? { product_id: r.product_id, received_qty: qty[keyOf(r)] }
-        : { row_id: r.row_id, received_qty: qty[keyOf(r)] }))
+    const items = []
+    const lines = []
+    for (const g of groups) {
+      const n = qty[g.key] || 0
+      if (n <= 0) continue
+      items.push(...allocate(g, n))
+      lines.push(`・${g.name} ${n}個`)
+    }
     if (!items.length) return
-    const lines = rows.filter(r => (qty[keyOf(r)] || 0) > 0)
-      .map(r => `・${r.name} ${qty[keyOf(r)]}個`).join('\n')
-    const body = '\n' + lines + '\n';
-    if (!window.confirm('次の内容で入荷します。' + body + 'よろしいですか？')) return
+    if (!window.confirm('次の内容で入荷します。\n' + lines.join('\n') + '\nよろしいですか？')) return
     setBusy(true); setErr(''); setMsg('')
     try {
       const r = await api.post('/wholesale/receive-items', { mode, items })
@@ -688,29 +735,29 @@ function PendingReceive({ supplierId, onDone }) {
     } finally { setBusy(false) }
   }
 
-  const fillAll = () => setQty(Object.fromEntries(rows.map(r => [keyOf(r), r.remaining_qty])))
+  const fillAll = () => setQty(Object.fromEntries(groups.map(g => [g.key, g.remaining])))
 
   return (
     <div>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
         <button className="btn btn-secondary" onClick={load} disabled={busy}>更新</button>
-        <button className="btn btn-secondary" onClick={fillAll} disabled={busy || !rows.length}>
+        <button className="btn btn-secondary" onClick={fillAll} disabled={busy || !groups.length}>
           全部「残り」を入れる
         </button>
         <button className="btn btn-secondary" onClick={() => setQty({})} disabled={busy}>入力をクリア</button>
-        <span style={{ fontSize: 13, color: '#64748b' }}>未入荷 {rows.length} 明細</span>
+        <span style={{ fontSize: 13, color: '#64748b' }}>未入荷 {groups.length} 商品</span>
       </div>
 
       {err && <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 10 }}>{err}</div>}
       {msg && <div style={{ color: '#16a34a', fontSize: 13, marginBottom: 10 }}>{msg}</div>}
 
-      {!rows.length && !busy && (
+      {!groups.length && !busy && (
         <div style={{ padding: 20, background: '#f8fafc', borderRadius: 8, color: '#64748b', fontSize: 13 }}>
           入荷待ちの明細はありません。
         </div>
       )}
 
-      {!!rows.length && (
+      {!!groups.length && (
         <>
           <table style={{ width: '100%', fontSize: 14, marginBottom: 16 }}>
             <thead>
@@ -724,23 +771,31 @@ function PendingReceive({ supplierId, onDone }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map(r => (
-                <tr key={keyOf(r)} style={{ borderTop: '1px solid #f1f5f9' }}>
+              {groups.map(g => (
+                <tr key={g.key} style={{ borderTop: '1px solid #f1f5f9' }}>
                   <td style={{ padding: 8, whiteSpace: 'nowrap', color: '#64748b', fontSize: 12 }}>
-                    {r.source === 'manual'
-                      ? <span style={{ padding: '1px 6px', borderRadius: 3, background: '#f1f5f9', color: '#475569' }}>手動発注</span>
-                      : r.order_date}
+                    {g.first || (
+                      <span style={{ padding: '1px 6px', borderRadius: 3, background: '#f1f5f9', color: '#475569' }}>手動発注</span>
+                    )}
+                    {/* 何件の発注をまとめているかが分かるようにしておく。
+                        「発注数が思ったより多い」と感じたときの手がかりになる */}
+                    {g.orders.size > 1 && (
+                      <span style={{ marginLeft: 6, color: '#94a3b8' }}>発注{g.orders.size}件</span>
+                    )}
+                    {g.first && g.manual > 0 && (
+                      <span style={{ marginLeft: 6, color: '#94a3b8' }}>+手動{g.manual}</span>
+                    )}
                   </td>
-                  <td style={{ padding: 8 }}>{r.name}</td>
-                  <td style={{ padding: 8, textAlign: 'right', color: '#64748b' }}>{r.source === 'manual' ? '—' : r.qty}</td>
-                  <td style={{ padding: 8, textAlign: 'right', color: '#64748b' }}>{r.source === 'manual' ? '—' : r.received_qty}</td>
-                  <td style={{ padding: 8, textAlign: 'right', fontWeight: 700, color: '#b45309' }}>{r.remaining_qty}</td>
+                  <td style={{ padding: 8 }}>{g.name}</td>
+                  <td style={{ padding: 8, textAlign: 'right', color: '#64748b' }}>{g.qty || '—'}</td>
+                  <td style={{ padding: 8, textAlign: 'right', color: '#64748b' }}>{g.received}</td>
+                  <td style={{ padding: 8, textAlign: 'right', fontWeight: 700, color: '#b45309' }}>{g.remaining}</td>
                   <td style={{ padding: 8, textAlign: 'right' }}>
-                    <input type="number" min="0" max={r.remaining_qty}
-                      value={qty[keyOf(r)] ?? ''} placeholder="0"
+                    <input type="number" min="0" max={g.remaining}
+                      value={qty[g.key] ?? ''} placeholder="0"
                       onChange={e => {
-                        const v = Math.max(0, Math.min(r.remaining_qty, Number(e.target.value) || 0))
-                        setQty(q => ({ ...q, [keyOf(r)]: v }))
+                        const v = Math.max(0, Math.min(g.remaining, Number(e.target.value) || 0))
+                        setQty(q => ({ ...q, [g.key]: v }))
                       }}
                       style={{ width: 110, padding: '5px 6px', textAlign: 'right' }} />
                   </td>
@@ -774,7 +829,8 @@ function PendingReceive({ supplierId, onDone }) {
               {busy ? '処理中…' : `入荷する（計 ${entered} 個）`}
             </button>
             <span style={{ fontSize: 12, color: '#64748b' }}>
-              入力した明細だけを処理します。全部届いた発注は自動で「入荷済」になります。
+              入力した商品だけを処理します。入れた数は古い発注から順に消し込み、
+              全部届いた発注は自動で「入荷済」になります。
             </span>
           </div>
         </>
