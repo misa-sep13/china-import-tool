@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import api from '../api/client'
+import api, { mediaUrl } from '../api/client'
+import { useWelfareVersion } from '../api/welfareVersion'
 
 /**
  * 就労支援さん向けの在庫一覧（閲覧のみ）。
@@ -11,10 +12,13 @@ import api from '../api/client'
 export default function WelfareInventoryPublic() {
   const [search, setSearch] = useState('')
 
+  // 変わったかどうかだけを毎分見て、変わったときに取り直す
+  const version = useWelfareVersion('inventory')
+
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ['welfare-inventory-public'],
+    queryKey: ['welfare-inventory-public', version],
     queryFn: () => api.get('/welfare/inventory').then(r => r.data),
-    refetchInterval: 60000,
+    staleTime: Infinity,
   })
 
   const visible = useMemo(() => {
@@ -69,8 +73,8 @@ export default function WelfareInventoryPublic() {
               {visible.map(r => (
                 <tr key={r.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                   <td style={{ padding: '6px 12px' }}>
-                    {r.image_data_url
-                      ? <img src={r.image_data_url} alt="" style={{
+                    {r.image_url
+                      ? <img src={mediaUrl(r.image_url)} alt="" style={{
                           width: 42, height: 42, objectFit: 'cover',
                           borderRadius: 4, display: 'block',
                         }} />

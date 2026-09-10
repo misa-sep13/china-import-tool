@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import api from '../api/client'
+import api, { mediaUrl } from '../api/client'
 import WelfarePackingAdmin from '../components/WelfarePackingAdmin'
 
 const fmtDate = (v) => {
@@ -851,7 +851,7 @@ export default function WelfareInventoryPage() {
                   return (
                     <tr key={item.id}>
                       <td style={{ fontWeight: 700 }}>{item.sku || '-'}</td>
-                      <td>{imageThumb(item.image_data_url)}</td>
+                      <td>{imageThumb(mediaUrl(item.image_url))}</td>
                       <td style={{ minWidth: 340 }}>
                         <input
                           value={itemName}
@@ -1048,7 +1048,7 @@ export default function WelfareInventoryPage() {
                             削除
                           </button>
                         </td>
-                        <td>{imageThumb(row.image_data_url)}</td>
+                        <td>{imageThumb(mediaUrl(row.image_url))}</td>
                         <td style={{ padding: 6 }}>
                           <input
                             value={productName}

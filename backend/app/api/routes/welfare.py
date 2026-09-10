@@ -5,9 +5,9 @@ import json
 import re
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, File
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.core.database import get_db
 from app.models.rakuten_product import RakutenProduct
@@ -270,7 +270,46 @@ def _same_shipment(existing_no, existing_file, new_no, new_file) -> bool:
     return (existing_file or "").strip() == (new_file or "").strip()
 
 
-def _out(item: WelfareInventoryItem):
+IMAGE_CACHE = "public, max-age=31536000, immutable"
+
+
+def _image_url(kind: str, row, has_image=None) -> Optional[str]:
+    """一覧に載せる画像の場所。
+
+    画像はbase64のまま列に入っている。これを一覧に混ぜると、
+    荷受け954行で3.5MBのうち3.2MBが画像になり、施設の画面が
+    60秒ごとにそれを取り直していた（月147GB。無料枠は5.5GB）。
+    場所だけ返してブラウザに任せると、2回目からは通信が起きない。
+    """
+    # 一覧では画像の列を読まずに済ませたいので、has_image を渡してもらう。
+    # 単票を返すところは行が全部読めているので、そのまま見てよい
+    ok = has_image if has_image is not None else bool(row.image_data_url)
+    return f"/api/welfare/{kind}/{row.id}/image" if ok else None
+
+
+def _image_response(data_url: Optional[str]):
+    """data:URL を画像そのものとして返す。
+
+    行は取り込みのたびに新しく作られるので、同じidの画像が
+    差し替わることはない。長く持たせてよい。
+    """
+    if not data_url:
+        raise HTTPException(status_code=404, detail="画像がありません")
+    head, _, b64 = str(data_url).partition(",")
+    if not b64:
+        raise HTTPException(status_code=404, detail="画像がありません")
+    media = "image/jpeg"
+    if head.startswith("data:") and ";" in head:
+        media = head[5:head.index(";")] or media
+    try:
+        raw = base64.b64decode(b64)
+    except Exception:
+        raise HTTPException(status_code=404, detail="画像を読めませんでした")
+    return Response(content=raw, media_type=media,
+                    headers={"Cache-Control": IMAGE_CACHE})
+
+
+def _out(item: WelfareInventoryItem, has_image=None):
     return {
         "id": item.id,
         "product_id": item.product_id,
@@ -279,7 +318,7 @@ def _out(item: WelfareInventoryItem):
         "name_cn": item.name_cn,
         "supplier_spec": item.supplier_spec,
         "buy_url": item.buy_url,
-        "image_data_url": item.image_data_url,
+        "image_url": _image_url("inventory", item, has_image),
         "unit_per_set": item.unit_per_set or 1,
         "total_received_units": item.total_received_units or 0,
         "total_received_qty": item.total_received_qty or 0,
@@ -290,6 +329,39 @@ def _out(item: WelfareInventoryItem):
         "last_received_at": item.last_received_at.isoformat() if item.last_received_at else None,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
     }
+
+
+@router.get("/version")
+def data_version(db: Session = Depends(get_db)):
+    """中身が変わったかどうかだけを返す、ごく軽い問い合わせ。
+
+    施設の画面は60秒ごとに更新している。毎回一覧を取り直すと
+    通信量が無料枠を大きく超えるので、まずここを見て、
+    変わっていなければ取り直さない。
+    """
+    from sqlalchemy import func as sqlfunc
+
+    def one(model):
+        n, mx = db.query(sqlfunc.count(model.id),
+                         sqlfunc.max(model.updated_at)).first()
+        return {"count": n or 0, "updated_at": mx.isoformat() if mx else None}
+
+    return {"work": one(WelfareWorkInstruction),
+            "inventory": one(WelfareInventoryItem)}
+
+
+@router.get("/work-instructions/{row_id}/image")
+def work_instruction_image(row_id: int, db: Session = Depends(get_db)):
+    row = (db.query(WelfareWorkInstruction.image_data_url)
+           .filter(WelfareWorkInstruction.id == row_id).first())
+    return _image_response(row[0] if row else None)
+
+
+@router.get("/inventory/{item_id}/image")
+def inventory_image(item_id: int, db: Session = Depends(get_db)):
+    row = (db.query(WelfareInventoryItem.image_data_url)
+           .filter(WelfareInventoryItem.id == item_id).first())
+    return _image_response(row[0] if row else None)
 
 
 @router.get("/inventory")
@@ -303,12 +375,17 @@ def list_inventory(q: Optional[str] = None, db: Session = Depends(get_db)):
             (WelfareInventoryItem.name_cn.ilike(like)) |
             (WelfareInventoryItem.supplier_spec.ilike(like))
         )
-    rows = query.order_by(WelfareInventoryItem.remaining_qty.desc(), WelfareInventoryItem.sku.asc()).all()
+    # 画像はbase64で列に入っている。一覧で読むとDBからの通信量がそのぶん増え、
+    # Supabaseの無料枠をすぐ使い切る。持っているかどうかだけを別に聞く
+    rows = query.options(defer(WelfareInventoryItem.image_data_url)).order_by(
+        WelfareInventoryItem.remaining_qty.desc(), WelfareInventoryItem.sku.asc()).all()
+    have = {i for (i,) in db.query(WelfareInventoryItem.id)
+            .filter(WelfareInventoryItem.image_data_url.isnot(None)).all()}
     pids = [r.product_id for r in rows if r.product_id]
     products = {p.id: p for p in db.query(RakutenProduct).filter(RakutenProduct.id.in_(pids)).all()} if pids else {}
     result = []
     for r in rows:
-        d = _out(r)
+        d = _out(r, r.id in have)
         p = products.get(r.product_id)
         d["product_unit_per_set"] = _unit_per_set(p) if p else (r.unit_per_set or 1)
         # SKU・名称は登録時点のコピーではなく、常に商品マスタの最新値を見せる
@@ -324,7 +401,7 @@ def list_inventory(q: Optional[str] = None, db: Session = Depends(get_db)):
     return result
 
 
-def _work_out(row: WelfareWorkInstruction):
+def _work_out(row: WelfareWorkInstruction, has_image=None):
     return {
         "id": row.id,
         "product_id": row.product_id,
@@ -339,7 +416,7 @@ def _work_out(row: WelfareWorkInstruction):
         "size": row.size,
         "supplier_spec": row.supplier_spec,
         "buy_url": row.buy_url,
-        "image_data_url": row.image_data_url,
+        "image_url": _image_url("work-instructions", row, has_image),
         "unit_price": row.unit_price,
         "units": row.units or 0,
         "unit_per_set": row.unit_per_set or 1,
@@ -369,15 +446,17 @@ def list_work_instructions(q: Optional[str] = None, db: Session = Depends(get_db
             (WelfareWorkInstruction.supplier_spec.ilike(like)) |
             (WelfareWorkInstruction.source_order_no.ilike(like))
         )
-    rows = query.order_by(
+    rows = query.options(defer(WelfareWorkInstruction.image_data_url)).order_by(
         WelfareWorkInstruction.order_date.desc(),
         WelfareWorkInstruction.id.desc(),
     ).limit(2000).all()
+    have = {i for (i,) in db.query(WelfareWorkInstruction.id)
+            .filter(WelfareWorkInstruction.image_data_url.isnot(None)).all()}
     pids = [r.product_id for r in rows if r.product_id]
     products = {p.id: p for p in db.query(RakutenProduct).filter(RakutenProduct.id.in_(pids)).all()} if pids else {}
     result = []
     for r in rows:
-        d = _work_out(r)
+        d = _work_out(r, r.id in have)
         p = products.get(r.product_id)
         # SKU・名称は商品マスタの最新値を見せる（マスタ側でSKUをリネームしても
         # 就労支援側の表示が古いSKUのままにならないように）

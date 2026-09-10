@@ -4,6 +4,14 @@ const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000/api',
 })
 
+// 商品写真などをそのまま <img src> に入れるための絶対URL。
+// APIと同じサーバーを見る（baseURL の末尾の /api を外して繋ぐ）。
+// 写真をJSONに混ぜると一覧が数MBになり、60秒ごとの更新で
+// 通信量が無料枠を大きく超えていたため、URLで渡してブラウザに任せる。
+const apiOrigin = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api')
+  .replace(/\/api\/?$/, '')
+export const mediaUrl = (path) => (path ? apiOrigin + path : '')
+
 // ログインが有効な間だけトークンを付与する。未設定時は何もしない
 // （認証が無効化されている今までどおりの運用のときはヘッダーなしで通る）。
 api.interceptors.request.use(config => {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import api from '../api/client'
+import api, { mediaUrl } from '../api/client'
+import { useWelfareVersion } from '../api/welfareVersion'
 import WelfarePackingOrders from '../components/WelfarePackingOrders'
 import WelfareInventoryPublic from '../components/WelfareInventoryPublic'
 
@@ -74,12 +75,16 @@ export default function WelfareWorkPublicPage() {
   // 荷受けの作業指示と、再梱包の作業依頼を切り替える
   const [view, setView] = useState('work')
 
+  // 60秒ごとに見るのは「変わったかどうか」だけ。変わったときに一覧を取り直す。
+  // 一覧そのものを毎分取り直すと、この画面だけで通信量が無料枠を大きく超える
+  const version = useWelfareVersion('work')
+
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ['welfare-work-public', search],
+    queryKey: ['welfare-work-public', search, version],
     queryFn: () => api.get('/welfare/work-instructions', {
       params: search ? { q: search } : {},
     }).then(r => r.data),
-    refetchInterval: 60000,
+    staleTime: Infinity,
   })
 
   const visibleRows = useMemo(
@@ -202,7 +207,7 @@ export default function WelfareWorkPublicPage() {
                   <tbody>
                     {selectedRows.map(row => (
                       <tr key={row.id}>
-                        <td>{imageThumb(row.image_data_url)}</td>
+                        <td>{imageThumb(mediaUrl(row.image_url))}</td>
                         <td style={{ wordBreak: 'break-word', fontWeight: 600 }}>{row.name_jp || row.source_product_name || '未照合'}</td>
                         <td style={{ color: '#e11d48' }}>{row.color || row.supplier_spec || '-'}</td>
                         <td style={{ color: '#e11d48' }}>{row.size || '-'}</td>

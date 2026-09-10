@@ -1338,6 +1338,9 @@ _AUTH_PUBLIC_GET_PATHS = {
     "/api/welfare/inventory",
     "/api/welfare/packing-orders",
     "/api/welfare/packing-orders/months",
+    # 中身が変わったかどうかだけを返す軽い問い合わせ。公開ページはまずこれを見て、
+    # 変わっていなければ一覧を取り直さない（通信量が桁で変わる）
+    "/api/welfare/version",
 }
 # 外注さんには見せない（APIキー等が見える設定画面）
 _AUTH_OWNER_ONLY_PREFIXES = ("/api/settings", "/api/rakuten/settings")
@@ -1365,6 +1368,11 @@ async def auth_middleware(request: _StarletteRequest, call_next):
     if request.method == "GET" and (
             path.startswith("/api/product-drafts/public-image/")
             or path.startswith("/api/amazon-listings/public-image/")):
+        return await call_next(request)
+    # 就労支援の公開ページに出す商品写真。一覧そのものが公開なので、
+    # 写真だけを隠しても意味がない。ブラウザに任せて取り直させないためのもの
+    if (request.method == "GET" and path.startswith("/api/welfare/")
+            and path.endswith("/image")):
         return await call_next(request)
 
     auth_header = request.headers.get("authorization", "")
