@@ -876,6 +876,7 @@ export default function RakutenOrderPage() {
   // SKUから商品を引く表。セット商品かどうかの確認に使う
   // 発注済とタオタロウの突き合わせ。画面を開いたときに一度だけ見る
   const [syncResult, setSyncResult] = useState(null)
+  const [leadOpen, setLeadOpen] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const runSync = async (dryRun) => {
     if (!dryRun) {
@@ -1247,7 +1248,20 @@ export default function RakutenOrderPage() {
               </div>
             ))}
             {toggleBtn}
+            {/* リードタイムが実態と合っているかは発注数そのものに効く。
+                集計でタオタロウのAPIを叩くので、開いたときだけ取る */}
+            <button className="btn btn-sm btn-secondary" style={{ fontSize: 12 }}
+              onClick={() => setLeadOpen(v => !v)}>
+              {leadOpen ? '⏱ リードタイム実績を閉じる' : '⏱ リードタイム実績'}
+            </button>
           </div>
+
+          {leadOpen && (
+            <LeadTimeCard onApplied={() => {
+              qc.invalidateQueries(['rakuten-all-products-order'])
+              qc.invalidateQueries(['rakuten-lead-time'])
+            }} />
+          )}
 
           {/* 検索 */}
           <div style={{ marginBottom: 12 }}>
@@ -1543,6 +1557,155 @@ export default function RakutenOrderPage() {
           onClose={() => setTaotaroItems(null)}
           onDone={handleTaotaroDone}
         />
+      )}
+    </div>
+  )
+}
+
+
+// 発注から入荷までに実際どれだけかかっているか。
+//
+// 提案発注数は「入荷までに売れる数」を見込んで決めるので、設定の
+// リードタイムが実態とずれていると在庫が足りないか余る。これまでは
+// 手で入れた日数が合っているか確かめる手立てが無かった。
+//
+// 船便と航空便は輸送だけで3倍ちがうので、混ぜた平均では意味がない。
+// 分けて出し、どちらを設定に使うか選べるようにする。
+function LeadTimeCard({ onApplied }) {
+  const [applying, setApplying] = useState(false)
+  const { data, isFetching, refetch, error } = useQuery({
+    queryKey: ['rakuten-lead-time'],
+    queryFn: () => api.get('/rakuten/orders/lead-time').then(r => r.data),
+    staleTime: 12 * 3600 * 1000,   // サーバー側も12時間持っている
+    retry: false,
+  })
+
+  const C = { line: '#e2e8f0', sub: '#64748b', text: '#0f172a', key: '#1d4ed8' }
+  const box = { background: '#f8fafc', border: `1px solid ${C.line}`,
+    borderRadius: 8, padding: 14, marginBottom: 16 }
+
+  if (error) {
+    return (
+      <div style={{ ...box, color: '#991b1b', background: '#fef2f2' }}>
+        リードタイムの集計が取れませんでした：
+        {error.response?.data?.detail || error.message}
+      </div>
+    )
+  }
+  if (!data) {
+    return <div style={{ ...box, color: C.sub, fontSize: 13 }}>
+      実績を集計しています…（配送依頼の明細を1件ずつ見るので少しかかります）
+    </div>
+  }
+
+  // 設定に使うのは船便。航空便は例外的な手配なので、これを既定にすると
+  // 足りなくなる。船便の実績が無いときだけ全体で代える
+  const base = data.sea.shipments > 0 ? data.sea : data.all
+  const baseLabel = data.sea.shipments > 0 ? '船便' : '全体'
+  const suggest = base.total.median
+  const cur = data.current_lead_days
+
+  const apply = async (days) => {
+    if (!window.confirm(
+      `リードタイムを ${cur}日 → ${days}日 に変更します。\n`
+      + '提案発注数が変わります。よろしいですか？')) return
+    setApplying(true)
+    try {
+      // 省略PUTは他の項目を消してしまう。取り直して丸ごと送る
+      const now = (await api.get('/rakuten/settings')).data
+      await api.put('/rakuten/settings', { ...now, lead_days: days })
+      if (onApplied) onApplied()
+    } catch (e) {
+      alert(e.response?.data?.detail || e.message)
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  const fmt = (s) => s.median == null ? '—'
+    : `${s.median}日（${s.min}〜${s.max}）`
+
+  return (
+    <div style={box}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <b style={{ fontSize: 14, color: C.text }}>⏱ リードタイムの実績</b>
+        <span style={{ fontSize: 11, color: C.sub }}>
+          入荷済みの便 {data.all.shipments}件から。集計 {String(data.computed_at).slice(0, 10)}
+        </span>
+        <button className="btn btn-sm btn-secondary" style={{ fontSize: 11, marginLeft: 'auto' }}
+          disabled={isFetching}
+          onClick={() => api.get('/rakuten/orders/lead-time?refresh=1').then(() => refetch())}>
+          {isFetching ? '集計中…' : '取り直す'}
+        </button>
+      </div>
+
+      <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ background: '#eef2f7', color: C.sub }}>
+            {['', '便数', '買付（発注→中国倉庫）', '滞留（倉庫→出荷）',
+              '輸送（出荷→日本）', '合計（発注→入荷）'].map(h => (
+              <th key={h} style={{ textAlign: 'left', padding: '5px 8px', whiteSpace: 'nowrap' }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {[['全体', data.all], ['船便', data.sea], ['航空便', data.air]]
+            .filter(([, s]) => s.shipments > 0).map(([label, s]) => (
+            <tr key={label} style={{ borderTop: `1px solid ${C.line}`,
+              fontWeight: label === baseLabel ? 700 : 400 }}>
+              <td style={{ padding: '5px 8px' }}>{label}</td>
+              <td style={{ padding: '5px 8px' }}>{s.shipments}便</td>
+              <td style={{ padding: '5px 8px' }}>{fmt(s.buy)}</td>
+              <td style={{ padding: '5px 8px' }}>{fmt(s.wait)}</td>
+              <td style={{ padding: '5px 8px' }}>{fmt(s.transit)}</td>
+              <td style={{ padding: '5px 8px' }}>{fmt(s.total)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div style={{ marginTop: 10, fontSize: 12, color: C.text }}>
+        いまの設定は <b>{cur}日</b>。
+        {suggest != null && (suggest === cur
+          ? ' 実績と合っています。'
+          : <> {baseLabel}の実績は <b>{suggest}日</b>で、
+              設定のほうが{Math.abs(cur - suggest)}日
+              {cur > suggest ? '長め（安全側）' : '短め'}です。</>)}
+      </div>
+      {suggest != null && suggest !== cur && (
+        <div style={{ marginTop: 8 }}>
+          <button className="btn btn-sm btn-primary" style={{ fontSize: 12 }}
+            disabled={applying} onClick={() => apply(suggest)}>
+            {applying ? '反映中…' : `${baseLabel}の実測 ${suggest}日 を設定に反映`}
+          </button>
+          <span style={{ fontSize: 11, color: C.sub, marginLeft: 8 }}>
+            提案発注数が変わります。航空便は{data.air.total.median ?? '—'}日ですが、
+            例外的な手配なので既定にはしません
+          </span>
+        </div>
+      )}
+
+      {data.slow_products.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>
+            買付が長い商品（実績{data.slow_products[0].n >= 3 ? '3件以上' : ''}のもの。
+            {data.slow_days}日以上は赤）
+          </div>
+          <table style={{ fontSize: 12, borderCollapse: 'collapse' }}>
+            <tbody>
+              {data.slow_products.slice(0, 8).map(p => (
+                <tr key={p.sku} style={{ borderTop: `1px solid ${C.line}`,
+                  color: p.is_slow ? '#b91c1c' : C.text }}>
+                  <td style={{ padding: '4px 8px', fontWeight: 600 }}>{p.sku}</td>
+                  <td style={{ padding: '4px 8px' }}>{p.name}</td>
+                  <td style={{ padding: '4px 8px' }}>{p.n}件</td>
+                  <td style={{ padding: '4px 8px' }}>中央 {p.median}日</td>
+                  <td style={{ padding: '4px 8px', color: C.sub }}>最長 {p.max}日</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   )

@@ -173,13 +173,17 @@ def compute(db, pages: int = 3, slow_days: int = 8, slow_min_n: int = 3) -> dict
             "total": _stats(rows, "total"),
         }
 
+    # 遅い順に並べて返す。閾値を超えたものだけ出すと、1件も無いときに
+    # 「調べたが問題なかった」のか「集計できていない」のか分からない
     slow = []
     for sku, v in buy_by_product.items():
         m = _median(v["days"])
-        if m is not None and len(v["days"]) >= slow_min_n and m >= slow_days:
-            slow.append({"sku": sku, "name": v["name"], "n": len(v["days"]),
-                         "median": m, "max": max(v["days"])})
-    slow.sort(key=lambda r: (-r["median"], -r["n"]))
+        if m is None or len(v["days"]) < slow_min_n:
+            continue
+        slow.append({"sku": sku, "name": v["name"], "n": len(v["days"]),
+                     "median": m, "max": max(v["days"]),
+                     "is_slow": m >= slow_days})
+    slow.sort(key=lambda r: (-r["median"], -r["max"], -r["n"]))
 
     return {
         "shipments": shipments,
