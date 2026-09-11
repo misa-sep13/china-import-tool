@@ -56,5 +56,8 @@ class RakutenProduct(Base):
     # レビューキャンペーン等の販促品（楽天には出品していない・在庫は就労支援の
     # 保管数把握のためだけにマスタ登録する）。RMS push・発注推奨・在庫一覧の対象外。
     is_promo     = Column(Boolean, default=False)
+    # 「どの商品の中身にもなっていない単品」の警告を、この商品については出さない。
+    # y91_caseのように、組み立てで使うだけで売り物に紐づけない単品がある
+    orphan_ok    = Column(Boolean, default=False)
     is_active    = Column(Boolean, default=True)
     created_at   = Column(DateTime, server_default=func.now())

@@ -62,6 +62,7 @@ def _migrate():
     Base.metadata.create_all(bind=engine)
 
     migrations = [
+        ("rakuten_products","orphan_ok",      "ALTER TABLE rakuten_products ADD COLUMN orphan_ok BOOLEAN DEFAULT FALSE"),
         ("import_permits","kind",                "ALTER TABLE import_permits ADD COLUMN kind VARCHAR DEFAULT 'permit'"),
         ("products",      "selling_price",       "ALTER TABLE products ADD COLUMN selling_price FLOAT"),
         ("products",      "fba_fee",             "ALTER TABLE products ADD COLUMN fba_fee FLOAT"),

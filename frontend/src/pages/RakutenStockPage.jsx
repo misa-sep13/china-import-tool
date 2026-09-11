@@ -123,6 +123,31 @@ export default function RakutenStockPage() {
   })
   const failedPushes = pushFailures?.items || []
 
+  // 単品に在庫があるのに、どの商品の中身にもなっていないもの。
+  // 入荷しても売り物の在庫が増えないので、気づけるように出す
+  const { data: orphanData } = useQuery({
+    queryKey: ['orphan-components'],
+    queryFn: () => api.get('/rakuten/products/orphan-components').then(r => r.data),
+  })
+  const orphans = orphanData?.items || []
+  const orphanTotal = orphanData?.total_stock || 0
+  const [hidingOrphan, setHidingOrphan] = useState(null)
+  const hideOrphan = async (o) => {
+    if (!confirm(`「${o.sku}」を警告に出さないようにします。
+
+組み立てに使うだけで、売り物に紐づけない単品のときに使ってください。
+よろしいですか？`)) return
+    setHidingOrphan(o.id)
+    try {
+      await api.patch(`/rakuten/products/${o.id}/orphan-ok`, { ok: true })
+      qc.invalidateQueries({ queryKey: ['orphan-components'] })
+    } catch (e) {
+      alert('変更できませんでした: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setHidingOrphan(null)
+    }
+  }
+
   // セット商品の在庫が構成品と食い違っていないか。多い方向にずれると
   // 楽天に実在庫以上の数が出て売り越しになるため、気づけるように出す。
   const { data: setAudit } = useQuery({
@@ -338,6 +363,54 @@ export default function RakutenStockPage() {
           {saving ? '保存中...' : `💾 一括保存${dirtyCount > 0 ? `（${dirtyCount}件）` : ''}`}
         </button>
       </div>
+
+      {/* 単品に在庫があるのに、どの商品の中身にもなっていない状態。
+          入荷しても売り物の在庫が増えず、楽天にも出ない。数字がどこにも
+          出ないので、放っておくと売り逃していることに気づけない */}
+      {orphans.length > 0 && (
+        <div style={{ background: '#fffbeb', border: '2px solid #d97706', borderRadius: 8,
+          padding: 14, marginBottom: 16 }}>
+          <div style={{ fontWeight: 700, color: '#92400e', marginBottom: 6 }}>
+            ⚠ 在庫があるのに、どの商品にも使われていない単品が {orphans.length}件あります
+            （計 {orphanTotal}個）
+          </div>
+          <div style={{ fontSize: 12, color: '#92400e', marginBottom: 8, lineHeight: 1.7 }}>
+            単品は、売っている商品に<b>「中身」として登録されて初めて在庫になります</b>。
+            登録されていないと、入荷しても在庫が増えず楽天にも出ません。
+            商品マスタで親商品の構成品に加えてください。
+          </div>
+          <div style={{ maxHeight: 220, overflowY: 'auto', marginBottom: 10 }}>
+            <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#fef3c7' }}>
+                  {['SKU', '商品名', '在庫', '親になりそうな商品', ''].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '4px 8px', whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {orphans.map(o => (
+                  <tr key={o.id} style={{ borderTop: '1px solid #fde68a' }}>
+                    <td style={{ padding: '4px 8px', fontWeight: 600 }}>{o.sku}</td>
+                    <td style={{ padding: '4px 8px' }}>{o.name}</td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 700 }}>{o.stock}</td>
+                    <td style={{ padding: '4px 8px', color: '#92400e' }}>{o.parent_hint || '—'}</td>
+                    <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>
+                      {/* 組み立てに使うだけで売り物に紐づけない単品もある。
+                          そういうものは毎回出ても邪魔なので消せるようにする */}
+                      <button className="btn btn-sm btn-secondary" style={{ fontSize: 11 }}
+                        disabled={hidingOrphan === o.id}
+                        onClick={() => hideOrphan(o)}>
+                        これは出さなくてよい
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {setDiffs.length > 0 && (
         <div style={{ background: '#fef2f2', border: '2px solid #dc2626', borderRadius: 8,

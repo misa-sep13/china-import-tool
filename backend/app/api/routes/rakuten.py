@@ -1031,6 +1031,74 @@ async def receive_manufacturer_stock(product_id: int, background_tasks: Backgrou
     }
 
 
+@router.get("/products/orphan-components")
+def orphan_components(db: Session = Depends(get_db)):
+    """在庫があるのに、どの商品の中身にもなっていない単品を返す。
+
+    単品（is_component）で自分のページを持たないものは、親の商品に
+    中身として登録されて初めて売り物の在庫になる。登録を忘れると、
+    入荷しても在庫が増えず、楽天へも送られない。数字はどこにも出ないので、
+    売り逃していても気づけない。
+
+    実際、ペット歯ブラシの3色（各50個）がこの状態で3日間眠っていた。
+
+    組み立てに使うだけで売り物に紐づけない単品（耳栓のケース等）は、
+    画面から「これは出さなくてよい」にできる。
+    """
+    products = (db.query(RakutenProduct)
+                .filter(RakutenProduct.is_active == True).all())
+
+    used = set()
+    for p in products:
+        for c in _parse_components_for_stock(p):
+            if c.get("sku"):
+                used.add(c["sku"])
+
+    out = []
+    for p in products:
+        if not p.is_component or p.orphan_ok:
+            continue
+        # 自分のページを持つものは、その番号で楽天へ送られている
+        if (p.rakuten_item_url or "").strip():
+            continue
+        # 資材・販促品は貯まって当たり前なので数えない
+        if p.is_material or p.is_promo:
+            continue
+        if (p.stock or 0) <= 0 or p.sku in used:
+            continue
+        out.append({
+            "id": p.id, "sku": p.sku, "name": p.name,
+            "stock": p.stock or 0,
+            "inbound": p.inbound or 0,
+            "supplier_spec": p.supplier_spec,
+            # 同じ頭のSKUに売り物があれば、そこへ登録すればよいと見当が付く
+            "parent_hint": next(
+                (q.sku for q in products
+                 if q.sku != p.sku
+                 and p.sku.split("_")[0] == q.sku.split("_")[0]
+                 and (q.rakuten_item_url or "").strip()), None),
+        })
+    out.sort(key=lambda x: -x["stock"])
+    return {"items": out, "count": len(out),
+            "total_stock": sum(x["stock"] for x in out)}
+
+
+class OrphanOkIn(BaseModel):
+    ok: bool = True
+
+
+@router.patch("/products/{product_id}/orphan-ok")
+def set_orphan_ok(product_id: int, data: OrphanOkIn,
+                  db: Session = Depends(get_db)):
+    """この単品については警告を出さない／出すを切り替える。"""
+    p = db.query(RakutenProduct).filter(RakutenProduct.id == product_id).first()
+    if not p:
+        raise HTTPException(404, "商品が見つかりません")
+    p.orphan_ok = bool(data.ok)
+    db.commit()
+    return {"ok": True, "sku": p.sku, "orphan_ok": p.orphan_ok}
+
+
 @router.post("/products/bulk-set-components")
 def bulk_set_components(body: dict, db: Session = Depends(get_db)):
     """SKUをキー、set_componentsをJSONとして受け取り一括更新"""
