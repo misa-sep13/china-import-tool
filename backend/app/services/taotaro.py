@@ -674,7 +674,9 @@ def inspect_options(raw) -> dict:
     out = {}
     for k in INSPECT_FLAGS:
         if raw and raw.get(k):
-            out[k] = 1
+            # 仕様書には「1 =依頼する」と数字で書かれているが、
+            # 実際に数値で送ると「文字列で指定してください」と断られる
+            out[k] = "1"
     for k in INSPECT_TEXT:
         v = str((raw or {}).get(k) or "").strip()
         if v:
