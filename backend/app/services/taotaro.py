@@ -826,8 +826,14 @@ def invoice(sid: int) -> dict:
     }
 
 
-def invoice_pdf(sid: int) -> tuple:
-    """請求書PDFの中身を取ってくる。(ファイル名, bytes) を返す。"""
+def invoice_file(sid: int) -> tuple:
+    """請求書の中身を取ってくる。(ファイル名, bytes) を返す。
+
+    仕様書には「請求書PDF」と書かれているが、実際に落ちてくるのは
+    いつも手で添付してもらっているインボイスのExcelそのもので、
+    箱ごとの寸法・重量（箱规）と、箱と注文の対応（箱单）まで入っている。
+    拡張子は中身を見て決める。決め打ちにすると、PDFに戻ったときに壊れる。
+    """
     import urllib.request
 
     inv = invoice(sid)
@@ -842,4 +848,15 @@ def invoice_pdf(sid: int) -> tuple:
         raise TaotaroError(f"請求書を取得できませんでした（{type(e).__name__}）")
     if not raw:
         raise TaotaroError("請求書が空でした")
-    return (f"{sid}.pdf", raw)
+    ext = "pdf" if raw[:5] == b"%PDF-" else ("xlsx" if raw[:2] == b"PK" else "bin")
+    return (f"{sid}.{ext}", raw)
+
+
+def invoice_workbook(sid: int) -> bytes:
+    """請求書のExcelを取ってくる。仕入管理の取り込みで使う。"""
+    name, raw = invoice_file(sid)
+    if not name.endswith(".xlsx"):
+        raise TaotaroError(
+            "この便の請求書はExcelではありませんでした。"
+            "お手元のインボイスを使ってください")
+    return raw

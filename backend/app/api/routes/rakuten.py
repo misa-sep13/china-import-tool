@@ -2360,16 +2360,6 @@ class RakutenTaotaroInvoiceIn(BaseModel):
     sid: int
 
 
-def _guess_method(name: str) -> str:
-    """配送方法の名前から船便か航空便かを推測する。確実ではないので初期値だけ。"""
-    n = (name or "")
-    if any(k in n for k in ("船", "海", "SEA", "sea", "Sea")):
-        return "sea"
-    if any(k in n for k in ("航空", "空運", "AIR", "air", "Air")):
-        return "air"
-    return "sea"
-
-
 def _fill_unmatched_from_taotaro(parsed: dict, db: Session) -> int:
     """インボイスで照合できなかった行を、同じ便のタオタロウ明細で埋める。
 
@@ -2439,92 +2429,41 @@ def _fill_unmatched_from_taotaro(parsed: dict, db: Session) -> int:
 @router.post("/invoices/from-taotaro")
 def rakuten_invoice_from_taotaro(data: RakutenTaotaroInvoiceIn,
                                  db: Session = Depends(get_db)):
-    """インボイスExcelの代わりに、タオタロウのAPIから明細と費用を取る。
+    """インボイスのExcelを、手で落とさずAPIから取って解析する。
 
-    戻り値は parse-excel と同じ形なので、このあとの計算・保存はそのまま動く。
-    Excelと違うのは:
-      ・out_id（自社の管理番号）が入るので、SKUの推測が要らない
-      ・費用が見積もりではなく確定値で入る
-      ・箱ごとの重量が無いので、国際送料は金額比で配る
-        （Excelの箱シートがあるときだけ重量按分できる）
+    仕様書には「請求書PDF」と書かれているが、実際に落ちてくるのは
+    いつも添付してもらっているインボイスのExcelそのもので、
+    箱ごとの寸法・重量まで入っている。つまり手で落としたものと同じ結果になり、
+    国際送料も実測重量で配れる。
+
+    解析はアップロードと同じ関数を通す。片方だけ直して結果がずれると、
+    経路によって原価が変わってしまう。
     """
     from app.services import taotaro
-    # 就労支援の荷受けと同じ形の行を作り、同じ照合を使う。
-    # URLだけで引くと、同じURLの色違いが区別できず取りこぼす
-    # （実際この経路で28明細中19件が未照合になった）。
-    # 荷受け側は色とサイズも見て照合しており、同じ便で全件当たっている
-    from app.api.routes.welfare import _match_product, _product_indexes
     try:
-        d = taotaro.send_order_rows(data.sid)
+        raw = taotaro.invoice_workbook(data.sid)
     except taotaro.TaotaroError as e:
         raise HTTPException(502, e.message)
 
-    fees = d.get("fees") or {}
-
-    def f(key):
-        try:
-            return float(fees.get(key) or 0)
-        except (TypeError, ValueError):
-            return 0.0
-
-    idx = _product_indexes(db)
-    items = []
-    matched = unmatched = 0
-    for row in d.get("rows") or []:
-        qty = int(row.get("units") or 0)
-        try:
-            price = float(row.get("unit_price") or 0)
-        except (TypeError, ValueError):
-            price = 0.0
-        if qty <= 0 or price <= 0:
-            continue
-        product, how = _match_product(row, *idx)
-        if product:
-            matched += 1
-        else:
-            unmatched += 1
-        items.append({
-            "sku": product.sku if product else "",
-            "name_jp": (product.name if product else "") or row.get("name_cn") or "",
-            "qty": qty,
-            "unit_price_cny": price,
-            "total_price_cny": round(qty * price, 2),
-            "buy_url": (row.get("buy_url") or "").strip(),
-            # どうやって当たったかを残す。あとで取り違えを追える
-            "asin_memo": f"{row.get('order_no') or ''}{'（' + how + '）' if how else ''}",
-            "goods_id": str(row.get("order_no") or ""),
-        })
-    if not items:
-        raise HTTPException(404, "この配送依頼に明細がありません")
-
-    # 国内側の費用はまとめて金額比で配る。Excelでも国内送料と加工費(Added Value)を
-    # 同じ扱いにしているので、そこに合わせる
-    domestic = f("send_price") + f("server_fee") + f("customs_fee") + f("remote_fee")
-
-    goods_cny = round(sum(i["total_price_cny"] for i in items), 2)
-    return {
-        "invoice_no": d.get("sn") or str(d.get("sid") or ""),
-        "domestic_freight": round(domestic, 2),
-        "added_value": round(f("server_fee"), 2),
-        "international_freight": round(f("freight"), 2),
-        "goods_cny": goods_cny,
-        "items": items,
-        # 箱ごとの重量はAPIに無い。重量按分はできないので金額比に落ちる
-        "box_data": None,
-        "has_box_data": False,
-        "shipping_method": _guess_method(d.get("delivery_name")),
-        "customs_fee_sea_jpy": invoice_calc.CUSTOMS_FEE_SEA_JPY,
-        "matched": matched,
-        "unmatched": unmatched,
-        # 画面で内訳を見せるため。合計は total_send_fee と一致する
-        "taotaro": {
+    parsed = _rakuten_invoice_payload(raw, db)
+    # 便の費用の内訳は画面で見せたい。確定値なので突き合わせの材料にもなる
+    try:
+        d = taotaro.get_send_order(data.sid)
+        parsed["taotaro"] = {
             "sid": d.get("sid"), "sn": d.get("sn"),
             "state_label": d.get("state_label"),
             "count_weight": d.get("count_weight"),
             "delivery_name": d.get("delivery_name"),
-            "fees": fees,
-        },
-    }
+            "fees": {"send_price": d.get("send_price"),
+                     "server_fee": d.get("server_fee"),
+                     "freight": d.get("freight"),
+                     "customs_fee": d.get("customs_fee"),
+                     "remote_fee": d.get("remote_fee"),
+                     "total_send_fee": d.get("total_send_fee")},
+        }
+    except taotaro.TaotaroError:
+        parsed["taotaro"] = None
+    return parsed
 
 
 @router.get("/invoices/stored-permit/{permit_id}")
@@ -2557,8 +2496,16 @@ def rakuten_stored_permit(permit_id: int, db: Session = Depends(get_db)):
 @router.post("/invoices/parse-excel")
 async def rakuten_parse_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """タオタロウ形式ExcelをパースしてSKU・単価を返す"""
+    return _rakuten_invoice_payload(await file.read(), db)
+
+
+def _rakuten_invoice_payload(content: bytes, db: Session) -> dict:
+    """インボイスのExcelを解析して、SKU照合まで済ませた形で返す。
+
+    アップロードされたファイルでも、APIから落としたものでも同じ道を通す。
+    片方だけ直して結果がずれると、経路によって原価が変わってしまう。
+    """
     import openpyxl
-    content = await file.read()
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content))
     except Exception as e:

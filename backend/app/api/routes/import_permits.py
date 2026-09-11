@@ -224,7 +224,7 @@ def fetch_taotaro_invoices(data: TaotaroInvoiceIn, db: Session = Depends(get_db)
             not_ready.append(x.get("sn") or str(sid))
             continue
         try:
-            _, raw = taotaro.invoice_pdf(sid)
+            fname, raw = taotaro.invoice_file(sid)
         except taotaro.TaotaroError as e:
             not_ready.append(f"{x.get('sn') or sid}（{e.message}）")
             continue
@@ -234,7 +234,9 @@ def fetch_taotaro_invoices(data: TaotaroInvoiceIn, db: Session = Depends(get_db)
             permit_no=str(x.get("sn") or sid),
             # 請求書に許可日は無いので、便の更新日を日付として使う
             permit_date=str(x.get("updated_at") or "")[:10],
-            filename=f"{x.get('sn') or sid}.pdf",
+            # 仕様書はPDFと書いているが、実際に落ちてくるのはExcelのことがある。
+            # 拡張子を決め打ちすると、開けないファイルとして保管してしまう
+            filename=f"{x.get('sn') or sid}{fname[fname.rfind('.'):]}",
             size_bytes=len(raw), pdf=raw, source="taotaro",
             mail_message_id=key,
             mail_subject=f"タオタロウ請求書 {x.get('sn') or sid}",
@@ -289,7 +291,10 @@ def _drive_name(p: ImportPermit) -> str:
     d = _sort_date(p) or "日付不明"
     label = "請求書" if p.kind == "invoice" else "輸入許可書"
     no = f"_{p.permit_no}" if p.permit_no else ""
-    return f"{d}_{label}{no}.pdf"
+    # 請求書はExcelで落ちてくることがある。拡張子は保管したものに合わせる
+    name = (p.filename or "")
+    ext = name[name.rfind("."):] if "." in name else ".pdf"
+    return f"{d}_{label}{no}{ext}"
 
 
 @router.post("/{permit_id}/to-drive")
@@ -332,7 +337,9 @@ def download_zip(year: Optional[int] = None, month: Optional[int] = None,
             # 同じ日に2便あると名前がぶつかる。上書きすると片方が消える
             i = 2
             while name in used:
-                name = f"{_drive_name(p)[:-4]}_{i}.pdf"
+                base = _drive_name(p)
+                stem, dot, ext = base.rpartition(".")
+                name = f"{stem}_{i}.{ext}" if dot else f"{base}_{i}"
                 i += 1
             used.add(name)
             z.writestr(name, p.pdf or b"")

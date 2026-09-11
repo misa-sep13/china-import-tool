@@ -92,11 +92,16 @@ export default function RakutenInvoicePage() {
         ...(pdfRes.data.exchange_rate ? { exchange_rate: pdfRes.data.exchange_rate } : {}),
       }))
 
-      // Excel経路の「整合性チェック」と同じ確認を、こちらでも必ず出す。
-      // 別の便の許可書を選ぶ事故がいちばん怖いので、金額で突き合わせる
-      const invCny = (invRes.data.items || [])
+      // 別の便の許可書を選ぶ事故がいちばん怖いので、金額で突き合わせる。
+      // 許可書のCIFは「商品代のみ」と「商品代＋諸費用」の両方があるので、近いほうで見る
+      const goods = (invRes.data.items || [])
         .reduce((a, i) => a + Number(i.total_price_cny || 0), 0)
-      const permitCny = Number(pdfRes.data.permit_cny || 0)
+      const withFees = goods + Number(invRes.data.domestic_freight || 0)
+        + Number(invRes.data.international_freight || 0)
+      const permitCnyRaw = Number(pdfRes.data.permit_cny || 0)
+      const invCny = Math.abs(withFees - permitCnyRaw) <= Math.abs(goods - permitCnyRaw)
+        ? withFees : goods
+      const permitCny = permitCnyRaw
       const diff = Math.round(Math.abs(invCny - permitCny) * 100) / 100
       setValidation({
         ok: permitCny > 0 ? diff <= 1 : true,
@@ -231,9 +236,10 @@ export default function RakutenInvoicePage() {
           インボイスはタオタロウのAPIから、許可書は保管してあるものから選ぶ。
           Excelの経路は「箱ごとの重量で国際送料を配りたいとき」に残してある */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <h3 style={{ marginBottom: 6 }}>タオタロウ＋保管済みの許可書から取り込む</h3>
+        <h3 style={{ marginBottom: 6 }}>ファイルを用意せずに取り込む</h3>
         <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
-          ファイルの用意は要りません。便と許可書を選んで「読み込む」を押してください。
+          インボイスはタオタロウから、許可書は保管済みから。
+          便と許可書を選んで「読み込む」を押してください。ダウンロードは要りません。
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div className="form-group">
@@ -286,11 +292,11 @@ export default function RakutenInvoicePage() {
               遠隔地 {apiInfo.fees?.remote_fee}元
               <b>合計 {apiInfo.fees?.total_send_fee}元</b>
             </div>
-            {/* Excelの箱シートが無いので重量按分ができない。黙って金額比にすると
-                同じ便でも経路によって原価が変わるため、はっきり出す */}
-            <div style={{ fontSize: 12, marginTop: 4, color: '#b45309' }}>
-              ※国際送料は金額比で配ります（箱ごとの重量はAPIから取れないため）。
-              重量で配りたいときは、下のExcelの経路をお使いください。
+            {/* 落としてくるのは手で添付してもらっているインボイスそのもの。
+                箱シートも入っているので、結果はExcel経路と同じになる */}
+            <div style={{ fontSize: 12, marginTop: 4, color: '#166534' }}>
+              APIから取れるのは、いつも添付してもらっているインボイスと同じファイルです。
+              箱ごとの重量も入っているので、国際送料は実測重量で配ります。
             </div>
           </div>
         )}
@@ -298,9 +304,9 @@ export default function RakutenInvoicePage() {
 
       {/* ファイル選択 */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <h3 style={{ marginBottom: 6 }}>ファイルから取り込む（箱ごとの重量で配りたいとき）</h3>
+        <h3 style={{ marginBottom: 6 }}>ファイルから取り込む</h3>
         <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
-          インボイスに箱シートが付いていれば、国際送料を実測重量で配れます。
+          上で取り込めなかったときや、手元のインボイスを使いたいときに。
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div className="form-group">
