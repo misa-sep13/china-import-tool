@@ -1490,3 +1490,33 @@ def get_inventory_events(sku: str = None, limit: int = 100):
         db.close()
 
 
+
+# ============================================================
+# 想定外の例外を、中身の分かる形で返す
+# ============================================================
+# FastAPI の既定では、拾い損ねた例外は本文 "Internal Server Error" の
+# 500 になる。この応答には CORS のヘッダーが付かないため、ブラウザは
+# 応答ごと捨ててしまい、画面には「Network Error」としか出ない。
+# 実際、楽天の発注下調べが毎回500で落ちていたのに、原因にたどり着くまで
+# 遠回りした。
+#
+# この middleware は最後に足しているので、認証も含めた外側を包む。
+# CORSMiddleware はこれより内側にいて素通りされるため、401 と同じく
+# ヘッダーを自分で付ける。
+@app.middleware("http")
+async def surface_errors(request: _StarletteRequest, call_next):
+    try:
+        return await call_next(request)
+    except Exception as e:
+        import logging
+        import traceback
+        logging.error("未処理の例外 %s %s\n%s", request.method,
+                      request.url.path, traceback.format_exc())
+        return _JSONResponse(
+            status_code=500,
+            # 画面にそのまま出る。何が起きたか分からないと直せないので、
+            # 例外の種類と本文を入れる
+            content={"detail": f"サーバー側でエラーが出ました: "
+                               f"{type(e).__name__}: {e}"},
+            headers=_cors_headers_for(request),
+        )
