@@ -298,7 +298,13 @@ function ShipmentTab() {
         unmatched,
       })
       const receiveRes = await api.post(`/shipment-orders/${saveRes.data.shipment_order_id}/receive`)
-      setReceiveResult(receiveRes.data)
+      // 入荷で発注済が閉じ切れないことがある（発注の記録をあとから入れた場合など）。
+      // 当日中に気づけるよう、ここでタオタロウと突き合わせて結果を添える
+      let sync = null
+      try {
+        sync = (await api.post('/rakuten/orders/sync-taotaro', { dry_run: true })).data
+      } catch { /* 繋がらないときは入荷そのものは成功しているので黙って進む */ }
+      setReceiveResult({ ...receiveRes.data, sync })
       setDone(true)
       qc.invalidateQueries(['rakuten-all-products-order'])
       qc.invalidateQueries(['rakuten-order-history'])
@@ -331,6 +337,13 @@ function ShipmentTab() {
                   {receiveResult.duplicate_skipped > 0 && ` / 重複スキップ: ${receiveResult.duplicate_skipped}件`}
                   {' '}/ 発注済消化: {receiveResult.order_consumed}件
                   {' '} / RMS反映: ok {receiveResult.rms_push_ok || 0} / fail {receiveResult.rms_push_fail || 0}
+                  {receiveResult.sync && receiveResult.sync.over_qty > 0 && (
+                    <div style={{ marginTop: 6, color: '#b45309', fontWeight: 700 }}>
+                      ⚠ 発注済がタオタロウより {receiveResult.sync.over_qty}個 多いままです
+                      （{receiveResult.sync.over.map(o => o.sku).slice(0, 5).join('、')}）。
+                      発注管理の画面から合わせてください。
+                    </div>
+                  )}
 
                   {receiveResult.skipped_rows?.length > 0 && (
                     <div style={{ marginTop: 12, border: '1px solid #fcd34d', background: '#fffbeb', borderRadius: 8, padding: 12 }}>
@@ -861,6 +874,34 @@ export default function RakutenOrderPage() {
   const thresholdDays = settings.threshold_days ?? 40
 
   // SKUから商品を引く表。セット商品かどうかの確認に使う
+  // 発注済とタオタロウの突き合わせ。画面を開いたときに一度だけ見る
+  const [syncResult, setSyncResult] = useState(null)
+  const [syncing, setSyncing] = useState(false)
+  const runSync = async (dryRun) => {
+    if (!dryRun) {
+      const n = syncResult ? syncResult.over_qty : 0
+      if (!confirm(`タオタロウ側に無い発注済 ${n}個ぶんを閉じます。
+
+在庫は動きません。発注済から外れるだけです。
+よろしいですか？`)) return
+    }
+    setSyncing(true)
+    try {
+      const r = await api.post('/rakuten/orders/sync-taotaro', { dry_run: dryRun })
+      setSyncResult(r.data)
+      if (!dryRun) {
+        qc.invalidateQueries(['rakuten-all-products-order'])
+        qc.invalidateQueries(['rakuten-order-history'])
+      }
+    } catch (e) {
+      // 繋がらないときは黙って出さない。発注そのものは今までどおりできる
+      if (!dryRun) alert('合わせられませんでした: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setSyncing(false)
+    }
+  }
+  useEffect(() => { runSync(true) }, [])
+
   // 入荷したのに閉じていない発注。残っていると次の発注が遅れる
   const { data: staleData } = useQuery({
     queryKey: ['stale-pending-orders'],
@@ -1007,6 +1048,71 @@ export default function RakutenOrderPage() {
 
   return (
     <div>
+      {/* 発注済とタオタロウの実際の注文を突き合わせる。発注済は
+          「あと何個来るか」として発注数に効くので、ずれていると
+          足りているように見えて次の発注が遅れる */}
+      {syncResult && (syncResult.over.length > 0 || syncResult.short.length > 0) && (
+        <div style={{ background: '#fffbeb', border: '2px solid #d97706', borderRadius: 8,
+          padding: 14, marginBottom: 16 }}>
+          <div style={{ fontWeight: 700, color: '#92400e', marginBottom: 6 }}>
+            ⚠ 発注済がタオタロウと合っていません
+            （多い {syncResult.over.length}件・{syncResult.over_qty}個
+            {syncResult.short.length > 0 && ` ／ 足りない ${syncResult.short.length}件`}）
+          </div>
+          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse', marginBottom: 10 }}>
+            <thead>
+              <tr style={{ background: '#fef3c7' }}>
+                {['SKU', 'ツールの発注済', 'タオタロウ', '差', '閉じる発注'].map(h => (
+                  <th key={h} style={{ textAlign: 'left', padding: '4px 8px', whiteSpace: 'nowrap' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {syncResult.over.map(o => (
+                <tr key={o.sku} style={{ borderTop: '1px solid #fde68a' }}>
+                  <td style={{ padding: '4px 8px', fontWeight: 600 }}>{o.sku}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{o.ours}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{o.theirs}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 700, color: '#b45309' }}>
+                    −{o.close}
+                  </td>
+                  <td style={{ padding: '4px 8px', color: '#92400e' }}>
+                    {o.records.map(r => `${r.ordered_at} ${r.qty}個`).join('／')}
+                  </td>
+                </tr>
+              ))}
+              {syncResult.short.map(o => (
+                <tr key={o.sku} style={{ borderTop: '1px solid #fde68a' }}>
+                  <td style={{ padding: '4px 8px', fontWeight: 600 }}>{o.sku}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{o.ours}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{o.theirs}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 700, color: '#b91c1c' }}>
+                    ＋{o.missing}
+                  </td>
+                  <td style={{ padding: '4px 8px', color: '#b91c1c' }}>
+                    発注の記録が漏れています（自動では足しません）
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {syncResult.over.length > 0 && (
+            <button className="btn btn-sm btn-secondary" style={{ fontSize: 12 }}
+              disabled={syncing} onClick={() => runSync(false)}>
+              多いぶんを閉じる（{syncResult.over_qty}個）
+            </button>
+          )}
+          {syncResult.unknown.length > 0 && (
+            <div style={{ fontSize: 11, color: '#92400e', marginTop: 8 }}>
+              ※ {syncResult.unknown.length}件は判断できないので触っていません
+              （{syncResult.unknown.slice(0, 4).map(u => u.sku).join('、')}
+              {syncResult.unknown.length > 4 && ' ほか'}）。
+              発注時に管理番号を入れていない古い注文です。
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 入荷したのに閉じていない発注。発注済は「あと何個来るか」として
           発注数の計算に効くので、残っていると足りているように見えて
           次の発注が遅れる。自動では閉じない（別の発注ぶんの入荷を

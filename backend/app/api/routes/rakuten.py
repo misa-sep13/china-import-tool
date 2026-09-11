@@ -1638,6 +1638,98 @@ def update_order_qty(order_id: int, body: dict, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "qty": o.qty}
 
+class SyncTaotaroIn(BaseModel):
+    # 既定は見るだけ。閉じるときだけ明示的に false にする
+    dry_run: bool = True
+
+
+@router.post("/orders/sync-taotaro")
+def sync_orders_with_taotaro(data: SyncTaotaroIn, request: Request,
+                             db: Session = Depends(get_db)):
+    """発注済をタオタロウの実際の注文と突き合わせる。
+
+    発注済は「あと何個来るか」として発注数の計算に効く。閉じ忘れが残ると
+    足りているように見えて、次の発注が遅れる。実際、37件1,125個ぶんが
+    何か月も残っていた。
+
+    タオタロウ側には注文ごとの状態があるので、そちらを正として比べる。
+    多すぎるぶんは古い発注から閉じる。少ないぶんは記録漏れなので、
+    こちらでは足さずに報告だけする（勝手に発注を作ると事故になる）。
+
+    自社の管理番号（out_id）で引く。入れずに出した古い注文は引けないので、
+    1件も見つからないSKUは触らない。0個と「分からない」は違う。
+    """
+    from app.services import taotaro
+    if not taotaro.is_configured():
+        raise HTTPException(502, "タオタロウのトークンが未設定です")
+
+    rows = (db.query(RakutenOrderHistory)
+            .filter(RakutenOrderHistory.is_delivered == False,
+                    RakutenOrderHistory.is_deleted == False)
+            .order_by(RakutenOrderHistory.ordered_at.asc(),
+                      RakutenOrderHistory.id.asc()).all())
+    by_sku: dict = {}
+    for r in rows:
+        by_sku.setdefault(r.sku or "", []).append(r)
+
+    try:
+        stat = taotaro.open_qty_by_sku(sorted(by_sku.keys()))
+    except taotaro.TaotaroError as e:
+        raise HTTPException(502, e.message)
+
+    over, short, unknown, closed = [], [], [], []
+    for sku, recs in by_sku.items():
+        info = stat.get(sku) or {}
+        ours = sum(int(r.qty or 0) for r in recs)
+        if info.get("error") or not info.get("found"):
+            unknown.append({"sku": sku, "ours": ours,
+                            "reason": info.get("error")
+                            or "タオタロウ側で見つからない（管理番号なしの発注）"})
+            continue
+        theirs = int(info.get("open") or 0)
+        if theirs == ours:
+            continue
+        if theirs > ours:
+            short.append({"sku": sku, "ours": ours, "theirs": theirs,
+                          "missing": theirs - ours})
+            continue
+
+        gap = ours - theirs
+        picked, left = [], gap
+        for r in recs:                       # 古い順
+            if left <= 0:
+                break
+            picked.append(r)
+            left -= int(r.qty or 0)
+        # 端数が出る組み合わせは触らない。中途半端に閉じると数が合わなくなる
+        if left != 0:
+            unknown.append({"sku": sku, "ours": ours, "theirs": theirs,
+                            "reason": "発注の単位が合わず、きれいに閉じられない"})
+            continue
+        over.append({
+            "sku": sku, "ours": ours, "theirs": theirs, "close": gap,
+            "records": [{"id": r.id, "qty": r.qty,
+                         "ordered_at": r.ordered_at.isoformat()
+                         if r.ordered_at else None} for r in picked],
+        })
+        if not data.dry_run:
+            for r in picked:
+                r.is_deleted = True
+                log_activity(db, request, "delete", "rakuten_order", r.id,
+                             f"タオタロウと突き合わせて発注済を解消: {r.sku} 数量{r.qty}",
+                             sku=r.sku)
+                closed.append(r.id)
+
+    if closed:
+        db.commit()
+    return {
+        "dry_run": data.dry_run,
+        "over": over, "short": short, "unknown": unknown,
+        "closed": len(closed),
+        "over_qty": sum(x["close"] for x in over),
+    }
+
+
 @router.get("/orders/pending-taotaro")
 def pending_orders_taotaro(db: Session = Depends(get_db)):
     """未納品の発注が、タオタロウ側で今どうなっているかを返す。

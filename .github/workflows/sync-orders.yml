@@ -1,0 +1,29 @@
+name: Daily Sync Orders With Taotaro
+
+# 発注済は「あと何個来るか」として発注数の計算に効く。閉じ忘れが残ると
+# 足りているように見えて次の発注が遅れる。実際に37件1,125個ぶんが
+# 何か月も残っていた。1日1回、タオタロウの実際の注文と突き合わせて直す。
+#
+# 見るだけではなく実際に閉じる。人が毎日見る前提にすると、忙しい日に
+# 飛ばされて元に戻るため。判断できないもの（管理番号なしの古い注文）は
+# 触らない作りなので、勝手に消えて困ることは起きない。
+
+on:
+  schedule:
+    # 毎日 8:00 JST（= 前日 23:00 UTC）。発注作業を始める前に整える
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync pending orders with Taotaro
+        run: |
+          curl -X POST "${{ secrets.BACKEND_URL }}/api/rakuten/orders/sync-taotaro" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.AUTH_SERVICE_TOKEN }}" \
+            -d '{"dry_run": false}' \
+            --max-time 300 \
+            --retry 2 \
+            -f

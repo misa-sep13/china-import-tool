@@ -864,3 +864,61 @@ def invoice_workbook(sid: int) -> bytes:
             "この便の請求書はExcelではありませんでした。"
             "お手元のインボイスを使ってください")
     return raw
+
+
+# 「まだ届いていない」注文のステータス。
+# 注文そのものには「日本に着いた」という状態が無く、便へ載ったあとは
+# 5（配送依頼提出済）のまま止まる。だから便の状態まで見ないと、
+# 到着済みのものを「まだ来る」と数えてしまう。
+_ORDER_COMING = {1, 2, 3, 4, 7, 8, 9}   # 買付中〜倉庫内。まだ日本へ出ていない
+_ORDER_IN_SEND = 5                       # 便に載った。届いたかは便の状態しだい
+# 便が受け取り済みなら、その中身はもう日本にある
+_SEND_ARRIVED = {3}                      # 3=受け取り済み
+
+
+def open_qty_by_sku(skus: list, send_pages: int = 3) -> dict:
+    """自社SKUごとに「まだ届いていない数」を返す。
+
+    発注済は本来これと同じはずで、ずれていたら閉じ忘れか記録漏れ。
+    out_id を入れずに出した古い注文は引けないので、その場合は
+    found=0 を返す。0個と0件は意味が違うので、呼び出し側で分けて扱う。
+    """
+    # 便の状態をまとめて引く。注文1件ずつ便を引くと回数制限に当たる
+    send_state = {}
+    for page in range(1, max(1, send_pages) + 1):
+        d = list_send_orders(page=page, limit=100)
+        for x in d.get("items") or []:
+            if x.get("sid") is not None:
+                send_state[x["sid"]] = x.get("state")
+        if not d.get("has_more_pages"):
+            break
+
+    out = {}
+    for sku in skus:
+        sku = (sku or "").strip()
+        if not sku:
+            continue
+        try:
+            orders = find_orders_by_out_id(sku, limit=50)
+        except TaotaroError as e:
+            out[sku] = {"found": 0, "open": 0, "error": e.message, "detail": []}
+            continue
+        total, detail = 0, []
+        for o in orders:
+            st = o.get("state")
+            qty = int(o.get("quantity") or 0)
+            if st in _ORDER_COMING:
+                coming = True
+            elif st == _ORDER_IN_SEND:
+                # 便が受け取り済みなら届いている
+                coming = send_state.get(o.get("sid")) not in _SEND_ARRIVED
+            else:
+                coming = False          # 無効・返金・廃棄
+            if coming:
+                total += qty
+            detail.append({"oid": o.get("oid"), "sid": o.get("sid"),
+                           "qty": qty, "state_label": o.get("state_label"),
+                           "coming": coming})
+        out[sku] = {"found": len(orders), "open": total, "error": "",
+                    "detail": detail[:10]}
+    return out
