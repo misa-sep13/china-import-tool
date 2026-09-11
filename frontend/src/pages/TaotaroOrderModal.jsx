@@ -79,6 +79,9 @@ export default function TaotaroOrderModal({
           // （毎回手で書くと、書き忘れた便が普通の配送で来てしまう）
           remark: [x.note || '', x.asin ? FBA_NOTE : ''].filter(Boolean).join(' / '),
           inspect: x.inspect || {},
+          // 「その他」は、タオタロウの画面と同じくチェックを入れてから書く形。
+          // 商品マスタに覚えた文章があるなら、最初から入れた状態で開く
+          otherOn: !!((x.inspect || {}).var7 || '').trim(),
           rememberInspect: false,
           send: x.ok,
         })))
@@ -331,7 +334,9 @@ function Row({ r, i, patch, pickSku }) {
             border: 'none', padding: 0, cursor: 'pointer',
           }}>
             {open ? '▲ 検品オプション・備考を閉じる' : '▼ 検品オプション・備考'}
-            {Object.keys(r.inspect || {}).length > 0 && ' （指定あり）'}
+            {/* 外したチェックは 0 で残るので、中身のあるものだけ数える */}
+            {Object.values(r.inspect || {}).some(v =>
+              typeof v === 'string' ? v.trim() : v) && ' （指定あり）'}
           </button>
 
           {open && (
@@ -351,12 +356,31 @@ function Row({ r, i, patch, pickSku }) {
                     {labelText}
                   </label>
                 ))}
+                {/* タオタロウの画面と同じ並び。チェックを入れると下の欄に書ける。
+                    外したときは書きかけを消す。残ったまま送ると、頼んでいない
+                    ことが現場へ伝わってしまう */}
+                <label style={{ fontSize: 12, display: 'flex',
+                  alignItems: 'center', gap: 4 }}>
+                  <input type="checkbox" checked={!!r.otherOn} style={check}
+                    onChange={e => {
+                      const on = e.target.checked
+                      const ins = { ...r.inspect }
+                      if (!on) delete ins.var7
+                      patch(i, { otherOn: on, inspect: ins })
+                    }} />
+                  その他
+                </label>
               </div>
-              <input type="text" placeholder="その他のご要望（現場スタッフが見ます）"
+              <input type="text" disabled={!r.otherOn}
+                placeholder={r.otherOn
+                  ? 'その他のご要望（現場スタッフが見ます）'
+                  : '「その他」にチェックを入れると書けます'}
                 value={r.inspect.var7 || ''}
                 onChange={e => patch(i, { inspect: { ...r.inspect, var7: e.target.value } })}
                 style={{ width: '100%', marginTop: 8, fontSize: 12, padding: '6px 8px',
-                  border: `1px solid ${C.line}`, borderRadius: 5, boxSizing: 'border-box' }} />
+                  border: `1px solid ${C.line}`, borderRadius: 5, boxSizing: 'border-box',
+                  background: r.otherOn ? '#fff' : '#f1f5f9',
+                  color: r.otherOn ? C.text : C.sub }} />
               <input type="text" placeholder="タオタロウへ伝える備考（商品マスタの備考が入っています）"
                 value={r.remark}
                 onChange={e => patch(i, { remark: e.target.value })}
