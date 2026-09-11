@@ -4541,8 +4541,26 @@ def _taotaro_rows(order_items: list, db: Session) -> list:
         if not p:
             continue
 
-        # 本体行（set_componentsありかつspec空のものは、構成品だけを頼む）
-        if not (p.set_components and not (p.spec or "").strip()):
+        try:
+            comps = json.loads(p.set_components or "[]")
+        except Exception:
+            comps = []
+        try:
+            pcomps = json.loads(getattr(p, "purchase_components", None) or "[]")
+        except Exception:
+            pcomps = []
+
+        # 本体行を出すか。構成品を持っていて、本体に仕入先の仕様が無いものは
+        # 「まとまりの名前」でしかなく、買う対象ではない（y47の4色セットなど）。
+        # どの色を買うか指定できないうえ、出すと構成品と二重に頼むことになる。
+        skip_parent = bool(comps or pcomps) and not (
+            (getattr(p, "supplier_spec", "") or "").strip()
+        )
+        # set_componentsありかつspec空のものは、従来どおり構成品だけを頼む
+        if p.set_components and not (p.spec or "").strip():
+            skip_parent = True
+
+        if not skip_parent:
             rows.append({
                 "sku": sku, "name": p.name or sku,
                 "buy_url": p.buy_url or "",
@@ -4552,15 +4570,6 @@ def _taotaro_rows(order_items: list, db: Session) -> list:
                 # どちらも現場への指示なので、まとめて備考として送る
                 "note": _join_notes(p.customer_memo, p.notes),
             })
-
-        try:
-            comps = json.loads(p.set_components or "[]")
-        except Exception:
-            comps = []
-        try:
-            pcomps = json.loads(getattr(p, "purchase_components", None) or "[]")
-        except Exception:
-            pcomps = []
 
         for comp in comps + pcomps:
             comp_sku = comp.get("sku")

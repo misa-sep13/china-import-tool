@@ -573,9 +573,17 @@ def _label_parts(label: str) -> list:
     """仕入先のラベル「カラー：赤 / サイズ：M」を、値だけの断片にする。
 
     属性名（カラー・颜色分类など）は商品マスタに入っていないので落とす。
+
+    値は商品マスタ側と同じ割り方（_parts）で細かくする。揃えないと
+    「34*34cm39克（蜂窝系列）」がラベル側では1つの塊のままになり、
+    完全一致では決まらない。そうなると部分一致まで落ちて、
+    「灰色」が「浅灰色」にも当たってしまい、どちらか決められなくなる。
+    実際、キッチンタオル4色のうち3色がこれで選び直しになっていた。
     """
+    import re
     out = []
-    for seg in str(label or "").split("/"):
+    # 「颜色：乳白色；规格：34*34cm39克」のように ； で並ぶ書き方もある
+    for seg in re.split(r"[/／；;]+", str(label or "")):
         seg = seg.strip()
         if not seg:
             continue
@@ -584,9 +592,7 @@ def _label_parts(label: str) -> list:
             if sep in seg:
                 seg = seg.split(sep, 1)[1]
                 break
-        seg = _norm(seg)
-        if seg:
-            out.append(seg)
+        out.extend(_parts(seg))
     return out
 
 
