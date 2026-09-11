@@ -4767,3 +4767,19 @@ def rakuten_taotaro_submit(body: dict, db: Session = Depends(get_db)):
 
     return {"ordered": len(goods_list), "oids": r.get("oids") or [],
             "recorded": recorded}
+
+
+@router.get("/orders/lead-time")
+def rakuten_lead_time(refresh: int = 0, db: Session = Depends(get_db)):
+    """発注から入荷までの実績。設定のリードタイムが実態と合っているか見る。
+
+    タオタロウのAPIは1分100回までで、便の明細を1件ずつ引くため、
+    結果は12時間持っておく。refresh=1 で取り直す。
+    """
+    from app.services import taotaro, lead_time
+    if not taotaro.is_configured():
+        raise HTTPException(502, "タオタロウのトークンが未設定です")
+    s = _get_or_create_settings(db)
+    out = lead_time.cached(db, refresh=bool(refresh))
+    out["current_lead_days"] = s.lead_days
+    return out
