@@ -70,6 +70,8 @@ def build_args(params):
     sellers = params.get("sellers")
     if sellers:
         args += ["--sellers", ",".join(str(x) for x in sellers)]
+    elif params.get("only_new"):
+        args += ["--only-new"]
     elif params.get("stale_days"):
         args += ["--stale-days", str(params["stale_days"])]
     if params.get("pages"):

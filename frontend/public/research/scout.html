@@ -255,6 +255,7 @@
       <label>更新する範囲</label>
       <select class="num" id="scope">
         <option value="all">登録セラー全部</option>
+        <option value="new">まだ取っていないセラーだけ</option>
         <option value="stale">7日以上前のセラーだけ</option>
         <option value="selected">左で選んだセラーだけ</option>
         <option value="resume">前回の続きから</option>
@@ -795,6 +796,7 @@ $("#btnRun").addEventListener("click", async ()=>{
   const body = { pages: +pg, early_stop: es === "1",
                  fast: pace==="fast", slow: pace==="slow" };
   if(scope==="resume") body.resume = true;
+  else if(scope==="new") body.only_new = true;
   else if(scope==="stale") body.stale_days = 7;
   else if(scope==="selected"){
     if(!picked.size) return toast("左のセラー一覧から選んでください");

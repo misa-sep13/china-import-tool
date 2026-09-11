@@ -594,6 +594,9 @@ class CrawlIn(BaseModel):
     fast: Optional[bool] = None
     slow: Optional[bool] = None
     resume: Optional[bool] = None
+    # ブックマークを足した直後、新しいぶんだけ回したいことが多い。
+    # 全部回すと1時間半かかるので、そこは待てない
+    only_new: Optional[bool] = None
     stale_days: Optional[int] = None
     sellers: Optional[List[str]] = None
     hidden: Optional[bool] = None

@@ -336,7 +336,11 @@ def pick_sellers(con, a):
         return [(r["seller_id"], r["name"]) for r in rows]
 
     sql = "SELECT seller_id,name FROM sellers WHERE enabled=1"
-    if a.stale_days:                      # 最近取ったセラーは飛ばす
+    if getattr(a, "only_new", False):     # 一度も取っていないセラーだけ
+        # ブックマークから足した直後に、新しいぶんだけ回したいことが多い。
+        # 289社を全部回すと1時間半かかるので、そこは待てない
+        sql += " AND last_run_at IS NULL"
+    elif a.stale_days:                    # 最近取ったセラーは飛ばす
         sql += (" AND (last_run_at IS NULL OR last_run_at <"
                 f" datetime('now','localtime','-{int(a.stale_days)} day'))")
     # 一度も取っていないセラー → 取得が古いセラー の順に片づける
@@ -391,6 +395,8 @@ def main():
                     help="1セラーあたりのページ数の上限（安全のための頭打ち）")
     ap.add_argument("--stale-days", type=int, default=0,
                     help="この日数以内に取得済みのセラーは飛ばす")
+    ap.add_argument("--only-new", action="store_true",
+                    help="一度も取得していないセラーだけを回す")
     # ページ間・セラー間の「間隔」だけが Amazon から見た速さを決める。
     # 描画待ち(--render-timeout)は上限であって、出たらすぐ進むので実測1〜2秒。
     ap.add_argument("--page-wait-min", type=float, default=2.5)
