@@ -35,6 +35,10 @@ const INSPECT = [
   ['var6', '下げ札取り外し'],
 ]
 
+// FBAはまだAPIで指定できない（タオタロウ確認済み・2026-09）。
+// 対応したらこの行と、下の remark への差し込みを外す
+const FBA_NOTE = 'FBA行きです。APIで指定できないため、そちらでFBAに変更をお願いします。'
+
 export default function TaotaroOrderModal({
   items, onClose, onDone,
   // 叩く先。楽天とAmazonで置き場所が違うだけで、中身も画面も同じ
@@ -65,8 +69,10 @@ export default function TaotaroOrderModal({
           ...x,
           skuId: (x.chosen && x.chosen.sku_id) || '',
           // 商品マスタの備考をそのまま入れておく。「ケースのみ購入」など、
-          // 現場に伝えないと違うものが届く指示が書かれている
-          remark: x.note || '',
+          // 現場に伝えないと違うものが届く指示が書かれている。
+          // FBA行きはまだAPIで指定できないので、そのお願いも足しておく
+          // （毎回手で書くと、書き忘れた便が普通の配送で来てしまう）
+          remark: [x.note || '', x.asin ? FBA_NOTE : ''].filter(Boolean).join(' / '),
           inspect: x.inspect || {},
           rememberInspect: false,
           send: x.ok,
@@ -111,7 +117,7 @@ export default function TaotaroOrderModal({
           product_id: t.product_id, sku_id: t.skuId,
           remark: t.remark || '',
           asin: t.asin || '', fnsku: t.fnsku || '',
-          fba: t.asin ? 1 : 0,
+          fba: t.asin ? '1' : '0',
           inspect: t.inspect || {},
           remember_sku: true,
           remember_inspect: !!t.rememberInspect,

@@ -321,8 +321,11 @@ def order_submit(req: SubmitRequest, db: Session = Depends(get_db)):
         }
         if it.remark:
             g["remark"] = it.remark
+        # FBAはまだAPIで指定できない（タオタロウ確認済み・2026-09）。
+        # 送っても効かないが、対応したときに拾ってもらえるよう項目は残す。
+        # 実際のFBA指定は、画面が備考に入れるお願い文で伝えている
         if it.fba and it.asin:
-            g["fba"] = 1
+            g["fba"] = "1"
             g["asin"] = it.asin
             if it.fnsku:
                 g["fnsku"] = it.fnsku
