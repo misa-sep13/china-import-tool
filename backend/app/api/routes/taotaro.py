@@ -230,7 +230,10 @@ def order_preview(req: PreviewRequest, db: Session = Depends(get_db)):
 
         row.update({
             "product_id": d["product_id"], "platform": d["platform"],
-            "title": d.get("title_trans") or d.get("title") or "",
+            # 仕入先の商品名は原文のまま使う。訳は「純綿の蜂の巣は吸水して
+            # 厚い雑巾を厚くします」のように意味の通らない日本語になり、
+            # それがそのままタオタロウの注文名になってしまう
+            "title": d.get("title") or d.get("title_trans") or "",
             "skus": d["skus"], "min_order_quantity": d["min_order_quantity"],
             "status": d.get("status"),
         })
