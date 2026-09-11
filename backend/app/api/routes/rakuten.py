@@ -4596,6 +4596,8 @@ def rakuten_taotaro_preview(body: dict, db: Session = Depends(get_db)):
 
     out = []
     for r in _taotaro_rows(body.get("items", []), db):
+        # 商品マスタは row を組み立てる前に引く。master_price で参照するため
+        p = db.query(RakutenProduct).filter(RakutenProduct.sku == r["sku"]).first()
         row = {
             "sku": r["sku"], "name": r["name"], "qty": r["qty"],
             "buy_url": r["buy_url"], "color": r["spec"], "size": "",
@@ -4609,7 +4611,6 @@ def rakuten_taotaro_preview(body: dict, db: Session = Depends(get_db)):
             # 円で入れてしまっている可能性がある
             "master_price": (p.price if p else None),
         }
-        p = db.query(RakutenProduct).filter(RakutenProduct.sku == r["sku"]).first()
 
         if not r["buy_url"]:
             row["error"] = "仕入URLがありません"

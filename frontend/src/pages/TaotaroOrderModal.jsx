@@ -50,12 +50,17 @@ export default function TaotaroOrderModal({
   const [err, setErr] = useState('')
   const [sending, setSending] = useState(false)
   const [result, setResult] = useState(null)
+  // 下調べのやり直し回数。通信が一瞬切れただけでも下調べは落ちるが、
+  // そこで閉じさせると画面の行の選び直しからやり直しになる。
+  // 選んだ状態のまま、この画面の中で引き直せるようにしておく
+  const [retry, setRetry] = useState(0)
 
   // 開いたらすぐ下調べ。価格と在庫はキャッシュされるので、
   // 発注の直前に取り直すよう仕様書で勧められている
   useEffect(() => {
     let alive = true
     const run = async () => {
+      setBusy(true); setErr('')
       try {
         const r = await api.post(previewUrl, {
           items: items.map(it => ({
@@ -85,7 +90,7 @@ export default function TaotaroOrderModal({
     }
     run()
     return () => { alive = false }
-  }, [items, previewUrl])
+  }, [items, previewUrl, retry])
 
   const patch = (i, v) => setRows(rs => rs.map((r, n) => n === i ? { ...r, ...v } : r))
 
@@ -151,6 +156,14 @@ export default function TaotaroOrderModal({
 
         <div style={{ padding: 16, overflow: 'auto', flex: 1 }}>
           {err && <Err text={err} />}
+          {/* 下調べが取れていないときだけ引き直せる。発注の失敗でこれを出すと、
+              せっかく選んだ色・サイズが消えてしまう */}
+          {err && !busy && !rows && (
+            <button className="btn btn-secondary" style={{ marginBottom: 10 }}
+              onClick={() => setRetry(n => n + 1)}>
+              もう一度読み込む
+            </button>
+          )}
           {busy && <div style={{ color: C.sub, fontSize: 13 }}>
             商品情報を取り直しています…（価格と在庫は発注直前に確認します）
           </div>}
