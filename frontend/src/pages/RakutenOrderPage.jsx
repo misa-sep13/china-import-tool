@@ -861,6 +861,32 @@ export default function RakutenOrderPage() {
   const thresholdDays = settings.threshold_days ?? 40
 
   // SKUから商品を引く表。セット商品かどうかの確認に使う
+  // 入荷したのに閉じていない発注。残っていると次の発注が遅れる
+  const { data: staleData } = useQuery({
+    queryKey: ['stale-pending-orders'],
+    queryFn: () => api.get('/rakuten/orders/stale-pending').then(r => r.data),
+    retry: false,
+  })
+  const stalePending = staleData?.items || []
+  const [closingOrder, setClosingOrder] = useState(null)
+  const closeStale = async (o) => {
+    if (!confirm(`${o.sku} の発注 ${o.qty}個（${o.ordered_at}）を納品済にします。
+
+在庫は動きません。発注済から外れるだけです。
+よろしいですか？`)) return
+    setClosingOrder(o.id)
+    try {
+      await api.patch('/rakuten/orders/history/' + o.id + '/deliver')
+      qc.invalidateQueries(['stale-pending-orders'])
+      qc.invalidateQueries(['rakuten-all-products-order'])
+      qc.invalidateQueries(['rakuten-order-history'])
+    } catch (e) {
+      alert('変更できませんでした: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setClosingOrder(null)
+    }
+  }
+
   const bySku = new Map((allData?.items || []).map(x => [x.sku, x]))
 
   const handleOrder = async (item) => {
@@ -965,6 +991,53 @@ export default function RakutenOrderPage() {
 
   return (
     <div>
+      {/* 入荷したのに閉じていない発注。発注済は「あと何個来るか」として
+          発注数の計算に効くので、残っていると足りているように見えて
+          次の発注が遅れる。自動では閉じない（別の発注ぶんの入荷を
+          数えていることがあるため）*/}
+      {stalePending.length > 0 && (
+        <div style={{ background: '#fffbeb', border: '2px solid #d97706', borderRadius: 8,
+          padding: 14, marginBottom: 16 }}>
+          <div style={{ fontWeight: 700, color: '#92400e', marginBottom: 6 }}>
+            ⚠ 入荷したのに発注済のまま残っている可能性があります（{stalePending.length}件）
+          </div>
+          <div style={{ fontSize: 12, color: '#92400e', marginBottom: 8, lineHeight: 1.7 }}>
+            発注日より後に、発注数以上の入荷があります。
+            発注済に残っていると「まだ来る」と見なされ、次の発注が遅れます。
+            中身を確かめてから「納品済にする」を押してください。
+          </div>
+          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#fef3c7' }}>
+                {['発注日', 'SKU', '商品名', '発注数', 'その後の入荷', ''].map(h => (
+                  <th key={h} style={{ textAlign: 'left', padding: '4px 8px', whiteSpace: 'nowrap' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {stalePending.map(o => (
+                <tr key={o.id} style={{ borderTop: '1px solid #fde68a' }}>
+                  <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>{o.ordered_at}</td>
+                  <td style={{ padding: '4px 8px', fontWeight: 600 }}>{o.sku}</td>
+                  <td style={{ padding: '4px 8px' }}>{o.name}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{o.qty}</td>
+                  <td style={{ padding: '4px 8px' }}>
+                    <b>{o.received_after}</b>
+                    <span style={{ color: '#92400e', marginLeft: 6 }}>
+                      （{(o.receipts || []).map(r => `${r.date} ${r.qty}`).join('／')}）
+                    </span>
+                  </td>
+                  <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>
+                    <button className="btn btn-sm btn-secondary" style={{ fontSize: 11 }}
+                      disabled={closingOrder === o.id}
+                      onClick={() => closeStale(o)}>納品済にする</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         <h1>🛒 楽天 発注管理</h1>
         <button className="btn" onClick={() => refetch()} disabled={isFetching} style={{ fontSize: 13 }}>

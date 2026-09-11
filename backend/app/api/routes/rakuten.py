@@ -1638,6 +1638,61 @@ def update_order_qty(order_id: int, body: dict, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "qty": o.qty}
 
+@router.get("/orders/stale-pending")
+def stale_pending_orders(db: Session = Depends(get_db)):
+    """入荷したのに閉じていない発注を探す。
+
+    入荷処理では発注履歴を古い順に消し込んでいるが、発注の記録を
+    あとから入れた場合など、消し込まれずに残ることがある。
+    実際、マウスピースケースの120個が入荷後も発注済に残っていた。
+
+    発注済は「あと何個来るか」として発注数の計算に効くので、
+    残っていると足りているように見えて、次の発注が遅れる。
+
+    判定は「その発注日より後に、発注数以上の入荷がある」。
+    別の発注ぶんの入荷を数えてしまうことがあるので、自動では閉じない。
+    """
+    from app.models.inventory_reflection_log import InventoryReflectionLog
+
+    pending = (db.query(RakutenOrderHistory)
+               .filter(RakutenOrderHistory.is_delivered == False,
+                       RakutenOrderHistory.is_deleted == False)
+               .all())
+    if not pending:
+        return {"items": [], "count": 0}
+
+    skus = {o.sku for o in pending if o.sku}
+    logs = (db.query(InventoryReflectionLog)
+            .filter(InventoryReflectionLog.sku.in_(skus)).all()) if skus else []
+    by_sku: dict = {}
+    for lg in logs:
+        by_sku.setdefault(lg.sku, []).append(lg)
+
+    out = []
+    for o in pending:
+        if not o.sku or not o.ordered_at:
+            continue
+        after = [lg for lg in by_sku.get(o.sku, [])
+                 if lg.created_at and lg.created_at.date() > o.ordered_at]
+        got = sum(int(lg.received_qty or 0) for lg in after)
+        if got < (o.qty or 0):
+            continue
+        out.append({
+            "id": o.id, "sku": o.sku, "name": o.name,
+            "qty": o.qty, "stage": o.stage,
+            "ordered_at": o.ordered_at.isoformat() if o.ordered_at else None,
+            "received_after": got,
+            # 何を見てそう判断したのかを出す。これが無いと信じて押せない
+            "receipts": [{
+                "date": lg.created_at.date().isoformat() if lg.created_at else None,
+                "qty": lg.received_qty,
+                "source": lg.source_label,
+            } for lg in sorted(after, key=lambda x: x.created_at)][:5],
+        })
+    out.sort(key=lambda x: (x["ordered_at"] or "", x["sku"]))
+    return {"items": out, "count": len(out)}
+
+
 @router.patch("/orders/history/{order_id}/deliver")
 def mark_delivered(order_id: int, db: Session = Depends(get_db)):
     o = db.query(RakutenOrderHistory).filter(RakutenOrderHistory.id == order_id).first()
