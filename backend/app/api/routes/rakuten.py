@@ -1638,7 +1638,7 @@ def update_order_qty(order_id: int, body: dict, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "qty": o.qty}
 
-def _taotaro_open_by_sku(db: Session, days: int = 150, max_pages: int = 12) -> dict:
+def _taotaro_open_by_sku(db: Session, days: int = 120, max_pages: int = 12) -> dict:
     """タオタロウの注文を自社SKUに割り当てて、「まだ届いていない数」を数える。
 
     管理番号（out_id）で引ければ確実だが、入れずに出した古い注文が大半なので、
@@ -1655,9 +1655,13 @@ def _taotaro_open_by_sku(db: Session, days: int = 150, max_pages: int = 12) -> d
 
     coming_states = {1, 2, 3, 4, 7, 8, 9}   # 買付中〜倉庫内
     in_send_state = 5                        # 便に載った
-    arrived_send = {3}                       # 便が受け取り済み＝もう日本にある
+    # 便が受け取り済みなら、その中身はもう日本にある。
+    # 一覧に見当たらない便は古い便なので、届いたものとして扱う。
+    # 「分からないから、まだ来る」にすると、何か月も前の注文まで
+    # 発注済に数えてしまう（実際それで18,800個と出た）
+    arrived_send = {3}
 
-    send_state = taotaro.send_order_states(pages=3)
+    send_state = taotaro.send_order_states(pages=5)
     start = int((_dt.now() - _td(days=days)).timestamp())
 
     idx = _product_indexes(db)
@@ -1672,13 +1676,17 @@ def _taotaro_open_by_sku(db: Session, days: int = 150, max_pages: int = 12) -> d
             if st in coming_states:
                 coming = True
             elif st == in_send_state:
-                coming = send_state.get(o.get("sid")) not in arrived_send
+                sid_state = send_state.get(o.get("sid"))
+                coming = sid_state is not None and sid_state not in arrived_send
             else:
                 coming = False
             e = found.setdefault(product.sku, {"found": 0, "open": 0})
             e["found"] += 1
             if coming:
-                e["open"] += int(o.get("quantity") or 0)
+                # タオタロウの数量は「個」。発注済は販売単位なので割る
+                unit = product.set_size or 1
+                qty = int(o.get("quantity") or 0)
+                e["open"] += qty // unit if unit > 1 else qty
         if not d["has_more_pages"]:
             break
     return found
