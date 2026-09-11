@@ -46,6 +46,8 @@
   .srow:last-child{border-bottom:0}
   .srow:hover{background:#f8f9fb}
   .srow.on{background:#fff4ec}
+  /* Shift+クリックで範囲を選ぶとき、文字が青く反転して見づらいので止める */
+  .srow{user-select:none}
   /* min-width:0 が無いと、flexの既定(min-width:auto)で名前の長さまで縮まない。
      「Luce Luce （横浜本店…）【当日便可能】…」のような65文字の店名で
      行が横に伸び、一覧に横スクロールが出ていた */
@@ -287,6 +289,9 @@
     <h3>セラー <span id="selCnt" style="color:var(--sub);font-weight:400"></span></h3>
     <select class="num" id="folder" style="margin-bottom:7px"><option value="">すべてのフォルダ</option></select>
     <div class="sellers" id="sellerList"></div>
+    <div style="font-size:11px;color:var(--sub);margin-top:4px">
+      クリックで選択／Shift+クリックで、直前に押した行からここまでをまとめて選択
+    </div>
   </aside>
 
   <main class="main">
@@ -679,10 +684,28 @@ $("#btnBasketClear").addEventListener("click", async ()=>{
 });
 
 /* ---- 操作 ---- */
+/* 直前に押した行。Shift+クリックでここまでをまとめて選ぶ。
+   フォルダを切り替えると並びが変わるので、覚えるのはIDではなく
+   「そのとき画面に出ている並びの中での位置」ではなくIDにしておき、
+   押した時点の一覧から位置を引き直す */
+let lastPickedId = null;
+
 $("#sellerList").addEventListener("click", e=>{
   const row = e.target.closest(".srow"); if(!row) return;
   const id = row.dataset.id;
-  picked.has(id) ? picked.delete(id) : picked.add(id);
+  const ids = [...$("#sellerList").querySelectorAll(".srow")].map(r=>r.dataset.id);
+  const from = lastPickedId === null ? -1 : ids.indexOf(lastPickedId);
+  const to = ids.indexOf(id);
+
+  if(e.shiftKey && from >= 0 && to >= 0){
+    // 範囲は「足す」だけにする。消すほうに倒すと、選び直しのつもりが
+    // 選んでいたものまで消えて分かりにくい
+    const [a, b] = from < to ? [from, to] : [to, from];
+    for(let i = a; i <= b; i++) picked.add(ids[i]);
+  }else{
+    picked.has(id) ? picked.delete(id) : picked.add(id);
+  }
+  lastPickedId = id;
   drawSellers(); load();
 });
 document.addEventListener("click", e=>{
