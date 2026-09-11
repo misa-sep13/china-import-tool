@@ -229,6 +229,8 @@ def _order_brief(o: dict) -> dict:
     """同梱注文の1明細。out_id が自社の管理番号（SKU）。"""
     return {
         "oid": o.get("oid"),
+        # 紐づく配送依頼。まだ便に入っていなければ0かNone
+        "sid": o.get("sid"),
         "out_id": o.get("out_id"),
         "state": o.get("state"),
         "state_label": ORDER_STATES.get(o.get("state"), ""),
@@ -720,7 +722,7 @@ def _pick_oids(data) -> list:
 
 
 def find_orders_by_out_id(out_id: str, limit: int = 20) -> list:
-    """自社の管理番号で注文を探す。作成直後の確認に使う。"""
+    """自社の管理番号で注文を探す。作成直後の確認と、発注済の突き合わせに使う。"""
     d = _request("/api/v1/orders", {"page": 1, "limit": limit,
                                     "out_id": (out_id or "").strip()})
     return [_order_brief(o) for o in (d.get("items") or [])]

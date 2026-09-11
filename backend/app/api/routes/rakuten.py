@@ -1638,6 +1638,68 @@ def update_order_qty(order_id: int, body: dict, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "qty": o.qty}
 
+@router.get("/orders/pending-taotaro")
+def pending_orders_taotaro(db: Session = Depends(get_db)):
+    """未納品の発注が、タオタロウ側で今どうなっているかを返す。
+
+    入荷記録から推測すると「どの発注に対する入荷か」が決められない。
+    タオタロウには注文ごとの状態・入庫日・どの便に入ったかが残っているので、
+    推測せずに確かめられる。
+
+    自社の管理番号（out_id）で引く。発注時に入れていない古い注文は
+    引けないので、その場合は「タオタロウ側に見つからない」と返す。
+    """
+    from app.services import taotaro
+    if not taotaro.is_configured():
+        raise HTTPException(502, "タオタロウのトークンが未設定です")
+
+    pending = (db.query(RakutenOrderHistory)
+               .filter(RakutenOrderHistory.is_delivered == False,
+                       RakutenOrderHistory.is_deleted == False)
+               .order_by(RakutenOrderHistory.ordered_at.asc()).all())
+    skus = sorted({o.sku for o in pending if o.sku})
+
+    # 倉庫まで届いている状態。ここから先は「発注したものが存在する」ことが確か
+    at_warehouse = {4, 5, 7, 8, 9}
+    on_the_way = {1, 2, 3}
+
+    by_sku: dict = {}
+    for sku in skus:
+        try:
+            orders = taotaro.find_orders_by_out_id(sku, limit=50)
+        except taotaro.TaotaroError as e:
+            by_sku[sku] = {"error": e.message, "orders": []}
+            continue
+        by_sku[sku] = {"error": "", "orders": orders}
+
+    out = []
+    for o in pending:
+        info = by_sku.get(o.sku or "", {"error": "", "orders": []})
+        orders = info["orders"]
+        arrived = sum(int(x.get("quantity") or 0) for x in orders
+                      if x.get("state") in at_warehouse)
+        coming = sum(int(x.get("quantity") or 0) for x in orders
+                     if x.get("state") in on_the_way)
+        out.append({
+            "id": o.id, "sku": o.sku, "name": o.name, "qty": o.qty,
+            "stage": o.stage,
+            "ordered_at": o.ordered_at.isoformat() if o.ordered_at else None,
+            "error": info["error"],
+            "found": len(orders),
+            "qty_at_warehouse": arrived,
+            "qty_on_the_way": coming,
+            "orders": [{
+                "oid": x.get("oid"), "sid": x.get("sid"),
+                "qty": x.get("quantity"),
+                "state": x.get("state"), "state_label": x.get("state_label"),
+                "created_at": (x.get("created_at") or "")[:10],
+                "arrived_at": (x.get("arrived_at") or "")[:10],
+            } for x in orders][:10],
+        })
+    return {"items": out, "count": len(out),
+            "note": "倉庫到着＝入庫済み・配送依頼提出済など。途中＝買付中・ショップから出荷など"}
+
+
 @router.get("/orders/stale-pending")
 def stale_pending_orders(db: Session = Depends(get_db)):
     """入荷したのに閉じていない発注を探す。
