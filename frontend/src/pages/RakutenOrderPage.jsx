@@ -12,6 +12,33 @@ const shipTraceColor = (text) => {
   return '#64748b'
 }
 
+// セット商品を親のSKUで発注してしまうのを止める。
+// 中身が登録されている商品は、実際には中身のSKUで届く。親で発注すると
+// 発注済がいつまでも消えず、荷受け画面に残り続ける（実際にy34で起きた）。
+const componentsOf = (item) => {
+  const c = item && item.set_components
+  if (Array.isArray(c)) return c.filter(x => x && x.sku)
+  return []
+}
+
+// 発注しようとしている中にセット商品があれば、名前を挙げて止める。
+// 進めることもできる（どうしても親で出したい事情があるかもしれない）
+const confirmSetOrder = (rows, bySku) => {
+  const bad = rows
+    .map(r => ({ sku: r.sku, comps: componentsOf(bySku.get(r.sku)) }))
+    .filter(x => x.comps.length > 0)
+  if (bad.length === 0) return true
+  const lines = bad.map(x =>
+    `・${x.sku}　→　${x.comps.map(c => `${c.sku}${c.qty > 1 ? ' ×' + c.qty : ''}`).join('、')}`
+  ).join('\n')
+  return window.confirm(
+    'セット商品が含まれています。\n\n'
+    + lines
+    + '\n\nこれらは中身のSKUで届くため、このまま発注すると発注済が消えずに残り続けます。'
+    + '\n中身のSKUで発注し直すことをおすすめします。\n\nこのまま進めますか？'
+  )
+}
+
 /* ===================== 配送依頼タブ ===================== */
 function ShipmentTab() {
   const qc = useQueryClient()
@@ -833,9 +860,13 @@ export default function RakutenOrderPage() {
   const settings = allData?.settings || {}
   const thresholdDays = settings.threshold_days ?? 40
 
+  // SKUから商品を引く表。セット商品かどうかの確認に使う
+  const bySku = new Map((allData?.items || []).map(x => [x.sku, x]))
+
   const handleOrder = async (item) => {
     const qty = orderInputs[item.sku] ?? item.order_qty
     if (!qty || qty <= 0) return
+    if (!confirmSetOrder([{ sku: item.sku }], bySku)) return
     setOrdering(item.sku)
     try {
       // 単品の発注Excelを生成し、同時に発注済みリストへ記録する
@@ -867,6 +898,7 @@ export default function RakutenOrderPage() {
   // 実際の発注はモーダルの中で、色・サイズを目視してから行う
   const handleTaotaroOrder = () => {
     const targets = splitTargets()
+    if (targets.length > 0 && !confirmSetOrder(targets, bySku)) return
     if (targets.length === 0) {
       alert('チェックした商品（発注数1以上）がありません')
       return
@@ -891,6 +923,7 @@ export default function RakutenOrderPage() {
       alert('チェックした商品（発注数1以上）がありません')
       return
     }
+    if (!confirmSetOrder(targets, bySku)) return
     setDownloading(true)
     try {
       // 航空・船が混ざっていてもExcelは1つ。航空便の行だけ備考で区別する
@@ -1051,6 +1084,13 @@ export default function RakutenOrderPage() {
                         <div style={{ color: '#999', fontSize: 11 }}>{item.sku}</div>
                         {item.buy_url && (
                           <a href={item.buy_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#e94560' }}>仕入れURL</a>
+                        )}
+                        {comps.length > 0 && (
+                          /* この商品は中身のSKUで届く。親で発注すると発注済が
+                             消えずに残るので、発注する前に目に入るようにしておく */
+                          <div style={{ marginTop: 4, fontSize: 11, fontWeight: 700, color: '#b45309' }}>
+                            ⚠ セット商品です。発注は中身のSKUで出してください
+                          </div>
                         )}
                         {comps.length > 0 && (
                           <div style={{ marginTop: 4, paddingLeft: 8, borderLeft: '2px solid #e2e8f0' }}>
