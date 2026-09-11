@@ -1638,6 +1638,52 @@ def update_order_qty(order_id: int, body: dict, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "qty": o.qty}
 
+def _taotaro_open_by_sku(db: Session, days: int = 150, max_pages: int = 12) -> dict:
+    """タオタロウの注文を自社SKUに割り当てて、「まだ届いていない数」を数える。
+
+    管理番号（out_id）で引ければ確実だが、入れずに出した古い注文が大半なので、
+    URLと色・サイズでも引く。荷受けの取り込みと同じ照合を使うので、
+    同じURLの色違いも見分けられる（同じ便で28明細すべて当たっている）。
+
+    注文には「日本に着いた」という状態が無く、便に載ったあとは
+    配送依頼提出済のまま止まる。便の状態まで見ないと、到着済みのものを
+    「まだ来る」と数えてしまう。
+    """
+    from datetime import datetime as _dt, timedelta as _td
+    from app.services import taotaro
+    from app.api.routes.welfare import _match_product, _product_indexes
+
+    coming_states = {1, 2, 3, 4, 7, 8, 9}   # 買付中〜倉庫内
+    in_send_state = 5                        # 便に載った
+    arrived_send = {3}                       # 便が受け取り済み＝もう日本にある
+
+    send_state = taotaro.send_order_states(pages=3)
+    start = int((_dt.now() - _td(days=days)).timestamp())
+
+    idx = _product_indexes(db)
+    found: dict = {}
+    for page in range(1, max_pages + 1):
+        d = taotaro.list_orders(page=page, limit=100, start_time=start)
+        for o in d["items"]:
+            product, _ = _match_product(taotaro.order_match_row(o), *idx)
+            if not product:
+                continue
+            st = o.get("state")
+            if st in coming_states:
+                coming = True
+            elif st == in_send_state:
+                coming = send_state.get(o.get("sid")) not in arrived_send
+            else:
+                coming = False
+            e = found.setdefault(product.sku, {"found": 0, "open": 0})
+            e["found"] += 1
+            if coming:
+                e["open"] += int(o.get("quantity") or 0)
+        if not d["has_more_pages"]:
+            break
+    return found
+
+
 class SyncTaotaroIn(BaseModel):
     # 既定は見るだけ。閉じるときだけ明示的に false にする
     dry_run: bool = True
@@ -1673,7 +1719,7 @@ def sync_orders_with_taotaro(data: SyncTaotaroIn, request: Request,
         by_sku.setdefault(r.sku or "", []).append(r)
 
     try:
-        stat = taotaro.open_qty_by_sku(sorted(by_sku.keys()))
+        stat = _taotaro_open_by_sku(db)
     except taotaro.TaotaroError as e:
         raise HTTPException(502, e.message)
 
@@ -1684,7 +1730,7 @@ def sync_orders_with_taotaro(data: SyncTaotaroIn, request: Request,
         if info.get("error") or not info.get("found"):
             unknown.append({"sku": sku, "ours": ours,
                             "reason": info.get("error")
-                            or "タオタロウ側で見つからない（管理番号なしの発注）"})
+                            or "タオタロウ側に見当たらない（注文が古いか、商品の仕入URLが違う）"})
             continue
         theirs = int(info.get("open") or 0)
         if theirs == ours:
