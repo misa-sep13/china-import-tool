@@ -292,7 +292,10 @@ def calc_order(rows: List[DayRow], stock: int, set_size: int,
     qty = 0
     qty_pieces = 0
 
-    if need <= 0:
+    if d <= 0:
+        # まだ売れていない商品は判断材料が無い。勝手に数を作らない
+        reason = "販売実績がまだありません"
+    elif need <= 0:
         reason = "在庫が足りています"
     elif days_left > t_days - s.trigger_slack:
         reason = (f"まだ余裕があります"
