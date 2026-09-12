@@ -8015,6 +8015,12 @@ if(FIREBASE_CONFIG.databaseURL){
     rowRefreshers = [];
     container.innerHTML = '';
     const vis = state.researches.filter(matchesFilter);
+    // 採用したものを上に固める。これから仕込む商品なので、
+    // 追加した順に埋もれると探しにくい。
+    // 採用の中／それ以外の中では、これまでどおり並びを変えない
+    vis.sort((a, b) =>
+      (ADOPTED_STATUSES.indexOf(a.status) >= 0 ? 0 : 1)
+      - (ADOPTED_STATUSES.indexOf(b.status) >= 0 ? 0 : 1));
     vis.forEach(r => container.appendChild(buildResearch(r)));
     if(!vis.length){
       container.appendChild(el('div', 'filter-empty',
