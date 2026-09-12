@@ -86,13 +86,17 @@ def _resolve_short(url: str) -> str:
 
 
 def _join_notes(*parts) -> str:
-    """メモをひとつにまとめる。空のものは飛ばし、同じ文は重ねない。"""
+    """メモをひとつにまとめる。空のものは飛ばし、同じ文は重ねない。
+
+    商品補足と商品備考は別々の話なので、行を分ける。
+    1行に繋げると、どこまでが補足でどこからが備考か分からなくなる。
+    """
     out = []
     for x in parts:
         x = str(x or "").strip()
         if x and x not in out:
             out.append(x)
-    return " / ".join(out) or None
+    return "\n".join(out) or None
 
 
 def _catalog(asin: str) -> dict:
