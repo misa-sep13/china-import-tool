@@ -7812,9 +7812,12 @@ if(FIREBASE_CONFIG.databaseURL){
     // 中継は入れた人しか動かしておらず、入れていない人（外注さん）の画面では
     // 寸法・重量・手数料がいつまでも空のままだった。SP-APIは正規のAPIなので
     // サーバーからも叩ける。
+    // 取り込みサーバーがあればそちらへ。無ければ一元管理へ。
+    // 取り込みサーバーは自分が持っていないものを一元管理へ回すので、
+    // どちらの場合もトークンを渡す
     const useLocal = document.body.classList.contains('sp-ready');
     const res = useLocal
-      ? await fetch(SP_SERVER + '/asin' + q)
+      ? await fetch(SP_SERVER + '/asin' + q, {headers: apiHeaders()})
       : await fetch(API_BASE + '/amazon-research/asin' + q, {headers: apiHeaders()});
     const j = await res.json();
     if(!j.ok) throw new Error(j.error || 'HTTP ' + res.status);
