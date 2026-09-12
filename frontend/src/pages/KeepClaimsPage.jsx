@@ -206,7 +206,7 @@ export default function KeepClaimsPage({ share = '' }) {
             {owners.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
           <input type="text" value={url} onChange={e => setUrl(e.target.value)}
-            placeholder="AmazonのURL（短縮URLでもOK）"
+            placeholder="AmazonのURL または ASIN（短縮URLでもOK）"
             onKeyDown={e => { if (e.key === 'Enter' && !checked?.taken) add() }}
             style={{ flex: 1, minWidth: 260, fontSize: 13, padding: '7px 9px',
               border: `1px solid ${C.line}`, borderRadius: 6 }} />

@@ -39,14 +39,27 @@ def _asin_from(url: str) -> str:
         m = re.search(pat, u, re.I)
         if m:
             return m.group(1).upper()
-    # ASINそのものを貼られた場合
-    m = re.fullmatch(r"\s*([A-Z0-9]{10})\s*", u)
+    # ASINそのものを貼られた場合。小文字で書かれることもある
+    m = re.fullmatch(r"\s*([A-Za-z0-9]{10})\s*", u)
     return m.group(1).upper() if m else ""
 
 
 # Amazonは素っ気ないUser-Agentを弾く。ブラウザと同じものを名乗る
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+
+
+def _as_url(value: str) -> str:
+    """入力をURLに直す。ASINだけ入れられたら商品ページのURLにする。
+
+    そのまま保存すると、一覧のリンクを押しても開けない。
+    """
+    v = str(value or "").strip()
+    if not v:
+        return ""
+    if re.fullmatch(r"[A-Za-z0-9]{10}", v) and not v.isdigit():
+        return f"https://www.amazon.co.jp/dp/{v.upper()}"
+    return v
 
 
 def _resolve_short(url: str) -> str:
@@ -185,7 +198,7 @@ def check(data: ClaimIn, db: Session = Depends(get_db)):
     親ASIN単位で見るので、色違いのページでも同じ商品として当たる。
     """
     _expire_overdue(db)
-    url = _resolve_short(data.url)
+    url = _resolve_short(_as_url(data.url))
     asin = _asin_from(url)
     if not asin:
         return {"asin": "", "taken": False,
@@ -208,7 +221,7 @@ def create(data: ClaimIn, force: bool = False, db: Session = Depends(get_db)):
     _expire_overdue(db)
     if not data.owner.strip():
         raise HTTPException(status_code=400, detail="担当者を入れてください")
-    url = _resolve_short(data.url)
+    url = _resolve_short(_as_url(data.url))
     asin = _asin_from(url)
 
     if asin and not force:
@@ -466,7 +479,7 @@ def import_rows(body: ImportIn, db: Session = Depends(get_db)):
     seen_urls = {r.url for r in db.query(KeepClaim.url).all()}
 
     for i, row in enumerate(body.rows):
-        url = _resolve_short(row.url.strip())
+        url = _resolve_short(_as_url(row.url))
         if not url:
             continue
         if url in seen_urls:
