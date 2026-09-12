@@ -33,6 +33,33 @@ const STATUS = {
   released: { label: '🔓 取り下げ', color: C.sub, bg: '#f8fafc' },
 }
 
+// 担当ごとの色。誰が押さえているか、ひと目で分かるようにする。
+// 地色は薄くして、状態（キープ中／発送済）の見え方を邪魔しない
+const OWNER_COLORS = {
+  C: { bg: '#fff7ed', bar: '#f97316', text: '#c2410c' },   // だいだい
+  Y: { bg: '#f0fdfa', bar: '#14b8a6', text: '#0f766e' },   // みどり
+}
+const OWNER_FALLBACK = { bg: '#f8fafc', bar: '#94a3b8', text: '#475569' }
+
+function ownerColor(owner) {
+  return OWNER_COLORS[String(owner || '').trim().toUpperCase()] || OWNER_FALLBACK
+}
+
+/**
+ * リンク先。http で始まらないものをそのまま href にすると、
+ * このツールの中の住所として扱われて自分のページに戻ってしまう。
+ * ASINならAmazonの商品ページ、それ以外は検索へ回す。
+ */
+function linkOf(r) {
+  const u = String(r.url || '').trim()
+  if (/^https?:\/\//i.test(u)) return u
+  const a = String(r.asin || '').trim()
+  if (/^[A-Za-z0-9]{10}$/.test(a)) {
+    return 'https://www.amazon.co.jp/dp/' + a.toUpperCase()
+  }
+  return 'https://www.amazon.co.jp/s?k=' + encodeURIComponent(u || a)
+}
+
 /** 残り日数の色。近いほど強く出す */
 function leftColor(d) {
   if (d <= 7) return C.bad
@@ -257,9 +284,13 @@ export default function KeepClaimsPage({ share = '' }) {
           {owners.map(o => {
             const used = data?.used?.[o] || 0
             const over = used > (data?.limit || 7)
+            const oc = ownerColor(o)
             return (
               <span key={o} style={{ marginRight: 12 }}>
-                <b>{o}</b>{' '}
+                {/* 一覧の行と同じ色。どちらの枠か見分けやすくする */}
+                <b style={{ color: oc.text, background: oc.bg,
+                  border: `1px solid ${oc.bar}`, borderRadius: 4,
+                  padding: '1px 6px' }}>{o}</b>{' '}
                 <b style={{ color: over ? C.bad : C.text }}>{used}</b>
                 <span style={{ color: C.sub }}> / {data?.limit || 7}</span>
               </span>
@@ -337,12 +368,18 @@ export default function KeepClaimsPage({ share = '' }) {
 function Row({ r, busy, onShip, onRelease, onDelete }) {
   const st = STATUS[r.status] || STATUS.keep
   const keeping = r.status === 'keep'
+  const oc = ownerColor(r.owner)
   return (
-    <div style={{ ...card, background: st.bg, display: 'flex', gap: 12,
+    <div style={{ ...card,
+      // キープ中は担当の色。終わったものは落ち着かせて、
+      // 今押さえているものだけが目に入るようにする
+      background: keeping ? oc.bg : '#f8fafc',
+      borderLeft: `5px solid ${keeping ? oc.bar : C.line}`,
+      display: 'flex', gap: 12,
       alignItems: 'flex-start', minWidth: 0, overflow: 'hidden' }}>
       {/* 商品写真。URLとASINだけでは何の商品か分からない */}
       {r.image_url ? (
-        <a href={r.url} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
+        <a href={linkOf(r)} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
           <img src={r.image_url} alt="" loading="lazy"
             onError={e => { e.currentTarget.style.visibility = 'hidden' }}
             style={{ width: 64, height: 64, objectFit: 'contain',
@@ -357,7 +394,9 @@ function Row({ r, busy, onShip, onRelease, onDelete }) {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center',
           flexWrap: 'wrap', minWidth: 0 }}>
           <b style={{ fontSize: 13, color: st.color }}>{st.label}</b>
-          <span style={{ fontSize: 13, fontWeight: 700 }}>{r.owner}</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: oc.text,
+            background: '#fff', border: `1px solid ${oc.bar}`,
+            borderRadius: 4, padding: '0 6px' }}>{r.owner}</span>
           {keeping && (
             <span style={{ fontSize: 12, color: leftColor(r.days_left),
               fontWeight: r.days_left <= 14 ? 700 : 400 }}>
@@ -383,7 +422,7 @@ function Row({ r, busy, onShip, onRelease, onDelete }) {
         <div style={{ fontSize: 13, marginTop: 4, minWidth: 0,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
           title={r.title || r.url}>
-          <a href={r.url} target="_blank" rel="noreferrer"
+          <a href={linkOf(r)} target="_blank" rel="noreferrer"
             style={{ color: C.key }}>
             {r.title || r.asin || r.url}
           </a>

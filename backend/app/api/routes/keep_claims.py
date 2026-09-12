@@ -9,6 +9,7 @@ ASINを取り出して突き合わせる。
 """
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date, datetime, timezone
 from typing import List, Optional
@@ -59,6 +60,11 @@ def _as_url(value: str) -> str:
         return ""
     if re.fullmatch(r"[A-Za-z0-9]{10}", v) and not v.isdigit():
         return f"https://www.amazon.co.jp/dp/{v.upper()}"
+    # http で始まらないものは、そのまま持つとリンクを押したときに
+    # このツールの中の住所として扱われてしまう。Amazonの検索に回す
+    if not re.match(r"https?://", v, re.I):
+        return ("https://www.amazon.co.jp/s?k="
+                + urllib.parse.quote(v))
     return v
 
 
