@@ -189,26 +189,36 @@ def _keywords_from_t4s(page, asin: str) -> list:
 
 
 def fetch_one(page, asin: str, kinds: set) -> dict:
-    """1商品ぶん取る。取れなかった種類は入れずに返す。"""
-    out = {}
+    """1商品ぶん取る。取れなかった種類は入れずに返す。
 
-    if "reviews" in kinds:
+    取れなかった理由は errors に入れる。シートがそのまま画面に出すので、
+    「不明なエラー」で終わらせない。
+    """
+    out = {"errors": []}
+
+    if "rv" in kinds:
         try:
             rows = _download_from_amazon(page, asin, "レビュー")
             if len(rows) > 1:
                 out["reviews"] = {"head": rows[0], "rows": rows[1:]}
+            else:
+                out["errors"].append("レビューが1件も返ってきませんでした")
         except Exception as e:
             _log("レビュー取得に失敗", asin, type(e).__name__, str(e)[:80])
+            out["errors"].append("レビュー: " + type(e).__name__)
 
-    if "keywords" in kinds:
+    if "kw" in kinds:
         try:
             rows = _keywords_from_t4s(page, asin)
             if len(rows) > 1:
                 # シート側は「タブ区切りの生テキスト」を待っている
                 out["keywords"] = {
                     "text": "\n".join("\t".join(r) for r in rows)}
+            else:
+                out["errors"].append("キーワードが1件も返ってきませんでした")
         except Exception as e:
             _log("キーワード取得に失敗", asin, type(e).__name__, str(e)[:80])
+            out["errors"].append("キーワード: " + type(e).__name__)
 
     return out
 
@@ -231,7 +241,7 @@ def t4s_fetch(asins: list, kinds: set) -> dict:
                 got[asin] = r
         finally:
             ctx.close()
-    return {"ok": True, "items": got}
+    return {"ok": True, "results": got}
 
 
 # ---------- HTTP ----------
@@ -269,8 +279,9 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/t4s/fetch":
             asins = [a.strip().upper()
                      for a in (q.get("asins", [""])[0]).split(",") if a.strip()]
+            # シートは rv / kw で送ってくる
             kinds = {k.strip() for k in
-                     (q.get("kinds", ["reviews,keywords"])[0]).split(",") if k.strip()}
+                     (q.get("kinds", ["rv,kw"])[0]).split(",") if k.strip()}
             asins = [a for a in asins if re.fullmatch(r"[A-Z0-9]{10}", a)]
             if not asins:
                 return self._send({"ok": False, "error": "ASINがありません"})
