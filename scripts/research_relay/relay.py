@@ -26,10 +26,6 @@ from urllib.parse import parse_qs, urlparse
 HERE = Path(__file__).resolve().parent
 PROFILE = HERE / "browser"          # ログインを残す場所
 VISITED = HERE / "visited_urls.txt"  # ログイン時に開いた画面のURL控え
-# 取得先の画面URL。tool4sellerの画面構成はこちらで確かめようがないので、
-# 決め打ちにせず、ログインのときに控えたURLをここに書いて使う。
-# {asin} のところが商品ごとに差し替わる
-CONF = HERE / "urls.json"
 PORT = 8765
 
 # 紹介ページ(www)ではなく、ログインして使う本体はこちら。
@@ -108,18 +104,88 @@ def _logged_in(page) -> bool:
     return "login" not in url.lower() and "signin" not in url.lower()
 
 
-def _url_for(kind: str, asin: str) -> str:
-    """取得先。urls.json に書いてあるものを使う。
+def _parse_html_table(raw: bytes) -> list:
+    """落ちてきた .xls を、行 × 列の配列にする。
 
-    無ければ空を返し、呼び出し側で「設定がまだ」と伝える。
-    当てずっぽうのURLを叩いても404になるだけなので、黙って進めない。
+    拡張子は .xls だが中身はHTMLの表。Excelがそれを開けるので、
+    tool4seller はこの形で書き出している。
     """
+    import html as _html
+
+    text = None
+    for enc in ("utf-8", "cp932", "utf-16"):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if not text:
+        return []
+
+    rows = []
+    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", text, re.S | re.I):
+        cells = [_html.unescape(re.sub(r"<[^>]+>", "", c)).strip()
+                 for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>",
+                                     tr, re.S | re.I)]
+        if any(cells):
+            rows.append(cells)
+    return rows
+
+
+def _download_from_amazon(page, asin: str, want: str) -> list:
+    """Amazonの商品ページで、拡張の「ダウンロード」から落とす。
+
+    手でやるときと同じ場所を押している。tool4seller の管理画面側には
+    ASINでレビューを一覧する場所が無く、拡張が商品ページに差し込む
+    パネルからしか取れない（レビューはAmazonのログインも要る）。
+    """
+    page.goto("https://www.amazon.co.jp/dp/" + asin,
+              wait_until="domcontentloaded", timeout=60000)
+    # 拡張がパネルを描くまで待つ。ページの読み込み完了とは別に時間がかかる
+    page.wait_for_timeout(14000)
+
+    trig = page.locator(".searchGrayDownloadBtn").first
+    trig.hover(timeout=20000)
+    page.wait_for_timeout(2000)
+
+    item = page.locator("li.el-dropdown-menu__item", has_text=want).first
+    with page.expect_download(timeout=120000) as dw:
+        item.click()
+    return _parse_html_table(dw.value.path().read_bytes())
+
+
+def _keywords_from_t4s(page, asin: str) -> list:
+    """キーワードは tool4seller の「ASINキーワードリサーチ」から取る。
+
+    Amazonの商品ページのダウンロードには「レビュー」と「商品画像」しか
+    無いので、こちらは管理画面側で探す。
+    """
+    page.goto(T4S + "/asin_lookup_keywords",
+              wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(6000)
+
+    box = page.locator("input[placeholder*='ASIN']").first
+    box.fill(asin, timeout=20000)
+    page.locator("button", has_text="キーワードリサーチ").first.click(timeout=20000)
+
+    # 検索が終わるまで待つ。件数が出るまでに時間がかかる
+    page.wait_for_timeout(12000)
     try:
-        conf = json.loads(CONF.read_text(encoding="utf-8"))
+        page.wait_for_selector("table tbody tr", timeout=60000)
     except Exception:
-        return ""
-    tpl = str(conf.get(kind) or "")
-    return tpl.replace("{asin}", asin) if tpl else ""
+        pass
+
+    return page.evaluate("""() => {
+      const tb = document.querySelector('table');
+      if (!tb) return [];
+      const out = [];
+      for (const tr of tb.querySelectorAll('tr')) {
+        const cells = [...tr.querySelectorAll('th,td')]
+          .map(td => (td.innerText || '').trim().replace(/\\s+/g, ' '));
+        if (cells.some(c => c)) out.push(cells);
+      }
+      return out;
+    }""") or []
 
 
 def fetch_one(page, asin: str, kinds: set) -> dict:
@@ -127,60 +193,24 @@ def fetch_one(page, asin: str, kinds: set) -> dict:
     out = {}
 
     if "reviews" in kinds:
-        url = _url_for("reviews", asin)
-        if not url:
-            return {"error": "noconf"}
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(3000)
-            if not _logged_in(page):
-                return {"error": "login"}
-            rows = _read_table(page)
-            if rows:
+            rows = _download_from_amazon(page, asin, "レビュー")
+            if len(rows) > 1:
                 out["reviews"] = {"head": rows[0], "rows": rows[1:]}
         except Exception as e:
-            _log("レビュー取得に失敗", asin, type(e).__name__)
+            _log("レビュー取得に失敗", asin, type(e).__name__, str(e)[:80])
 
     if "keywords" in kinds:
-        url = _url_for("keywords", asin)
-        if not url:
-            return {"error": "noconf"}
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(3000)
-            if not _logged_in(page):
-                return {"error": "login"}
-            rows = _read_table(page)
-            if rows:
+            rows = _keywords_from_t4s(page, asin)
+            if len(rows) > 1:
                 # シート側は「タブ区切りの生テキスト」を待っている
                 out["keywords"] = {
                     "text": "\n".join("\t".join(r) for r in rows)}
         except Exception as e:
-            _log("キーワード取得に失敗", asin, type(e).__name__)
+            _log("キーワード取得に失敗", asin, type(e).__name__, str(e)[:80])
 
     return out
-
-
-def _read_table(page) -> list:
-    """画面の表を、行 × 列の配列にして返す。
-
-    tool4seller の画面構成は変わることがある。見出しと中身が拾えなければ
-    空を返し、呼び出し側で「取れなかった」として扱う。
-    """
-    try:
-        return page.evaluate("""() => {
-          const tb = document.querySelector('table');
-          if (!tb) return [];
-          const out = [];
-          for (const tr of tb.querySelectorAll('tr')) {
-            const cells = [...tr.querySelectorAll('th,td')]
-              .map(td => (td.innerText || '').trim());
-            if (cells.some(c => c)) out.push(cells);
-          }
-          return out;
-        }""") or []
-    except Exception:
-        return []
 
 
 def t4s_fetch(asins: list, kinds: set) -> dict:
@@ -194,11 +224,6 @@ def t4s_fetch(asins: list, kinds: set) -> dict:
             for asin in asins:
                 _log("取得中", asin, ",".join(sorted(kinds)))
                 r = fetch_one(page, asin, kinds)
-                if r.get("error") == "noconf":
-                    return {"ok": False,
-                            "error": "取得先の画面がまだ設定されていません。"
-                                     "urls.json にレビューとキーワードの"
-                                     "画面URLを入れてください"}
                 if r.get("error") == "login":
                     return {"ok": False,
                             "error": "ログインが切れています。"
@@ -333,19 +358,6 @@ def login():
         print()
         print("控えました:", VISITED)
 
-        # 設定の雛形を置いておく。ASINの部分を {asin} に書き換えて使う
-        if not CONF.exists():
-            CONF.write_text(json.dumps({
-                "_使い方": "下の2つに、レビュー画面とキーワード画面のURLを入れる。"
-                           "ASINのところは {asin} に書き換える",
-                "_控えたURL": VISITED.name + " を見てください",
-                "reviews": "",
-                "keywords": "",
-            }, ensure_ascii=False, indent=2), encoding="utf-8")
-            print()
-            print("設定の雛形を作りました:", CONF)
-            print("レビューとキーワードの画面URLを入れてください")
-            print("（ASINのところは {asin} に書き換える）")
 
 
 if __name__ == "__main__":
