@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, urlparse
 
 HERE = Path(__file__).resolve().parent
 PROFILE = HERE / "browser"          # ログインを残す場所
+VISITED = HERE / "visited_urls.txt"  # ログイン時に開いた画面のURL控え
 PORT = 8765
 
 T4S = "https://www.tool4seller.com"
@@ -210,16 +211,42 @@ def main():
 
 
 def login():
-    """ログイン用にブラウザを開く。閉じるまで待つ。"""
+    """ログイン用にブラウザを開く。
+
+    ログインできたら、レビューとキーワードの画面を開いてURLを控える。
+    tool4seller の画面構成はこちらで確かめようがないので、
+    実際に開いたURLをそのまま設定として残す。
+    """
     from playwright.sync_api import sync_playwright
     PROFILE.mkdir(parents=True, exist_ok=True)
+    print("=" * 60)
     print("tool4seller のログイン画面を開きます。")
-    print("ログインしたら、この窓ではなくブラウザを閉じてください。")
+    print()
+    print("  1. ログインする")
+    print("  2. レビューを見る画面と、キーワードを見る画面を開く")
+    print("  3. ブラウザを閉じる（この窓ではなくブラウザのほう）")
+    print()
+    print("開いた画面のURLを控えて、⚡の取得先として使います。")
     print("（レビューも取るなら、同じ窓で amazon.co.jp にもログイン）")
+    print("=" * 60)
+
+    seen = []
     with sync_playwright() as pw:
         ctx = pw.chromium.launch_persistent_context(
             str(PROFILE), headless=False, locale="ja-JP")
+
+        def note(page):
+            try:
+                u = page.url or ""
+            except Exception:
+                return
+            if u.startswith("http") and u not in seen:
+                seen.append(u)
+
+        ctx.on("page", lambda pg: pg.on("framenavigated",
+                                        lambda f: note(pg)))
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.on("framenavigated", lambda f: note(page))
         page.goto(T4S + "/login")
         try:
             while ctx.pages:
@@ -231,7 +258,17 @@ def login():
                 ctx.close()
             except Exception:
                 pass
+
+    print()
     print("ログイン情報を保存しました。")
+    if seen:
+        VISITED.write_text("\n".join(seen), encoding="utf-8")
+        print()
+        print("開いた画面のURL（この中からレビューとキーワードの画面を教えてください）:")
+        for u in seen[-25:]:
+            print("  " + u)
+        print()
+        print("控えました:", VISITED)
 
 
 if __name__ == "__main__":
