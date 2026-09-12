@@ -165,8 +165,11 @@ def list_claims(status: Optional[str] = None,
     rows = q.order_by(KeepClaim.claimed_at.desc(), KeepClaim.id.desc()).all()
     today = date.today()
     items = [_out(r, today) for r in rows]
-    # キープ中を先に、その中も新しい順。終わったものは下へ送る
+    # キープ中を先に、終わったものは下へ送る。
+    # キープ中の中では、リサーチで採用したもの（research_id が付いている）
+    # を上に固める。これから仕込む商品なので、いちばん見たい
     keeping = [x for x in items if x["status"] == "keep"]
+    keeping.sort(key=lambda x: 0 if x.get("research_id") else 1)
     others = [x for x in items if x["status"] != "keep"]
 
     # 枠の残り。人ごとに数える

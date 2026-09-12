@@ -418,9 +418,12 @@ function Row({ r, busy, onShip, onRelease, onDelete }) {
               {r.shipped_at} 発送（{r.days_elapsed}日）
             </span>
           )}
+          {/* 採用ぶんは上に固めてある。どこまでが採用ぶんか分かるよう
+              印を付ける */}
           {r.research_id && (
-            <span style={{ fontSize: 11, color: C.good }}>
-              リサーチ採用ぶん
+            <span style={{ fontSize: 11, color: '#fff', background: C.good,
+              borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>
+              採用
             </span>
           )}
         </div>
