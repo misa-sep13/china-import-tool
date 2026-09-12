@@ -284,9 +284,29 @@ class Handler(BaseHTTPRequestHandler):
         self._send({"ok": False, "error": "not found"}, 404)
 
 
+def _already_running() -> bool:
+    """すでに動いていないか。
+
+    2つ動くと、同じブラウザのプロファイルを取り合って両方おかしくなる。
+    自動起動と手動起動が重なると起きるので、後から立ち上がったほうが退く。
+    """
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                f"http://127.0.0.1:{PORT}/ping", timeout=3) as res:
+            return b'"ok"' in res.read() or True
+    except Exception:
+        return False
+
+
 def main():
     if "--login" in sys.argv:
         return login()
+    if _already_running():
+        _log("すでに動いています。この窓は閉じてかまいません")
+        _log(f"（http://127.0.0.1:{PORT} で待ち受け中）")
+        time.sleep(6)
+        return
     PROFILE.mkdir(parents=True, exist_ok=True)
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     _log(f"取り込みサーバーを開始しました  http://127.0.0.1:{PORT}")
