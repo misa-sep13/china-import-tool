@@ -40,30 +40,36 @@ function leftColor(d) {
   return C.sub
 }
 
-export default function KeepClaimsPage() {
+export default function KeepClaimsPage({ share = '' }) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [filter, setFilter] = useState('keep')
 
   // 誰として登録するか。毎回選ぶのは面倒なので覚えておく
+  // 自分はY。共有ページで相手が開いたときは、選び直してもらう
   const [owner, setOwner] = useState(
-    () => localStorage.getItem('keep_owner') || '')
+    () => localStorage.getItem('keep_owner') || (share ? '' : 'Y'))
   const [url, setUrl] = useState('')
   const [title, setTitle] = useState('')
   const [supplierUrl, setSupplierUrl] = useState('')
   const [memo, setMemo] = useState('')
   const [checked, setChecked] = useState(null)
 
+  // 共有ページはログインしていないので、合言葉を付けて呼ぶ
+  const q = useCallback(
+    (path) => (share ? path + (path.includes('?') ? '&' : '?')
+      + 'share=' + encodeURIComponent(share) : path), [share])
+
   const load = useCallback(async () => {
     setErr('')
     try {
-      const r = await api.get('/keep-claims')
+      const r = await api.get(q('/keep-claims'))
       setData(r.data)
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     }
-  }, [])
+  }, [q])
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
@@ -78,7 +84,7 @@ export default function KeepClaimsPage() {
     let alive = true
     const t = setTimeout(async () => {
       try {
-        const r = await api.post('/keep-claims/check', { owner: owner || '-', url: u })
+        const r = await api.post(q('/keep-claims/check'), { owner: owner || '-', url: u })
         if (alive) setChecked(r.data)
       } catch { /* 判定できなくても登録はできる */ }
     }, 600)
@@ -90,7 +96,7 @@ export default function KeepClaimsPage() {
     if (!url.trim()) { setErr('URLを入れてください'); return }
     setBusy(true); setErr('')
     try {
-      await api.post('/keep-claims', {
+      await api.post(q('/keep-claims'), {
         owner: owner.trim(), url: url.trim(), title: title.trim(),
         supplier_url: supplierUrl.trim(), memo: memo.trim(),
       })
@@ -105,33 +111,23 @@ export default function KeepClaimsPage() {
     if (confirmText && !confirm(confirmText)) return
     setBusy(true); setErr('')
     try {
-      await api.post(`/keep-claims/${id}/${path}`)
+      await api.post(q(`/keep-claims/${id}/${path}`))
       await load()
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }
   }
 
-  // スプレッドシートからの移行。1回きりなので、まず何が入るか見せる
-  const importSheet = async (dryRun) => {
-    if (!dryRun && !confirm(
-      'スプレッドシートの内容を取り込みます。\n'
-      + '同じURLがすでにあるものは飛ばします。よろしいですか？')) return
+  // リサーチシートで採用にしたものを取り込む。自分が採用した商品は、
+  // 相手にも押さえたと伝わっている必要がある
+  const syncAdopted = async () => {
     setBusy(true); setErr('')
     try {
-      const r = await api.post(
-        `/keep-claims/import-sheet?dry_run=${dryRun ? 'true' : 'false'}`)
-      const d = r.data
-      const noAsin = (d.items || []).filter(x => !x.asin).length
-      if (dryRun) {
-        alert(`取り込むと ${d.added} 件入ります`
-          + `（すでにある ${d.skipped} 件は飛ばします）\n`
-          + (noAsin ? `※ ${noAsin} 件はASINを読み取れず、被り判定ができません\n` : '')
-          + '\nよければ「取り込む」を押してください')
-      } else {
-        alert(`${d.added} 件を取り込みました（${d.skipped} 件は飛ばしました）`)
-        await load()
-      }
+      const r = await api.post(q(`/keep-claims/sync-adopted?owner=${encodeURIComponent(owner || 'Y')}`))
+      const n = r.data.added || 0
+      if (n) await load()
+      alert(n ? `${n}件をリサーチシートから取り込みました`
+        : '新しく取り込むものはありませんでした')
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }
@@ -141,7 +137,7 @@ export default function KeepClaimsPage() {
     if (!confirm('この記録を消しますか？（誰が何を見ていたか分からなくなります）')) return
     setBusy(true)
     try {
-      await api.delete(`/keep-claims/${id}`)
+      await api.delete(q(`/keep-claims/${id}`))
       await load()
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
@@ -270,19 +266,15 @@ export default function KeepClaimsPage() {
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6,
           alignItems: 'center' }}>
-          {/* スプレッドシートからの移行用。済んだら外してよい */}
-          <button className="btn btn-secondary" disabled={busy}
-            onClick={() => importSheet(true)}
-            style={{ fontSize: 11, padding: '3px 8px' }}
-            title="スプレッドシートを読んで、何件入るか見るだけ">
-            シートを確認
-          </button>
-          <button className="btn btn-secondary" disabled={busy}
-            onClick={() => importSheet(false)}
-            style={{ fontSize: 11, padding: '3px 8px' }}
-            title="スプレッドシートの内容を取り込む">
-            取り込む
-          </button>
+          {/* 共有ページからは触らせない。自分のシートの話なので */}
+          {!share && (
+            <button className="btn btn-secondary" disabled={busy}
+              onClick={syncAdopted}
+              style={{ fontSize: 11, padding: '3px 8px' }}
+              title="競合リサーチシートで採用にしたものを、ここに取り込む">
+              採用したものを取り込む
+            </button>
+          )}
           <span style={{ fontSize: 11, color: C.sub }}>
             親ASIN単位で独占／{data?.limit_days || 60}日以内に発送しないと消滅
           </span>
@@ -295,7 +287,6 @@ export default function KeepClaimsPage() {
             onShip={() => act(r.id, 'ship')}
             onRelease={() => act(r.id, 'release',
               '独占を手放します。相手が仕入れられるようになります。よろしいですか？')}
-            onAdopt={() => act(r.id, 'adopt')}
             onDelete={() => remove(r.id)} />
         ))}
         {!items.length && (
@@ -312,12 +303,25 @@ export default function KeepClaimsPage() {
   )
 }
 
-function Row({ r, busy, onShip, onRelease, onAdopt, onDelete }) {
+function Row({ r, busy, onShip, onRelease, onDelete }) {
   const st = STATUS[r.status] || STATUS.keep
   const keeping = r.status === 'keep'
   return (
     <div style={{ ...card, background: st.bg, display: 'flex', gap: 12,
       alignItems: 'flex-start' }}>
+      {/* 商品写真。URLとASINだけでは何の商品か分からない */}
+      {r.image_url ? (
+        <a href={r.url} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
+          <img src={r.image_url} alt="" loading="lazy"
+            onError={e => { e.currentTarget.style.visibility = 'hidden' }}
+            style={{ width: 64, height: 64, objectFit: 'contain',
+              background: '#fff', border: `1px solid ${C.line}`,
+              borderRadius: 6, display: 'block' }} />
+        </a>
+      ) : (
+        <div style={{ width: 64, height: 64, flexShrink: 0,
+          border: `1px dashed ${C.line}`, borderRadius: 6 }} />
+      )}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center',
           flexWrap: 'wrap' }}>
@@ -336,7 +340,7 @@ function Row({ r, busy, onShip, onRelease, onAdopt, onDelete }) {
           )}
           {r.research_id && (
             <span style={{ fontSize: 11, color: C.good }}>
-              リサーチシートへ送信済み
+              リサーチ採用ぶん
             </span>
           )}
         </div>
@@ -377,14 +381,6 @@ function Row({ r, busy, onShip, onRelease, onAdopt, onDelete }) {
         flexShrink: 0 }}>
         {keeping && (
           <>
-            {!r.research_id && (
-              <button className="btn btn-primary" disabled={busy}
-                onClick={onAdopt}
-                style={{ fontSize: 12, padding: '4px 10px', whiteSpace: 'nowrap' }}
-                title="競合リサーチシートに枠を作って、そのまま調査に入る">
-                採用 → リサーチへ
-              </button>
-            )}
             <button className="btn btn-secondary" disabled={busy} onClick={onShip}
               style={{ fontSize: 12, padding: '4px 10px', whiteSpace: 'nowrap' }}
               title="代行会社から発送された。ここで枠が空く">

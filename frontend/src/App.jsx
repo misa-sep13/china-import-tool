@@ -26,6 +26,7 @@ import AdsPage from './pages/AdsPage'
 import InventoryReflectionLogsPage from './pages/InventoryReflectionLogsPage'
 import WelfareInventoryPage from './pages/WelfareInventoryPage'
 import WelfareWorkPublicPage from './pages/WelfareWorkPublicPage'
+import KeepClaimsPublicPage from './pages/KeepClaimsPublicPage'
 import FbaPlanPage from './pages/FbaPlanPage'
 import LoginPage from './pages/LoginPage'
 import ActivityHistoryPanel from './components/ActivityHistoryPanel'
@@ -76,6 +77,15 @@ function App() {
     return (
       <Routes>
         <Route path="/welfare/work-public" element={<WelfareWorkPublicPage />} />
+      </Routes>
+    )
+  }
+
+  // 商品キープの共有ページ。相手にURLを渡して、被り防止だけを見てもらう
+  if (location.pathname === '/keep-public') {
+    return (
+      <Routes>
+        <Route path="/keep-public" element={<KeepClaimsPublicPage />} />
       </Routes>
     )
   }

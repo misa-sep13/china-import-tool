@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     # タオタロウ（代理購入）のAPI。トークンは "ID|シークレット" の形で、
     # 縦棒を含めた全体で1つ。発注権限そのものなのでサーバー側だけで持つ
     TAOTARO_API_TOKEN: Optional[str] = None
+    # 商品キープの共有ページを開くための合言葉。相手に渡すURLに入れる。
+    # 空なら共有ページは開けない（既定で閉じておく）
+    KEEP_SHARE_TOKEN: Optional[str] = None
     TAOTARO_API_BASE: str = "https://api.yiwutaro.com"
     # 出品に使う。セラーセントラルの「出品用アカウント情報」に出ている出品者ID
     SP_API_SELLER_ID: Optional[str] = None

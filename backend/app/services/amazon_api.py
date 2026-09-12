@@ -153,6 +153,38 @@ def fetch_item_name(asin: str) -> str:
     return ""
 
 
+def fetch_catalog_one(asin: str) -> dict:
+    """1商品ぶんの画像・商品名。キープ登録のように、その場で1件だけ
+    知りたいときに使う。取れなければ空で返す（登録は止めない）。"""
+    mp = "A1VC38T7YXB528"
+    try:
+        params = urllib.parse.urlencode({
+            "marketplaceIds": mp,
+            "includedData": "images,summaries",
+        })
+        data = _call_sp_api(f"/catalog/2022-04-01/items/{asin}?{params}")
+    except Exception:
+        return {}
+
+    image_url = None
+    for img_set in data.get("images", []):
+        for img in img_set.get("images", []):
+            if img.get("variant") == "MAIN":
+                image_url = img.get("link")
+                break
+        if image_url:
+            break
+
+    title = None
+    parent_asin = None
+    for summary in data.get("summaries", []):
+        if summary.get("marketplaceId") == mp:
+            title = summary.get("itemName")
+            parent_asin = summary.get("parentAsin")
+            break
+    return {"image_url": image_url, "title": title, "parent_asin": parent_asin}
+
+
 def fetch_catalog_info(asin_list: List[str]) -> Dict[str, dict]:
     """商品画像（1枚目）とレビュー評価をASINごとに取得"""
     cache_key = "catalog_info"

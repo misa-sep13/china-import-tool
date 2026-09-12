@@ -1330,6 +1330,7 @@ app.add_middleware(
 from starlette.requests import Request as _StarletteRequest
 from starlette.responses import JSONResponse as _JSONResponse
 from app.core.auth import auth_enabled, verify_token, check_service_token
+from app.core.config import settings as app_config
 
 # ログイン不要で通す経路。
 # ・/api/auth/* はログイン自体に使うので当然除外
@@ -1376,6 +1377,16 @@ async def auth_middleware(request: _StarletteRequest, call_next):
             path.startswith("/api/product-drafts/public-image/")
             or path.startswith("/api/amazon-listings/public-image/")):
         return await call_next(request)
+    # 商品キープの共有ページ。相手（別の会社の人）がログインなしで
+    # 開いて、自分のキープを登録できるようにする。合言葉つきのURLでだけ
+    # 通す。読むだけでなく書き込みも通すのは、相手も登録する必要があるため。
+    # 触れるのは keep-claims だけで、他のAPIには一切届かない
+    if path.startswith("/api/keep-claims"):
+        token = (request.query_params.get("share")
+                 or request.headers.get("x-keep-share") or "")
+        if token and token == (app_config.KEEP_SHARE_TOKEN or ""):
+            return await call_next(request)
+
     # 就労支援の公開ページに出す商品写真。一覧そのものが公開なので、
     # 写真だけを隠しても意味がない。ブラウザに任せて取り直させないためのもの
     if (request.method == "GET" and path.startswith("/api/welfare/")

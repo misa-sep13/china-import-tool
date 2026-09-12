@@ -66,6 +66,15 @@ def _resolve_short(url: str) -> str:
         return u
 
 
+def _catalog(asin: str) -> dict:
+    """商品名と画像をAmazonから取る。取れなくても登録は止めない。"""
+    try:
+        from app.services.amazon_api import fetch_catalog_one
+        return fetch_catalog_one(asin) or {}
+    except Exception:
+        return {}
+
+
 def _out(r: KeepClaim, today: date = None) -> dict:
     return {
         "id": r.id, "owner": r.owner, "url": r.url, "asin": r.asin,
@@ -187,10 +196,17 @@ def create(data: ClaimIn, force: bool = False, db: Session = Depends(get_db)):
                 status_code=409,
                 detail=f"すでに {hit.owner} さんが {when} にキープしています")
 
+    title = data.title.strip()
+    image = data.image_url.strip()
+    # 商品名と画像は手で入れるものではない。ASINが分かれば取ってくる
+    if asin and (not title or not image):
+        info = _catalog(asin)
+        title = title or (info.get("title") or "")
+        image = image or (info.get("image_url") or "")
+
     r = KeepClaim(
         owner=data.owner.strip(), url=url, asin=asin or None,
-        title=data.title.strip() or None,
-        image_url=data.image_url.strip() or None,
+        title=title or None, image_url=image or None,
         supplier_url=data.supplier_url.strip() or None,
         memo=data.memo.strip() or None,
         status="keep",
@@ -256,67 +272,113 @@ def delete(cid: int, db: Session = Depends(get_db)):
     db.commit()
     return {"deleted": cid}
 
-@router.post("/{cid:int}/adopt")
-def adopt(cid: int, workspace: str = "default", db: Session = Depends(get_db)):
-    """採用して、競合リサーチシートに枠を作る。
+@router.post("/sync-adopted")
+def sync_adopted(workspace: str = "default", owner: str = "Y",
+                 db: Session = Depends(get_db)):
+    """リサーチシートで採用にしたものを、キープとして取り込む。
 
-    キープしただけでは調べ始められない。採用を押したらシートへ移し、
-    そのまま調査に入れるようにする。URLと仕入れ先とメモを持っていく。
-
-    シートは丸ごとJSONで持っているので、読んで枠を足して書き戻す。
+    自分が採用した商品は、相手にも「これは押さえた」と伝わっている
+    必要がある。シートを見に行って、採用以降の状態になっている枠を
+    こちらへ写す。すでにあるASINは飛ばすので、何度呼んでもよい。
     """
     import json
     from app.models.amazon_research import AmazonResearchSheet
-
-    r = db.query(KeepClaim).filter(KeepClaim.id == cid).first()
-    if not r:
-        raise HTTPException(status_code=404, detail="そのキープがありません")
-    if r.research_id:
-        return {"already": True, "research_id": r.research_id,
-                "detail": "すでにリサーチシートへ送っています"}
+    from app.services.amazon_listing_sync import ADOPTED_STATUS
 
     row = (db.query(AmazonResearchSheet)
            .filter(AmazonResearchSheet.workspace == workspace).first())
-    data = {}
-    if row and row.data:
-        try:
-            data = json.loads(row.data)
-        except (ValueError, TypeError):
-            data = {}
-    researches = data.get("researches")
-    if not isinstance(researches, list):
-        researches = []
-        data["researches"] = researches
+    if not row or not row.data:
+        return {"added": 0, "items": [], "detail": "リサーチシートが空です"}
+    try:
+        data = json.loads(row.data)
+    except (ValueError, TypeError):
+        return {"added": 0, "items": [], "detail": "リサーチシートを読めませんでした"}
 
-    # idはシート側と同じ作りにする（重ならなければよい）
-    new_id = "k" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    research = {
-        "id": new_id,
-        "title": r.title or (r.asin or r.url)[:60],
-        "status": "",
-        "rows": [{
-            "id": new_id + "_1",
-            "asin": r.asin or "",
-            "url": r.url,
-            "image": r.image_url or "",
-            "buyUrl": r.supplier_url or "",
-            "note": r.memo or "",
-        }],
-    }
-    # 新しいものを上に。シート側も新しい順に並べている
-    researches.insert(0, research)
+    have_asin = {a for (a,) in db.query(KeepClaim.asin).all() if a}
+    have_url = {u for (u,) in db.query(KeepClaim.url).all() if u}
 
-    raw = json.dumps(data, ensure_ascii=False)
-    if row is None:
-        row = AmazonResearchSheet(workspace=workspace)
-        db.add(row)
-    row.data = raw
-    row.size_bytes = len(raw.encode())
+    added = []
+    for research in (data.get("researches") or []):
+        if not isinstance(research, dict):
+            continue
+        if (research.get("status") or "") not in ADOPTED_STATUS:
+            continue
 
-    r.research_id = new_id
-    r.adopted_at = datetime.now(timezone.utc)
+        # 候補商品の1行目をライバルとして見る。シートの作りに合わせる
+        rows = [x for x in (research.get("rows") or []) if isinstance(x, dict)]
+        if not rows:
+            continue
+        first = rows[0]
+        asin = (first.get("asin") or "").strip().upper()
+        url = (first.get("url") or "").strip()
+        if not url and asin:
+            url = f"https://www.amazon.co.jp/dp/{asin}"
+        if not url:
+            continue
+        if (asin and asin in have_asin) or url in have_url:
+            continue
+
+        title = (research.get("title") or "").strip()
+        image = (first.get("image") or "").strip()
+        if asin and not image:
+            info = _catalog(asin)
+            image = info.get("image_url") or ""
+            title = title or (info.get("title") or "")
+
+        r = KeepClaim(
+            owner=owner, url=url, asin=asin or None,
+            title=title or None, image_url=image or None,
+            supplier_url=(first.get("buyUrl") or "").strip() or None,
+            memo=(first.get("note") or "").strip() or None,
+            status="keep",
+            research_id=research.get("id"),
+            adopted_at=datetime.now(timezone.utc),
+        )
+        db.add(r)
+        added.append({"asin": asin, "title": title, "url": url})
+        if asin:
+            have_asin.add(asin)
+        have_url.add(url)
+
     db.commit()
-    return {"research_id": new_id, "claim": _out(r)}
+    return {"added": len(added), "items": added}
+
+
+@router.post("/{cid:int}/fill")
+def fill(cid: int, db: Session = Depends(get_db)):
+    """商品名と画像を取り直す。取り込んだ古い行を埋めるため。"""
+    r = db.query(KeepClaim).filter(KeepClaim.id == cid).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="そのキープがありません")
+    if not r.asin:
+        raise HTTPException(status_code=400, detail="ASINが分からないので取れません")
+    info = _catalog(r.asin)
+    r.title = r.title or info.get("title") or None
+    r.image_url = info.get("image_url") or r.image_url
+    db.commit()
+    return _out(r)
+
+
+@router.post("/fill-missing")
+def fill_missing(limit: int = 30, db: Session = Depends(get_db)):
+    """画像が入っていない行をまとめて埋める。
+
+    APIを1件ずつ叩くので、一度に扱う数は絞る。
+    """
+    rows = (db.query(KeepClaim)
+            .filter(KeepClaim.asin.isnot(None), KeepClaim.image_url.is_(None))
+            .limit(limit).all())
+    filled = 0
+    for r in rows:
+        info = _catalog(r.asin)
+        if info.get("image_url"):
+            r.image_url = info["image_url"]
+            filled += 1
+        if not r.title and info.get("title"):
+            r.title = info["title"]
+    db.commit()
+    return {"targets": len(rows), "filled": filled}
+
 
 class ImportRow(BaseModel):
     """スプレッドシートの1行。列の並びはあちらに合わせてある。"""
