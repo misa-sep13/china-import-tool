@@ -57,12 +57,45 @@ def _log(*a):
 
 # ---------- tool4seller の操作 ----------
 
-def _new_page(pw):
-    """ログイン済みのプロファイルでブラウザを開く。"""
+# 普段のChromeに入っている tool4seller 拡張のID
+EXT_ID = "ocjlckkmllgdmmpiobopeblldmmhjpjk"
+
+
+def find_extension() -> str:
+    """tool4seller 拡張の場所を探す。
+
+    レビュー（AI評価分析）は拡張が入っていないと動かない。
+    拡張そのものは持たず、普段のChromeに入っているものを借りる。
+    """
+    import glob
+    import os
+    base = os.path.expandvars("%LOCALAPPDATA%")
+    pat = os.path.join(base, "Google", "Chrome", "User Data", "*",
+                       "Extensions", EXT_ID, "*")
+    found = [d for d in glob.glob(pat)
+             if os.path.exists(os.path.join(d, "manifest.json"))]
+    # 版が複数あれば新しいほうを使う
+    return sorted(found)[-1] if found else ""
+
+
+def _new_page(pw, headless: bool = True):
+    """ログイン済みのプロファイルでブラウザを開く。
+
+    拡張はヘッドレスでは読み込まれない。拡張が要るときは画面を出して
+    動かすしかないので、画面の外へ追いやって目に入らないようにする。
+    """
+    args = ["--disable-blink-features=AutomationControlled"]
+    ext = find_extension()
+    if ext:
+        args += ["--disable-extensions-except=" + ext,
+                 "--load-extension=" + ext,
+                 # 画面の外に置く。閉じてしまうと拡張が動かない
+                 "--window-position=-2400,-2400",
+                 "--window-size=1280,900"]
     ctx = pw.chromium.launch_persistent_context(
         str(PROFILE),
-        headless=True,
-        args=["--disable-blink-features=AutomationControlled"],
+        headless=(headless and not ext),
+        args=args,
         locale="ja-JP",
     )
     page = ctx.pages[0] if ctx.pages else ctx.new_page()
