@@ -2,11 +2,28 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <!-- このページはブラウザに覚えさせない。覚えられると、直したあとも
+       古い転送先へ飛ばされ続けて「開けない」になる -->
+  <meta http-equiv="Cache-Control" content="no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <script>
-    var path = window.location.pathname.replace('/china-import-tool', '') || '/';
-    var search = window.location.search;
-    var hash = window.location.hash;
-    window.location.replace('/china-import-tool/?p=' + encodeURIComponent(path + search) + hash);
+    (function() {
+      var base = '/china-import-tool';
+      var path = window.location.pathname.replace(base, '') || '/';
+      var search = window.location.search;
+      var hash = window.location.hash;
+
+      // 共有ページはここからハッシュへ直接飛ばす。index.html を挟むと、
+      // そちらが古いまま覚えられていたときに動かなくなる
+      if (path.indexOf('/keep-public') === 0) {
+        window.location.replace(base + '/#/keep-public' + search);
+        return;
+      }
+
+      window.location.replace(
+        base + '/?p=' + encodeURIComponent(path + search) + hash);
+    })();
   </script>
 </head>
 <body></body>
