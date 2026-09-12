@@ -44,19 +44,23 @@ def _asin_from(url: str) -> str:
     return m.group(1).upper() if m else ""
 
 
+# Amazonは素っ気ないUser-Agentを弾く。ブラウザと同じものを名乗る
+_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+
+
 def _resolve_short(url: str) -> str:
     """amzn.asia / amzn.to の短縮URLをたどって本来のURLにする。
 
+    HEADだと404が返るので（Amazon側がHEADを受け付けない）GETでたどる。
     たどれなければ元のURLをそのまま返す（登録は通す）。
     """
     u = str(url or "").strip()
     if not re.search(r"amzn\.(asia|to)/", u):
         return u
     try:
-        req = urllib.request.Request(u, method="HEAD", headers={
-            "User-Agent": "Mozilla/5.0 (compatible; china-import-tool/1.0)",
-        })
-        with urllib.request.urlopen(req, timeout=10) as res:
+        req = urllib.request.Request(u, headers={"User-Agent": _UA})
+        with urllib.request.urlopen(req, timeout=15) as res:
             return res.geturl() or u
     except Exception:
         return u
@@ -103,12 +107,12 @@ def list_claims(status: Optional[str] = None,
         q = q.filter(KeepClaim.status == status)
     if owner:
         q = q.filter(KeepClaim.owner == owner)
-    # キープ中は期限が近い順、それ以外は新しい順
-    rows = q.order_by(KeepClaim.claimed_at.desc()).all()
+    # 新しく登録したものが上。あとから登録した分を探し回らずに済む
+    rows = q.order_by(KeepClaim.claimed_at.desc(), KeepClaim.id.desc()).all()
     today = date.today()
     items = [_out(r, today) for r in rows]
+    # キープ中を先に、その中も新しい順。終わったものは下へ送る
     keeping = [x for x in items if x["status"] == "keep"]
-    keeping.sort(key=lambda x: x["days_left"])
     others = [x for x in items if x["status"] != "keep"]
 
     # 枠の残り。人ごとに数える
@@ -313,3 +317,116 @@ def adopt(cid: int, workspace: str = "default", db: Session = Depends(get_db)):
     r.adopted_at = datetime.now(timezone.utc)
     db.commit()
     return {"research_id": new_id, "claim": _out(r)}
+
+class ImportRow(BaseModel):
+    """スプレッドシートの1行。列の並びはあちらに合わせてある。"""
+    claimed_at: str = ""      # 記入日時。早い者勝ちの根拠なので、そのまま持ってくる
+    owner: str = ""
+    url: str = ""
+    status: str = ""          # ⏳キープ中 / ✅発送済（枠解放） / ❌期限切れ（消滅）
+    shipped_at: str = ""
+    supplier_url: str = ""
+    memo: str = ""
+
+
+class ImportIn(BaseModel):
+    rows: List[ImportRow]
+    dry_run: bool = True
+
+
+_STATUS_MAP = {
+    "キープ": "keep",
+    "発送": "shipped",
+    "期限切れ": "expired",
+    "消滅": "expired",
+}
+
+
+def _parse_status(text: str) -> str:
+    t = str(text or "")
+    for key, val in _STATUS_MAP.items():
+        if key in t:
+            return val
+    return "keep"
+
+
+def _parse_dt(text: str):
+    """「2026/05/10 8:27:42」「2026/05/10」を読む。"""
+    t = str(text or "").strip()
+    if not t:
+        return None
+    for fmt in ("%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y/%m/%d",
+                "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(t, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+@router.post("/import")
+def import_rows(body: ImportIn, db: Session = Depends(get_db)):
+    """スプレッドシートから移してくる。
+
+    既定は dry_run。何が入るかを見てから、あらためて実行する。
+    同じURLがすでにあれば飛ばす（二重に入れない）。
+
+    記入日時はあちらの値をそのまま使う。早い者勝ちの根拠なので、
+    取り込んだ日時に置き換えてしまうと順番が狂う。
+    """
+    added, skipped, errors = [], [], []
+    seen_urls = {r.url for r in db.query(KeepClaim.url).all()}
+
+    for i, row in enumerate(body.rows):
+        url = _resolve_short(row.url.strip())
+        if not url:
+            continue
+        if url in seen_urls:
+            skipped.append({"row": i + 1, "url": url, "reason": "すでにあります"})
+            continue
+
+        asin = _asin_from(url)
+        status = _parse_status(row.status)
+        claimed = _parse_dt(row.claimed_at)
+        shipped = _parse_dt(row.shipped_at)
+
+        item = {
+            "owner": row.owner.strip() or "?",
+            "url": url, "asin": asin or None,
+            "status": status,
+            "claimed_at": claimed.isoformat() if claimed else None,
+            "shipped_at": str(shipped.date()) if shipped else None,
+            "supplier_url": row.supplier_url.strip() or None,
+            "memo": row.memo.strip() or None,
+        }
+        if not asin:
+            item["warning"] = "ASINを読み取れませんでした（被り判定ができません）"
+
+        if body.dry_run:
+            added.append(item)
+            seen_urls.add(url)
+            continue
+
+        r = KeepClaim(
+            owner=item["owner"], url=url, asin=asin or None,
+            status=status,
+            shipped_at=shipped.date() if shipped else None,
+            supplier_url=item["supplier_url"], memo=item["memo"],
+        )
+        db.add(r)
+        db.flush()
+        # server_default があるので、入れたあとに上書きする
+        if claimed:
+            r.claimed_at = claimed
+        added.append(item)
+        seen_urls.add(url)
+
+    if not body.dry_run:
+        db.commit()
+        _expire_overdue(db)
+
+    return {
+        "dry_run": body.dry_run,
+        "added": len(added), "skipped": len(skipped),
+        "items": added, "skipped_items": skipped, "errors": errors,
+    }

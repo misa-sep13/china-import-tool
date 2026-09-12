@@ -123,10 +123,20 @@ export default function KeepClaimsPage() {
     } finally { setBusy(false) }
   }
 
+  // 期限が2週間を切ったキープ。並びは新しい順なので、これだけ別に数える
+  const soon = useMemo(
+    () => (data?.items || []).filter(
+      x => x.status === 'keep' && x.days_left <= 14),
+    [data])
+
   const items = useMemo(() => {
     const all = data?.items || []
-    return filter === 'all' ? all : all.filter(x => x.status === filter)
-  }, [data, filter])
+    if (filter === 'all') return all
+    if (filter === 'soon') {
+      return [...soon].sort((a, b) => a.days_left - b.days_left)
+    }
+    return all.filter(x => x.status === filter)
+  }, [data, filter, soon])
 
   const owners = useMemo(() => {
     const s = new Set(['C', 'Y'])
@@ -223,6 +233,16 @@ export default function KeepClaimsPage() {
             </button>
           ))}
         </div>
+        {/* 新しい順に並べているので、期限が近いものは下に埋もれる。
+            件数だけ先に知らせて、見落とさないようにする */}
+        {soon.length > 0 && (
+          <button onClick={() => setFilter('soon')}
+            className={`btn ${filter === 'soon' ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ fontSize: 12, padding: '4px 10px',
+              color: filter === 'soon' ? '#fff' : C.bad, fontWeight: 700 }}>
+            期限が近い {soon.length}
+          </button>
+        )}
         <div style={{ marginLeft: 'auto', fontSize: 11, color: C.sub }}>
           親ASIN単位で独占／{data?.limit_days || 60}日以内に発送しないと消滅
         </div>
@@ -241,7 +261,9 @@ export default function KeepClaimsPage() {
           <div style={{ ...card, color: C.sub, fontSize: 13, lineHeight: 1.7 }}>
             {filter === 'keep'
               ? 'キープ中の商品はありません。上のURL欄に貼って登録してください。'
-              : 'この状態の商品はありません。'}
+              : filter === 'soon'
+                ? '期限が近いものはありません。'
+                : 'この状態の商品はありません。'}
           </div>
         )}
       </div>
@@ -278,22 +300,28 @@ function Row({ r, busy, onShip, onRelease, onAdopt, onDelete }) {
           )}
         </div>
 
-        <div style={{ fontSize: 13, marginTop: 4, wordBreak: 'break-all' }}>
+        {/* URLは長いと3行占領して読めなくなる。商品名が無ければ
+            ASINを見出しにし、リンクは1行に収める */}
+        <div style={{ fontSize: 13, marginTop: 4, display: 'flex', gap: 8,
+          alignItems: 'baseline', flexWrap: 'wrap' }}>
           <a href={r.url} target="_blank" rel="noreferrer"
-            style={{ color: C.key }}>
-            {r.title || r.url}
+            style={{ color: C.key, maxWidth: '100%', overflow: 'hidden',
+              textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            title={r.url}>
+            {r.title || r.asin || r.url}
           </a>
-          {r.asin && (
-            <span style={{ fontSize: 11, color: C.sub, marginLeft: 8 }}>
-              {r.asin}
-            </span>
+          {r.title && r.asin && (
+            <span style={{ fontSize: 11, color: C.sub }}>{r.asin}</span>
           )}
         </div>
 
         {r.supplier_url && (
-          <div style={{ fontSize: 11, marginTop: 3, wordBreak: 'break-all' }}>
+          <div style={{ fontSize: 11, marginTop: 3, overflow: 'hidden',
+            textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             <a href={r.supplier_url} target="_blank" rel="noreferrer"
-              style={{ color: C.sub }}>仕入先: {r.supplier_url.slice(0, 70)}…</a>
+              style={{ color: C.sub }} title={r.supplier_url}>
+              仕入先を開く
+            </a>
           </div>
         )}
         {r.memo && (
