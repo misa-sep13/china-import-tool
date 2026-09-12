@@ -18,9 +18,18 @@
         if (p) {
           window.history.replaceState(null, null, '/china-import-tool' + p);
         }
+        // 共有ページのURLは相手に渡すものなので、# を付けずに書きたい。
+        // ただしHashRouterはハッシュしか見ないので、パス側で来たときは
+        // ハッシュへ振り替える（/keep-public?share=... → #/keep-public?share=...）
+        var path = window.location.pathname;
+        var i = path.indexOf('/keep-public');
+        if (i >= 0 && !window.location.hash) {
+          window.location.replace(
+            '/china-import-tool/#/keep-public' + window.location.search);
+        }
       })();
     </script>
-    <script type="module" crossorigin src="/china-import-tool/assets/index-B3lGVuyY.js"></script>
+    <script type="module" crossorigin src="/china-import-tool/assets/index-CAmZDSNf.js"></script>
     <link rel="stylesheet" crossorigin href="/china-import-tool/assets/index-BvuTldty.css">
   </head>
   <body>
