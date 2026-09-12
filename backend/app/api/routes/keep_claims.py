@@ -67,12 +67,38 @@ def _resolve_short(url: str) -> str:
 
 
 def _catalog(asin: str) -> dict:
-    """商品名と画像をAmazonから取る。取れなくても登録は止めない。"""
+    """商品名と画像を取る。取れなくても登録は止めない。
+
+    SP-APIのCatalog APIは権限が無く「Access to requested resource is
+    denied」になるため、商品ページから拾う。ここで欲しいのは
+    「どの商品か見て分かる」ことだけなので、これで足りる。
+    """
+    asin = (asin or "").strip().upper()
+    if not asin:
+        return {}
     try:
-        from app.services.amazon_api import fetch_catalog_one
-        return fetch_catalog_one(asin) or {}
+        req = urllib.request.Request(
+            f"https://www.amazon.co.jp/dp/{asin}",
+            headers={"User-Agent": _UA, "Accept-Language": "ja-JP,ja;q=0.9"})
+        with urllib.request.urlopen(req, timeout=20) as res:
+            html = res.read().decode("utf-8", "replace")
     except Exception:
         return {}
+
+    out = {}
+    # メイン画像。ページの中に大きい版のURLが入っている
+    m = re.search(r'"large":"(https://m\.media-amazon\.com/images/I/[^"]+)"',
+                  html)
+    if not m:
+        m = re.search(r'"hiRes":"(https://m\.media-amazon\.com/images/I/[^"]+)"',
+                      html)
+    if m:
+        out["image_url"] = m.group(1)
+
+    t = re.search(r'<span id="productTitle"[^>]*>\s*([^<]+)', html)
+    if t:
+        out["title"] = t.group(1).strip()[:200]
+    return out
 
 
 def _out(r: KeepClaim, today: date = None) -> dict:

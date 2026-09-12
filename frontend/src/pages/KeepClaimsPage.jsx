@@ -133,6 +133,23 @@ export default function KeepClaimsPage({ share = '' }) {
     } finally { setBusy(false) }
   }
 
+  // 取り込んだ古い行は画像が入っていない。ASINから取り直す。
+  // 1件ずつAPIを叩くので、一度に扱う数は絞ってある
+  const fillMissing = async () => {
+    setBusy(true); setErr('')
+    try {
+      const r = await api.post(q('/keep-claims/fill-missing?limit=30'))
+      const d = r.data
+      if (d.filled) await load()
+      alert(d.targets
+        ? `${d.filled} / ${d.targets} 件の写真を入れました`
+          + (d.targets >= 30 ? '\nまだ残っているので、もう一度押してください' : '')
+        : '写真が入っていないものはありません')
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
   const remove = async (id) => {
     if (!confirm('この記録を消しますか？（誰が何を見ていたか分からなくなります）')) return
     setBusy(true)
@@ -158,6 +175,11 @@ export default function KeepClaimsPage({ share = '' }) {
     }
     return all.filter(x => x.status === filter)
   }, [data, filter, soon])
+
+  // 写真が入っていない件数。ボタンを出すかどうかの判断に使う
+  const noImage = useMemo(
+    () => (data?.items || []).filter(x => x.asin && !x.image_url).length,
+    [data])
 
   const owners = useMemo(() => {
     const s = new Set(['C', 'Y'])
@@ -267,6 +289,15 @@ export default function KeepClaimsPage({ share = '' }) {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6,
           alignItems: 'center' }}>
           {/* 共有ページからは触らせない。自分のシートの話なので */}
+          {/* 写真が抜けている行があるときだけ出す。埋まれば消える */}
+          {noImage > 0 && (
+            <button className="btn btn-secondary" disabled={busy}
+              onClick={fillMissing}
+              style={{ fontSize: 11, padding: '3px 8px' }}
+              title="ASINから商品写真を取り直す">
+              写真を入れる（{noImage}）
+            </button>
+          )}
           {!share && (
             <button className="btn btn-secondary" disabled={busy}
               onClick={syncAdopted}
