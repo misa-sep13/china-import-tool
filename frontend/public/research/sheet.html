@@ -1720,9 +1720,10 @@ if(FIREBASE_CONFIG.databaseURL){
     return ARS_API ? ARS_API + '/amazon-research' + path : SP_SERVER_URL + path;
   }
   function apiHeaders(){
+    // 取り込みサーバーは、自分が持っていないもの（サジェスト・画像の文字）を
+    // 一元管理へ回す。そのときトークンが要るので、中継のときも渡す
     const t = String(arsCfgEarly('__ARS_TOKEN__') || '');
-    return (!document.body.classList.contains('sp-ready') && t)
-      ? {Authorization: 'Bearer ' + t} : {};
+    return t ? {Authorization: 'Bearer ' + t} : {};
   }
 
   const COLS = [

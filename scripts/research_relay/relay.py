@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, urlparse
 HERE = Path(__file__).resolve().parent
 PROFILE = HERE / "browser"          # ログインを残す場所
 VISITED = HERE / "visited_urls.txt"  # ログイン時に開いた画面のURL控え
+SETTINGS = HERE / "settings.json"   # 一元管理のAPIの場所とトークン
 PORT = 8765
 
 # 紹介ページ(www)ではなく、ログインして使う本体はこちら。
@@ -45,6 +46,23 @@ try:
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
+
+
+def _proxy_base() -> str:
+    """一元管理のAPIの場所。settings.json に書いておく。"""
+    try:
+        d = json.loads(SETTINGS.read_text(encoding="utf-8"))
+        return str(d.get("api_base") or "").rstrip("/")
+    except Exception:
+        return ""
+
+
+def _proxy_token() -> str:
+    try:
+        d = json.loads(SETTINGS.read_text(encoding="utf-8"))
+        return str(d.get("token") or "")
+    except Exception:
+        return ""
 
 
 def _log(*a):
@@ -292,7 +310,44 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send({"ok": False,
                                    "error": f"取り込みに失敗しました（{type(e).__name__}）"})
 
+        # ここが持っていないもの（サジェスト・画像の文字）は
+        # 一元管理のサーバーへ回す。
+        # シートは「取り込みサーバーがあれば、そこに全部ある」前提で
+        # 呼んでくるので、無いと 404 になって取れなくなる
+        if _proxy_base():
+            return self._proxy(u.path, u.query)
+
         self._send({"ok": False, "error": "not found"}, 404)
+
+    def _proxy(self, path: str, query: str):
+        """一元管理のサーバーへそのまま渡して、返ってきたものを返す。"""
+        import urllib.error
+        import urllib.request
+
+        url = _proxy_base() + "/amazon-research" + path + (("?" + query) if query else "")
+        req = urllib.request.Request(url)
+        # シートから渡ってきたトークンをそのまま使う。
+        # 無ければ settings.json のものを使う
+        token = self.headers.get("Authorization", "")
+        if not token:
+            t = _proxy_token()
+            token = ("Bearer " + t) if t else ""
+        if token:
+            req.add_header("Authorization", token)
+        try:
+            with urllib.request.urlopen(req, timeout=180) as res:
+                body = res.read()
+        except urllib.error.HTTPError as e:
+            body = e.read()
+        except Exception as e:
+            return self._send({"ok": False,
+                               "error": f"一元管理へ繋がりませんでした（{type(e).__name__}）"})
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
 
 def _already_running() -> bool:
