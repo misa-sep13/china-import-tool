@@ -11,9 +11,19 @@ import KeepClaimsPage from './KeepClaimsPage'
  * サーバー側も keep-claims 以外は受け付けない。
  */
 export default function KeepClaimsPublicPage() {
+  // 合言葉はURLのどこに入っていても拾う。
+  // HashRouterなので #/keep-public?share=... の形だと ? はハッシュ側に入り、
+  // location.search には出てこない。両方見る
   const share = useMemo(() => {
-    const p = new URLSearchParams(window.location.search)
-    return p.get('share') || p.get('token') || ''
+    const pick = (qs) => {
+      const p = new URLSearchParams(qs)
+      return p.get('share') || p.get('token') || ''
+    }
+    const fromSearch = pick(window.location.search)
+    if (fromSearch) return fromSearch
+    const hash = window.location.hash || ''
+    const i = hash.indexOf('?')
+    return i >= 0 ? pick(hash.slice(i + 1)) : ''
   }, [])
 
   if (!share) {

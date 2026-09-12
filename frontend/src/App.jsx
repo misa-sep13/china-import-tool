@@ -81,8 +81,14 @@ function App() {
     )
   }
 
-  // 商品キープの共有ページ。相手にURLを渡して、被り防止だけを見てもらう
-  if (location.pathname === '/keep-public') {
+  // 商品キープの共有ページ。相手にURLを渡して、被り防止だけを見てもらう。
+  // HashRouterなので本来は #/keep-public だが、相手に渡すURLで # が
+  // 落ちることがある。?share= が付いていればそちらでも開けるようにする
+  // （合言葉が無ければ何も見せないので、これで漏れることはない）
+  const rawSearch = new URLSearchParams(window.location.search)
+  if (location.pathname === '/keep-public'
+      || (window.location.pathname.endsWith('/keep-public')
+          && rawSearch.get('share'))) {
     return (
       <Routes>
         <Route path="/keep-public" element={<KeepClaimsPublicPage />} />
