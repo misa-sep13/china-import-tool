@@ -36,8 +36,8 @@ const STATUS = {
 // 担当ごとの色。誰が押さえているか、ひと目で分かるようにする。
 // 地色は薄くして、状態（キープ中／発送済）の見え方を邪魔しない
 const OWNER_COLORS = {
-  C: { bg: '#fff7ed', bar: '#f97316', text: '#c2410c' },   // だいだい
-  Y: { bg: '#f0fdfa', bar: '#14b8a6', text: '#0f766e' },   // みどり
+  C: { bg: '#f0fdfa', bar: '#14b8a6', text: '#0f766e' },   // みどり
+  Y: { bg: '#fff7ed', bar: '#f97316', text: '#c2410c' },   // だいだい
 }
 const OWNER_FALLBACK = { bg: '#f8fafc', bar: '#94a3b8', text: '#475569' }
 
