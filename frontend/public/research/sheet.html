@@ -2051,7 +2051,7 @@ if(FIREBASE_CONFIG.databaseURL){
        'fixedStandard','fixedOversize','realShip','chinaOverhead'].forEach(k => delete s.settings[k]);
     }
     if(!Array.isArray(s.researches) || !s.researches.length) s.researches = [defaultResearch()];
-    s.researches.forEach(r => {
+    s.researches.forEach((r, i) => {
       if(!Array.isArray(r.rows) || !r.rows.length) r.rows = [defaultRow()];
       r.rows.forEach(row => {
         // 旧「アリババURL」(単一文字列) を 1688 URL の配列へ移行
@@ -2092,6 +2092,15 @@ if(FIREBASE_CONFIG.databaseURL){
       // 工程を足したときは STATUS_DEFS だけでなく、ここにも足すこと。
       // 入れ忘れると、読み込むたびに空へ戻されて保存が効かなくなる
       if(STATUS_DEFS.every(([v]) => v !== r.status)) r.status = '';
+
+      // 採用した時刻。並べ替えに使う。
+      // これを入れる前から採用になっていた枠には時刻が無いので、
+      // 今ある並びを保つよう、上にあるものほど新しいことにしておく
+      // （そうしないと全部0になって、順番がばらばらに見える）
+      if(ADOPTED_STATUSES.indexOf(r.status) >= 0 && !r.adoptedAt){
+        r.adoptedAt = 1 + (s.researches.length - i);
+      }
+      if(ADOPTED_STATUSES.indexOf(r.status) < 0) r.adoptedAt = null;
     });
     return s;
   }
@@ -7282,7 +7291,15 @@ if(FIREBASE_CONFIG.databaseURL){
     stSel.dataset.st = st;
     stSel.title = 'この枠のステータス（工程）。ツールバーの絞り込みと対応し、枠の色も変わります';
     stSel.addEventListener('change', () => {
+      const before = research.status;
       research.status = (stSel.value === 'active') ? '' : stSel.value;
+      // 採用にした時刻を残す。あとから採用したものを上に出すため。
+      // 採用より先の工程（発注済みなど）へ進んでも、最初に採用した
+      // ときの時刻を保つ（進めるたびに順番が動くと探しにくい）
+      const nowAdopted = ADOPTED_STATUSES.indexOf(research.status) >= 0;
+      const wasAdopted = ADOPTED_STATUSES.indexOf(before) >= 0;
+      if(nowAdopted && !wasAdopted) research.adoptedAt = Date.now();
+      if(!nowAdopted) research.adoptedAt = null;
       render(); scheduleSave();
     });
     stBox.appendChild(stSel);
@@ -8017,10 +8034,14 @@ if(FIREBASE_CONFIG.databaseURL){
     const vis = state.researches.filter(matchesFilter);
     // 採用したものを上に固める。これから仕込む商品なので、
     // 追加した順に埋もれると探しにくい。
-    // 採用の中／それ以外の中では、これまでどおり並びを変えない
-    vis.sort((a, b) =>
-      (ADOPTED_STATUSES.indexOf(a.status) >= 0 ? 0 : 1)
-      - (ADOPTED_STATUSES.indexOf(b.status) >= 0 ? 0 : 1));
+    // 採用の中は、あとから採用したものほど上に出す
+    const adoptedRank = r => (ADOPTED_STATUSES.indexOf(r.status) >= 0 ? 0 : 1);
+    vis.sort((a, b) => {
+      const d = adoptedRank(a) - adoptedRank(b);
+      if(d) return d;
+      if(adoptedRank(a) === 0) return (b.adoptedAt || 0) - (a.adoptedAt || 0);
+      return 0;
+    });
     vis.forEach(r => container.appendChild(buildResearch(r)));
     if(!vis.length){
       container.appendChild(el('div', 'filter-empty',
