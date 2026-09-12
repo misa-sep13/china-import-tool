@@ -430,3 +430,41 @@ def import_rows(body: ImportIn, db: Session = Depends(get_db)):
         "added": len(added), "skipped": len(skipped),
         "items": added, "skipped_items": skipped, "errors": errors,
     }
+
+# 移行元のスプレッドシート。1回きりの取り込みなので、URLはここに持つ
+_SHEET_CSV = ("https://docs.google.com/spreadsheets/d/"
+              "1-81x0JKUzZ_RqESiEx5e0WfJRAOLnQs0QLsDxTxUmDI/"
+              "gviz/tq?tqx=out:csv&gid=1776725859")
+
+
+@router.post("/import-sheet")
+def import_sheet(dry_run: bool = True, db: Session = Depends(get_db)):
+    """スプレッドシートを読んで取り込む。移行のための1回きりの口。
+
+    列の並びはあちらに合わせてある:
+      0 記入日時 / 1 担当 / 3 URL / 5 ステータス / 6 発送日
+      7 仕入先URL / 8 メモ
+    """
+    import csv
+    import io as _io
+
+    try:
+        req = urllib.request.Request(_SHEET_CSV, headers={"User-Agent": _UA})
+        with urllib.request.urlopen(req, timeout=60) as res:
+            text = res.read().decode("utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=502,
+                            detail=f"スプレッドシートを読めませんでした（{type(e).__name__}）")
+
+    rows = list(csv.reader(_io.StringIO(text)))
+    out = []
+    for r in rows[3:]:          # 3行目までは見出しと枠数
+        if len(r) < 7 or not r[3].strip():
+            continue
+        out.append(ImportRow(
+            claimed_at=r[0], owner=r[1], url=r[3], status=r[5],
+            shipped_at=r[6],
+            supplier_url=(r[7] if len(r) > 7 else ""),
+            memo=(r[8] if len(r) > 8 else ""),
+        ))
+    return import_rows(ImportIn(rows=out, dry_run=dry_run), db)

@@ -112,6 +112,31 @@ export default function KeepClaimsPage() {
     } finally { setBusy(false) }
   }
 
+  // スプレッドシートからの移行。1回きりなので、まず何が入るか見せる
+  const importSheet = async (dryRun) => {
+    if (!dryRun && !confirm(
+      'スプレッドシートの内容を取り込みます。\n'
+      + '同じURLがすでにあるものは飛ばします。よろしいですか？')) return
+    setBusy(true); setErr('')
+    try {
+      const r = await api.post(
+        `/keep-claims/import-sheet?dry_run=${dryRun ? 'true' : 'false'}`)
+      const d = r.data
+      const noAsin = (d.items || []).filter(x => !x.asin).length
+      if (dryRun) {
+        alert(`取り込むと ${d.added} 件入ります`
+          + `（すでにある ${d.skipped} 件は飛ばします）\n`
+          + (noAsin ? `※ ${noAsin} 件はASINを読み取れず、被り判定ができません\n` : '')
+          + '\nよければ「取り込む」を押してください')
+      } else {
+        alert(`${d.added} 件を取り込みました（${d.skipped} 件は飛ばしました）`)
+        await load()
+      }
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
   const remove = async (id) => {
     if (!confirm('この記録を消しますか？（誰が何を見ていたか分からなくなります）')) return
     setBusy(true)
@@ -243,8 +268,24 @@ export default function KeepClaimsPage() {
             期限が近い {soon.length}
           </button>
         )}
-        <div style={{ marginLeft: 'auto', fontSize: 11, color: C.sub }}>
-          親ASIN単位で独占／{data?.limit_days || 60}日以内に発送しないと消滅
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6,
+          alignItems: 'center' }}>
+          {/* スプレッドシートからの移行用。済んだら外してよい */}
+          <button className="btn btn-secondary" disabled={busy}
+            onClick={() => importSheet(true)}
+            style={{ fontSize: 11, padding: '3px 8px' }}
+            title="スプレッドシートを読んで、何件入るか見るだけ">
+            シートを確認
+          </button>
+          <button className="btn btn-secondary" disabled={busy}
+            onClick={() => importSheet(false)}
+            style={{ fontSize: 11, padding: '3px 8px' }}
+            title="スプレッドシートの内容を取り込む">
+            取り込む
+          </button>
+          <span style={{ fontSize: 11, color: C.sub }}>
+            親ASIN単位で独占／{data?.limit_days || 60}日以内に発送しないと消滅
+          </span>
         </div>
       </div>
 
