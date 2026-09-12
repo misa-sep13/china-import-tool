@@ -23,6 +23,7 @@ from app.api.routes import import_permits as import_permit_routes
 from app.api.routes import chatwork as chatwork_routes
 from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
+from app.models import daily_sales as daily_sales_models
 from app.models import price_log as price_log_models
 from app.models import rakuten_product as rakuten_product_models
 from app.models import rakuten_order as rakuten_order_models
