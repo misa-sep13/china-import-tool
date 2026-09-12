@@ -339,7 +339,7 @@ function Row({ r, busy, onShip, onRelease, onDelete }) {
   const keeping = r.status === 'keep'
   return (
     <div style={{ ...card, background: st.bg, display: 'flex', gap: 12,
-      alignItems: 'flex-start' }}>
+      alignItems: 'flex-start', minWidth: 0, overflow: 'hidden' }}>
       {/* 商品写真。URLとASINだけでは何の商品か分からない */}
       {r.image_url ? (
         <a href={r.url} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
@@ -355,7 +355,7 @@ function Row({ r, busy, onShip, onRelease, onDelete }) {
       )}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center',
-          flexWrap: 'wrap' }}>
+          flexWrap: 'wrap', minWidth: 0 }}>
           <b style={{ fontSize: 13, color: st.color }}>{st.label}</b>
           <span style={{ fontSize: 13, fontWeight: 700 }}>{r.owner}</span>
           {keeping && (
@@ -378,18 +378,21 @@ function Row({ r, busy, onShip, onRelease, onDelete }) {
 
         {/* URLは長いと3行占領して読めなくなる。商品名が無ければ
             ASINを見出しにし、リンクは1行に収める */}
-        <div style={{ fontSize: 13, marginTop: 4, display: 'flex', gap: 8,
-          alignItems: 'baseline', flexWrap: 'wrap' }}>
+        {/* 商品名は長いものが多い。1行で切らないと、ボタンが右へ
+            押し出されて横スクロールが出る */}
+        <div style={{ fontSize: 13, marginTop: 4, minWidth: 0,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          title={r.title || r.url}>
           <a href={r.url} target="_blank" rel="noreferrer"
-            style={{ color: C.key, maxWidth: '100%', overflow: 'hidden',
-              textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-            title={r.url}>
+            style={{ color: C.key }}>
             {r.title || r.asin || r.url}
           </a>
-          {r.title && r.asin && (
-            <span style={{ fontSize: 11, color: C.sub }}>{r.asin}</span>
-          )}
         </div>
+        {r.title && r.asin && (
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>
+            {r.asin}
+          </div>
+        )}
 
         {r.supplier_url && (
           <div style={{ fontSize: 11, marginTop: 3, overflow: 'hidden',
@@ -409,7 +412,7 @@ function Row({ r, busy, onShip, onRelease, onDelete }) {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5,
-        flexShrink: 0 }}>
+        flexShrink: 0, width: 110 }}>
         {keeping && (
           <>
             <button className="btn btn-secondary" disabled={busy} onClick={onShip}
