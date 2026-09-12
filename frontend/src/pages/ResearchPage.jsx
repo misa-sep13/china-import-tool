@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import api from '../api/client'
 import ListingTab from './ListingTab'
+import KeepClaimsPage from './KeepClaimsPage'
 
 /**
  * リサーチ（競合リサーチシート ／ セラースカウト ／ 商品登録）。
@@ -21,7 +22,7 @@ export default function ResearchPage() {
 
   // 商品登録はシートそのもの。採用したものだけを開く。
   // 別の画面を作ると同じ中身を二重に持つことになるため
-  const isFrame = tab !== 'old'
+  const isFrame = tab !== 'old' && tab !== 'keep'
 
   // iframeの中へ、APIのURLとログイン済みトークンを渡す。
   // 中のスクリプトはこれを見て保存先とAPIの向き先を決める。
@@ -68,6 +69,7 @@ export default function ResearchPage() {
         {[
           { k: 'sheet', l: '📋 競合リサーチシート' },
           { k: 'scout', l: '🔎 セラースカウト' },
+          { k: 'keep', l: '🤝 商品キープ' },
           { k: 'listing', l: '🏷 商品登録（採用したもの）' },
           { k: 'old', l: '（旧）登録画面' },
         ].map(t => (
@@ -99,6 +101,10 @@ export default function ResearchPage() {
             style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
             onLoad={() => { injectConfig(); setReady(true) }}
           />
+        </div>
+      ) : tab === 'keep' ? (
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+          <KeepClaimsPage />
         </div>
       ) : (
         <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>

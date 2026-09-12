@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import Base, engine
 from app.api.routes import products, orders, settings, fba, invoices, price_adjustments, analytics, shipment_orders, fba_plan, taotaro
 from app.api.routes import order_logic_routes
+from app.api.routes import keep_claims
 from app.api.routes import inventory_snapshots
 from app.api.routes import material_costs
 from app.api.routes import cost_histories
@@ -25,6 +26,7 @@ from app.api.routes import chatwork as chatwork_routes
 from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
 from app.models import daily_sales as daily_sales_models
+from app.models import keep_claim as keep_claim_models
 from app.models import price_log as price_log_models
 from app.models import rakuten_product as rakuten_product_models
 from app.models import rakuten_order as rakuten_order_models
@@ -1428,6 +1430,7 @@ app.include_router(amazon_listings.router, prefix="/api")
 app.include_router(scout.router, prefix="/api")
 app.include_router(taotaro.router, prefix="/api")
 app.include_router(order_logic_routes.router, prefix="/api")
+app.include_router(keep_claims.router, prefix="/api")
 app.include_router(import_permit_routes.router, prefix="/api")
 app.include_router(chatwork_routes.router, prefix="/api")
 app.include_router(research_routes.router, prefix="/api")
