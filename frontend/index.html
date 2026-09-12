@@ -15,17 +15,21 @@
     <script>
       (function() {
         var p = new URLSearchParams(window.location.search).get('p');
+
+        // 共有ページのURLは相手に渡すものなので、# を付けずに書きたい。
+        // ただしHashRouterはハッシュしか見ないので、パスで来たら
+        // ハッシュへ振り替える。
+        // 404.htmlを経由すると ?p=/keep-public?share=... の形で来るので、
+        // pathname ではなく p の中身を見る（このときpathnameはまだ '/'）
+        var target = p || (window.location.pathname.replace('/china-import-tool', '')
+                           + window.location.search);
+        if (target.indexOf('/keep-public') === 0 && !window.location.hash) {
+          window.location.replace('/china-import-tool/#' + target);
+          return;
+        }
+
         if (p) {
           window.history.replaceState(null, null, '/china-import-tool' + p);
-        }
-        // 共有ページのURLは相手に渡すものなので、# を付けずに書きたい。
-        // ただしHashRouterはハッシュしか見ないので、パス側で来たときは
-        // ハッシュへ振り替える（/keep-public?share=... → #/keep-public?share=...）
-        var path = window.location.pathname;
-        var i = path.indexOf('/keep-public');
-        if (i >= 0 && !window.location.hash) {
-          window.location.replace(
-            '/china-import-tool/#/keep-public' + window.location.search);
         }
       })();
     </script>
