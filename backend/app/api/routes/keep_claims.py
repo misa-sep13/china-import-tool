@@ -85,6 +85,16 @@ def _resolve_short(url: str) -> str:
         return u
 
 
+def _join_notes(*parts) -> str:
+    """メモをひとつにまとめる。空のものは飛ばし、同じ文は重ねない。"""
+    out = []
+    for x in parts:
+        x = str(x or "").strip()
+        if x and x not in out:
+            out.append(x)
+    return " / ".join(out) or None
+
+
 def _catalog(asin: str) -> dict:
     """商品名と画像を取る。取れなくても登録は止めない。
 
@@ -346,6 +356,7 @@ def sync_adopted(workspace: str = "default", owner: str = "Y",
     have_url = {u for (u,) in db.query(KeepClaim.url).all() if u}
 
     added = []
+    updated = 0
     for research in (data.get("researches") or []):
         if not isinstance(research, dict):
             continue
@@ -364,6 +375,16 @@ def sync_adopted(workspace: str = "default", owner: str = "Y",
         if not url:
             continue
         if (asin and asin in have_asin) or url in have_url:
+            # すでにあるものは足さないが、シート側でメモを書き足して
+            # いることがあるので、そこだけ写しておく
+            memo = _join_notes(research.get("imgNote"), first.get("note"))
+            if memo:
+                cur = (db.query(KeepClaim)
+                       .filter(KeepClaim.research_id == research.get("id"))
+                       .first())
+                if cur and (cur.memo or "") != memo:
+                    cur.memo = memo
+                    updated += 1
             continue
 
         title = (research.get("title") or "").strip()
@@ -377,7 +398,9 @@ def sync_adopted(workspace: str = "default", owner: str = "Y",
             owner=owner, url=url, asin=asin or None,
             title=title or None, image_url=image or None,
             supplier_url=(first.get("buyUrl") or "").strip() or None,
-            memo=(first.get("note") or "").strip() or None,
+            # 商品補足（画像外注へ渡すために書いたもの）と、表の商品備考。
+            # どちらも「この商品をどう扱うか」の話なので、まとめて持ってくる
+            memo=_join_notes(research.get("imgNote"), first.get("note")),
             status="keep",
             research_id=research.get("id"),
             adopted_at=datetime.now(timezone.utc),
@@ -389,7 +412,7 @@ def sync_adopted(workspace: str = "default", owner: str = "Y",
         have_url.add(url)
 
     db.commit()
-    return {"added": len(added), "items": added}
+    return {"added": len(added), "updated": updated, "items": added}
 
 
 @router.post("/{cid:int}/fill")

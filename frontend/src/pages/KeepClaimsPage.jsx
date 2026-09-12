@@ -162,8 +162,11 @@ export default function KeepClaimsPage({ share = '' }) {
       // 画面で選んでいる担当（Cのことが多い）に引きずられないようにする
       const r = await api.post(q('/keep-claims/sync-adopted?owner=Y'))
       const n = r.data.added || 0
-      if (n) await load()
-      alert(n ? `${n}件をリサーチシートから取り込みました`
+      const u = r.data.updated || 0
+      if (n || u) await load()
+      alert(n || u
+        ? [n ? `${n}件を取り込みました` : '',
+           u ? `${u}件のメモを新しくしました` : ''].filter(Boolean).join('／')
         : '新しく取り込むものはありませんでした')
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
@@ -455,8 +458,10 @@ function Row({ r, busy, onShip, onRelease, onDelete }) {
             </a>
           </div>
         )}
+        {/* 商品補足はデザイナーへの指示なので、切らずに全部見せる */}
         {r.memo && (
-          <div style={{ fontSize: 12, color: C.sub, marginTop: 3 }}>{r.memo}</div>
+          <div style={{ fontSize: 12, color: C.sub, marginTop: 3,
+            whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{r.memo}</div>
         )}
         <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>
           {r.claimed_at && new Date(r.claimed_at).toLocaleString('ja-JP')} 登録
