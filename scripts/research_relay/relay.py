@@ -26,9 +26,16 @@ from urllib.parse import parse_qs, urlparse
 HERE = Path(__file__).resolve().parent
 PROFILE = HERE / "browser"          # ログインを残す場所
 VISITED = HERE / "visited_urls.txt"  # ログイン時に開いた画面のURL控え
+# 取得先の画面URL。tool4sellerの画面構成はこちらで確かめようがないので、
+# 決め打ちにせず、ログインのときに控えたURLをここに書いて使う。
+# {asin} のところが商品ごとに差し替わる
+CONF = HERE / "urls.json"
 PORT = 8765
 
-T4S = "https://www.tool4seller.com"
+# 紹介ページ(www)ではなく、ログインして使う本体はこちら。
+# www 側に /login は無く404になる
+T4S = "https://data.tool4seller.com"
+T4S_LOGIN = "https://data.tool4seller.com/landing?userHostRegion=com"
 
 # ブラウザ操作は同時に走らせない。1つのプロファイルを共有しているので、
 # 並行して動かすと互いのページを奪い合う
@@ -68,14 +75,30 @@ def _logged_in(page) -> bool:
     return "login" not in url.lower() and "signin" not in url.lower()
 
 
+def _url_for(kind: str, asin: str) -> str:
+    """取得先。urls.json に書いてあるものを使う。
+
+    無ければ空を返し、呼び出し側で「設定がまだ」と伝える。
+    当てずっぽうのURLを叩いても404になるだけなので、黙って進めない。
+    """
+    try:
+        conf = json.loads(CONF.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    tpl = str(conf.get(kind) or "")
+    return tpl.replace("{asin}", asin) if tpl else ""
+
+
 def fetch_one(page, asin: str, kinds: set) -> dict:
     """1商品ぶん取る。取れなかった種類は入れずに返す。"""
     out = {}
 
     if "reviews" in kinds:
+        url = _url_for("reviews", asin)
+        if not url:
+            return {"error": "noconf"}
         try:
-            page.goto(f"{T4S}/review/reviewList?asin={asin}",
-                      wait_until="domcontentloaded", timeout=60000)
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(3000)
             if not _logged_in(page):
                 return {"error": "login"}
@@ -86,9 +109,11 @@ def fetch_one(page, asin: str, kinds: set) -> dict:
             _log("レビュー取得に失敗", asin, type(e).__name__)
 
     if "keywords" in kinds:
+        url = _url_for("keywords", asin)
+        if not url:
+            return {"error": "noconf"}
         try:
-            page.goto(f"{T4S}/keyword/keywordResearch?asin={asin}",
-                      wait_until="domcontentloaded", timeout=60000)
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(3000)
             if not _logged_in(page):
                 return {"error": "login"}
@@ -136,6 +161,11 @@ def t4s_fetch(asins: list, kinds: set) -> dict:
             for asin in asins:
                 _log("取得中", asin, ",".join(sorted(kinds)))
                 r = fetch_one(page, asin, kinds)
+                if r.get("error") == "noconf":
+                    return {"ok": False,
+                            "error": "取得先の画面がまだ設定されていません。"
+                                     "urls.json にレビューとキーワードの"
+                                     "画面URLを入れてください"}
                 if r.get("error") == "login":
                     return {"ok": False,
                             "error": "ログインが切れています。"
@@ -247,7 +277,7 @@ def login():
                                         lambda f: note(pg)))
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.on("framenavigated", lambda f: note(page))
-        page.goto(T4S + "/login")
+        page.goto(T4S_LOGIN)
         try:
             while ctx.pages:
                 time.sleep(1)
@@ -269,6 +299,20 @@ def login():
             print("  " + u)
         print()
         print("控えました:", VISITED)
+
+        # 設定の雛形を置いておく。ASINの部分を {asin} に書き換えて使う
+        if not CONF.exists():
+            CONF.write_text(json.dumps({
+                "_使い方": "下の2つに、レビュー画面とキーワード画面のURLを入れる。"
+                           "ASINのところは {asin} に書き換える",
+                "_控えたURL": VISITED.name + " を見てください",
+                "reviews": "",
+                "keywords": "",
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+            print()
+            print("設定の雛形を作りました:", CONF)
+            print("レビューとキーワードの画面URLを入れてください")
+            print("（ASINのところは {asin} に書き換える）")
 
 
 if __name__ == "__main__":
