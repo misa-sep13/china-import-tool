@@ -73,10 +73,18 @@ export default function KeepClaimsPage({ share = '' }) {
   const [busy, setBusy] = useState(false)
   const [filter, setFilter] = useState('keep')
 
-  // 誰として登録するか。毎回選ぶのは面倒なので覚えておく
-  // 自分はY。共有ページで相手が開いたときは、選び直してもらう
-  const [owner, setOwner] = useState(
-    () => localStorage.getItem('keep_owner') || (share ? '' : 'Y'))
+  // 誰として登録するか。毎回選ぶのは面倒なので覚えておく。
+  // 手で足すのはCのぶんが多いので、既定はC。
+  // 自分（Y）のぶんは「採用したものを取り込む」から入る
+  const [owner, setOwner] = useState(() => {
+    // 前に選んだ担当は覚えておく。ただし既定をYからCへ変えたので、
+    // 一度だけ入れ直す（覚えたYがそのまま残ると既定が効かない）
+    if (!localStorage.getItem('keep_owner_v2')) {
+      localStorage.setItem('keep_owner_v2', '1')
+      localStorage.removeItem('keep_owner')
+    }
+    return localStorage.getItem('keep_owner') || (share ? '' : 'C')
+  })
   const [url, setUrl] = useState('')
   const [title, setTitle] = useState('')
   const [supplierUrl, setSupplierUrl] = useState('')
@@ -150,7 +158,9 @@ export default function KeepClaimsPage({ share = '' }) {
   const syncAdopted = async () => {
     setBusy(true); setErr('')
     try {
-      const r = await api.post(q(`/keep-claims/sync-adopted?owner=${encodeURIComponent(owner || 'Y')}`))
+      // 採用からのぶんは必ずY。自分がリサーチして採用したものなので、
+      // 画面で選んでいる担当（Cのことが多い）に引きずられないようにする
+      const r = await api.post(q('/keep-claims/sync-adopted?owner=Y'))
       const n = r.data.added || 0
       if (n) await load()
       alert(n ? `${n}件をリサーチシートから取り込みました`
