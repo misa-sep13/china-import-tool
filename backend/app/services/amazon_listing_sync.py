@@ -17,7 +17,8 @@ import re
 ADOPTED_STATUS = {"adopted", "ordered", "imaged", "listed"}
 
 STATUS_LABEL = {
-    "": "リサーチ中", "active": "リサーチ中", "adopted": "採用",
+    "": "リサーチ中", "active": "リサーチ中", "hold": "保留",
+    "adopted": "採用",
     "ordered": "発注済み", "imaged": "画像依頼済み",
     "listed": "商品登録済み", "rejected": "不採用",
 }
