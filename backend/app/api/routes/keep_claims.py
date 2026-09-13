@@ -356,11 +356,13 @@ def sync_adopted(workspace: str = "default", owner: str = "Y",
     except (ValueError, TypeError):
         return {"added": 0, "items": [], "detail": "リサーチシートを読めませんでした"}
 
-    have_asin = {a for (a,) in db.query(KeepClaim.asin).all() if a}
-    have_url = {u for (u,) in db.query(KeepClaim.url).all() if u}
+    live = db.query(KeepClaim).filter(KeepClaim.status == "keep").all()
+    have_asin = {r.asin for r in live if r.asin}
+    have_url = {r.url for r in live if r.url}
 
     added = []
     updated = 0
+    skipped = []
     for research in (data.get("researches") or []):
         if not isinstance(research, dict):
             continue
@@ -368,16 +370,25 @@ def sync_adopted(workspace: str = "default", owner: str = "Y",
             continue
 
         # 候補商品の1行目をライバルとして見る。シートの作りに合わせる
+        title = (research.get("title") or "").strip()
         rows = [x for x in (research.get("rows") or []) if isinstance(x, dict)]
         if not rows:
+            skipped.append({"title": title, "why": "候補商品がありません"})
             continue
-        first = rows[0]
+
+        # 候補が複数あるとき、1行目が空のことがある。ASINが入っている
+        # 最初の行を使う（1行目だけ見ると取りこぼす）
+        first = next((x for x in rows if (x.get("asin") or "").strip()), rows[0])
         asin = (first.get("asin") or "").strip().upper()
         url = (first.get("url") or "").strip()
         if not url and asin:
             url = f"https://www.amazon.co.jp/dp/{asin}"
         if not url:
+            skipped.append({"title": title, "why": "ASINもURLも入っていません"})
             continue
+        # まだキープ中のものだけ「すでにある」とみなす。
+        # 発送済み・期限切れのものは枠が空いているので、また採用したなら
+        # 入れ直す（前に一度扱った商品を二度と載せられないのはおかしい）
         if (asin and asin in have_asin) or url in have_url:
             # すでにあるものは足さないが、シート側でメモを書き足して
             # いることがあるので、そこだけ写しておく
@@ -416,7 +427,8 @@ def sync_adopted(workspace: str = "default", owner: str = "Y",
         have_url.add(url)
 
     db.commit()
-    return {"added": len(added), "updated": updated, "items": added}
+    return {"added": len(added), "updated": updated,
+            "skipped": skipped, "items": added}
 
 
 @router.post("/{cid:int}/fill")

@@ -163,11 +163,18 @@ export default function KeepClaimsPage({ share = '' }) {
       const r = await api.post(q('/keep-claims/sync-adopted?owner=Y'))
       const n = r.data.added || 0
       const u = r.data.updated || 0
+      const sk = r.data.skipped || []
       if (n || u) await load()
-      alert(n || u
+      // 入らなかったものは理由を出す。黙って飛ばすと
+      // 「採用したのに載らない」で止まってしまう
+      const why = sk.length
+        ? '\n\n入らなかったもの:\n'
+          + sk.map(x => `・${x.title || '(名前なし)'} … ${x.why}`).join('\n')
+        : ''
+      alert((n || u
         ? [n ? `${n}件を取り込みました` : '',
            u ? `${u}件のメモを新しくしました` : ''].filter(Boolean).join('／')
-        : '新しく取り込むものはありませんでした')
+        : '新しく取り込むものはありませんでした') + why)
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }
