@@ -565,6 +565,10 @@
   .reg-check b.ok{color:var(--ok,#15803d);}
   .reg-check b.ng{color:var(--warn);}
   .reg-issue{color:var(--ink-2);margin-left:8px;line-height:1.6;}
+  /* 商品マスタに作る内容の確認。発注はここの数字を使うので目で見て確かめる */
+  .mas-tbl{border-collapse:collapse;margin:6px 0 8px;font-size:12px;}
+  .mas-tbl th{text-align:left;padding:3px 8px;background:var(--surface-3);white-space:nowrap;}
+  .mas-tbl td{padding:3px 8px;border-top:1px solid var(--line);white-space:nowrap;}
   .an-status{font-size:11.5px;color:var(--ink-2);}
   .an-status.warn{color:var(--warn);font-weight:800;}
 
@@ -6299,11 +6303,16 @@ if(FIREBASE_CONFIG.databaseURL){
       const ops = el('div', 'an-row');
       const prep = el('button', 'mini', '出品の準備（商品タイプ・SKU・JAN）');
       prep.dataset.writes = '1';
+      // 発注は商品マスタの仕入URL・単価・入数を使う。発注はAmazon出品より
+      // ずっと前なので、SKUが決まった「出品の準備」の直後に作る。
+      // 出品のあとに作ると、届くまで発注できない
+      const mas = el('button', 'mini', '📦 商品マスタに登録');
+      mas.dataset.writes = '1';
       const val = el('button', 'mini', '🔎 Amazonで検証する');
       const sub = el('button', 'primary', 'Amazonへ出品する');
       sub.dataset.writes = '1';
       const opStatus = el('span', 'an-status');
-      [prep, val, sub, opStatus].forEach(x => ops.appendChild(x));
+      [prep, mas, val, sub, opStatus].forEach(x => ops.appendChild(x));
       panel.appendChild(ops);
 
       const out = el('div', 'reg-out');
@@ -6331,6 +6340,22 @@ if(FIREBASE_CONFIG.databaseURL){
           draw();
         }catch(e){ opStatus.textContent = String(e.message || e); }
         finally{ prep.disabled = false; }
+      });
+
+      mas.addEventListener('click', async () => {
+        const kids = (data.children || []).filter(c => (c.sku || '').trim());
+        if(!kids.length){
+          opStatus.textContent = '先に「出品の準備」を押してSKUを決めてください';
+          return;
+        }
+        mas.disabled = true; opStatus.textContent = '中身を調べています…';
+        try{
+          await flush();
+          const p = await regApi('/' + data.id + '/master-preview');
+          drawMaster(out, p, data.id, opStatus, () => { mas.disabled = false; });
+          opStatus.textContent = '';
+        }catch(e){ opStatus.textContent = String(e.message || e); }
+        finally{ mas.disabled = false; }
       });
 
       val.addEventListener('click', async () => {
@@ -6606,6 +6631,110 @@ if(FIREBASE_CONFIG.databaseURL){
       });
       out.appendChild(d);
     });
+  }
+
+  // 商品マスタに何を作るかを先に見せる。
+  // 発注はここの仕入URL・単価・入数を使うので、推測で埋めたものを黙って
+  // 確定させない。URLの候補が複数あるときは選んでもらう。
+  function drawMaster(out, p, listingId, status, onDone){
+    out.innerHTML = '';
+    const box = el('div', 'reg-check');
+    box.appendChild(el('b', null, '商品マスタに作る内容（' + (p.rows || []).length + '件）'));
+
+    (p.warnings || []).forEach(w => {
+      box.appendChild(el('div', 'reg-issue', '⚠ ' + w));
+    });
+
+    // 仕入URL。候補が2本以上あるときに黙って先頭を採ると、
+    // 選んでいない仕入先に発注してしまう
+    let buyUrl = ((p.rows || [])[0] || {}).buy_url || '';
+    const choices = p.url_choices || [];
+    if(choices.length > 1){
+      const wrap = el('div', 'reg-issue');
+      wrap.appendChild(el('div', null, '発注に使う仕入URLを選んでください'));
+      choices.forEach((u, i) => {
+        const lab = document.createElement('label');
+        lab.style.display = 'block';
+        const r = document.createElement('input');
+        r.type = 'radio'; r.name = 'mas-url-' + listingId;
+        r.checked = (i === 0);
+        if(i === 0) buyUrl = u;
+        r.addEventListener('change', () => { if(r.checked) buyUrl = u; });
+        lab.appendChild(r);
+        lab.appendChild(document.createTextNode(' ' + u));
+        wrap.appendChild(lab);
+      });
+      box.appendChild(wrap);
+    }
+
+    const tbl = document.createElement('table');
+    tbl.className = 'mas-tbl';
+    const head = document.createElement('tr');
+    ['SKU', '商品名', 'カラー', '仕入単価(元)', '入数', '売価(円)', ''].forEach(h => {
+      const th = document.createElement('th'); th.textContent = h; head.appendChild(th);
+    });
+    tbl.appendChild(head);
+    (p.rows || []).forEach(r => {
+      const tr = document.createElement('tr');
+      [r.sku, r.name || '', r.color || '—',
+       (r.price == null ? '—' : r.price), (r.set_size == null ? 1 : r.set_size),
+       (r.selling_price == null ? '—' : r.selling_price),
+       r.exists ? '既にあります（空欄だけ補う）' : '新規'].forEach((v, i) => {
+        const td = document.createElement('td');
+        td.textContent = String(v);
+        if(i === 6) td.className = r.exists ? 'ng' : 'ok';
+        tr.appendChild(td);
+      });
+      tbl.appendChild(tr);
+    });
+    box.appendChild(tbl);
+
+    (p.components || []).forEach(c => {
+      box.appendChild(el('div', 'reg-issue',
+        '発注用付属品：' + (c.name || '（名前なし）') + ' ×' + c.qty
+        + '　' + (c.buy_url || 'URLなし（このままだと発注できません）')));
+    });
+
+    const go = el('button', 'primary', 'この内容で商品マスタに登録する');
+    go.dataset.writes = '1';
+    go.addEventListener('click', async () => {
+      go.disabled = true; status.textContent = '登録しています…';
+      try{
+        const body = {
+          rows: (p.rows || []).map(r => ({
+            sku: r.sku, name: r.name || '', color: r.color || '',
+            size: r.size || '', spec: r.spec || '',
+            buy_url: buyUrl || r.buy_url || '',
+            price: r.price, set_size: r.set_size == null ? 1 : r.set_size,
+            selling_price: r.selling_price, cost_jpy: r.cost_jpy,
+            fba_fee: r.fba_fee, asin: r.asin || '',
+          })),
+          components: p.components || [],
+        };
+        const res = await regApi('/' + listingId + '/to-master',
+          {method: 'POST', body: JSON.stringify(body)});
+        out.innerHTML = '';
+        const done = el('div', 'reg-check');
+        done.appendChild(el('b', 'ok', '商品マスタに登録しました'));
+        done.appendChild(el('div', null,
+          '新しく作成 ' + res.created.length + '件'
+          + (res.created.length ? '：' + res.created.join('、') : '')));
+        done.appendChild(el('div', null,
+          'すでにあったので空欄だけ補った ' + res.updated.length + '件'
+          + (res.updated.length ? '：' + res.updated.join('、') : '')));
+        if(res.components) done.appendChild(el('div', null,
+          '発注用付属品 ' + res.components + '件も入れました'));
+        done.appendChild(el('div', null, '発注管理に出てくるようになりました'));
+        out.appendChild(done);
+        status.textContent = '';
+        if(onDone) onDone();
+      }catch(e){
+        status.textContent = String(e.message || e);
+        go.disabled = false;
+      }
+    });
+    box.appendChild(go);
+    out.appendChild(box);
   }
 
   function drawSubmit(out, r){
