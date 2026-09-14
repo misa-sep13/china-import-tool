@@ -591,6 +591,20 @@ async def _apply_receive(db: Session, order: ShipmentOrder, items, mark_received
     # product_id -> その商品で既に反映した(色, サイズ)の組み合わせ
     processed_variants: dict[int, set[tuple[str, str]]] = {}
 
+    # 詰め合わせ商品（4色セットなど）は、1セットぶんが色ごとの行に分かれて届く。
+    # 行ごとに set_size で割ると、そのたびに端数が切り捨てられる。
+    # 4色セット30組は「30枚 × 4行」で来るので、行ごとだと 30//4=7 の4回で28組。
+    # 2組ぶんが消える。合算してから割れば 120//4=30 で正しく入る。
+    assorted_units: dict[int, int] = {}
+    for it in items:
+        if not it.product_id:
+            continue
+        pr = db.query(RakutenProduct).filter(RakutenProduct.id == it.product_id).first()
+        if pr and not (pr.supplier_spec or "").strip():
+            assorted_units[it.product_id] = (
+                assorted_units.get(it.product_id, 0) + (it.qty or 0))
+    assorted_done: set[int] = set()
+
     def _skip(item, reason: str, sku: str = ""):
         skipped_rows.append({
             "name_cn": item.name_cn or "",
@@ -615,11 +629,22 @@ async def _apply_receive(db: Session, order: ShipmentOrder, items, mark_received
 
         # 配送依頼の数量は仕入れ単位。販売在庫はset_sizeで割った単位で管理する。
         set_size = product.set_size or 1
-        received_qty = item.qty // set_size if set_size > 1 else item.qty
+        is_assorted = not (product.supplier_spec or "").strip()
+        if is_assorted and item.product_id in assorted_units:
+            # 色ごとの行をまとめて1回だけ入れる。端数の切り捨てを防ぐため
+            if item.product_id in assorted_done:
+                item.is_reflected = True     # 同じ商品の別の色の行。数はもう入れた
+                continue
+            units = assorted_units[item.product_id]
+        else:
+            units = item.qty or 0
+        received_qty = units // set_size if set_size > 1 else units
         if received_qty <= 0:
             skipped += 1
             _skip(item, f"セット入数{set_size}に満たないため0個換算", product.sku or "")
             continue
+        if is_assorted and item.product_id in assorted_units:
+            assorted_done.add(item.product_id)
 
         before = {
             "stock": product.stock or 0,
@@ -635,7 +660,7 @@ async def _apply_receive(db: Session, order: ShipmentOrder, items, mark_received
         # 1つの商品に集まるのが正しい姿。こうした商品は特定の色を持たないので
         # 仕様（supplier_spec）が空になっている。これを紐づけ間違いとして弾くと
         # 詰め合わせの在庫が永久に入らないため、その場合は合算を許可する。
-        is_assorted = not (product.supplier_spec or "").strip()
+        # （is_assorted は上で求めたものをそのまま使う）
         variant_key = ((item.color or "").strip(), (item.size or "").strip())
         seen_variants = processed_variants.setdefault(item.product_id, set())
         if not is_assorted and seen_variants and variant_key not in seen_variants:
