@@ -7401,6 +7401,31 @@ if(FIREBASE_CONFIG.databaseURL){
     return wrap;
   }
 
+  // 色ごとの中国語名を入れる欄の例文。どの色でも同じ例を出していたため、
+  // グレーの欄に黒の例が出て紛らわしかった
+  const CN_COLOR_HINT = [
+    [['ブラック', 'クロ', '黒'], '暗夜黑'],
+    [['グレー', 'グレイ', '灰'], '岩石灰'],
+    [['ホワイト', 'シロ', '白'], '米白色'],
+    [['ベージュ'], '杏色'],
+    [['ブラウン', '茶'], '咖啡色'],
+    [['ネイビー', '紺'], '藏青色'],
+    [['ブルー', '青'], '蓝色'],
+    [['ピンク', '桃'], '粉色'],
+    [['レッド', '赤'], '红色'],
+    [['グリーン', '緑'], '绿色'],
+    [['パープル', '紫'], '紫色'],
+    [['イエロー', '黄'], '柠檬黄'],
+    [['オレンジ'], '橙色'],
+  ];
+  function cnColorHint(name){
+    const t = String(name || '');
+    for(const [keys, cn] of CN_COLOR_HINT){
+      if(keys.some(k => t.indexOf(k) >= 0)) return '例: ' + cn + '（牛奶绒）';
+    }
+    return '例: 灰色 / 咖啡色 など、仕入先の書き方のまま';
+  }
+
   // 子の名前「カラー ブラック」から値だけ取り出す。
   // サーバー側の split_child_name と同じ切り方にしてある
   function splitKidName(name){
@@ -7589,7 +7614,7 @@ if(FIREBASE_CONFIG.databaseURL){
           line.appendChild(el('span', 'acc-cap', k));
           const inp = document.createElement('input');
           inp.type = 'text';
-          inp.placeholder = '例: 暗夜黑（牛奶绒）';
+          inp.placeholder = cnColorHint(k);
           inp.value = research.cnNames[k] || '';
           inp.addEventListener('input', () => {
             research.cnNames[k] = inp.value; scheduleSave();
