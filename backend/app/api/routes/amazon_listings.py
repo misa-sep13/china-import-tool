@@ -291,8 +291,11 @@ def sync_one(research_id: str, overwrite: bool = False,
     put("len_c", src["len_c"])
     put("weight", src["weight"])
     put("rival_asin", src["rival_asin"])
-    # シートの「配送」から。FBA以外は自己発送として扱う
-    put("fulfillment", "fba" if src.get("fulfill") == "FBA" else "merchant")
+    # シートの「配送」から。うちはほぼFBAで出すので、はっきり「自己発送」と
+    # 書かれているときだけ自己発送にする。空のまま自己発送で出ると、
+    # 気づかないまま自分で送ることになる
+    put("fulfillment",
+        "merchant" if src.get("fulfill") == "自己発送" else "fba")
 
     # 判断根拠はシートが正。毎回そのまま写す
     row.rival_image = src["rival_image"]

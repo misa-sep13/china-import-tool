@@ -6183,7 +6183,9 @@ if(FIREBASE_CONFIG.databaseURL){
         const o = document.createElement('option');
         o.value = v; o.textContent = l; ful.appendChild(o);
       });
-      ful.value = data.fulfillment || 'merchant';
+      // 既定はFBA。うちはほぼFBAで出すので、空のまま自己発送で出ると
+      // 気づかないまま自分で送ることになる
+      ful.value = data.fulfillment || 'fba';
       ful.addEventListener('change', () => put('fulfillment', ful.value));
       pRow.appendChild(ful);
 
