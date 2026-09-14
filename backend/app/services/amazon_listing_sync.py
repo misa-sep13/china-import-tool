@@ -212,13 +212,24 @@ def extract(research: dict, settings: dict) -> dict:
         "review_count": _i(row.get("reviewCount")),
         "review_rate": _f(row.get("reviewRate")) or None,
         "urls_1688": [u for u in (row.get("urls1688") or []) if u],
-        # 1販売単位の中身。商品マスタを作るとき、1行目を本体の単価と入数に、
-        # 2行目以降を発注用付属品にする。部位と発注先URLは2部材以上のときだけ
-        # シートで入力してもらう（推測でURLを埋めると違うものが届く）
+        # 仕入先の言い方。商品マスタの仕様になり、発注のとき「どの色の何を
+        # 買うか」を決める材料になる。本体はここ、付属品は下の accessories
+        "cn_name": (research.get("cnName") or "").strip(),
+        "main_url": (research.get("mainUrl") or "").strip(),
+        # 一緒に発注するもの（収納袋など）。在庫には連動しない。
+        # URLが空なら本体と同じページから買う
+        "accessories": [
+            {"name": (a.get("name") or "").strip(),
+             "url": (a.get("url") or "").strip(),
+             "qty": int(a.get("qty") or 1) or 1}
+            for a in (research.get("accessories") or [])
+            if isinstance(a, dict) and (a.get("name") or a.get("url"))
+        ],
+        # 1販売単位の中身。商品マスタを作るとき、1行目を本体の単価と入数にする。
+        # 発注する付属品は parts ではなく accessories から取る（仕入先の
+        # 言い方が入るのはあちらなので）
         "parts": [{"price": _f(p.get("price")) or None,
-                   "qty": _f(p.get("qty"), 1) or 1,
-                   "name": (p.get("name") or "").strip(),
-                   "url": (p.get("url") or "").strip()}
+                   "qty": _f(p.get("qty"), 1) or 1}
                   for p in (row.get("parts") or [])
                   if isinstance(p, dict) and _f(p.get("price"))],
 

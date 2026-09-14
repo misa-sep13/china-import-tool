@@ -2029,13 +2029,15 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
     parts = src.get("parts") or []
     urls = [u for u in (src.get("urls_1688") or []) if u]
     main = parts[0] if parts else None
-    comps = parts[1:]
+    # 付属品は「画像外注へ渡す情報」の欄から取る。部材（単価×入数）は原価の
+    # ための入力で、そこには仕入先の言い方が入っていないため、発注先を決められない
+    acc = src.get("accessories") or []
 
     warnings = []
     # 仕入URLの決め方。候補が1本だけなら迷いようがないので入れておく。
     # 2本以上あるときは選んでもらう。黙って先頭を採ると、選んでいない
     # 仕入先に発注してしまう
-    buy_url = (main or {}).get("url") or ""
+    buy_url = (src.get("main_url") or "").strip() or (main or {}).get("url") or ""
     if not buy_url:
         if len(urls) == 1:
             buy_url = urls[0]
@@ -2045,24 +2047,26 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
             warnings.append("仕入URLがシートに入っていません。あとで商品マスタに入れてください")
     if not main:
         warnings.append("1688単価がシートに入っていないので、単価と入数は空になります")
-    if comps:
-        names = "・".join([c.get("name") or "名前なし" for c in comps])
+    if len(parts) > 1 and not acc:
         warnings.append(
-            f"部材が{len(parts)}件あります。1行目を本体として入数を入れます。"
-            f"付属品（{names}）は発注用付属品として下に出しています")
+            f"部材が{len(parts)}件ありますが、付属品の欄が空です。"
+            "一緒に発注するものがあるなら「画像外注へ渡す情報」の付属品に"
+            "中国語名を入れてください")
 
-    # 付属品は在庫連動しない発注用の部材。URLが無いものは発注できないので、
-    # そのまま入れずに知らせる
+    # 付属品は在庫連動しない発注用の行。仕入先の言い方（中国語名）が無いと
+    # 何を買えばよいか決まらないので、入っていなければ知らせる。
+    # URLが空なら本体と同じページから買う
     components = []
-    for c in comps:
-        if not c.get("url"):
-            warnings.append(
-                f"付属品「{c.get('name') or '名前なし'}」に1688 URLがありません。"
-                "シートの部材行に入れてください")
-        components.append({"sku": "", "qty": c.get("qty") or 1,
-                           "buy_url": c.get("url") or "",
-                           "name": c.get("name") or "",
-                           "price": c.get("price")})
+    for a in acc:
+        if not (a.get("name") or "").strip():
+            warnings.append("付属品に中国語名が入っていません。"
+                            "何を買うか決められないので入れてください")
+        components.append({
+            "sku": "", "qty": a.get("qty") or 1,
+            "buy_url": (a.get("url") or "").strip() or buy_url,
+            "supplier_spec": a.get("name") or "",
+            "name": a.get("name") or "",
+        })
 
     kids = (db.query(AmazonListingChild)
             .filter(AmazonListingChild.listing_id == row.id)
@@ -2079,7 +2083,8 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
             "name": (c.title or row.title or "").strip(),
             "color": c.axis1 or "",
             "size": c.axis2 or "",
-            "spec": spec,
+            # 仕入先の言い方。発注のとき、どの色の何を買うかの手がかりになる
+            "spec": (src.get("cn_name") or "").strip() or spec,
             "buy_url": buy_url,
             "price": (main or {}).get("price"),
             "set_size": int((main or {}).get("qty") or 1),
