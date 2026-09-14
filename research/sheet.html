@@ -191,6 +191,14 @@
   .brief-title{font-size:11.5px;font-weight:800;color:#1e40af;margin-bottom:6px;}
   .brief-grid{display:flex;flex-wrap:wrap;gap:8px 12px;}
   .brief-cell{display:flex;flex-direction:column;gap:2px;}
+  /* 付属品。1つのURLに本体と袋が入っている商品のように、一緒に頼むもの */
+  .w-acc{flex:1 1 480px;min-width:320px;}
+  .acc-list{display:flex;flex-direction:column;gap:3px;}
+  .acc-line{display:flex;gap:4px;align-items:center;}
+  .acc-line input{min-width:0;flex:1 1 auto;}
+  .acc-line input.acc-qty{flex:0 0 52px;text-align:right;}
+  .acc-del{flex:0 0 auto;color:var(--danger);border-color:var(--danger-line);padding:2px 6px;}
+  .acc-add{align-self:flex-start;padding:3px 8px;font-size:10px;}
   .brief-cap{font-size:10.5px;font-weight:700;color:var(--ink-2);}
   .brief-cell input,.brief-cell textarea{border:1px solid var(--line-2);
     border-radius:var(--r-sm);padding:5px 7px;font-size:11.5px;
@@ -358,11 +366,6 @@
   td.parts-cell .part-line{display:flex;gap:3px;align-items:center;}
   td.parts-cell .part-line input{width:100%;min-width:0;text-align:right;}
   td.parts-cell .part-x{color:var(--ink-3);font-size:11px;flex:0 0 auto;}
-  /* 部材が2つ以上のときだけ出す「どの部位か」と「発注先URL」。
-     単品のときは邪魔になるので出さない（URLは隣の1688 URL列でよい） */
-  td.parts-cell .part-sub{display:flex;gap:3px;margin:2px 0 5px;}
-  td.parts-cell .part-sub input{width:100%;min-width:0;font-size:10.5px;text-align:left;}
-  td.parts-cell .part-sub input.part-name{flex:0 0 38%;}
   td.parts-cell .part-del{padding:2px 5px;font-size:10px;color:var(--danger);border-color:var(--danger-line);
     flex:0 0 auto;box-shadow:none;}
   td.parts-cell .parts-sum{margin-top:5px;font-size:11.5px;font-weight:800;color:#1e40af;
@@ -1766,7 +1769,7 @@ if(FIREBASE_CONFIG.databaseURL){
     {key:'urls1688',     label:'1688 URL',       type:'urls',     group:'man',
      tip:'1688の商品ページURL。「＋ URLを追加」で何件でも足せます。1行目に入れたあと「↓ 下の行すべてに反映」で他の行へコピーできます'},
     {key:'parts',        label:'1688単価 (元 × 入数)', type:'parts', group:'man',
-     tip:'1販売単位あたりの中身を「単価(元) × 入数」で入力します。単品なら1行だけ。セット商品は部材ごとに行を足すと自動で合算されます。2行以上にすると「部位」と「その部材の1688 URL」の欄が出ます（商品マスタを作るときに、本体と付属品を見分けて発注先を決めるのに使います）。中国国内送料や加工費は含めないでください（上部の「中国側 基本作業費」で加算されます）'},
+     tip:'1販売単位あたりの中身を「単価(元) × 入数」で入力します。単品なら1行だけ。セット商品は部材ごとに行を足すと自動で合算されます。中国国内送料や加工費は含めないでください（上部の「中国側 基本作業費」で加算されます）'},
     {key:'extra',        label:'オプション代 (元/販売単位)', type:'options', group:'man', tip:'ラクマートに頼む加工の費用。自社の実発注5,256明細で使用実績のあるものを厳選して並べてある。ラベル代0.80元は全商品に発生するので既定でON。中国国内送料は上部の設定で別に加算される'},
   ];
 
@@ -2930,28 +2933,6 @@ if(FIREBASE_CONFIG.databaseURL){
         }
         list.appendChild(line);
 
-        // 部材が2つ以上あるときだけ、どの部位かと発注先URLを聞く。
-        // 単価と入数だけでは、商品マスタを作るときに「本体はどれで、
-        // 付属品をどこから買うか」が決まらない。発注URLを推測で埋めると
-        // 違うものが届くので、ここで入れてもらう。
-        if(row.parts.length > 1){
-          const sub = el('div', 'part-sub');
-          const name = document.createElement('input');
-          name.className = 'part-name'; name.type = 'text';
-          name.placeholder = i === 0 ? '部位（本体）' : '部位（収納袋 など）';
-          name.value = (p.name ?? '');
-          const url = document.createElement('input');
-          url.type = 'text'; url.placeholder = 'この部材の1688 URL';
-          url.value = (p.url ?? '');
-          name.addEventListener('input', () => {
-            row.parts[i].name = name.value; onChange(); scheduleSave();
-          });
-          url.addEventListener('input', () => {
-            row.parts[i].url = url.value.trim(); onChange(); scheduleSave();
-          });
-          sub.appendChild(name); sub.appendChild(url);
-          list.appendChild(sub);
-        }
       });
       refreshSum();
     }
@@ -7531,7 +7512,58 @@ if(FIREBASE_CONFIG.databaseURL){
       field('商品名（短縮）', research.shortName,
             v => { research.shortName = v; }, 'w-sku');
 
-      field('中国語名', research.cnName, v => { research.cnName = v; }, 'w-cn');
+      // 中国語名は本体のもの。ここと下の付属品欄が、そのまま商品マスタの
+      // 「仕入先の仕様」と「発注用付属品」になる。発注のとき、どの色の
+      // 何を買うかがこれで決まるので、推測で埋めずにここへ入れてもらう
+      field('中国語名（本体）', research.cnName, v => { research.cnName = v; }, 'w-cn');
+      field('本体URL（空なら1688 URL）', research.mainUrl,
+            v => { research.mainUrl = v; }, 'w-url');
+
+      // 付属品。1つのURLに本体と袋が入っている商品のように、一緒に頼むもの。
+      // 在庫には連動しない（本体と一緒に発注する行として出るだけ）
+      if(!Array.isArray(research.accessories)) research.accessories = [];
+      const accWrap = el('div', 'brief-cell w-acc');
+      accWrap.appendChild(el('div', 'brief-cap', '付属品（一緒に発注するもの）'));
+      const accList = el('div', 'acc-list');
+      accWrap.appendChild(accList);
+      const drawAcc = () => {
+        accList.innerHTML = '';
+        research.accessories.forEach((a, i) => {
+          const line = el('div', 'acc-line');
+          const mk = (ph, val, on, cls) => {
+            const inp = document.createElement('input');
+            inp.type = 'text'; inp.placeholder = ph; inp.value = val || '';
+            if(cls) inp.className = cls;
+            inp.addEventListener('input', () => { on(inp.value); scheduleSave(); });
+            line.appendChild(inp);
+            return inp;
+          };
+          mk('中国語名（例: 收纳袋）', a.name, v => { research.accessories[i].name = v; });
+          mk('URL（空なら本体と同じ）', a.url, v => { research.accessories[i].url = v; });
+          const q = document.createElement('input');
+          q.type = 'number'; q.min = '1'; q.className = 'acc-qty';
+          q.placeholder = '数'; q.value = (a.qty == null ? 1 : a.qty);
+          q.addEventListener('input', () => {
+            research.accessories[i].qty = Number(q.value) || 1; scheduleSave();
+          });
+          line.appendChild(q);
+          const del = el('button', 'mini acc-del', '✕');
+          del.title = 'この付属品を削除';
+          del.addEventListener('click', () => {
+            research.accessories.splice(i, 1); drawAcc(); scheduleSave();
+          });
+          line.appendChild(del);
+          accList.appendChild(line);
+        });
+        const add = el('button', 'mini acc-add', '＋ 付属品を追加');
+        add.addEventListener('click', () => {
+          research.accessories.push({name: '', url: '', qty: 1});
+          drawAcc(); scheduleSave();
+        });
+        accList.appendChild(add);
+      };
+      drawAcc();
+      grid.appendChild(accWrap);
 
       // 商品補足。デザイナーに伝えたいこと
       const cell = el('div', 'brief-cell w-note');
