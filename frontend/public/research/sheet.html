@@ -7479,14 +7479,20 @@ if(FIREBASE_CONFIG.databaseURL){
     comment.placeholder = '管理者からのコメント';
     comment.addEventListener('input', () => { research.comment = comment.value; scheduleSave(); });
     const meta = el('div', 'research-meta', researchMetaText(research));
-    // ---- 画像外注へ渡す情報 ----
+    // ---- 画像外注へ渡す情報＆商品マスタ登録用 ----
     //
     // 採用したもの（＝商品登録へ進んだもの）だけに出す。
-    // デザイナーに渡すときに毎回聞かれることを、枠の一番上にまとめておく。
+    // デザイナーに渡すときに毎回聞かれることと、商品マスタを作るときに要る
+    // 仕入先の言い方（中国語名・付属品）をまとめてある。
     // 表の中に入れると横に流れて見つけにくいので、見出しの上に置いている。
+    //
+    // 色ごとの中国語名は ③商品タイトル の子から作るので、③を入れるまでは
+    // 欄が出ない。ここが枠の一番上にあるのは「渡すもの・作るものの控え」
+    // だからで、入力の順番としては ③ のあと
     if(ADOPTED_STATUSES.indexOf(research.status) >= 0){
       const brief = el('div', 'brief');
-      brief.appendChild(el('div', 'brief-title', '画像外注へ渡す情報'));
+      brief.appendChild(el('div', 'brief-title',
+        '画像外注へ渡す情報 ＆ 商品マスタ登録用'));
       const grid = el('div', 'brief-grid');
 
       const field = (label, value, onInput, cls) => {
