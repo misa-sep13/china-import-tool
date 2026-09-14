@@ -196,6 +196,7 @@
   .acc-list{display:flex;flex-direction:column;gap:3px;}
   .acc-line{display:flex;gap:4px;align-items:center;}
   .acc-line input{min-width:0;flex:1 1 auto;}
+  .acc-cap{flex:0 0 84px;font-size:11px;color:var(--ink-2);}
   .acc-line input.acc-qty{flex:0 0 52px;text-align:right;}
   .acc-del{flex:0 0 auto;color:var(--danger);border-color:var(--danger-line);padding:2px 6px;}
   .acc-add{align-self:flex-start;padding:3px 8px;font-size:10px;}
@@ -7394,6 +7395,15 @@ if(FIREBASE_CONFIG.databaseURL){
     return wrap;
   }
 
+  // 子の名前「カラー ブラック」から値だけ取り出す。
+  // サーバー側の split_child_name と同じ切り方にしてある
+  function splitKidName(name){
+    const t = String(name || '').trim();
+    if(!t) return '';
+    const p = t.split(/[\s　:：/／]+/);
+    return p.length > 1 ? p.slice(1).join(' ') : t;
+  }
+
   function buildResearch(research){
     const box = el('div', 'research');
     box.dataset.rid = research.id;
@@ -7515,9 +7525,37 @@ if(FIREBASE_CONFIG.databaseURL){
       // 中国語名は本体のもの。ここと下の付属品欄が、そのまま商品マスタの
       // 「仕入先の仕様」と「発注用付属品」になる。発注のとき、どの色の
       // 何を買うかがこれで決まるので、推測で埋めずにここへ入れてもらう
-      field('中国語名（本体）', research.cnName, v => { research.cnName = v; }, 'w-cn');
+      field('中国語名（本体・共通）', research.cnName,
+            v => { research.cnName = v; }, 'w-cn');
       field('本体URL（空なら1688 URL）', research.mainUrl,
             v => { research.mainUrl = v; }, 'w-url');
+
+      // 色違いがあるときは、色ごとの中国語名が要る。1つの欄に2色まとめて
+      // 書くと、発注のときどちらのSKUを買うか決められない
+      const kidNames = (research.titleChildren || [])
+        .map(c => (splitKidName(c.name) || '').trim()).filter(Boolean);
+      if(kidNames.length){
+        if(!research.cnNames || typeof research.cnNames !== 'object') research.cnNames = {};
+        const cw = el('div', 'brief-cell w-acc');
+        cw.appendChild(el('div', 'brief-cap', '中国語名（色ごと）'));
+        const cl = el('div', 'acc-list');
+        kidNames.forEach(k => {
+          const line = el('div', 'acc-line');
+          const cap = el('span', 'acc-cap', k);
+          line.appendChild(cap);
+          const inp = document.createElement('input');
+          inp.type = 'text';
+          inp.placeholder = research.cnName ? '空なら「' + research.cnName + '」' : '例: 暗夜黑（牛奶绒）';
+          inp.value = research.cnNames[k] || '';
+          inp.addEventListener('input', () => {
+            research.cnNames[k] = inp.value; scheduleSave();
+          });
+          line.appendChild(inp);
+          cl.appendChild(line);
+        });
+        cw.appendChild(cl);
+        grid.appendChild(cw);
+      }
 
       // 付属品。1つのURLに本体と袋が入っている商品のように、一緒に頼むもの。
       // 在庫には連動しない（本体と一緒に発注する行として出るだけ）
