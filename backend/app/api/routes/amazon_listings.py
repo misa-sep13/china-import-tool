@@ -2083,8 +2083,11 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
             "name": (c.title or row.title or "").strip(),
             "color": c.axis1 or "",
             "size": c.axis2 or "",
-            # 仕入先の言い方。発注のとき、どの色の何を買うかの手がかりになる
-            "spec": (src.get("cn_name") or "").strip() or spec,
+            # 仕入先の言い方。発注のとき、どの色の何を買うかの決め手になる。
+            # 色ごとに入っていればそれを使う。共通の欄に2色まとめて書かれて
+            # いると、どちらのSKUを買うか決められないため
+            "spec": ((src.get("cn_names") or {}).get(c.axis1 or "")
+                     or (src.get("cn_name") or "").strip() or spec),
             "buy_url": buy_url,
             "price": (main or {}).get("price"),
             "set_size": int((main or {}).get("qty") or 1),

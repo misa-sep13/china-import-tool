@@ -215,6 +215,11 @@ def extract(research: dict, settings: dict) -> dict:
         # 仕入先の言い方。商品マスタの仕様になり、発注のとき「どの色の何を
         # 買うか」を決める材料になる。本体はここ、付属品は下の accessories
         "cn_name": (research.get("cnName") or "").strip(),
+        # 色ごとの中国語名。子の軸の値（ブラック・グレー）が鍵。
+        # 1つの欄に2色まとめて書くと、発注でどちらのSKUを買うか決められない
+        "cn_names": {str(k).strip(): str(v).strip()
+                     for k, v in (research.get("cnNames") or {}).items()
+                     if str(v or "").strip()},
         "main_url": (research.get("mainUrl") or "").strip(),
         # 一緒に発注するもの（収納袋など）。在庫には連動しない。
         # URLが空なら本体と同じページから買う
