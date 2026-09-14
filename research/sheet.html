@@ -6314,13 +6314,20 @@ if(FIREBASE_CONFIG.databaseURL){
         try{
           await flush();
           data = await regApi('/' + data.id + '/prepare', {method: 'POST'});
-          // 画像外注へ渡す欄にも親SKUを写しておく（毎回聞かれるため）
+          // 画像外注へ渡す欄にも親SKUを写しておく（毎回聞かれるため）。
+          // ここで render() を呼ぶとシート全体が描き直され、開いていた枠が
+          // 全部閉じて画面の位置も飛ぶ。欄の値だけ直接入れ替える
           if(data.parent_sku && research.parentSku !== data.parent_sku){
             research.parentSku = data.parent_sku;
-            scheduleSave(); render();
+            const inp = document.querySelector(
+              '[data-parent-sku-for="' + (research.id || '') + '"]');
+            if(inp) inp.value = data.parent_sku;
+            scheduleSave();
           }
+          const kids = (data.children || []).filter(c => (c.sku || '').trim());
           opStatus.textContent = '商品タイプ ' + (data.product_type || '')
-            + '。SKUとJANを用意しました';
+            + '。SKU' + (kids.length ? '（' + kids.map(c => c.sku).join('・') + '）' : '')
+            + 'とJANを用意しました。この⑦の「出品するSKU」の欄に入っています';
           draw();
         }catch(e){ opStatus.textContent = String(e.message || e); }
         finally{ prep.disabled = false; }
@@ -7373,7 +7380,11 @@ if(FIREBASE_CONFIG.databaseURL){
       };
 
       // 親SKU。⑦で採番したものがあればそれを出す（手で直してもよい）
-      field('SKU（親）', research.parentSku, v => { research.parentSku = v; }, 'w-sku');
+      // ⑦の「出品の準備」から直接書き換えられるよう印を付ける。
+      // 印が無いと全体を描き直すしかなく、開いている枠が全部閉じてしまう
+      const pskuField = field('SKU（親）', research.parentSku,
+                              v => { research.parentSku = v; }, 'w-sku');
+      pskuField.dataset.parentSkuFor = research.id || '';
 
       // 参考URL。似た商品や参考にしたい見せ方のページ
       research.refUrls = Array.isArray(research.refUrls)
