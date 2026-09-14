@@ -1319,6 +1319,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # ZIPやExcelのファイル名は Content-Disposition に入っている。
+    # 既定では JavaScript から読めないため、名前が取れず「保存」にできず、
+    # 新しいタブを開こうとしてポップアップブロックで止まっていた
+    expose_headers=["Content-Disposition"],
 )
 
 

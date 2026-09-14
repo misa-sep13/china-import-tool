@@ -15,17 +15,30 @@ const SPANS = [
   { days: 400, label: '直近1年' },
 ]
 
-async function openBlob(url, params) {
+/**
+ * サーバーから受け取ったファイルを開く、または保存する。
+ *
+ * saveAs を渡したときは必ず保存する。ZIPは開いても仕方がないので保存、
+ * PDFはその場で読みたいので新しいタブ、という使い分け。
+ *
+ * 以前はファイル名（Content-Disposition）の有無で振り分けていたが、
+ * このヘッダーはCORSで既定では読めない。名前が取れず、ZIPまで
+ * window.open に回ってポップアップブロックで止まっていた。
+ */
+async function openBlob(url, params, saveAs) {
   const res = await api.get(url, { params, responseType: 'blob' })
   const href = URL.createObjectURL(res.data)
   const cd = res.headers['content-disposition'] || ''
-  const name = /filename="([^"]+)"/.exec(cd)?.[1]
+  const fromHeader = /filename="([^"]+)"/.exec(cd)?.[1]
+  const name = saveAs && decodeURIComponent(fromHeader || saveAs)
   if (name) {
-    // ZIPは開いても仕方ないので保存させる
     const a = document.createElement('a')
     a.href = href
-    a.download = decodeURIComponent(name)
+    a.download = name
+    // Firefoxなど、DOMに入っていないリンクのクリックを無視するブラウザがある
+    document.body.appendChild(a)
     a.click()
+    a.remove()
   } else {
     window.open(href, '_blank')
   }
@@ -35,6 +48,8 @@ async function openBlob(url, params) {
 export default function ImportPermitPage() {
   const qc = useQueryClient()
   const fileRef = useRef(null)
+  const [zipping, setZipping] = useState(false)
+  const [zipErr, setZipErr] = useState('')
   const [year, setYear] = useState('')
   const [month, setMonth] = useState('')
   const [days, setDays] = useState(60)
@@ -276,11 +291,28 @@ ${notReady.join(`
             )}
           </span>
           <button className="btn btn-primary" style={{ marginLeft: 'auto' }}
-            disabled={items.length === 0}
-            onClick={() => openBlob('/import-permits/zip', params)}>
-            まとめてZIPで書き出す
+            disabled={items.length === 0 || zipping}
+            onClick={async () => {
+              // 39件ぶんのPDFを詰めるので数十秒かかることがある。
+              // 何も出ないと「押しても反応しない」に見える
+              setZipping(true); setZipErr('')
+              try {
+                await openBlob('/import-permits/zip', params,
+                  `輸入許可書_${new Date().toISOString().slice(0, 10)}.zip`)
+              } catch (e) {
+                setZipErr(e.response?.data?.detail || e.message)
+              } finally { setZipping(false) }
+            }}>
+            {zipping ? 'まとめています…' : 'まとめてZIPで書き出す'}
           </button>
         </div>
+        {zipErr && (
+          <div style={{ background: '#fef2f2', border: '1px solid #fecaca',
+            color: '#991b1b', padding: 9, borderRadius: 6, fontSize: 13,
+            marginBottom: 10 }}>
+            ZIPを作れませんでした：{zipErr}
+          </div>
+        )}
 
         {isLoading ? <div style={{ color: '#94a3b8' }}>読み込み中…</div> : (
           <table style={{ width: '100%', fontSize: 13 }}>
