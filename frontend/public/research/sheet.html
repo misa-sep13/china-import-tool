@@ -358,6 +358,11 @@
   td.parts-cell .part-line{display:flex;gap:3px;align-items:center;}
   td.parts-cell .part-line input{width:100%;min-width:0;text-align:right;}
   td.parts-cell .part-x{color:var(--ink-3);font-size:11px;flex:0 0 auto;}
+  /* 部材が2つ以上のときだけ出す「どの部位か」と「発注先URL」。
+     単品のときは邪魔になるので出さない（URLは隣の1688 URL列でよい） */
+  td.parts-cell .part-sub{display:flex;gap:3px;margin:2px 0 5px;}
+  td.parts-cell .part-sub input{width:100%;min-width:0;font-size:10.5px;text-align:left;}
+  td.parts-cell .part-sub input.part-name{flex:0 0 38%;}
   td.parts-cell .part-del{padding:2px 5px;font-size:10px;color:var(--danger);border-color:var(--danger-line);
     flex:0 0 auto;box-shadow:none;}
   td.parts-cell .parts-sum{margin-top:5px;font-size:11.5px;font-weight:800;color:#1e40af;
@@ -1757,7 +1762,7 @@ if(FIREBASE_CONFIG.databaseURL){
     {key:'urls1688',     label:'1688 URL',       type:'urls',     group:'man',
      tip:'1688の商品ページURL。「＋ URLを追加」で何件でも足せます。1行目に入れたあと「↓ 下の行すべてに反映」で他の行へコピーできます'},
     {key:'parts',        label:'1688単価 (元 × 入数)', type:'parts', group:'man',
-     tip:'1販売単位あたりの中身を「単価(元) × 入数」で入力します。単品なら1行だけ。セット商品は部材ごとに行を足すと自動で合算されます。中国国内送料や加工費は含めないでください（上部の「中国側 基本作業費」で加算されます）'},
+     tip:'1販売単位あたりの中身を「単価(元) × 入数」で入力します。単品なら1行だけ。セット商品は部材ごとに行を足すと自動で合算されます。2行以上にすると「部位」と「その部材の1688 URL」の欄が出ます（商品マスタを作るときに、本体と付属品を見分けて発注先を決めるのに使います）。中国国内送料や加工費は含めないでください（上部の「中国側 基本作業費」で加算されます）'},
     {key:'extra',        label:'オプション代 (元/販売単位)', type:'options', group:'man', tip:'ラクマートに頼む加工の費用。自社の実発注5,256明細で使用実績のあるものを厳選して並べてある。ラベル代0.80元は全商品に発生するので既定でON。中国国内送料は上部の設定で別に加算される'},
   ];
 
@@ -2920,6 +2925,29 @@ if(FIREBASE_CONFIG.databaseURL){
           line.appendChild(del);
         }
         list.appendChild(line);
+
+        // 部材が2つ以上あるときだけ、どの部位かと発注先URLを聞く。
+        // 単価と入数だけでは、商品マスタを作るときに「本体はどれで、
+        // 付属品をどこから買うか」が決まらない。発注URLを推測で埋めると
+        // 違うものが届くので、ここで入れてもらう。
+        if(row.parts.length > 1){
+          const sub = el('div', 'part-sub');
+          const name = document.createElement('input');
+          name.className = 'part-name'; name.type = 'text';
+          name.placeholder = i === 0 ? '部位（本体）' : '部位（収納袋 など）';
+          name.value = (p.name ?? '');
+          const url = document.createElement('input');
+          url.type = 'text'; url.placeholder = 'この部材の1688 URL';
+          url.value = (p.url ?? '');
+          name.addEventListener('input', () => {
+            row.parts[i].name = name.value; onChange(); scheduleSave();
+          });
+          url.addEventListener('input', () => {
+            row.parts[i].url = url.value.trim(); onChange(); scheduleSave();
+          });
+          sub.appendChild(name); sub.appendChild(url);
+          list.appendChild(sub);
+        }
       });
       refreshSum();
     }
@@ -3149,7 +3177,8 @@ if(FIREBASE_CONFIG.databaseURL){
     }
     if(key === 'parts'){
       const a = (Array.isArray(src.parts) && src.parts.length) ? src.parts : [{price:'', qty:''}];
-      dst.parts = a.map(p => ({price: (p && p.price) ?? '', qty: (p && p.qty) ?? ''}));
+      dst.parts = a.map(p => ({price: (p && p.price) ?? '', qty: (p && p.qty) ?? '',
+                               name: (p && p.name) ?? '', url: (p && p.url) ?? ''}));
       return;
     }
     // オプション代はチェック（optSel）と自由入力（extra）の2つで1セット

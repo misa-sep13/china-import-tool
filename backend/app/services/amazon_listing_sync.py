@@ -212,6 +212,15 @@ def extract(research: dict, settings: dict) -> dict:
         "review_count": _i(row.get("reviewCount")),
         "review_rate": _f(row.get("reviewRate")) or None,
         "urls_1688": [u for u in (row.get("urls1688") or []) if u],
+        # 1販売単位の中身。商品マスタを作るとき、1行目を本体の単価と入数に、
+        # 2行目以降を発注用付属品にする。部位と発注先URLは2部材以上のときだけ
+        # シートで入力してもらう（推測でURLを埋めると違うものが届く）
+        "parts": [{"price": _f(p.get("price")) or None,
+                   "qty": _f(p.get("qty"), 1) or 1,
+                   "name": (p.get("name") or "").strip(),
+                   "url": (p.get("url") or "").strip()}
+                  for p in (row.get("parts") or [])
+                  if isinstance(p, dict) and _f(p.get("price"))],
 
         "cost_jpy": c.get("cost_jpy"),
         "profit_jpy": c.get("profit_jpy"),

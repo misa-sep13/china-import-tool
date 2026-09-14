@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import api from '../api/client'
 import { C, card, label, input, bytes, Err } from './ListingTab'
+import MasterPanel from './MasterPanel'
 import { titleProblems, byteLen, KW_LIMITS, stripColor, childTitle,
   parentColorLeft } from '../lib/listingChecks'
 
@@ -22,6 +23,7 @@ export default function ListingEditor({ listingId, onBack }) {
   const [result, setResult] = useState(null)
   const [nextSku, setNextSku] = useState('')   // 次に空いている番号。欄の下書きに出す
   const [kwLimit, setKwLimit] = useState(500)  // 検索キーワードの上限（バイト）
+  const [master, setMaster] = useState(false)  // 商品マスタへの登録画面
   const dirty = useRef(false)
 
   // どのカテゴリでもだいたい聞かれる項目。全商品に効く既定値
@@ -730,6 +732,26 @@ export default function ListingEditor({ listingId, onBack }) {
         <div style={{ ...card, marginBottom: 10, fontSize: 12, color: C.good }}>
           この商品タイプで追加の入力は要りません。
         </div>
+      )}
+
+      {/* ---- 商品マスタ ----
+           発注はマスタの情報を使うので、出品を送るより先に作る。
+           出品が通ってから作ると、届くまで発注できない */}
+      <section style={{ ...card, marginBottom: 10, display: 'flex',
+        gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button className="btn btn-secondary" onClick={() => setMaster(true)}
+          disabled={busy}
+          title="SKUごとに商品マスタを作ります。中身を確かめてから確定します">
+          📦 商品マスタに登録
+        </button>
+        <span style={{ fontSize: 12, color: C.sub }}>
+          発注管理と在庫管理に出てくるようになります。仕入URL・単価・入数は
+          リサーチシートから引いてきて、確定前に確かめられます
+        </span>
+      </section>
+
+      {master && (
+        <MasterPanel listingId={listingId} onClose={() => setMaster(false)} />
       )}
 
       {/* ---- 送信 ---- */}

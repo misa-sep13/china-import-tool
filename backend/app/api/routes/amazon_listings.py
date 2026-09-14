@@ -1997,3 +1997,188 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
             "material": material,
             "links": links,
             "memo": memo}
+
+
+# ---------- 商品マスタへの登録 ----------
+#
+# 出品の準備ができても、これまでツールのAmazon商品マスタには1行も
+# 作られていなかった。そのため出品した商品が発注管理にも在庫管理にも
+# 出てこない。発注はマスタの情報を使うので、出品を送るより前に作る。
+#
+# 押す前に必ず対応表を見せる（/master-preview）。仕入URLと入数を
+# 推測で埋めると、違うものを違う数だけ発注することになるため。
+
+
+def _src_of(db: Session, research_id: str) -> dict | None:
+    """シートから、その出品の元になったリサーチを引く。
+
+    仕入URL・単価・入数はシートが持っていて、出品レコードには無い。
+    採用以外の状態に戻されていても引けるよう all_status で探す。
+    """
+    for c in sync.candidates(_sheet(db), all_status=True):
+        if c["research_id"] == research_id:
+            return c
+    return None
+
+
+def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
+    """商品マスタに作る予定の中身を組み立てる。まだ書き込まない。"""
+    parts = src.get("parts") or []
+    urls = [u for u in (src.get("urls_1688") or []) if u]
+    main = parts[0] if parts else None
+    comps = parts[1:]
+
+    warnings = []
+    # 仕入URLの決め方。候補が1本だけなら迷いようがないので入れておく。
+    # 2本以上あるときは選んでもらう。黙って先頭を採ると、選んでいない
+    # 仕入先に発注してしまう
+    buy_url = (main or {}).get("url") or ""
+    if not buy_url:
+        if len(urls) == 1:
+            buy_url = urls[0]
+        elif len(urls) > 1:
+            warnings.append(f"仕入URLの候補が{len(urls)}件あります。どれで発注するか選んでください")
+        else:
+            warnings.append("仕入URLがシートに入っていません。あとで商品マスタに入れてください")
+    if not main:
+        warnings.append("1688単価がシートに入っていないので、単価と入数は空になります")
+    if comps:
+        names = "・".join([c.get("name") or "名前なし" for c in comps])
+        warnings.append(
+            f"部材が{len(parts)}件あります。1行目を本体として入数を入れます。"
+            f"付属品（{names}）は発注用付属品として下に出しています")
+
+    # 付属品は在庫連動しない発注用の部材。URLが無いものは発注できないので、
+    # そのまま入れずに知らせる
+    components = []
+    for c in comps:
+        if not c.get("url"):
+            warnings.append(
+                f"付属品「{c.get('name') or '名前なし'}」に1688 URLがありません。"
+                "シートの部材行に入れてください")
+        components.append({"sku": "", "qty": c.get("qty") or 1,
+                           "buy_url": c.get("url") or "",
+                           "name": c.get("name") or "",
+                           "price": c.get("price")})
+
+    kids = (db.query(AmazonListingChild)
+            .filter(AmazonListingChild.listing_id == row.id)
+            .order_by(AmazonListingChild.sort_order,
+                      AmazonListingChild.id).all())
+    out = []
+    for c in kids:
+        if not (c.sku or "").strip():
+            continue
+        exist = db.query(Product).filter(Product.sku == c.sku).first()
+        spec = "／".join([x for x in [c.axis1, c.axis2] if x])
+        out.append({
+            "sku": c.sku,
+            "name": (c.title or row.title or "").strip(),
+            "color": c.axis1 or "",
+            "size": c.axis2 or "",
+            "spec": spec,
+            "buy_url": buy_url,
+            "price": (main or {}).get("price"),
+            "set_size": int((main or {}).get("qty") or 1),
+            "selling_price": c.price or row.price,
+            "cost_jpy": src.get("cost_jpy"),
+            "fba_fee": src.get("fee"),
+            "asin": c.asin or "",
+            "exists": bool(exist),
+            "exists_name": exist.name if exist else "",
+        })
+    if not out:
+        warnings.append("SKUがまだ決まっていません。先にSKUを採番してください")
+    return {"rows": out, "url_choices": urls, "components": components,
+            "warnings": warnings,
+            "variation_theme": row.variation_theme or "",
+            "parent_sku": row.parent_sku or ""}
+
+
+@router.get("/{listing_id:int}/master-preview")
+def master_preview(listing_id: int, db: Session = Depends(get_db)):
+    """商品マスタに何を作るかを先に見せる。書き込みはしない。"""
+    row = db.get(AmazonListing, listing_id)
+    if not row:
+        raise HTTPException(404, "見つかりません")
+    src = _src_of(db, row.research_id)
+    if src is None:
+        raise HTTPException(404, "元のリサーチがシートにありません")
+    return _master_rows(db, row, src)
+
+
+class MasterRowIn(BaseModel):
+    sku: str
+    name: str = ""
+    color: str = ""
+    size: str = ""
+    spec: str = ""
+    buy_url: str = ""
+    price: Optional[float] = None
+    set_size: int = 1
+    selling_price: Optional[float] = None
+    cost_jpy: Optional[float] = None
+    fba_fee: Optional[float] = None
+    asin: str = ""
+
+
+class ToMasterIn(BaseModel):
+    # 確認画面で直したあとの最終形をそのまま受ける
+    rows: list[MasterRowIn]
+    components: list[dict] = []
+
+
+@router.post("/{listing_id:int}/to-master")
+def to_master(listing_id: int, body: ToMasterIn, db: Session = Depends(get_db)):
+    """商品マスタに作る。既にあるSKUは、空いている欄だけ埋める。
+
+    手で直した値を消さないため、上書きはしない。
+    Amazonの親は在庫を持たないダミーなので作らない（子SKUだけ）。
+    """
+    row = db.get(AmazonListing, listing_id)
+    if not row:
+        raise HTTPException(404, "見つかりません")
+    if not body.rows:
+        raise HTTPException(400, "登録するSKUがありません")
+
+    comps = [c for c in (body.components or []) if (c or {}).get("buy_url")]
+    comp_json = json.dumps(comps, ensure_ascii=False) if comps else None
+
+    created, updated = [], []
+    for r in body.rows:
+        sku = (r.sku or "").strip()
+        if not sku:
+            continue
+        p = db.query(Product).filter(Product.sku == sku).first()
+        new = p is None
+        if new:
+            p = Product(sku=sku, supplier="タオタロウ")
+            db.add(p)
+
+        def put(field, value):
+            if value in (None, "", 0):
+                return
+            if not getattr(p, field, None):
+                setattr(p, field, value)
+
+        put("name", (r.name or "").strip())
+        put("color", r.color)
+        put("size", r.size)
+        put("spec", r.spec)
+        put("buy_url", (r.buy_url or "").strip())
+        put("price", r.price)
+        put("selling_price", r.selling_price)
+        put("cost_jpy", r.cost_jpy)
+        put("fba_fee", r.fba_fee)
+        if r.asin:
+            put("asin", r.asin)
+            put("amazon_url", f"https://www.amazon.co.jp/dp/{r.asin}")
+        if (r.set_size or 1) > 1 and (p.set_size or 1) <= 1:
+            p.set_size = r.set_size
+        if comp_json and not p.purchase_components:
+            p.purchase_components = comp_json
+        (created if new else updated).append(sku)
+
+    db.commit()
+    return {"created": created, "updated": updated,
+            "components": len(comps)}
