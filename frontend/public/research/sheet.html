@@ -195,6 +195,7 @@
   .brief-sub{margin:8px 0 4px;font-size:11.5px;color:var(--ink-2);}
   .brief-sub b{color:var(--ink);}
   .brief-note{margin-left:8px;color:var(--ink-3);font-size:11px;}
+  .brief-when{margin:2px 0 2px;font-size:11px;color:var(--ink-3);}
   .brief-cell{display:flex;flex-direction:column;gap:2px;}
   /* 付属品。1つのURLに本体と袋が入っている商品のように、一緒に頼むもの */
   .w-acc{flex:1 1 480px;min-width:320px;}
@@ -7498,6 +7499,10 @@ if(FIREBASE_CONFIG.databaseURL){
       const brief = el('div', 'brief');
       brief.appendChild(el('div', 'brief-title',
         '画像外注へ渡す情報 ＆ 商品マスタ登録用'));
+      // いつ入力すればよいかを書いておく。枠の一番上にあるので、
+      // 何も決まっていない段階で埋めようとして手が止まっていた
+      brief.appendChild(el('div', 'brief-when',
+        '③商品タイトルを決めたあとに入力します（色ごとの欄は③の子から作られます）'));
       // 2つの目的が混ざる場所なので、見出しを付けて分ける。
       // 上＝デザイナーへ渡すもの、下＝仕入先へ伝えるもの（発注と商品マスタ）
       const sub = (text, note) => {
@@ -7533,7 +7538,8 @@ if(FIREBASE_CONFIG.databaseURL){
       };
 
       // ---- デザイナーへ渡すもの ----
-      const gA = sub('デザイナーへ渡す', 'Wordとチャットワークに入ります');
+      const gA = sub('デザイナーへ渡す',
+                     '⑥の画像作成指示書を作る前に入力 → Wordとチャットワークに入ります');
 
       // 親SKU。⑦で採番したものがあればそれを出す（手で直してもよい）
       // ⑦の「出品の準備」から直接書き換えられるよう印を付ける。
@@ -7555,7 +7561,9 @@ if(FIREBASE_CONFIG.databaseURL){
 
       // ---- 仕入先へ伝えるもの ----
       const gB = sub('仕入先の言い方（発注・商品マスタ用）',
-                     'ここが商品マスタの仕様になり、発注でどれを買うかが決まります');
+                     '⑦「出品の準備」でSKUを決めたあと、'
+                     + '「📦 商品マスタに登録」を押す前に入力 → '
+                     + 'ここが商品マスタの仕様になり、発注でどの色を買うかが決まります');
 
       const kidNames = (research.titleChildren || [])
         .map(c => (splitKidName(c.name) || '').trim()).filter(Boolean);
