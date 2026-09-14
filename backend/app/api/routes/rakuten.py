@@ -4566,6 +4566,10 @@ def _taotaro_rows(order_items: list, db: Session) -> list:
                 "buy_url": p.buy_url or "",
                 "spec": getattr(p, "supplier_spec", "") or "",
                 "qty": qty * (p.set_size or 1),
+                # 発注済に残すのは販売単位の数。ここで展開した個数から
+                # 割り戻そうとすると、部材ごとに行が増えたぶんだけ
+                # 二重に数えてしまう（4色セット30個が120個になっていた）
+                "origin_sku": sku, "origin_qty": qty,
                 # Excelは「お客様専用メモ」と「備考」の両方を出している。
                 # どちらも現場への指示なので、まとめて備考として送る
                 "note": _join_notes(p.customer_memo, p.notes),
@@ -4589,6 +4593,7 @@ def _taotaro_rows(order_items: list, db: Session) -> list:
                 "name": comp.get("name", "") or comp_sku or "",
                 "buy_url": comp_url, "spec": comp_spec,
                 "qty": qty * comp_qty,
+                "origin_sku": sku, "origin_qty": qty,
                 "note": _join_notes(comp.get("customer_memo"), comp.get("notes")),
             })
     return rows
@@ -4609,6 +4614,9 @@ def rakuten_taotaro_preview(body: dict, db: Session = Depends(get_db)):
         p = db.query(RakutenProduct).filter(RakutenProduct.sku == r["sku"]).first()
         row = {
             "sku": r["sku"], "name": r["name"], "qty": r["qty"],
+            # どの発注から展開された行か。発注済を販売単位で残すのに使う
+            "origin_sku": r.get("origin_sku") or r["sku"],
+            "origin_qty": r.get("origin_qty"),
             "buy_url": r["buy_url"], "color": r["spec"], "size": "",
             "ok": False, "error": "", "skus": [], "chosen": None,
             "product_id": None, "platform": "", "title": "",
@@ -4740,24 +4748,50 @@ def rakuten_taotaro_submit(body: dict, db: Session = Depends(get_db)):
             p.taotaro_inspect = json.dumps(
                 taotaro.inspect_options(it.get("inspect")), ensure_ascii=False)
 
-    # 発注履歴に残す。Excel出力のときと同じ形にしておく。
-    # 数量は仕入単位（個数）に展開済みなので、割り切れるときだけ販売単位へ戻す
+    # 発注履歴に残す。発注済は「あと何個来るか」を販売単位で持つので、
+    # ここへ入れる数はタオタロウへ送った個数ではなく、発注画面で入れた数。
+    #
+    # 送る側は1688の商品ごとに行が分かれている。4色セットのように部材へ
+    # ほどける商品は、同じSKUの行が色の数だけ並ぶ。行ごとに残すと
+    # 30セットの発注が120として記録され、まだ在庫があると誤解して
+    # 次の発注が止まる（実際にそうなった）。
+    #
+    # 一方、耳栓のケースのように構成品が自分のSKUを持っている場合は、
+    # そのSKUの在庫として本当に入ってくるので、行ごとに残すのが正しい。
+    # 親と同じSKUの行だけ、発注1件につき1行にまとめる。
     ordered_at = date.today()
     recorded = 0
+    seen_origin = set()
     for it in items:
-        p = db.query(RakutenProduct).filter(RakutenProduct.sku == it.get("sku")).first()
+        sku = (it.get("sku") or "").strip()
+        origin = (it.get("origin_sku") or sku).strip()
+        p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
         if not p:
+            continue
+
+        if sku == origin:
+            if origin in seen_origin:
+                continue                      # 同じ発注の別部材。数はもう残した
+            seen_origin.add(origin)
+            oq = it.get("origin_qty")
+            if oq:
+                qty = int(oq)                 # 発注画面で入れた数（販売単位）
+            else:
+                # 古い画面から来た場合の保険。割り切れるときだけ戻す
+                q, unit = int(it.get("qty") or 0), (p.set_size or 1)
+                qty = q // unit if unit > 1 and q % unit == 0 else q
+        else:
+            qty = int(it.get("qty") or 0)     # 構成品はその個数がそのまま入る
+
+        if qty <= 0:
             continue
         has_pending = db.query(RakutenOrderHistory).filter(
             RakutenOrderHistory.sku == p.sku,
             RakutenOrderHistory.is_deleted == False,
             RakutenOrderHistory.is_delivered == False,
         ).first() is not None
-        qty = int(it.get("qty") or 0)
-        unit = p.set_size or 1
         db.add(RakutenOrderHistory(
-            sku=p.sku, name=p.name,
-            qty=qty // unit if unit > 1 and qty % unit == 0 else qty,
+            sku=p.sku, name=p.name, qty=qty,
             stage=2 if has_pending else 1,
             ordered_at=ordered_at,
             memo="タオタロウAPIで発注",

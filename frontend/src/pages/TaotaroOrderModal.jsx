@@ -121,6 +121,9 @@ export default function TaotaroOrderModal({
       const r = await api.post(submitUrl, {
         items: targets.map(t => ({
           sku: t.sku, qty: t.qty, buy_url: t.buy_url,
+          // どの発注から展開された行か。発注済は販売単位で残すので、
+          // 部材ごとに行が増えても数が膨らまないようにサーバーへ渡す
+          origin_sku: t.origin_sku || t.sku, origin_qty: t.origin_qty,
           title: t.title || t.name, platform: t.platform,
           product_id: t.product_id, sku_id: t.skuId,
           remark: t.remark || '',
