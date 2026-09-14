@@ -7,6 +7,8 @@
 仕様書の推奨どおり「検知と金額の取得」までをツールで行い、
 実際の支払いは管理画面で目視確認のうえ実行する。
 """
+import json
+from types import SimpleNamespace
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -185,6 +187,58 @@ class PreviewRequest(BaseModel):
     items: List[PreviewItem]
 
 
+def _expand_for_order(items, db: Session) -> list:
+    """発注の行をほどく。本体の下に、発注用付属品（purchase_components）を足す。
+
+    1つの1688ページに本体と収納袋が入っている商品のように、一緒に頼むものが
+    ある。付属品は在庫には連動しないが、頼まないと本体だけ届く。
+    楽天側は前から展開していたが、Amazon側は本体しか送っていなかった。
+
+    どの発注から展開した行かを持ち回る。発注履歴は販売単位で1件だけ残したい
+    ので、行が増えたぶんだけ数が膨らまないようにするため。
+    """
+    rows = []
+    for it in items:
+        product = db.query(Product).filter(Product.sku == it.sku).first()
+        rows.append({
+            "sku": it.sku, "name": it.name, "qty": it.qty,
+            "buy_url": it.buy_url, "color": it.color, "size": it.size,
+            "spec": it.spec, "product": product,
+            "origin_sku": it.sku, "origin_qty": it.qty, "is_accessory": False,
+        })
+        if not product:
+            continue
+        try:
+            pcomps = json.loads(getattr(product, "purchase_components", None) or "[]")
+        except (ValueError, TypeError):
+            pcomps = []
+        for comp in pcomps:
+            comp_sku = (comp.get("sku") or "").strip()
+            comp_url = (comp.get("buy_url") or "").strip()
+            comp_spec = (comp.get("supplier_spec") or comp.get("spec") or "").strip()
+            c = (db.query(Product).filter(Product.sku == comp_sku).first()
+                 if comp_sku else None)
+            if c:
+                comp_url = comp_url or c.buy_url or ""
+                comp_spec = comp_spec or c.spec or ""
+            # URLが無ければ発注先が決まらない。黙って本体のURLで買うと
+            # 違うものが届くので、この行は出さない
+            if not comp_url:
+                continue
+            rows.append({
+                "sku": comp_sku or it.sku,
+                "name": comp.get("name") or comp_sku or "付属品",
+                "qty": int(it.qty) * int(comp.get("qty") or 1),
+                "buy_url": comp_url, "color": "", "size": "",
+                "spec": comp_spec, "product": c,
+                "origin_sku": it.sku, "origin_qty": it.qty,
+                # 自分のSKUを持たない付属品は、本体のSKUで並ぶ。
+                # 本体の「覚えた組み合わせ」を上書きしないよう印を付ける
+                "is_accessory": not comp_sku,
+            })
+    return rows
+
+
 @router.post("/order-preview")
 def order_preview(req: PreviewRequest, db: Session = Depends(get_db)):
     """発注の下調べ。商品詳細を取り直し、SKUの候補と単価・在庫を返す。
@@ -193,11 +247,15 @@ def order_preview(req: PreviewRequest, db: Session = Depends(get_db)):
     ここで ok=false のものは、画面でSKUを選んでもらうまで発注できない。
     """
     out = []
-    for it in req.items:
-        product = db.query(Product).filter(Product.sku == it.sku).first()
+    for it in _expand_for_order(req.items, db):
+        it = SimpleNamespace(**it)
+        product = it.product
         row = {
             "sku": it.sku, "name": it.name, "qty": it.qty,
             "buy_url": it.buy_url, "color": it.color, "size": it.size,
+            # どの発注から展開された行か。発注履歴を販売単位で残すのに使う
+            "origin_sku": it.origin_sku, "origin_qty": it.origin_qty,
+            "is_accessory": it.is_accessory,
             "ok": False, "error": "", "skus": [], "chosen": None,
             "product_id": None, "platform": "", "title": "",
             "min_order_quantity": 1, "remembered": False,
@@ -285,6 +343,12 @@ class SubmitItem(BaseModel):
     product_id: int
     sku_id: str
     remark: str = ""
+    # どの発注から展開された行か。付属品の行が増えても発注履歴が
+    # 膨らまないようにするため（楽天側で30セットが120と記録された）
+    origin_sku: str = ""
+    origin_qty: Optional[int] = None
+    # 自分のSKUを持たない付属品。本体の覚えた組み合わせを上書きしない
+    is_accessory: bool = False
     asin: str = ""
     fnsku: str = ""
     fba: int = 1
@@ -347,23 +411,35 @@ def order_submit(req: SubmitRequest, db: Session = Depends(get_db)):
         product = db.query(Product).filter(Product.sku == it.sku).first()
         if not product:
             continue
-        if it.remember_sku:
+        # 付属品は本体のSKUで並ぶことがある。そのまま覚えると、
+        # 次の発注で本体のかわりに収納袋が選ばれてしまう
+        if it.remember_sku and not it.is_accessory:
             product.taotaro_product_id = int(it.product_id)
             product.taotaro_sku_id = str(it.sku_id)
         if it.remember_inspect:
             product.taotaro_inspect = _json.dumps(
                 taotaro.inspect_options(it.inspect), ensure_ascii=False)
 
-    # 発注履歴に残す。Excel出力のときと同じ形にしておく
+    # 発注履歴に残す。Excel出力のときと同じ形にしておく。
+    # 付属品は本体と同じSKUで来ることがある（自分のSKUを持たない収納袋など）。
+    # 行ごとに残すと、1回の発注が付属品の数だけ多く記録されてしまうので、
+    # 親と同じSKUの行は発注1件につき1行にまとめる
     oids = r.get("oids") or []
+    seen_origin = set()
     for i, it in enumerate(req.items):
+        origin = (it.origin_sku or it.sku).strip()
+        if it.sku == origin:
+            if origin in seen_origin:
+                continue
+            seen_origin.add(origin)
         product = db.query(Product).filter(Product.sku == it.sku).first()
         db.add(OrderHistory(
             sku=it.sku,
             name=it.title or (product.name if product else ""),
             color=(product.color if product else ""),
             size=(product.size if product else ""),
-            qty=it.qty,
+            qty=(it.origin_qty if (it.sku == (it.origin_sku or it.sku)
+                                   and it.origin_qty) else it.qty),
             price=(product.price if product else 0) or 0,
             buy_url=it.buy_url,
             photo_url=(product.photo_url if product else ""),

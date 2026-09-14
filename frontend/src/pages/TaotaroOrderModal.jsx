@@ -124,6 +124,7 @@ export default function TaotaroOrderModal({
           // どの発注から展開された行か。発注済は販売単位で残すので、
           // 部材ごとに行が増えても数が膨らまないようにサーバーへ渡す
           origin_sku: t.origin_sku || t.sku, origin_qty: t.origin_qty,
+          is_accessory: !!t.is_accessory,
           title: t.title || t.name, platform: t.platform,
           product_id: t.product_id, sku_id: t.skuId,
           remark: t.remark || '',
@@ -189,7 +190,9 @@ export default function TaotaroOrderModal({
           )}
 
           {!busy && !result && rows && rows.map((r, i) => (
-            <Row key={r.sku} r={r} i={i} patch={patch} pickSku={pickSku} />
+            // 4色セットや付属品は、同じSKUの行が並ぶ。SKUだけを鍵にすると
+            // Reactが別の行と取り違えて、選んだ色が隣の行に移ることがある
+            <Row key={r.sku + '#' + i} r={r} i={i} patch={patch} pickSku={pickSku} />
           ))}
         </div>
 
