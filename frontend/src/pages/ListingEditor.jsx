@@ -287,6 +287,13 @@ export default function ListingEditor({ listingId, onBack }) {
             onChange={e => set('is_test', e.target.checked)} />
           テスト出品
         </label>
+        {/* 下にも同じボタンがあるが、画面が長くスクロールしないと出てこない。
+            発注はマスタの情報を使うので、出品より先に押すもの。上にも置く */}
+        <button className="btn btn-secondary" onClick={() => setMaster(true)}
+          disabled={busy} style={{ whiteSpace: 'nowrap' }}
+          title="SKUごとに商品マスタを作ります。中身を確かめてから確定します">
+          📦 商品マスタに登録
+        </button>
         <button className="btn btn-primary" onClick={() => save()} disabled={busy}>
           保存
         </button>
