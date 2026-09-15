@@ -903,47 +903,6 @@ export default function RakutenOrderPage() {
   }
   useEffect(() => { runSync(true) }, [])
 
-  // 入荷したのに閉じていない発注。残っていると次の発注が遅れる
-  const { data: staleData } = useQuery({
-    queryKey: ['stale-pending-orders'],
-    queryFn: () => api.get('/rakuten/orders/stale-pending').then(r => r.data),
-    retry: false,
-  })
-  const stalePending = staleData?.items || []
-  const [closingOrder, setClosingOrder] = useState(null)
-
-  // タオタロウ側の状態。入荷記録からの推測と違い、注文ごとに
-  // 今どこにあるかが分かるので、閉じてよいか確信を持って決められる
-  const [taoStatus, setTaoStatus] = useState(null)
-  const [checkingTao, setCheckingTao] = useState(false)
-  const checkTaotaro = async () => {
-    setCheckingTao(true)
-    try {
-      const r = await api.get('/rakuten/orders/pending-taotaro')
-      setTaoStatus(new Map((r.data.items || []).map(x => [x.id, x])))
-    } catch (e) {
-      alert('タオタロウに問い合わせできませんでした: ' + (e.response?.data?.detail || e.message))
-    } finally {
-      setCheckingTao(false)
-    }
-  }
-  const closeStale = async (o) => {
-    if (!confirm(`${o.sku} の発注 ${o.qty}個（${o.ordered_at}）を納品済にします。
-
-在庫は動きません。発注済から外れるだけです。
-よろしいですか？`)) return
-    setClosingOrder(o.id)
-    try {
-      await api.patch('/rakuten/orders/history/' + o.id + '/deliver')
-      qc.invalidateQueries(['stale-pending-orders'])
-      qc.invalidateQueries(['rakuten-all-products-order'])
-      qc.invalidateQueries(['rakuten-order-history'])
-    } catch (e) {
-      alert('変更できませんでした: ' + (e.response?.data?.detail || e.message))
-    } finally {
-      setClosingOrder(null)
-    }
-  }
 
   const bySku = new Map((allData?.items || []).map(x => [x.sku, x]))
 
@@ -1118,75 +1077,6 @@ export default function RakutenOrderPage() {
           発注数の計算に効くので、残っていると足りているように見えて
           次の発注が遅れる。自動では閉じない（別の発注ぶんの入荷を
           数えていることがあるため）*/}
-      {stalePending.length > 0 && (
-        <div style={{ background: '#fffbeb', border: '2px solid #d97706', borderRadius: 8,
-          padding: 14, marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, color: '#92400e', marginBottom: 6 }}>
-            ⚠ 入荷したのに発注済のまま残っている可能性があります（{stalePending.length}件）
-          </div>
-          <div style={{ fontSize: 12, color: '#92400e', marginBottom: 8, lineHeight: 1.7 }}>
-            発注日より後に、発注数以上の入荷があります。
-            発注済に残っていると「まだ来る」と見なされ、次の発注が遅れます。
-            中身を確かめてから「納品済にする」を押してください。
-          </div>
-          <div style={{ marginBottom: 8 }}>
-            <button className="btn btn-sm btn-secondary" style={{ fontSize: 12 }}
-              onClick={checkTaotaro} disabled={checkingTao}>
-              {checkingTao ? 'タオタロウに問い合わせ中…' : 'タオタロウで確かめる'}
-            </button>
-            <span style={{ fontSize: 11, color: '#92400e', marginLeft: 8 }}>
-              注文ごとの状態を取ってきます（推測ではなく実際の状態が分かります）
-            </span>
-          </div>
-          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: '#fef3c7' }}>
-                {['発注日', 'SKU', '商品名', '発注数', 'その後の入荷', 'タオタロウ', ''].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '4px 8px', whiteSpace: 'nowrap' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {stalePending.map(o => (
-                <tr key={o.id} style={{ borderTop: '1px solid #fde68a' }}>
-                  <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>{o.ordered_at}</td>
-                  <td style={{ padding: '4px 8px', fontWeight: 600 }}>{o.sku}</td>
-                  <td style={{ padding: '4px 8px' }}>{o.name}</td>
-                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{o.qty}</td>
-                  <td style={{ padding: '4px 8px' }}>
-                    <b>{o.received_after}</b>
-                    <span style={{ color: '#92400e', marginLeft: 6 }}>
-                      （{(o.receipts || []).map(r => `${r.date} ${r.qty}`).join('／')}）
-                    </span>
-                  </td>
-                  <td style={{ padding: '4px 8px', fontSize: 11 }}>
-                    {(() => {
-                      const t = taoStatus && taoStatus.get(o.id)
-                      if (!t) return <span style={{ color: '#b45309' }}>—</span>
-                      if (t.error) return <span style={{ color: '#b91c1c' }}>{t.error}</span>
-                      if (!t.found) return <span style={{ color: '#92400e' }}>見つからない（管理番号なしの発注）</span>
-                      return (
-                        <span>
-                          倉庫着 <b>{t.qty_at_warehouse}</b>
-                          {t.qty_on_the_way > 0 && <> ／ 途中 {t.qty_on_the_way}</>}
-                          <span style={{ color: '#92400e' }}>
-                            {' '}（{(t.orders || []).map(x => x.state_label).filter((v, i, a) => a.indexOf(v) === i).join('・')}）
-                          </span>
-                        </span>
-                      )
-                    })()}
-                  </td>
-                  <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>
-                    <button className="btn btn-sm btn-secondary" style={{ fontSize: 11 }}
-                      disabled={closingOrder === o.id}
-                      onClick={() => closeStale(o)}>納品済にする</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         <h1>🛒 楽天 発注管理</h1>
         <button className="btn" onClick={() => refetch()} disabled={isFetching} style={{ fontSize: 13 }}>
