@@ -1638,6 +1638,45 @@ def update_order_qty(order_id: int, body: dict, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "qty": o.qty}
 
+def _send_arrived_map(db: Session, pages: int = 5) -> tuple:
+    """便ごとに「もう日本にあるか」を返す。 (届いた便のsid集合, 見えている便のsid集合)
+
+    タオタロウの便は「出荷済み」で止まる。「受け取り済み」は使っていないので、
+    その状態だけを見ると、出荷したものが全部まだ来ていないことになる。
+    実際、突き合わせで36件すべてが「足りない」と出ていた。
+
+    日本に着いた日はこちらの配送依頼が持っているので、そちらを正とする。
+    """
+    from app.models.shipment_order import ShipmentOrder
+    from app.services import taotaro
+
+    ours = (db.query(ShipmentOrder)
+            .filter(ShipmentOrder.received_at.isnot(None)).all())
+    received_keys = set()
+    for o in ours:
+        for k in (str(o.order_no or ""), str(o.tracking_no or "")):
+            if k:
+                received_keys.add(k)
+
+    arrived, known = set(), set()
+    for page in range(1, max(1, pages) + 1):
+        d = taotaro.list_send_orders(page=page, limit=100)
+        for x in d.get("items") or []:
+            sid = x.get("sid")
+            if sid is None:
+                continue
+            known.add(sid)
+            state, sn = x.get("state"), str(x.get("sn") or "")
+            if state == 3:                       # 受け取り済み
+                arrived.add(sid)
+            elif state == 2:                     # 出荷済み。着いたかはこちらの記録で
+                if str(sid) in received_keys or (sn and sn in received_keys):
+                    arrived.add(sid)
+        if not d.get("has_more_pages"):
+            break
+    return arrived, known
+
+
 def _taotaro_open_by_sku(db: Session, days: int = 120, max_pages: int = 12) -> dict:
     """タオタロウの注文を自社SKUに割り当てて、「まだ届いていない数」を数える。
 
@@ -1655,13 +1694,13 @@ def _taotaro_open_by_sku(db: Session, days: int = 120, max_pages: int = 12) -> d
 
     coming_states = {1, 2, 3, 4, 7, 8, 9}   # 買付中〜倉庫内
     in_send_state = 5                        # 便に載った
-    # 便が受け取り済みなら、その中身はもう日本にある。
+    # 便が日本に着いたかどうか。タオタロウ側は「出荷済み」で止まるので、
+    # こちらの配送依頼の入荷日も見る。
     # 一覧に見当たらない便は古い便なので、届いたものとして扱う。
     # 「分からないから、まだ来る」にすると、何か月も前の注文まで
     # 発注済に数えてしまう（実際それで18,800個と出た）
-    arrived_send = {3}
+    arrived_sids, known_sids = _send_arrived_map(db, pages=5)
 
-    send_state = taotaro.send_order_states(pages=5)
     start = int((_dt.now() - _td(days=days)).timestamp())
 
     idx = _product_indexes(db)
@@ -1676,8 +1715,8 @@ def _taotaro_open_by_sku(db: Session, days: int = 120, max_pages: int = 12) -> d
             if st in coming_states:
                 coming = True
             elif st == in_send_state:
-                sid_state = send_state.get(o.get("sid"))
-                coming = sid_state is not None and sid_state not in arrived_send
+                sid = o.get("sid")
+                coming = (sid in known_sids) and (sid not in arrived_sids)
             else:
                 coming = False
             e = found.setdefault(product.sku, {"found": 0, "open": 0})
