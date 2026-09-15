@@ -1638,6 +1638,25 @@ def update_order_qty(order_id: int, body: dict, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "qty": o.qty}
 
+# 出荷から日本着までの実測は最長19日、発注から着くまでで最長29日。
+# それを大きく超えて出荷済みのままの便は、記録が無いだけで届いている
+_SHIPPED_ARRIVED_DAYS = 45
+
+
+def _shipped_long_ago(send_order: dict) -> bool:
+    from datetime import datetime as _dt, timezone as _tz
+    raw = send_order.get("updated_at") or send_order.get("created_at")
+    if not raw:
+        return False
+    try:
+        t = _dt.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=_tz.utc)
+    return (_dt.now(_tz.utc) - t).days > _SHIPPED_ARRIVED_DAYS
+
+
 def _send_arrived_map(db: Session, pages: int = 5) -> tuple:
     """便ごとに「もう日本にあるか」を返す。 (届いた便のsid集合, 見えている便のsid集合)
 
@@ -1671,6 +1690,11 @@ def _send_arrived_map(db: Session, pages: int = 5) -> tuple:
                 arrived.add(sid)
             elif state == 2:                     # 出荷済み。着いたかはこちらの記録で
                 if str(sid) in received_keys or (sn and sn in received_keys):
+                    arrived.add(sid)
+                elif _shipped_long_ago(x):
+                    # 配送依頼の記録を付け始める前の古い便。記録が無いだけで
+                    # とっくに届いている。実測の最長29日を大きく超えたものは
+                    # 届いたものとして扱う（残すと発注済が何倍にも膨らむ）
                     arrived.add(sid)
         if not d.get("has_more_pages"):
             break
