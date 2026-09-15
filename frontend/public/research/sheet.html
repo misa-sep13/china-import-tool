@@ -206,6 +206,7 @@
   .acc-line input{min-width:0;flex:1 1 auto;}
   .acc-cap{flex:0 0 84px;font-size:11px;color:var(--ink-2);}
   .acc-line input.acc-qty{flex:0 0 52px;text-align:right;}
+  .acc-total{font-size:11px;color:var(--ink-2);font-weight:600;}
   .acc-del{flex:0 0 auto;color:var(--danger);border-color:var(--danger-line);padding:2px 6px;}
   .acc-add{align-self:flex-start;padding:3px 8px;font-size:10px;}
   .brief-cap{font-size:10.5px;font-weight:700;color:var(--ink-2);}
@@ -7608,9 +7609,20 @@ if(FIREBASE_CONFIG.databaseURL){
       // 書くと、発注のときどちらのSKUを買うか決められない
       if(kidNames.length){
         if(!research.cnNames || typeof research.cnNames !== 'object') research.cnNames = {};
+        // 初回に何個頼むかは色ごとに変える（売れ筋の色を多めにする）。
+        // 中国語名と同じ行に置けば、発注書を作るときここだけ見れば済む
+        if(!research.firstQty || typeof research.firstQty !== 'object') research.firstQty = {};
         const cw = el('div', 'brief-cell w-acc');
-        cw.appendChild(el('div', 'brief-cap', '中国語名（色ごと）'));
+        cw.appendChild(el('div', 'brief-cap', '中国語名（色ごと）と初回の発注数'));
         const cl = el('div', 'acc-list');
+        // 合計の表示。先に作っておく（constは巻き上がらないので、
+        // 入力欄の中から呼ぶより前に用意しておく必要がある）
+        const totalTxt = el('span', 'acc-total');
+        const drawTotal = () => {
+          const n = kidNames.reduce(
+            (a, k) => a + (Number(research.firstQty[k]) || 0), 0);
+          totalTxt.textContent = n ? '合計 ' + n + '個' : '';
+        };
         kidNames.forEach(k => {
           const line = el('div', 'acc-line');
           line.appendChild(el('span', 'acc-cap', k));
@@ -7622,8 +7634,25 @@ if(FIREBASE_CONFIG.databaseURL){
             research.cnNames[k] = inp.value; scheduleSave();
           });
           line.appendChild(inp);
+          const q = document.createElement('input');
+          q.type = 'number'; q.min = '0'; q.className = 'acc-qty';
+          q.placeholder = '初回';
+          q.title = 'この色を初回に何個発注するか';
+          q.value = (research.firstQty[k] == null ? '' : research.firstQty[k]);
+          q.addEventListener('input', () => {
+            const v = q.value.trim();
+            research.firstQty[k] = v === '' ? null : (Number(v) || 0);
+            drawTotal(); scheduleSave();
+          });
+          line.appendChild(q);
           cl.appendChild(line);
         });
+        // 合計。発注書に書く数と突き合わせる
+        const totalLine = el('div', 'acc-line');
+        totalLine.appendChild(el('span', 'acc-cap', ''));
+        totalLine.appendChild(totalTxt);
+        drawTotal();
+        cl.appendChild(totalLine);
         cw.appendChild(cl);
         gB.appendChild(cw);
       }
