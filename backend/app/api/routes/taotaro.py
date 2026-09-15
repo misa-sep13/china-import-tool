@@ -326,8 +326,17 @@ def order_preview(req: PreviewRequest, db: Session = Depends(get_db)):
                 it.spec or (product.spec if product else ""))
 
         if not chosen:
-            row["error"] = ("色・サイズがどれに当たるか決められませんでした。"
-                            "選んでください")
+            if it.is_accessory:
+                # 本体と同じページを指す付属品。本体のSKUに含まれている
+                # ことが多い（「套装（収納袋＋眼罩耳塞）」など）。
+                # 別に頼むものが無いなら、リサーチシートの付属品欄から消す
+                row["error"] = (
+                    "本体と同じページです。本体のSKUに含まれているなら、"
+                    "リサーチシートの付属品欄から消してください。"
+                    "別に頼むものなら、付属品にURLと仕様を入れてください")
+            else:
+                row["error"] = ("色・サイズがどれに当たるか決められませんでした。"
+                                "選んでください")
             out.append(row); continue
 
         row["chosen"] = chosen

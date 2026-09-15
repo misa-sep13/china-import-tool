@@ -7668,11 +7668,12 @@ if(FIREBASE_CONFIG.databaseURL){
         kidNames.length
           ? '付属品（どの色にも共通。一緒に発注するもの）'
           : '付属品（一緒に発注するもの）'));
-      if(kidNames.length){
-        accWrap.appendChild(el('div', 'acc-note',
-          '色ごとに分けて入れないでください。ここに入れたものは、'
-          + 'どの色を発注するときも一緒に頼みます'));
-      }
+      accWrap.appendChild(el('div', 'acc-note',
+        '本体のSKUに含まれているもの（「套装（収納袋＋眼罩耳塞）」など、'
+        + '本体を選べば一緒に届くもの）は入れません。'
+        + '別に頼むものだけ、URLと中国語名を入れてください'
+        + (kidNames.length
+           ? '。色ごとに分けて入れないでください（どの色にも共通です）' : '')));
       const accList = el('div', 'acc-list');
       accWrap.appendChild(accList);
       const drawAcc = () => {
