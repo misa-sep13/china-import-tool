@@ -201,6 +201,9 @@
   .brief-cell{display:flex;flex-direction:column;gap:2px;}
   /* 付属品。1つのURLに本体と袋が入っている商品のように、一緒に頼むもの */
   .w-acc{flex:1 1 480px;min-width:320px;}
+  /* 付属品は色の欄と別の行に落とす。横に並ぶと色ごとの入力に見える */
+  .w-break{flex-basis:100%;}
+  .acc-note{font-size:10.5px;color:var(--ink-3);margin:-2px 0 4px;line-height:1.5;}
   .acc-list{display:flex;flex-direction:column;gap:3px;}
   .acc-line{display:flex;gap:4px;align-items:center;}
   .acc-line input{min-width:0;flex:1 1 auto;}
@@ -7660,8 +7663,16 @@ if(FIREBASE_CONFIG.databaseURL){
       // 付属品。1つのURLに本体と袋が入っている商品のように、一緒に頼むもの。
       // 在庫には連動しない（本体と一緒に発注する行として出るだけ）
       if(!Array.isArray(research.accessories)) research.accessories = [];
-      const accWrap = el('div', 'brief-cell w-acc');
-      accWrap.appendChild(el('div', 'brief-cap', '付属品（一緒に発注するもの）'));
+      const accWrap = el('div', 'brief-cell w-acc w-break');
+      accWrap.appendChild(el('div', 'brief-cap',
+        kidNames.length
+          ? '付属品（どの色にも共通。一緒に発注するもの）'
+          : '付属品（一緒に発注するもの）'));
+      if(kidNames.length){
+        accWrap.appendChild(el('div', 'acc-note',
+          '色ごとに分けて入れないでください。ここに入れたものは、'
+          + 'どの色を発注するときも一緒に頼みます'));
+      }
       const accList = el('div', 'acc-list');
       accWrap.appendChild(accList);
       const drawAcc = () => {

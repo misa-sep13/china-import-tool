@@ -205,6 +205,7 @@ def _expand_for_order(items, db: Session) -> list:
             "buy_url": it.buy_url, "color": it.color, "size": it.size,
             "spec": it.spec, "product": product,
             "origin_sku": it.sku, "origin_qty": it.qty, "is_accessory": False,
+            "out_sku": it.sku,
         })
         if not product:
             continue
@@ -212,6 +213,10 @@ def _expand_for_order(items, db: Session) -> list:
             pcomps = json.loads(getattr(product, "purchase_components", None) or "[]")
         except (ValueError, TypeError):
             pcomps = []
+        # 同じものが二重に登録されていることがある（色ごとに1つずつ
+        # 入れてしまったなど）。同じ発注先・同じ仕様のものは1つにまとめる。
+        # そのまま流すと同じ付属品を2回頼むことになる
+        seen_comp = set()
         for comp in pcomps:
             comp_sku = (comp.get("sku") or "").strip()
             comp_url = (comp.get("buy_url") or "").strip()
@@ -225,9 +230,16 @@ def _expand_for_order(items, db: Session) -> list:
             # 違うものが届くので、この行は出さない
             if not comp_url:
                 continue
+            key = (comp_sku, comp_url, comp_spec)
+            if key in seen_comp:
+                continue
+            seen_comp.add(key)
+            # 付属品にSKUが無いと本体と同じSKUで並び、同じ商品が
+            # 何行も出たように見える。画面では区別できる名前にする
+            label = (comp_sku or (it.sku + "（付属品）"))
             rows.append({
-                "sku": comp_sku or it.sku,
-                "name": comp.get("name") or comp_sku or "付属品",
+                "sku": label,
+                "name": comp.get("name") or comp_spec or comp_sku or "付属品",
                 "qty": int(it.qty) * int(comp.get("qty") or 1),
                 "buy_url": comp_url, "color": "", "size": "",
                 "spec": comp_spec, "product": c,
@@ -235,6 +247,9 @@ def _expand_for_order(items, db: Session) -> list:
                 # 自分のSKUを持たない付属品は、本体のSKUで並ぶ。
                 # 本体の「覚えた組み合わせ」を上書きしないよう印を付ける
                 "is_accessory": not comp_sku,
+                # タオタロウへ送る管理番号。表示用の名前ではなく、
+                # 本体のSKUを送る（配送依頼の取り込みで照合に使うため）
+                "out_sku": comp_sku or it.sku,
             })
     return rows
 
