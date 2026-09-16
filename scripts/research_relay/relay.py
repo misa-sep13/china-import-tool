@@ -319,13 +319,30 @@ class Handler(BaseHTTPRequestHandler):
 
         self._send({"ok": False, "error": "not found"}, 404)
 
-    def _proxy(self, path: str, query: str):
+    def do_POST(self):
+        """POSTはここで持っているものが無いので、全部一元管理へ回す。
+
+        ①②のキーワードをAIに作らせる /keywords-ai がこれ。
+        GETだけ中継していたころは、シートから呼んでも受け取れずに
+        「サーバーに繋がらない」になっていた。
+        """
+        u = urlparse(self.path)
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length > 0 else b""
+        if _proxy_base():
+            return self._proxy(u.path, u.query, body=body)
+        self._send({"ok": False, "error": "not found"}, 404)
+
+    def _proxy(self, path: str, query: str, body: bytes = None):
         """一元管理のサーバーへそのまま渡して、返ってきたものを返す。"""
         import urllib.error
         import urllib.request
 
         url = _proxy_base() + "/amazon-research" + path + (("?" + query) if query else "")
-        req = urllib.request.Request(url)
+        req = urllib.request.Request(url, data=body,
+                                     method="POST" if body is not None else "GET")
+        if body is not None:
+            req.add_header("Content-Type", "application/json")
         # シートから渡ってきたトークンをそのまま使う。
         # 無ければ settings.json のものを使う
         token = self.headers.get("Authorization", "")
