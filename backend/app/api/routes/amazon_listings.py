@@ -57,6 +57,7 @@ class ListingIn(BaseModel):
     variation_theme: Optional[str] = None
     axis1_label: Optional[str] = None
     axis2_label: Optional[str] = None
+    master_note: Optional[str] = None   # 商品マスタの備考に持っていく
     status: Optional[str] = None
     is_test: Optional[bool] = None
     children: Optional[list] = None      # [{id?, sku, title, axis1, axis2, price}]
@@ -122,6 +123,7 @@ def _out(row: AmazonListing, db: Session, src: dict = None) -> dict:
         "monthly_sales": row.monthly_sales, "review_count": row.review_count,
         "review_rate": row.review_rate, "profit_rate": row.profit_rate,
         "rival_image": row.rival_image,
+        "master_note": row.master_note or "",
         "status": row.status,
         "is_test": bool(row.is_test),
         "synced_at": row.synced_at.isoformat() if row.synced_at else None,
@@ -2095,6 +2097,8 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
             "cost_jpy": src.get("cost_jpy"),
             "fba_fee": src.get("fee"),
             "asin": c.asin or "",
+            # ⑦で書いた備考。全SKU共通で同じものを入れる
+            "note": (row.master_note or "").strip(),
             "exists": bool(exist),
             "exists_name": exist.name if exist else "",
         })
@@ -2131,6 +2135,7 @@ class MasterRowIn(BaseModel):
     cost_jpy: Optional[float] = None
     fba_fee: Optional[float] = None
     asin: str = ""
+    note: str = ""
 
 
 class ToMasterIn(BaseModel):
@@ -2181,6 +2186,7 @@ def to_master(listing_id: int, body: ToMasterIn, db: Session = Depends(get_db)):
         put("selling_price", r.selling_price)
         put("cost_jpy", r.cost_jpy)
         put("fba_fee", r.fba_fee)
+        put("note", (r.note or "").strip())
         if r.asin:
             put("asin", r.asin)
             put("amazon_url", f"https://www.amazon.co.jp/dp/{r.asin}")

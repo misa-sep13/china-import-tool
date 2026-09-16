@@ -347,6 +347,9 @@ def _migrate():
         # FBAか自己発送か。既定のDEFAULTだと自己発送になってしまう
         ("amazon_listings","fulfillment",
          "ALTER TABLE amazon_listings ADD COLUMN fulfillment VARCHAR"),
+        # 商品マスタの備考に持っていきたいこと（出品には送らない）
+        ("amazon_listings","master_note",
+         "ALTER TABLE amazon_listings ADD COLUMN master_note TEXT"),
     ]
 
     inspector = inspect(engine)

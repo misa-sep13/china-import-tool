@@ -59,6 +59,11 @@ class AmazonListing(Base):
     profit_rate   = Column(Float)
     rival_image   = Column(Text)
 
+    # 商品マスタの備考に入れたいこと。出品には送らない。
+    # マスタへ移ってから書こうとすると忘れるので、気づいた時点で
+    # ここに書いておき、「商品マスタに登録」で一緒に持っていく
+    master_note = Column(Text)
+
     # 動作確認のための出品。JANを本番ぶんとして数えず、
     # GS1への届け出にも載せない
     is_test     = Column(Boolean, default=False)
