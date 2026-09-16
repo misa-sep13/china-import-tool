@@ -124,7 +124,7 @@ export default function TaotaroOrderModal({
           // どの発注から展開された行か。発注済は販売単位で残すので、
           // 部材ごとに行が増えても数が膨らまないようにサーバーへ渡す
           origin_sku: t.origin_sku || t.sku, origin_qty: t.origin_qty,
-          is_accessory: !!t.is_accessory,
+          is_accessory: !!t.is_accessory, is_part: !!t.is_part,
           title: t.title || t.name, platform: t.platform,
           product_id: t.product_id, sku_id: t.skuId,
           remark: t.remark || '',

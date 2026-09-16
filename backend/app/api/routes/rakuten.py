@@ -4629,6 +4629,7 @@ def _taotaro_rows(order_items: list, db: Session) -> list:
                 "buy_url": p.buy_url or "",
                 "spec": getattr(p, "supplier_spec", "") or "",
                 "qty": qty * (p.set_size or 1),
+                "is_part": False,
                 # 発注済に残すのは販売単位の数。ここで展開した個数から
                 # 割り戻そうとすると、部材ごとに行が増えたぶんだけ
                 # 二重に数えてしまう（4色セット30個が120個になっていた）
@@ -4657,6 +4658,10 @@ def _taotaro_rows(order_items: list, db: Session) -> list:
                 "buy_url": comp_url, "spec": comp_spec,
                 "qty": qty * comp_qty,
                 "origin_sku": sku, "origin_qty": qty,
+                # 自分のSKUを持たない部材は、親のSKUで並ぶ。
+                # 覚えた組み合わせを共有すると、4色セットの4行すべてに
+                # 同じ色が入ってしまうので、印を付けて区別する
+                "is_part": not comp_sku,
                 "note": _join_notes(comp.get("customer_memo"), comp.get("notes")),
             })
     return rows
@@ -4680,6 +4685,7 @@ def rakuten_taotaro_preview(body: dict, db: Session = Depends(get_db)):
             # どの発注から展開された行か。発注済を販売単位で残すのに使う
             "origin_sku": r.get("origin_sku") or r["sku"],
             "origin_qty": r.get("origin_qty"),
+            "is_part": bool(r.get("is_part")),
             "buy_url": r["buy_url"], "color": r["spec"], "size": "",
             "ok": False, "error": "", "skus": [], "chosen": None,
             "product_id": None, "platform": "", "title": "",
@@ -4721,7 +4727,11 @@ def rakuten_taotaro_preview(body: dict, db: Session = Depends(get_db)):
         })
 
         chosen = None
-        if p and p.taotaro_sku_id:
+        # 覚えた組み合わせは、その商品そのものの行にだけ使う。
+        # 4色セットのように親のSKUで4行並ぶ場合に共有すると、
+        # 4行とも同じ色になってしまう（実際にそれで4色すべてが
+        # 浅灰色で発注され、出荷まで進んでしまった）
+        if p and p.taotaro_sku_id and not r.get("is_part"):
             for s in d["skus"]:
                 if s["sku_id"] == p.taotaro_sku_id:
                     chosen = s
@@ -4804,7 +4814,9 @@ def rakuten_taotaro_submit(body: dict, db: Session = Depends(get_db)):
         p = db.query(RakutenProduct).filter(RakutenProduct.sku == it.get("sku")).first()
         if not p:
             continue
-        if it.get("remember_sku", True):
+        # 親のSKUで並ぶ部材は覚えない。覚えると次の発注で、
+        # その色が4行すべてに入る
+        if it.get("remember_sku", True) and not it.get("is_part"):
             p.taotaro_product_id = int(it.get("product_id"))
             p.taotaro_sku_id = str(it.get("sku_id"))
         if it.get("remember_inspect"):
