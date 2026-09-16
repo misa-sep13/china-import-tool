@@ -23,6 +23,9 @@ class ProductCreate(BaseModel):
     color: Optional[str] = ""
     size: Optional[str] = ""
     price: Optional[float] = 0
+    # 発注単価（元）とは別物。仕入管理のインボイス取込でも自動で入るが、
+    # 手で直したいこともあるので受け取れるようにしておく
+    cost_jpy: Optional[float] = None
     repack: Optional[str] = ""
     spec: Optional[str] = ""
     customer_memo: Optional[str] = ""
@@ -60,6 +63,7 @@ class ProductUpdate(BaseModel):
     color: Optional[str] = None
     size: Optional[str] = None
     price: Optional[float] = None
+    cost_jpy: Optional[float] = None
     repack: Optional[str] = None
     spec: Optional[str] = None
     customer_memo: Optional[str] = None
