@@ -45,7 +45,10 @@ export default function ShipmentOrderPage() {
       setParsed(res.data)
       // 照合
       const matchRes = await axios.post(`${API}/shipment-orders/match`, res.data.items)
-      setMatched(matchRes.data.matched)
+      // 元の数量を控える。直したときに「元 105」と出して、
+      // 触ったことが一目で分かるようにするため
+      setMatched((matchRes.data.matched || []).map(
+        x => ({ ...x, qty_original: x.qty })))
       setUnmatched(matchRes.data.unmatched)
       setForm({ note: '' })
     } catch (e) {
@@ -374,7 +377,29 @@ export default function ShipmentOrderPage() {
                           <td style={{ fontSize: 12 }}>{item.name_jp || item.name_cn}</td>
                           <td style={{ fontSize: 12 }}>{item.color}</td>
                           <td style={{ fontSize: 12 }}>{item.size}</td>
-                          <td style={{ textAlign: 'right' }}>{item.qty}</td>
+                          {/* 仕入先の数量が実際と違うことがある。タオタロウが誤って
+                              105個で作り、75個を返品したのに配送依頼は105のまま、
+                              ということが2回起きた。保存する前にここで直せれば、
+                              在庫も発注済の消し込みも正しい数で動く */}
+                          <td style={{ textAlign: 'right' }}>
+                            <input type="number" min="0" value={item.qty}
+                              onChange={e => {
+                                const v = Math.max(0, Number(e.target.value) || 0)
+                                setMatched(rs => rs.map((r, n) =>
+                                  n === i ? { ...r, qty: v } : r))
+                              }}
+                              style={{
+                                width: 74, textAlign: 'right', padding: '2px 5px',
+                                fontSize: 13,
+                                borderColor: item.qty !== item.qty_original ? '#d97706' : undefined,
+                                background: item.qty !== item.qty_original ? '#fffbeb' : undefined,
+                              }} />
+                            {item.qty !== item.qty_original && (
+                              <div style={{ fontSize: 10, color: '#b45309' }}>
+                                元 {item.qty_original}
+                              </div>
+                            )}
+                          </td>
                           <td style={{ textAlign: 'right' }}>{item.unit_price_cny}</td>
                         </tr>
                       ))}
