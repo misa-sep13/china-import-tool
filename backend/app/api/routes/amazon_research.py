@@ -939,7 +939,9 @@ async def keywords_ai(body: KwGenIn):
 
     payload = {
         "model": "claude-sonnet-5",   # 語選びは質が効くので軽量モデルにしない
-        "max_tokens": 2000,
+        # 500バイトぶんの語＋説明用15語。途中で切れると
+        # JSONが閉じず「読めませんでした」になるので余裕を持たせる
+        "max_tokens": 4000,
         "messages": [{"role": "user", "content": prompt}],
     }
     headers = {"x-api-key": os.environ.get("ANTHROPIC_API_KEY", ""),
@@ -952,17 +954,37 @@ async def keywords_ai(body: KwGenIn):
         return {"ok": False,
                 "error": f"AIの呼び出しに失敗しました（{res.status_code}）: {res.text[:200]}"}
 
-    text = "".join(b.get("text", "") for b in res.json().get("content", [])
+    body_json = res.json()
+    text = "".join(b.get("text", "") for b in body_json.get("content", [])
                    if b.get("type") == "text").strip()
-    # ```json ... ``` で返ってくることがある
-    if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
+    if not text:
+        # 文章が1つも返らなかった。止まった理由が分かると直しようがある
+        stop = body_json.get("stop_reason") or "不明"
+        kinds = "/".join(sorted({b.get("type", "?")
+                                 for b in body_json.get("content", [])})) or "なし"
+        return {"ok": False,
+                "error": f"AIが文章を返しませんでした（stop_reason: {stop} / "
+                         f"中身: {kinds}）。もう一度お試しください"}
+
+    # ```json ... ``` や「はい、承知しました」のような前置きが付くことがある。
+    # 記号を削るのではなく、本文から最初の { … } を取り出すほうが確実
+    raw = text
+    if "```" in text:
+        parts = text.split("```")
+        if len(parts) >= 2:
+            text = parts[1]
+            if text.lstrip().lower().startswith("json"):
+                text = text.lstrip()[4:]
+    text = text.strip()
+    # 前置きだけでなく「以上です」のような後書きが付くこともあるので、
+    # 最初の { から最後の } までを常に切り出す
+    i, j = text.find("{"), text.rfind("}")
+    if i >= 0 and j > i:
+        text = text[i:j + 1]
     try:
-        data = json.loads(text.strip())
+        data = json.loads(text)
     except Exception:
-        return {"ok": False, "error": f"AIの返事を読めませんでした: {text[:200]}"}
+        return {"ok": False, "error": f"AIの返事を読めませんでした: {raw[:300]}"}
 
     def clean(items, cap):
         """禁止語とASINを落とし、重複を消す。AIに言うだけでは混ざるため。"""
