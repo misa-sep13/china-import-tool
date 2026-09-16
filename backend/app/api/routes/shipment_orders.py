@@ -87,16 +87,16 @@ def debug_match_score(buy_url: str, color: str = "", size: str = "", unit_price_
         # 本番の照合（score_product）と同じ順番・同じ点にしておく。
         # ここがずれていると、調べたときの点数が実際と食い違って迷う
         if spec_n and color_n and size_n and spec_n in {combo1, combo2}:
-            score += 40
+            score += 80
             detail["spec_branch"] = "combo"
         elif spec_n and color_n and spec_n == color_n:
-            score += 35
+            score += 70
             detail["spec_branch"] = "exact"
         elif spec_n and size_n and spec_n == size_n:
-            score += 35
+            score += 70
             detail["spec_branch"] = "size"
         elif spec_n and color_n and (spec_n in color_n or color_n in spec_n):
-            score += 18
+            score += 30
             detail["spec_branch"] = "partial"
         else:
             detail["spec_branch"] = None
@@ -108,6 +108,17 @@ def debug_match_score(buy_url: str, color: str = "", size: str = "", unit_price_
                 score += 15
         except Exception:
             detail["price_match"] = "error"
+        # 発注済の数と届いた数が一致したときの加点。本番では効いているのに
+        # ここに無いと、調べた点数と実際が食い違って原因を見誤る
+        try:
+            set_size = p.set_size or 1
+            recv = int(item.get("qty") or 0) // set_size if set_size > 1 else int(item.get("qty") or 0)
+            pend = (pending_by_sku.get(p.sku, 0) or 0) + (p.inbound or 0) + (p.standard_stock or 0)
+            detail["pending_match"] = recv > 0 and pend == recv
+            if detail["pending_match"]:
+                score += 25
+        except Exception:
+            detail["pending_match"] = "error"
         results.append({"sku": p.sku, "id": p.id, "score": score, "detail": detail})
     results.sort(key=lambda x: -x["score"])
     return {"item": item, "url_key": target_key, "candidates": results}
@@ -313,19 +324,26 @@ def match_products(items: List[dict], db: Session = Depends(get_db)):
         # 実際 y104_gold（香槟色、30*30cm-拷边加厚）と
         # review_cloth_gold（香槟色）が80点で並び、紐づかなかった。
         # 2項目一致は1項目一致より確かなので、点を高くする。
+        # 仕入先の書いた仕様が、こちらの控えとぴたり同じなら、それが答え。
+        # 単価の一致(+15)と発注済の数の一致(+25)は状況証拠にすぎないので、
+        # 合わせても完全一致を覆せない点差にしておく。
+        #
+        # 実際、キッズヘアゴムの「黑色48/包」で、発注済がたまたま10個だった
+        # 別の3色（ブラウン・グリーン・イエロー）が同点で並び、正しい黒を
+        # 上回って「どれか決められない」となった。
         if spec and color and size and spec in {
             _norm_text(f"{item.get('color', '')}、{item.get('size', '')}"),
             _norm_text(f"{item.get('color', '')} {item.get('size', '')}"),
         }:
-            score += 40
+            score += 80
         elif spec and color and spec == color:
-            score += 35
+            score += 70
         elif spec and size and spec == size:
-            score += 35
+            score += 70
         elif spec and color and (spec in color or color in spec):
-            score += 18
+            score += 30
         elif spec and size and (spec in size or size in spec):
-            score += 18
+            score += 30
 
         try:
             item_price = float(item.get("unit_price_cny") or 0)
