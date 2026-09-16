@@ -6292,11 +6292,33 @@ if(FIREBASE_CONFIG.databaseURL){
       pSku.type = 'text'; pSku.className = 'reg-sku';
       pSku.placeholder = '親SKU';
       pSku.value = data.parent_sku || '';
-      pSku.addEventListener('input', () => put('parent_sku', pSku.value.trim()));
+      // 親を直したら子の頭も付いてくる。付いてこないと a06_black と
+      // a14_gray のように1つの商品で頭がばらばらになる
+      pSku.addEventListener('input', () => {
+        const head = pSku.value.trim();
+        put('parent_sku', head);
+        if(!head) return;
+        let moved = 0;
+        (data.children || []).forEach(c => {
+          const cur = (c.sku || '').trim();
+          if(!cur || cur.indexOf('_') < 0) return;
+          const suf = cur.slice(cur.indexOf('_') + 1);
+          if(cur !== head + '_' + suf){ c.sku = head + '_' + suf; moved++; }
+        });
+        if(moved){
+          putKids();
+          // 欄の中身だけ入れ替える。draw()を呼ぶと入力中の枠が閉じる
+          panel.querySelectorAll('input.reg-sku').forEach((el2, i) => {
+            if(i === 0) return;
+            const c = (data.children || [])[i - 1];
+            if(c && el2.value !== (c.sku || '')) el2.value = c.sku || '';
+          });
+        }
+      });
       sHead.appendChild(el('span', 'an-note', '親'));
       sHead.appendChild(pSku);
       sHead.appendChild(el('span', 'an-note',
-        '単品でも親を作ります（Amazonの推奨）'));
+        '単品でも親を作ります（Amazonの推奨）／直すと子も付いてきます'));
       panel.appendChild(sHead);
 
       // 画像外注へ渡す欄に、子SKUとカラーも写しておく（親SKUと同じ理由。

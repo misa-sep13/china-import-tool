@@ -610,6 +610,17 @@ def prepare(listing_id: int, db: Session = Depends(get_db)):
         head = next_sku(db, "a")[0]
     row.parent_sku = head
 
+    # 親SKUを直したら、子の頭も付いてくるようにする。
+    # 直さないと a06_black と a14_gray のように、1つの商品の中で
+    # 頭がばらばらになる（JANはSKUごとなので、結びつきはずれない）
+    for c in kids:
+        s = (c.sku or "").strip()
+        if not s or "_" not in s:
+            continue
+        old_head, suf = s.split("_", 1)
+        if old_head != head:
+            c.sku = f"{head}_{suf}"
+
     taken = {(c.sku or "").strip() for c in kids if (c.sku or "").strip()}
     single = len(kids) == 1
     for i, c in enumerate(kids):
