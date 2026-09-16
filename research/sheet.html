@@ -1144,6 +1144,7 @@
   <ul>
     <li><b>① 検索キーワード</b>＝Amazonの検索キーワード欄にそのまま貼る1行。<b>上限はカテゴリーで違う</b>ため、パネル上部のカテゴリー選択で切り替えてください（ホーム＆キッチン・スポーツ＆アウトドア・おもちゃ・DIY工具・カー用品・ペット用品などは<b>500バイト未満</b>、服＆ファッション小物・シューズ＆バッグ・ジュエリー・時計は<b>250バイト未満</b>）。上限に達すると赤くなります。<b>③商品タイトルを先に書いてから仕分けると、タイトルにある語は自動で除かれます</b>（同じ語を繰り返しても効かないため、そのぶん別の語を入れられます）。</li>
     <li><b>② 商品説明に入れる必須キーワード</b>＝本文に自然に織り込む語。タイトルと重なって構いません。</li>
+    <li class="imgtext-only"><b>🤖 AIに作ってもらう</b>＝①②をAI（Claude）に作らせます。<b>KWが集まらない商品のとき</b>に使ってください。tool4sellerのキーワードは<b>CVが0より大きい語しか残さない</b>ため、ニッチな商品だと数語しか取れず、その数語も③タイトルに入っていると①が空になります。材料は<b>③商品タイトル</b>（必須）と、あれば<b>競合の商品名・商品仕様・レビュー</b>で、レビューが入っているほど精度が上がります（買う人の言葉そのものなので）。禁止語とASINはサーバー側でも落としますが、<b>そのまま使わず、関係ない語は消してください</b>（1商品1円ほどのAPI利用料）。</li>
     <li><b>③ 商品タイトル</b>＝<b>「✨ 親タイトルの下書きを作る」</b>を押すと、<b>ブランド名／メインキーワード／関連ワード／サイズ・数量・色</b>の順で<b>65字程度</b>にまとめた下書きができます（<b>75字まではOK</b>）（語はサジェストと競合タイトルの多い順から選び、<b>競合のブランド名と禁止語は入れません</b>）。押したいポイントがあれば横の欄に入れると<b>【立てて入る】</b>のようにブランド名の次に挟みます。作ったあとは手で直してください。<b>親が1行、バリエーションは「子」を追加</b>して1行ずつ書きます（子にはバリエーションテーマの名称も入れます）。<b>行ごとに字数・禁止語・同じ語の3回以上の重複を自動チェック</b>します（重複はAmazonの商品仕様エラーの原因になります）。下の整えるボタンは<b>最後に触った行</b>に効き、「対象：子（カラー ブラック）」のようにどこに効くかが出ます。</li>
     <li><b>④ 商品説明プロンプト</b>＝押すとプロンプトがコピーされます。タイトル・必須キーワード・<b>競合の商品仕様とレビュー</b>・<b>自社の差別化ポイント</b>が自動で差し込まれます。差別化ポイントの欄には、セット数・梱包・付属品など<b>自社で実際にやっている改良を事実だけ</b>書いてください（1688のページは改良前のベース商品なので、書かないとAIには見えません。書いた内容だけが「自社の強み」として使われ、書いていない改良を勝手に主張しないルールが自動で付きます）。<b>表の1688 URLと競合のAmazonページURLも入る</b>ので、<b>Claude in Chrome</b> のようにブラウザを開けるAIに貼れば、1688ページと競合の画像を見てから書かせられます。ChatGPTなどURLを開けない相手に貼るときは、これまでどおり<b>1688のページを画像で添付</b>してください。「商品画像の文字」カードで取得してあれば、競合画像のキャッチコピーもプロンプトに自動で入ります。<b>「📋 同じチャットで続ける版」</b>＝分析用プロンプトを貼ったチャットで続けて頼むとき用。競合の仕様・レビューを再掲せず、上の分析を根拠に書かせるので短くなります。</li>
     <li><b>⑤ できた5行</b>＝ChatGPTの回答を貼り付けると<b>そのまま保存されます</b>（次に開いても残ります）。<b>「✅ チェックする」</b>で、行数・各行の字数（120〜130字）・【見出し】の有無・必須キーワードの使用漏れ・3回以上の重複・禁止語をまとめて判定します。</li>
@@ -5193,8 +5194,19 @@ if(FIREBASE_CONFIG.databaseURL){
     splitBtn.title = '検索キーワード欄用と商品説明用に振り分けます。'
       + '\n禁止語は除き、オーガニック順位が上（同順位ならCVが高い）語から順に使います。'
       + '\n③商品タイトルがすでに入っていれば、そこにある語は検索キーワードから外します。';
+    // tool4sellerのKWはCVが0より大きい語しか残らない。よく売れている商品なら
+    // 数十語残るが、ニッチな商品だと数語しか残らず、しかもその数語は③の
+    // タイトルにも入っているので①が空になる。集める材料が無いので、作る道を出す。
+    // Anthropic APIを使うので、対応したサーバーから開いたときだけ出す
+    // （⚡商品画像の文字と同じ条件）
+    const aiBtn = el('button', 'mini imgtext-only', '🤖 AIに作ってもらう');
+    aiBtn.dataset.writes = '1';
+    aiBtn.title = '③商品タイトルと競合のレビュー・仕様から、'
+      + 'お客さんが検索しそうな語をAIに挙げてもらいます。'
+      + '\nKWが集まらない商品のときに使ってください（1商品1円ほど）。';
     const splitStatus = el('span', 'an-status');
-    catRow.appendChild(splitBtn); catRow.appendChild(splitStatus);
+    catRow.appendChild(splitBtn); catRow.appendChild(aiBtn);
+    catRow.appendChild(splitStatus);
     body.appendChild(catRow);
 
     // ---- 3つの欄 ----
@@ -5501,6 +5513,65 @@ if(FIREBASE_CONFIG.databaseURL){
         + bytesOf(searchTa.value) + 'バイト）／説明用' + spec.length + '語'
         + '　※元のKW ' + all.length + '語（禁止語は除外済み）'
         + (titleToks.size ? '／商品タイトルにある' + titleToks.size + '語は検索から除外' : '');
+    });
+
+    // ---- ①②をAIに作ってもらう ----
+    // 仕分けと違い、こちらは材料が無くても動く。材料（競合のレビュー・仕様・
+    // 商品名）があるほど精度が上がるので、あるものは全部渡す。
+    aiBtn.addEventListener('click', async () => {
+      const titles = allTitles();
+      if(!titles.length){
+        splitStatus.textContent = '先に③の商品タイトルを入れてください（これが材料になります）';
+        return;
+      }
+      if((searchTa.value.trim() || specTa.value.trim())
+         && !confirm('①②を、AIが作ったもので置き換えますか？')) return;
+
+      // 材料をかき集める。競合の商品名・仕様・レビューは効きが大きい
+      const rows = research.rows || [];
+      const rivalTitles = rows.map(r => (r.competitor || '').trim()).filter(Boolean);
+      const specs = [], reviews = [];
+      rows.forEach(r => {
+        const pg = getPage(r.id) || {};
+        if((pg.spec || '').trim()) specs.push(pg.spec.trim());
+        if((pg.reviews || '').trim()) reviews.push(pg.reviews.trim());
+      });
+
+      aiBtn.disabled = true;
+      splitStatus.textContent = 'AIに考えてもらっています...（20〜60秒かかります）';
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 180000);
+      try{
+        const res = await fetch(apiFor('/keywords-ai'), {
+          method: 'POST', signal: ctl.signal,
+          headers: Object.assign({'Content-Type': 'application/json'}, apiHeaders()),
+          body: JSON.stringify({
+            title: titles.join(' '),
+            rival_titles: rivalTitles,
+            specs: specs.join('\n\n'),
+            reviews: reviews.join('\n\n'),
+            limit: Number(catSel.value),
+          }),
+        });
+        const j = await res.json();
+        if(!j.ok){
+          splitStatus.textContent = '作れませんでした：' + (j.error || '不明なエラー');
+          return;
+        }
+        searchTa.value = (j.search || []).join(' ');
+        specTa.value = (j.spec || []).join(' ');
+        edSave(); edRefresh();
+        const ng = (j.dropped_ng || []).length;
+        splitStatus.textContent = 'AIが作りました：検索' + (j.search || []).length
+          + '語（' + j.bytes + 'バイト）／説明用' + (j.spec || []).length + '語'
+          + (ng ? '／禁止語' + ng + '語は除きました' : '')
+          + '　※そのまま使わず、おかしい語は消してください';
+      }catch(e){
+        splitStatus.textContent = 'サーバーに繋がらないか、時間切れです';
+      }finally{
+        clearTimeout(timer);
+        aiBtn.disabled = false;
+      }
     });
 
     // ---- ③ 商品タイトル（親と、バリエーションの子）----
