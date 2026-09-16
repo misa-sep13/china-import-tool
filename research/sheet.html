@@ -548,6 +548,9 @@
   .an-body .reg-panel input.reg-sku{width:130px;}
   .an-body .reg-panel input.reg-jan{width:140px;}
   .an-body .reg-panel input.reg-brand{width:180px;}
+  /* 商品マスタの備考。右下をつまんで伸ばせる */
+  .an-body .reg-panel textarea.reg-note{flex:1;min-width:260px;min-height:44px;
+    resize:vertical;font-size:11.5px;line-height:1.6;}
   .reg-unit{font-size:11px;color:var(--ink-2);margin-right:6px;}
   .reg-sec{font-size:11.5px;font-weight:800;color:var(--brand);
     margin-top:6px;padding-top:8px;border-top:1px solid var(--line);}
@@ -6263,6 +6266,22 @@ if(FIREBASE_CONFIG.databaseURL){
         })));
       }
 
+      // --- 商品マスタの備考 ---
+      // 気づくのは登録画面を作っているときなのに、書く場所はマスタ側に
+      // しかなかった。移ってから書こうとすると忘れるので、ここで書いて
+      // 「商品マスタに登録」で一緒に持っていく
+      const nRow = el('div', 'an-row reg-line');
+      nRow.appendChild(el('span', 'reg-lead', '備考'));
+      const note = document.createElement('textarea');
+      note.className = 'reg-note';
+      note.placeholder = '商品マスタの備考に入れたいこと（発注時の注意など）';
+      note.value = data.master_note || '';
+      note.addEventListener('input', () => put('master_note', note.value));
+      nRow.appendChild(note);
+      panel.appendChild(nRow);
+      panel.appendChild(el('div', 'an-note',
+        '「📦 商品マスタに登録」で、全SKUの備考に入ります'));
+
       // --- 商品画像 ---
       panel.appendChild(el('div', 'reg-sec', '商品画像'));
       const imgBox = el('div', 'reg-part');
@@ -6707,6 +6726,11 @@ if(FIREBASE_CONFIG.databaseURL){
         + '　' + (c.buy_url || 'URLなし（このままだと発注できません）')));
     });
 
+    const note = (((p.rows || [])[0] || {}).note || '').trim();
+    if(note){
+      box.appendChild(el('div', 'reg-issue', '備考（全SKUに入れます）：' + note));
+    }
+
     const go = el('button', 'primary', 'この内容で商品マスタに登録する');
     go.dataset.writes = '1';
     go.addEventListener('click', async () => {
@@ -6720,6 +6744,7 @@ if(FIREBASE_CONFIG.databaseURL){
             price: r.price, set_size: r.set_size == null ? 1 : r.set_size,
             selling_price: r.selling_price, cost_jpy: r.cost_jpy,
             fba_fee: r.fba_fee, asin: r.asin || '',
+            note: r.note || '',
           })),
           components: p.components || [],
         };
