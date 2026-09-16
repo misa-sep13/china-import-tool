@@ -187,7 +187,9 @@ function ShipmentTab() {
       const res = await api.post('/shipment-orders/parse-taotaro', { sid })
       setParsed(res.data)
       const matchRes = await api.post('/shipment-orders/match', res.data.items)
-      setMatched(matchRes.data.matched)
+      // 元の数量を控えておく。直したときに「元 105」と出して、
+      // 触ったことが一目で分かるようにするため
+      setMatched((matchRes.data.matched || []).map(x => ({ ...x, qty_original: x.qty })))
       setUnmatched(matchRes.data.unmatched)
       setSendOrders(null)
     } catch (e) {
@@ -206,7 +208,9 @@ function ShipmentTab() {
       const res = await api.post('/shipment-orders/parse-excel', fd)
       setParsed(res.data)
       const matchRes = await api.post('/shipment-orders/match', res.data.items)
-      setMatched(matchRes.data.matched)
+      // 元の数量を控えておく。直したときに「元 105」と出して、
+      // 触ったことが一目で分かるようにするため
+      setMatched((matchRes.data.matched || []).map(x => ({ ...x, qty_original: x.qty })))
       setUnmatched(matchRes.data.unmatched)
     } catch (e) {
       alert('読み込みエラー: ' + (e.response?.data?.detail || e.message))
@@ -665,7 +669,25 @@ function ShipmentTab() {
                               <td style={{ fontSize: 12 }}>{item.name_jp || item.name_cn}</td>
                               <td style={{ fontSize: 12 }}>{item.color}</td>
                               <td style={{ fontSize: 12 }}>{item.size}</td>
-                              <td style={{ textAlign: 'right' }}>{item.qty}</td>
+                              {/* 仕入先の数量が実際と違うことがある。タオタロウが誤って
+                                  105個で注文を作り75個を返品したのに、配送依頼は105のまま、
+                                  ということが2回起きた。保存前にここで直せば、在庫加算も
+                                  発注済の消し込みも直したあとの数で動く */}
+                              <td style={{ textAlign: 'right' }}>
+                                <input type="number" min="0" value={item.qty}
+                                  onChange={e => {
+                                    const v = Math.max(0, Number(e.target.value) || 0)
+                                    setMatched(rs => rs.map((r, n) => n === i ? { ...r, qty: v } : r))
+                                  }}
+                                  style={{
+                                    width: 76, textAlign: 'right', padding: '2px 5px', fontSize: 13,
+                                    borderColor: item.qty !== item.qty_original ? '#d97706' : undefined,
+                                    background: item.qty !== item.qty_original ? '#fffbeb' : undefined,
+                                  }} />
+                                {item.qty !== item.qty_original && (
+                                  <div style={{ fontSize: 10, color: '#b45309' }}>元 {item.qty_original}</div>
+                                )}
+                              </td>
                               <td style={{ textAlign: 'right', fontWeight: 700, color: '#166534' }}>
                                 {addQty}{setSize > 1 && <span style={{ fontSize: 11, color: '#64748b', fontWeight: 400 }}>（{setSize}個で1セット）</span>}
                               </td>
