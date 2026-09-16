@@ -60,11 +60,20 @@ function calcProfit(p) {
   // そのまま引くと桁がまるで合わない
   const cost = p.cost_jpy
   if (!p.selling_price || !cost) return null
-  const amazonFee = p.selling_price * (p.amazon_fee_rate ?? 0.1)
-  const fbaFee = p.fba_fee ?? 0
-  const profit = p.selling_price - cost - amazonFee - fbaFee
+  // fba_fee はSP-APIのTotalFeesEstimate＝「販売手数料＋FBA配送代行」の合計。
+  // ここにさらに手数料率を掛けて引くと、販売手数料を二重に引くことになる
+  // （売価を上げたのに利益が増えない、という形で出ていた）。
+  // 取れていない商品だけ、率で概算する
+  const hasFees = p.fba_fee != null && p.fba_fee > 0
+  // 取れていないときは販売手数料ぶんしか引けない。FBA配送代行が丸ごと
+  // 抜けて甘く出るので、数字は出しつつ「概算」と分かるようにする
+  const fees = hasFees
+    ? p.fba_fee
+    : p.selling_price * (p.amazon_fee_rate ?? 0.1)
+  const profit = p.selling_price - cost - fees
   const rate = profit / p.selling_price
-  return { profit: Math.round(profit), rate: (rate * 100).toFixed(1) }
+  return { profit: Math.round(profit), rate: (rate * 100).toFixed(1),
+           rough: !hasFees }
 }
 
 export default function ProductsPage() {
@@ -363,6 +372,10 @@ export default function ProductsPage() {
                       </td>
                       <td style={{ textAlign: 'right', fontWeight: 600, color: profit ? (parseFloat(profit.rate) >= 20 ? '#16a34a' : parseFloat(profit.rate) >= 10 ? '#ca8a04' : '#dc2626') : '#bbb' }}>
                         {profit ? `${profit.rate}%` : '-'}
+                        {profit?.rough && (
+                          <span title="FBA配送代行手数料が未取得です。手数料率だけで出した概算なので、実際の利益はこれより低くなります"
+                            style={{ color: '#d97706', marginLeft: 3, fontWeight: 700 }}>*</span>
+                        )}
                       </td>
                       <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: '#666' }}
                           title={p.note}>

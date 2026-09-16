@@ -129,9 +129,17 @@ def _run_analytics_job(job_id: str, days: int):
             normal_revenue = max(revenue - vine_revenue, 0)
 
             # 手数料計算（VINE分を除外）
+            # fba_fee はSP-APIのTotalFeesEstimate＝「販売手数料＋FBA配送代行」
+            # の合計。率を掛けたぶんを足すと販売手数料を二重に数えるので、
+            # 取れている商品は合計だけを使い、取れていない商品だけ率で概算する
             fba_fee_unit = p.fba_fee
-            fba_fee      = (fba_fee_unit or 0) * normal_units
-            amazon_fee   = round(normal_revenue * (p.amazon_fee_rate or amazon_fee_rate), 0)
+            if fba_fee_unit:
+                fba_fee    = fba_fee_unit * normal_units
+                amazon_fee = 0
+            else:
+                fba_fee    = 0
+                amazon_fee = round(normal_revenue
+                                   * (p.amazon_fee_rate or amazon_fee_rate), 0)
             # 原価は円（cost_jpy）。price は発注用の単価（元）なので、
             # そのまま掛けると利益が実際よりずっと低く出る
             cost_jpy     = round((p.cost_jpy or 0) * normal_units, 0)
