@@ -6081,7 +6081,7 @@ if(FIREBASE_CONFIG.databaseURL){
   //
   // 一元管理のサーバー（/api/amazon-listings）とやり取りする。
   // 「商品登録をはじめる」を押すと登録レコードを作り、そのあとは
-  //   梱包サイズ → 出品の準備（商品タイプ・SKU・JAN）→ 必要な項目
+  //   梱包サイズ → ❶出品の準備（商品タイプ・SKU・JAN）→ 必要な項目
   //   → 画像 → 検証 → 出品
   // の順に進む。押すまで何も作らないので、リサーチ中の枠でも邪魔にならない。
 
@@ -6280,7 +6280,7 @@ if(FIREBASE_CONFIG.databaseURL){
       nRow.appendChild(note);
       panel.appendChild(nRow);
       panel.appendChild(el('div', 'an-note',
-        '「📦 商品マスタに登録」で、全SKUの備考に入ります'));
+        '❷「📦 商品マスタに登録」で、全SKUの備考に入ります'));
 
       // --- 商品画像 ---
       panel.appendChild(el('div', 'reg-sec', '商品画像'));
@@ -6302,7 +6302,7 @@ if(FIREBASE_CONFIG.databaseURL){
       panel.appendChild(el('div', 'reg-sec', 'この商品タイプで必要な項目'));
       const needBox = el('div', 'reg-part');
       needBox.appendChild(el('span', 'an-note',
-        '「🔎 Amazonで検証する」を押すと、足りない項目がここに出ます'));
+        '❸「🔎 Amazonで検証する」を押すと、足りない項目がここに出ます'));
       panel.appendChild(needBox);
 
       // 検証で分かった「足りない項目」を並べる。
@@ -6331,20 +6331,26 @@ if(FIREBASE_CONFIG.databaseURL){
       }
 
       // --- 進めるボタン ---
+      // 押す順に番号を振る。どれから押すのか見て分からないと、
+      // 検証から先に押して「SKUが無い」で止まる
+      panel.appendChild(el('div', 'reg-sec', '進める（❶→❹の順に押します）'));
       const ops = el('div', 'an-row');
-      const prep = el('button', 'mini', '出品の準備（商品タイプ・SKU・JAN）');
+      const prep = el('button', 'mini', '❶ 出品の準備（商品タイプ・SKU・JAN）');
       prep.dataset.writes = '1';
       // 発注は商品マスタの仕入URL・単価・入数を使う。発注はAmazon出品より
       // ずっと前なので、SKUが決まった「出品の準備」の直後に作る。
       // 出品のあとに作ると、届くまで発注できない
-      const mas = el('button', 'mini', '📦 商品マスタに登録');
+      const mas = el('button', 'mini', '❷ 📦 商品マスタに登録');
       mas.dataset.writes = '1';
-      const val = el('button', 'mini', '🔎 Amazonで検証する');
-      const sub = el('button', 'primary', 'Amazonへ出品する');
+      const val = el('button', 'mini', '❸ 🔎 Amazonで検証する');
+      const sub = el('button', 'primary', '❹ Amazonへ出品する');
       sub.dataset.writes = '1';
       const opStatus = el('span', 'an-status');
       [prep, mas, val, sub, opStatus].forEach(x => ops.appendChild(x));
       panel.appendChild(ops);
+      panel.appendChild(el('div', 'reg-hint',
+        '❶ SKUとJANを決める　→　❷ 発注できるようにする（ここから発注可）'
+        + '　→　❸ 足りない項目を出す　→　❹ Amazonへ送る'));
 
       const out = el('div', 'reg-out');
       panel.appendChild(out);
@@ -6376,7 +6382,7 @@ if(FIREBASE_CONFIG.databaseURL){
       mas.addEventListener('click', async () => {
         const kids = (data.children || []).filter(c => (c.sku || '').trim());
         if(!kids.length){
-          opStatus.textContent = '先に「出品の準備」を押してSKUを決めてください';
+          opStatus.textContent = '先に❶「出品の準備」を押してSKUを決めてください';
           return;
         }
         mas.disabled = true; opStatus.textContent = '中身を調べています…';
@@ -7633,8 +7639,8 @@ if(FIREBASE_CONFIG.databaseURL){
 
       // ---- 仕入先へ伝えるもの ----
       const gB = sub('仕入先の言い方（発注・商品マスタ用）',
-                     '⑦「出品の準備」でSKUを決めたあと、'
-                     + '「📦 商品マスタに登録」を押す前に入力 → '
+                     '⑦の❶「出品の準備」でSKUを決めたあと、'
+                     + '❷「📦 商品マスタに登録」を押す前に入力 → '
                      + 'ここが商品マスタの仕様になり、発注でどの色を買うかが決まります');
 
       const kidNames = (research.titleChildren || [])
