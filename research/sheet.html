@@ -5596,7 +5596,23 @@ if(FIREBASE_CONFIG.databaseURL){
           // 日本語入力は変換中にも input が飛ぶ。確定するまで反映しない
           let composing = false;
           const applyColor = () => {
+            // 中国語名と初回の発注数は色名をキーにして持っている。
+            // ここで色名を変えると、古いキーに入ったまま新しい欄が
+            // 空になる。名前を変えたときは中身も引き継ぐ
+            const before = splitKidName(obj.name);
             obj.name = nm.value.trim();
+            const after = splitKidName(obj.name);
+            if(before && after && before !== after){
+              ['cnNames', 'firstQty'].forEach(key => {
+                const m = research[key];
+                if(m && typeof m === 'object' && m[before] !== undefined){
+                  if(m[after] === undefined || m[after] === '' || m[after] === null){
+                    m[after] = m[before];
+                  }
+                  delete m[before];
+                }
+              });
+            }
             obj.title = childTitleOf(obj.titleBase, obj.name);
             ti.value = obj.title;
             sync(); edSave();
@@ -7615,6 +7631,14 @@ if(FIREBASE_CONFIG.databaseURL){
         // 初回に何個頼むかは色ごとに変える（売れ筋の色を多めにする）。
         // 中国語名と同じ行に置けば、発注書を作るときここだけ見れば済む
         if(!research.firstQty || typeof research.firstQty !== 'object') research.firstQty = {};
+        // ③で色名を変える前に入れた値が、古い色名のまま残っていることがある。
+        // 今ある色だけにして、消えた色のぶんは落とす（別の色の欄に
+        // 古い中国語名が出ていると、違う色を発注してしまう）
+        [research.cnNames, research.firstQty].forEach(m => {
+          Object.keys(m).forEach(k => {
+            if(kidNames.indexOf(k) < 0) delete m[k];
+          });
+        });
         const cw = el('div', 'brief-cell w-acc');
         cw.appendChild(el('div', 'brief-cap', '中国語名（色ごと）と初回の発注数'));
         const cl = el('div', 'acc-list');
