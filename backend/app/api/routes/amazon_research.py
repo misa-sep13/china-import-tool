@@ -920,7 +920,7 @@ async def keywords_ai(body: KwGenIn):
         "Amazonの検索窓に実際に打ちそうな言葉を挙げてください。\n\n"
         + "\n\n".join(material)
         + "\n\n次の2つをJSONで返してください。\n"
-        "search: 検索キーワード欄に入れる語の配列。\n"
+        "search: 検索キーワード欄に入れる語の配列（40語まで）。\n"
         "  ・商品タイトルに既に入っている語は入れない（繰り返しても効かないため）\n"
         f"  ・全部を半角スペースでつないで{body.limit}バイト未満に収まる量\n"
         "  ・ひらがな・カタカナ・漢字の表記ゆれ、略語、用途や悩みの言葉を入れる\n"
@@ -984,6 +984,18 @@ async def keywords_ai(body: KwGenIn):
     try:
         data = json.loads(text)
     except Exception:
+        # 途中で切れたのか、そもそもJSONでないのかで直し方が違う。
+        # 判定はraw（切り出す前）で行う。切り出すと末尾の } が消えるため
+        stop = body_json.get("stop_reason") or ""
+        out_tok = (body_json.get("usage") or {}).get("output_tokens")
+        # JSONを書き始めてはいるのに閉じていない＝途中で切れた。
+        # そもそも { が無いものは、切れたのではなく別の返事をしている
+        started = "{" in raw and "}" not in raw
+        if stop == "max_tokens" or started:
+            return {"ok": False,
+                    "error": "AIの返事が途中で切れました"
+                             + (f"（出力{out_tok}トークン）" if out_tok else "")
+                             + "。もう一度お試しください"}
         return {"ok": False, "error": f"AIの返事を読めませんでした: {raw[:300]}"}
 
     def clean(items, cap):
@@ -1005,7 +1017,7 @@ async def keywords_ai(body: KwGenIn):
                 break
         return out, dropped
 
-    search, ng1 = clean(data.get("search"), 200)
+    search, ng1 = clean(data.get("search"), 80)
     spec, ng2 = clean(data.get("spec"), 30)
 
     # ①はバイト上限に収める。超える手前で切る
