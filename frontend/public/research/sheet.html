@@ -6050,14 +6050,18 @@ if(FIREBASE_CONFIG.databaseURL){
     iBtn.addEventListener('click', () => copyImage(false));
     iBtn2.addEventListener('click', () => copyImage(true));
 
-    // ---- ⑦ 商品登録（Amazon）----------------------------------------
+    // ---- ⑦ 商品マスタ登録＆Amazon出品 --------------------------------
     //
     // ここまでで作った出品原稿を、そのままAmazonへ出すところ。
     // 別の画面に移らず、同じ流れで最後まで進められるようにしてある。
     //
+    // Amazon出品だけの場所ではない。商品マスタの登録（＝発注できる
+    // ようにする）もここでやるので、見出しに両方を出しておく。
+    // 「商品登録（Amazon）」だと、発注の準備がここだと気づけない。
+    //
     // 中身は一元管理のサーバー（/api/amazon-listings）とやり取りする。
     // 配布版（一元管理の外）では使えないので、その旨だけ出す。
-    const rLabel = el('label', null, '⑦ 商品登録（Amazon）');
+    const rLabel = el('label', null, '⑦ 商品マスタ登録＆Amazon出品');
     rLabel.classList.add('an-sep');
     body.appendChild(rLabel);
 
