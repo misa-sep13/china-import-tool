@@ -839,6 +839,166 @@ async def image_text(asin: str):
     return {"ok": True, "asin": asin, "images": len(content) - 1, "text": text}
 
 
+# ---------- ①②のキーワードをAIに作らせる ----------
+#
+# tool4sellerのキーワードは「CVが0より大きい語」だけを残している。
+# よく売れている商品なら数十語残るが、ニッチな商品だと数語しか残らず、
+# しかもその数語は商品タイトルにも入っているので、①が空になる。
+#
+# 語が集まらないのは取り込みの不具合ではなく、材料がその商品には
+# 存在しないということ。なので、集める代わりに作る道を用意する。
+#
+# 商品タイトル・競合のタイトル・レビュー・商品仕様を材料にして、
+# 買う人が実際に打ちそうな言葉を出させる。
+
+# Amazonの検索キーワード欄で使えない語。シート側のNG_KEYWORDSと同じもの。
+# ここでも弾くのは、AIに「入れるな」と言うだけでは混ざることがあるため。
+_NG_WORDS = [
+    '無料', '送料込', '最低価格', '最安', '激安', '格安', '安い', '特価', '特売', '特別価格',
+    '半額', '割引', '値下げ', 'お得', 'お買い得', 'バーゲン', 'アウトレット', 'クリアランス',
+    'セール', '破格', 'プライスダウン', '%オフ', '％オフ', '%off', '％off',
+    '最高', '最強', '最上級', '世界一', '世界初', '業界初', '日本一', '決定版',
+    '高品質', '品質保証', '効果絶大', '優位性', '権威', '完璧', 'ベストセラー',
+    'no.1', 'ナンバーワン', '素晴らしい',
+    '人気', '売れ筋', '話題', 'ランキング', '口コミ', 'レビュー', '体験談', '愛用',
+    'おすすめ', 'オススメ', 'お勧め', 'お薦め', 'おススメ', '推奨', '推選',
+    '限定', '新作', '新発売', '最新', '即納', '入荷', '在庫限り', '先着', '早い者勝ち',
+    '注文殺到', '今なら', '年末商戦', '希少', '現行モデル',
+    'amazon', 'アマゾン', '他社', '保証付',
+]
+
+
+def _ng_hit(word: str) -> bool:
+    import re as _re
+    import unicodedata
+    w = unicodedata.normalize("NFKC", word or "").lower()
+    if _re.match(r"^b0[a-z0-9]{8}$", w):
+        return True
+    return any(ng in w for ng in _NG_WORDS)
+
+
+class KwGenIn(BaseModel):
+    title: str = ""             # ③で決めた自社の商品タイトル
+    have: str = ""              # すでに①に入っている語（重ねない）
+    rival_titles: list = []     # 競合の商品名
+    specs: str = ""             # competitor product specs
+    reviews: str = ""           # 競合のレビュー
+    limit: int = 500            # ①のバイト上限（カテゴリーで違う）
+
+
+@router.post("/keywords-ai")
+async def keywords_ai(body: KwGenIn):
+    """①検索キーワードと②必須キーワードをAIに作らせる。
+
+    tool4sellerで語が集まらない商品のための逃げ道。
+    1商品あたり1円ほどのAPI利用料がかかる。
+    """
+    import httpx
+    from app.services import copywriter
+
+    title = (body.title or "").strip()
+    if not title:
+        return {"ok": False, "error": "先に③の商品タイトルを入れてください"}
+    if not copywriter.is_enabled():
+        return {"ok": False,
+                "error": "ANTHROPIC_API_KEY が未設定です。Renderの環境変数に入れてください"}
+
+    rivals = [str(x).strip() for x in (body.rival_titles or []) if str(x).strip()]
+    material = [f"自社の商品タイトル: {title}"]
+    if body.have.strip():
+        material.append(f"すでに入れてある語: {body.have.strip()}")
+    if rivals:
+        material.append("競合の商品名:\n" + "\n".join("・" + r for r in rivals[:15]))
+    if body.specs.strip():
+        material.append("競合の商品仕様:\n" + body.specs.strip()[:2000])
+    if body.reviews.strip():
+        # レビューは買う人の言葉そのものなので、検索語の材料として一番効く
+        material.append("競合のレビュー:\n" + body.reviews.strip()[:4000])
+
+    prompt = (
+        "あなたはAmazonのSEOに詳しい人です。次の商品について、日本のお客さんが"
+        "Amazonの検索窓に実際に打ちそうな言葉を挙げてください。\n\n"
+        + "\n\n".join(material)
+        + "\n\n次の2つをJSONで返してください。\n"
+        "search: 検索キーワード欄に入れる語の配列。\n"
+        "  ・商品タイトルに既に入っている語は入れない（繰り返しても効かないため）\n"
+        f"  ・全部を半角スペースでつないで{body.limit}バイト未満に収まる量\n"
+        "  ・ひらがな・カタカナ・漢字の表記ゆれ、略語、用途や悩みの言葉を入れる\n"
+        "  ・1語ずつの短い語にする（長い文にしない）\n"
+        "spec: 商品説明に自然に織り込む語の配列（15語まで）。\n"
+        "  ・こちらは商品タイトルと重なってよい\n\n"
+        "どちらも次は入れないでください。\n"
+        "・販促や価格の訴求（激安・送料無料・セールなど）\n"
+        "・主観的な主張（最高・高品質など）\n"
+        "・人気やレビューへの言及（人気・口コミなど）\n"
+        "・一時的な表現（限定・新作・最新など）\n"
+        "・他社のブランド名、ASIN\n"
+        "・その商品と関係のない語（検索に出ても買われないため）\n\n"
+        'JSONだけを返してください。例: {"search":["語1","語2"],"spec":["語3"]}'
+    )
+
+    payload = {
+        "model": "claude-sonnet-5",   # 語選びは質が効くので軽量モデルにしない
+        "max_tokens": 2000,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    headers = {"x-api-key": os.environ.get("ANTHROPIC_API_KEY", ""),
+               "anthropic-version": "2023-06-01",
+               "content-type": "application/json"}
+    async with httpx.AsyncClient(timeout=120) as client:
+        res = await client.post("https://api.anthropic.com/v1/messages",
+                                json=payload, headers=headers)
+    if res.status_code != 200:
+        return {"ok": False,
+                "error": f"AIの呼び出しに失敗しました（{res.status_code}）: {res.text[:200]}"}
+
+    text = "".join(b.get("text", "") for b in res.json().get("content", [])
+                   if b.get("type") == "text").strip()
+    # ```json ... ``` で返ってくることがある
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+    try:
+        data = json.loads(text.strip())
+    except Exception:
+        return {"ok": False, "error": f"AIの返事を読めませんでした: {text[:200]}"}
+
+    def clean(items, cap):
+        """禁止語とASINを落とし、重複を消す。AIに言うだけでは混ざるため。"""
+        out, seen, dropped = [], set(), []
+        for x in items if isinstance(items, list) else []:
+            w = str(x).strip()
+            if not w:
+                continue
+            key = w.lower()
+            if key in seen:
+                continue
+            if _ng_hit(w):
+                dropped.append(w)
+                continue
+            seen.add(key)
+            out.append(w)
+            if len(out) >= cap:
+                break
+        return out, dropped
+
+    search, ng1 = clean(data.get("search"), 200)
+    spec, ng2 = clean(data.get("spec"), 30)
+
+    # ①はバイト上限に収める。超える手前で切る
+    kept = []
+    for w in search:
+        if len((" ".join(kept + [w])).encode("utf-8")) >= body.limit:
+            break
+        kept.append(w)
+
+    return {"ok": True,
+            "search": kept, "spec": spec,
+            "bytes": len((" ".join(kept)).encode("utf-8")),
+            "dropped_ng": ng1 + ng2}
+
+
 # ---------- 競合1商品ぶんの調査メモ ----------
 #
 # 商品仕様・レビュー・キーワード・画像の文字・分析結果。
