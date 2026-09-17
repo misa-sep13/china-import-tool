@@ -213,6 +213,7 @@
     font-size:10.5px;color:var(--ink-2);white-space:nowrap;}
   .acc-vine input{width:auto;flex:0 0 auto;margin:0;}
   .acc-line input.acc-qty{flex:0 0 52px;text-align:right;}
+  .acc-line input.acc-price{flex:0 0 78px;text-align:right;}
   .acc-total{font-size:11px;color:var(--ink-2);font-weight:600;}
   .acc-del{flex:0 0 auto;color:var(--danger);border-color:var(--danger-line);padding:2px 6px;}
   .acc-add{align-self:flex-start;padding:3px 8px;font-size:10px;}
@@ -7903,6 +7904,19 @@ if(FIREBASE_CONFIG.databaseURL){
           };
           mk('中国語名（例: 收纳袋）', a.name, v => { research.accessories[i].name = v; });
           mk('URL（空なら本体と同じ）', a.url, v => { research.accessories[i].url = v; });
+          // 単価が無いと原価に乗らず、そのぶん利益を多く見積もる。
+          // 実際、収納袋の分が0円で登録されていた
+          const pr = document.createElement('input');
+          pr.type = 'number'; pr.step = 'any'; pr.min = '0'; pr.className = 'acc-price';
+          pr.placeholder = '単価(元)';
+          pr.title = 'この付属品の1個あたりの値段（元）。空だと原価に乗りません';
+          pr.value = (a.price == null ? '' : a.price);
+          pr.addEventListener('input', () => {
+            const v = pr.value.trim();
+            research.accessories[i].price = v === '' ? null : (Number(v) || 0);
+            scheduleSave();
+          });
+          line.appendChild(pr);
           const q = document.createElement('input');
           q.type = 'number'; q.min = '1'; q.className = 'acc-qty';
           q.placeholder = '数'; q.value = (a.qty == null ? 1 : a.qty);
@@ -7920,7 +7934,7 @@ if(FIREBASE_CONFIG.databaseURL){
         });
         const add = el('button', 'mini acc-add', '＋ 付属品を追加');
         add.addEventListener('click', () => {
-          research.accessories.push({name: '', url: '', qty: 1});
+          research.accessories.push({name: '', url: '', qty: 1, price: null});
           drawAcc(); scheduleSave();
         });
         accList.appendChild(add);

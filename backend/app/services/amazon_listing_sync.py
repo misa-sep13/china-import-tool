@@ -226,7 +226,9 @@ def extract(research: dict, settings: dict) -> dict:
         "accessories": [
             {"name": (a.get("name") or "").strip(),
              "url": (a.get("url") or "").strip(),
-             "qty": int(a.get("qty") or 1) or 1}
+             "qty": int(a.get("qty") or 1) or 1,
+             # 単価が無いと原価に乗らず、そのぶん利益を多く見積もる
+             "price": _f(a.get("price")) or None}
             for a in (research.get("accessories") or [])
             if isinstance(a, dict) and (a.get("name") or a.get("url"))
         ],

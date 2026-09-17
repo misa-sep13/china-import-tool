@@ -2074,11 +2074,16 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
         if not (a.get("name") or "").strip():
             warnings.append("付属品に中国語名が入っていません。"
                             "何を買うか決められないので入れてください")
+        if a.get("price") in (None, "", 0):
+            warnings.append(
+                f"付属品「{a.get('name') or '名前なし'}」に単価が入っていません。"
+                "原価に乗らないので、そのぶん利益を多く見積もります")
         components.append({
             "sku": "", "qty": a.get("qty") or 1,
             "buy_url": (a.get("url") or "").strip() or buy_url,
             "supplier_spec": a.get("name") or "",
             "name": a.get("name") or "",
+            "price": a.get("price"),
         })
 
     kids = (db.query(AmazonListingChild)
