@@ -146,6 +146,20 @@ export default function OrderPage() {
     enabled: tab === 'history',
   })
 
+  // 発注数を直す。数え間違いや、仕入先が数を変えてきたときのため。
+  // 発注済は「あと何個来るか」として発注数の計算に効くので、
+  // 直したら発注推奨リストも取り直させる
+  const updateHistoryQty = useMutation({
+    mutationFn: ({ id, qty }) => api.patch(`/orders/history/${id}/qty`, { qty }),
+    onSuccess: () => {
+      qc.invalidateQueries(['orderHistory'])
+      sessionStorage.removeItem('order_items')
+      setRawItems([])
+      startFetch()
+    },
+    onError: (e) => alert(e.response?.data?.detail || e.message),
+  })
+
   const deleteHistory = useMutation({
     mutationFn: (id) => api.delete(`/orders/history/${id}`),
     onSuccess: () => {
@@ -713,7 +727,21 @@ export default function OrderPage() {
                       <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{row.sku}</td>
                       <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</td>
                       <td style={{ fontSize: 12, color: '#666' }}>{[row.color, row.size].filter(Boolean).join(' / ')}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{row.qty}</td>
+                      {/* 数え間違いや、仕入先が数を変えてきたときに直せるように。
+                          直すのはこちらの記録だけで、仕入先への注文は変わらない */}
+                      <td style={{ textAlign: 'right' }}>
+                        <input type="number" min="1" defaultValue={row.qty}
+                          title="発注数を直す（この記録だけ。仕入先への注文は変わりません）"
+                          onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                          onBlur={e => {
+                            const v = Number(e.target.value) || 0
+                            if (v === row.qty) return
+                            if (v <= 0) { e.target.value = row.qty; return }
+                            updateHistoryQty.mutate({ id: row.id, qty: v })
+                          }}
+                          style={{ width: 70, textAlign: 'right', padding: '2px 5px',
+                            fontSize: 13, fontWeight: 600 }} />
+                      </td>
                       {/* 単価を整数に丸めると、単価×数量が小計と合わなくなる。
                           7335.9円を7336と出すと50個で5円ずれ、「小計がおかしい」
                           と見える。小計が実額なので、単価のほうを小数まで出す */}

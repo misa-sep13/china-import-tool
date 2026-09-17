@@ -778,6 +778,32 @@ def mark_orders_shipped(req: MarkShippedRequest, db: Session = Depends(get_db)):
     return {"ok": True, "updated": updated}
 
 
+class OrderHistoryQtyIn(BaseModel):
+    qty: int
+
+
+@router.patch("/history/{history_id}/qty")
+def update_order_history_qty(history_id: int, data: OrderHistoryQtyIn,
+                             db: Session = Depends(get_db)):
+    """発注済みの数を直す。
+
+    数え間違いや、仕入先が数を変えてきたときのため。発注済は「あと何個
+    来るか」として発注数の計算に効くので、ここがずれていると次の発注が
+    多すぎたり少なすぎたりする。
+
+    直しても仕入先への注文そのものは変わらない。こちらの記録だけ。
+    """
+    row = db.query(OrderHistory).filter(OrderHistory.id == history_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="レコードが見つかりません")
+    if data.qty <= 0:
+        raise HTTPException(status_code=400,
+                            detail="0以下にはできません。消す場合は削除してください")
+    row.qty = data.qty
+    db.commit()
+    return {"ok": True, "qty": row.qty}
+
+
 @router.delete("/history/{history_id}")
 def delete_order_history(history_id: int, db: Session = Depends(get_db)):
     """発注済みレコードを削除（FBA納品プラン作成後に呼ぶ）"""
