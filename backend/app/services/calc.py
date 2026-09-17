@@ -133,12 +133,15 @@ def calc_order_qty(
     # 不足分だけ発注（マイナスなら0）
     qty_pieces = 0
     qty = 0
+    # 在庫も日販も販売単位（FBAが数えている単位）なので、不足数もその単位。
+    # 仕入先へ頼む個数は、そこに入数を掛けたもの。
+    # ここで割ってしまうと、2個セットを50個必要なときに25と出て、半分しか
+    # 発注できない（実際 a08 がそれで50個しか届かなかった）
     need = max(0, target_stock - stock)
     if need > 0:
-        qty_sets = -(-need // set_size)   # ceil除算
-        qty_pieces = qty_sets * set_size
+        qty_pieces = need * set_size
         if qty_pieces >= s.min_order_qty:
-            qty = qty_sets
+            qty = need
         else:
             qty_pieces = 0
 

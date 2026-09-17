@@ -745,14 +745,20 @@ export default function OrderPage() {
                       {/* 単価を整数に丸めると、単価×数量が小計と合わなくなる。
                           7335.9円を7336と出すと50個で5円ずれ、「小計がおかしい」
                           と見える。小計が実額なので、単価のほうを小数まで出す */}
+                      {/* 発注数は販売単位、単価は1個あたり。入数を掛けないと
+                          金額が入数のぶん少なく出る（2個セット50セットが
+                          50個ぶんの金額になっていた） */}
                       <td style={{ textAlign: 'right' }}
-                        title={`${row.price} 元 × ${exchangeRate} 円/元`}>
+                        title={`${row.price} 元/個 × ${row.set_size || 1}個 × ${exchangeRate} 円/元`}>
                         {(() => {
-                          const y = Math.round(row.price * exchangeRate * 10) / 10
+                          const y = Math.round(row.price * (row.set_size || 1) * exchangeRate * 10) / 10
                           return Number.isInteger(y) ? y : y.toFixed(1)
                         })()}
+                        {(row.set_size || 1) > 1 && (
+                          <div style={{ fontSize: 10, color: '#64748b' }}>1セット{row.set_size}個</div>
+                        )}
                       </td>
-                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{Math.round(row.qty * row.price * exchangeRate)}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{Math.round(row.qty * row.price * (row.set_size || 1) * exchangeRate)}</td>
                       <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
                         {row.status === 'shipped' ? (
                           <span style={{ color: '#16a34a', fontWeight: 700 }} title="発注数の集計から外れています">✓ 納品済</span>
@@ -786,7 +792,7 @@ export default function OrderPage() {
                   <tr>
                     <td colSpan={6} style={{ textAlign: 'right', fontWeight: 700, paddingTop: 12 }}>合計</td>
                     <td style={{ textAlign: 'right', fontWeight: 700 }}>
-                      {Math.round(history.reduce((s, r) => s + r.qty * r.price, 0) * exchangeRate)} 円
+                      {Math.round(history.reduce((s, r) => s + r.qty * r.price * (r.set_size || 1), 0) * exchangeRate)} 円
                     </td>
                     <td></td>
                     <td></td>

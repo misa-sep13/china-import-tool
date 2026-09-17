@@ -610,9 +610,15 @@ def record_order(req: OrderRecordRequest, db: Session = Depends(get_db)):
 def get_order_history(db: Session = Depends(get_db)):
     """発注済みリストを取得（未削除・新しい順）"""
     rows = db.query(OrderHistory).filter(OrderHistory.is_deleted == False).order_by(OrderHistory.ordered_at.desc()).all()
+    # 入数を添える。発注数は販売単位、単価は1個あたりなので、
+    # 掛け合わせるだけでは金額が入数のぶん少なく出る
+    # （2個セットを50セット発注したのに、50個ぶんの金額になっていた）
+    sizes = {p.sku: (p.set_size or 1)
+             for p in db.query(Product.sku, Product.set_size).all() if p.sku}
     return [
         {
             "id": r.id,
+            "set_size": sizes.get(r.sku, 1),
             "ordered_at": r.ordered_at.isoformat() if r.ordered_at else None,
             "sku": r.sku,
             "name": r.name,
