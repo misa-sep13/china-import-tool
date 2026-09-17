@@ -521,6 +521,10 @@ def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
     for item in req.items:
         if item.qty <= 0:
             continue
+        # 画面の発注数は販売単位（セット数）。仕入先へ頼むのは個数なので、
+        # 入数を掛けて渡す。掛けずに出していたため、2個セットを30と入れても
+        # 30個しか発注されず、15セット分しか作れなかった
+        unit = item.set_size or 1
         items_data.append({
             "sku": item.sku,
             "name": item.name,
@@ -531,7 +535,9 @@ def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
             "size": item.size,
             "spec": item.spec,
             "customer_memo": item.customer_memo,
-            "qty": item.qty,
+            "qty": item.qty * unit,
+            # 発注済は販売単位で持つ。個数で残すと入数のぶん多く見える
+            "qty_sets": item.qty,
             "price": item.price,
             "repack": item.repack,
             "note": item.note,
@@ -551,7 +557,7 @@ def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
             name=item["name"],
             color=item["color"],
             size=item["size"],
-            qty=item["qty"],
+            qty=item.get("qty_sets", item["qty"]),
             price=item["price"],
             buy_url=item["buy_url"],
             photo_url=item["photo_url"],

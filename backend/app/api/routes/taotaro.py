@@ -200,8 +200,12 @@ def _expand_for_order(items, db: Session) -> list:
     rows = []
     for it in items:
         product = db.query(Product).filter(Product.sku == it.sku).first()
+        # 画面の発注数は販売単位（セット数）。仕入先へ頼むのは個数なので、
+        # 入数を掛けて送る。掛けずに送っていたため、2個セットを30と入れても
+        # 30個しか発注されず、15セット分しか作れなかった
+        unit = (product.set_size or 1) if product else 1
         rows.append({
-            "sku": it.sku, "name": it.name, "qty": it.qty,
+            "sku": it.sku, "name": it.name, "qty": int(it.qty) * unit,
             "buy_url": it.buy_url, "color": it.color, "size": it.size,
             "spec": it.spec, "product": product,
             "origin_sku": it.sku, "origin_qty": it.qty, "is_accessory": False,
