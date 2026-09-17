@@ -208,6 +208,10 @@
   .acc-line{display:flex;gap:4px;align-items:center;}
   .acc-line input{min-width:0;flex:1 1 auto;}
   .acc-cap{flex:0 0 84px;font-size:11px;color:var(--ink-2);}
+  /* Vineを使う色の印。初回の発注数に提供分を足す判断に使う */
+  .acc-vine{flex:0 0 auto;display:flex;align-items:center;gap:3px;
+    font-size:10.5px;color:var(--ink-2);white-space:nowrap;}
+  .acc-vine input{width:auto;flex:0 0 auto;margin:0;}
   .acc-line input.acc-qty{flex:0 0 52px;text-align:right;}
   .acc-total{font-size:11px;color:var(--ink-2);font-weight:600;}
   .acc-del{flex:0 0 auto;color:var(--danger);border-color:var(--danger-line);padding:2px 6px;}
@@ -5715,7 +5719,9 @@ if(FIREBASE_CONFIG.databaseURL){
             obj.name = nm.value.trim();
             const after = splitKidName(obj.name);
             if(before && after && before !== after){
-              ['cnNames', 'firstQty'].forEach(key => {
+              // Vineの印も色名の変更に付いていく。置いていくと、
+              // 名前を直した瞬間にどの色でVineを使うのか分からなくなる
+              ['cnNames', 'firstQty', 'vine'].forEach(key => {
                 const m = research[key];
                 if(m && typeof m === 'object' && m[before] !== undefined){
                   if(m[after] === undefined || m[after] === '' || m[after] === null){
@@ -7797,10 +7803,13 @@ if(FIREBASE_CONFIG.databaseURL){
         // 初回に何個頼むかは色ごとに変える（売れ筋の色を多めにする）。
         // 中国語名と同じ行に置けば、発注書を作るときここだけ見れば済む
         if(!research.firstQty || typeof research.firstQty !== 'object') research.firstQty = {};
+        // Vineは色ごとに出す・出さないを決める。初回の発注数に
+        // Vine提供分（最大30個）を足しておく必要があるので、同じ行で見る
+        if(!research.vine || typeof research.vine !== 'object') research.vine = {};
         // ③で色名を変える前に入れた値が、古い色名のまま残っていることがある。
         // 今ある色だけにして、消えた色のぶんは落とす（別の色の欄に
         // 古い中国語名が出ていると、違う色を発注してしまう）
-        [research.cnNames, research.firstQty].forEach(m => {
+        [research.cnNames, research.firstQty, research.vine].forEach(m => {
           Object.keys(m).forEach(k => {
             if(kidNames.indexOf(k) < 0) delete m[k];
           });
@@ -7814,7 +7823,9 @@ if(FIREBASE_CONFIG.databaseURL){
         const drawTotal = () => {
           const n = kidNames.reduce(
             (a, k) => a + (Number(research.firstQty[k]) || 0), 0);
-          totalTxt.textContent = n ? '合計 ' + n + '個' : '';
+          const v = kidNames.filter(k => research.vine[k]);
+          totalTxt.textContent = (n ? '合計 ' + n + '個' : '')
+            + (v.length ? '　／　VINE: ' + v.join('・') : '');
         };
         kidNames.forEach(k => {
           const line = el('div', 'acc-line');
@@ -7838,6 +7849,20 @@ if(FIREBASE_CONFIG.databaseURL){
             drawTotal(); scheduleSave();
           });
           line.appendChild(q);
+          // Vineを使う色に印を付ける。発注数を決めるときに提供分を
+          // 足し忘れると、売る在庫が足りなくなる
+          const vw = document.createElement('label');
+          vw.className = 'acc-vine';
+          vw.title = 'この色でVineを使う（提供分を初回の発注数に含めてください）';
+          const vc = document.createElement('input');
+          vc.type = 'checkbox';
+          vc.checked = !!research.vine[k];
+          vc.addEventListener('change', () => {
+            research.vine[k] = vc.checked; drawTotal(); scheduleSave();
+          });
+          vw.appendChild(vc);
+          vw.appendChild(document.createTextNode('VINE'));
+          line.appendChild(vw);
           cl.appendChild(line);
         });
         // 合計。発注書に書く数と突き合わせる
