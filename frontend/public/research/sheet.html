@@ -660,6 +660,16 @@
   .an-body textarea.an-bullets{min-height:150px;}
   .an-body textarea.i-small{min-height:52px;}
   .i-sub{font-size:11.5px;font-weight:700;color:var(--ink-2);margin:8px 0 2px;}
+  /* ③ 商品タイトルの前に出す注意。ここを外すと検索に出ないので、
+     書く前に必ず目に入る濃さにしてある */
+  .tl-warn{margin:6px 0 8px;padding:8px 11px;border-radius:6px;
+    background:#fff7ed;border:1px solid #fed7aa;font-size:12px;line-height:1.7;}
+  .tl-warn b{display:block;color:#9a3412;font-size:12.5px;}
+  .tl-warn span{color:var(--ink-2);}
+  .tl-warn-links{margin-top:4px;}
+  .tl-warn-cap{color:var(--ink-3);}
+  .tl-warn-links a{color:var(--brand-d);font-weight:600;margin-right:6px;}
+
   /* ③ 商品タイトル（親＋子） */
   .title-box{display:flex;flex-direction:column;gap:5px;margin:4px 0 2px;}
   .title-line{display:flex;align-items:center;gap:6px;}
@@ -5592,6 +5602,34 @@ if(FIREBASE_CONFIG.databaseURL){
     });
     tLabel.appendChild(tRule);
     body.appendChild(tLabel);
+
+    // メインキーワードの入れ忘れが一番効く抜け。tool4sellerの拡張で調べた語を
+    // タイトルに入れないと、そもそも検索に出ない。書く前に目に入る位置へ置く。
+    // 競合の商品ページもここから開けるようにして、調べ直しに戻らなくて済むように
+    const tWarn = el('div', 'tl-warn');
+    tWarn.appendChild(el('b', null, '⚠ メインキーワードを必ずタイトルに入れる'));
+    tWarn.appendChild(el('span', null,
+      'tool4sellerの拡張機能（キーワード検索）で、検索ボリュームと'
+      + 'コンバージョンのある語を確かめてから書いてください。'
+      + 'ここが入っていないと、どれだけ関連ワードを並べても検索に出ません。'));
+    const asins = [...new Set((research.rows || [])
+      .map(r => (r && r.asin ? String(r.asin).trim() : ''))
+      .filter(Boolean))];
+    if(asins.length){
+      const line = el('div', 'tl-warn-links');
+      line.appendChild(el('span', 'tl-warn-cap', '競合の商品ページ：'));
+      asins.forEach((a, i) => {
+        if(i) line.appendChild(document.createTextNode(' '));
+        const link = document.createElement('a');
+        link.href = 'https://www.amazon.co.jp/dp/' + a;
+        link.target = '_blank'; link.rel = 'noopener';
+        link.textContent = a;
+        line.appendChild(link);
+      });
+      tWarn.appendChild(line);
+    }
+    body.appendChild(tWarn);
+
     const tBox = el('div', 'title-box');
     body.appendChild(tBox);
     const tAddRow = el('div', 'an-row');
