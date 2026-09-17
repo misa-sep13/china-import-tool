@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../api/client'
+import { matchesQuery } from '../searchUtil'
 
 const fmtDate = (value) => {
   if (!value) return '-'
@@ -20,6 +21,9 @@ const sourceStyle = (source) => {
 export default function InventoryReflectionLogsPage() {
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [sourceFilter, setSourceFilter] = useState('')
+  // SKU・商品名・配送依頼No・仕入先で絞る。件数が増えると、
+  // ある商品がいつ入ったのかを目で追うのが難しくなる
+  const [q, setQ] = useState('')
 
   const { data, dataUpdatedAt, isLoading } = useQuery({
     queryKey: ['inventory-reflection-logs'],
@@ -28,7 +32,12 @@ export default function InventoryReflectionLogsPage() {
   })
 
   const logs = data?.logs || []
-  const filtered = sourceFilter ? logs.filter(l => l.source === sourceFilter) : logs
+  const filtered = logs.filter(l => {
+    if (sourceFilter && l.source !== sourceFilter) return false
+    if (!q.trim()) return true
+    return matchesQuery(q, [l.sku, l.name, l.supplier, l.source_ref,
+                            l.source_label, l.note])
+  })
 
   const groups = useMemo(() => {
     const map = new Map()
@@ -68,6 +77,13 @@ export default function InventoryReflectionLogsPage() {
           <option value="shipment_order">配送依頼</option>
           <option value="manufacturer_receive">メーカー入荷</option>
         </select>
+        <input type="text" value={q} onChange={e => setQ(e.target.value)}
+          placeholder="SKU・商品名・配送依頼Noで絞り込み"
+          className="search-input-ja" style={{ width: 260 }} />
+        {q && (
+          <button className="btn btn-sm btn-secondary" style={{ fontSize: 12 }}
+            onClick={() => setQ('')}>クリア</button>
+        )}
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
           <input type="checkbox" checked={autoRefresh} onChange={e => setAutoRefresh(e.target.checked)} />
           30秒自動更新
@@ -83,7 +99,7 @@ export default function InventoryReflectionLogsPage() {
         <div className="loading">読み込み中...</div>
       ) : groups.length === 0 ? (
         <div className="card" style={{ padding: 32, textAlign: 'center', color: '#666' }}>
-          在庫反映履歴はまだありません。
+          {q ? `「${q}」に当てはまる履歴はありません。` : '在庫反映履歴はまだありません。'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

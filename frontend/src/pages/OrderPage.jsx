@@ -714,7 +714,16 @@ export default function OrderPage() {
                       <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</td>
                       <td style={{ fontSize: 12, color: '#666' }}>{[row.color, row.size].filter(Boolean).join(' / ')}</td>
                       <td style={{ textAlign: 'right', fontWeight: 600 }}>{row.qty}</td>
-                      <td style={{ textAlign: 'right' }}>{Math.round(row.price * exchangeRate)}</td>
+                      {/* 単価を整数に丸めると、単価×数量が小計と合わなくなる。
+                          7335.9円を7336と出すと50個で5円ずれ、「小計がおかしい」
+                          と見える。小計が実額なので、単価のほうを小数まで出す */}
+                      <td style={{ textAlign: 'right' }}
+                        title={`${row.price} 元 × ${exchangeRate} 円/元`}>
+                        {(() => {
+                          const y = Math.round(row.price * exchangeRate * 10) / 10
+                          return Number.isInteger(y) ? y : y.toFixed(1)
+                        })()}
+                      </td>
                       <td style={{ textAlign: 'right', fontWeight: 600 }}>{Math.round(row.qty * row.price * exchangeRate)}</td>
                       <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
                         {row.status === 'shipped' ? (
@@ -733,10 +742,14 @@ export default function OrderPage() {
                           className="btn btn-sm"
                           style={{ background: '#fee2e2', color: '#991b1b', whiteSpace: 'nowrap' }}
                           onClick={() => {
-                            if (confirm(`${row.sku} を発注済みリストから外しますか？\n（入荷して納品済み、または誤発注・キャンセルの場合に押してください）`))
+                            if (confirm(`${row.sku} ${row.qty}個 の発注記録を削除します。\n\n`
+                              + '発注をキャンセルした、誤って記録した場合に使ってください。\n'
+                              + '入荷して納品が済んだ場合は、削除せず「納品済」にしてください。\n'
+                              + '（履歴が残り、何がいつ入ったかを後から追えます）\n\n'
+                              + '削除すると元に戻せません。よろしいですか？'))
                               deleteHistory.mutate(row.id)
                           }}
-                        >リストから外す</button>
+                        >削除</button>
                       </td>
                     </tr>
                   ))}

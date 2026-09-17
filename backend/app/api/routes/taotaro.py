@@ -459,7 +459,10 @@ def order_submit(req: SubmitRequest, db: Session = Depends(get_db)):
         product = db.query(Product).filter(Product.sku == it.sku).first()
         db.add(OrderHistory(
             sku=it.sku,
-            name=it.title or (product.name if product else ""),
+            # 発注履歴はこちらの商品名で残す。it.title は仕入先の原文
+            # （中国語）で、タオタロウへ送るためのもの。履歴に入れると
+            # 一覧が中国語だらけになって、どれがどれか分からなくなる
+            name=(product.name if product else "") or it.title,
             color=(product.color if product else ""),
             size=(product.size if product else ""),
             qty=(it.origin_qty if (it.sku == (it.origin_sku or it.sku)
