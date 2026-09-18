@@ -6125,6 +6125,10 @@ if(FIREBASE_CONFIG.databaseURL){
               ref_url: (research.rows || []).map(r => r && r.asin
                 ? 'https://www.amazon.co.jp/dp/' + String(r.asin).trim() : '')
                 .filter(Boolean)[0] || '',
+              // 仕入元のページ。デザイナーが画像素材と実物の作りを見るのに要る
+              main_url: (research.mainUrl || '').trim()
+                || ((research.rows || []).map(r => (r && (r.urls1688 || [])[0]) || '')
+                    .filter(Boolean)[0] || ''),
               room_id: String(room), room_name: roomName, sent: true,
             }),
           });
