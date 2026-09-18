@@ -6121,6 +6121,8 @@ if(FIREBASE_CONFIG.databaseURL){
               research_id: research.id || null,
               sku: (research.parentSku || '').trim(),
               name: shortName(research) || (research.title || ''),
+              // 商品補足。デザイナーに伝えたいことがそのまま一覧に出る
+              detail: (research.imgNote || '').trim(),
               doc_name: doc.name,
               ref_url: (research.rows || []).map(r => r && r.asin
                 ? 'https://www.amazon.co.jp/dp/' + String(r.asin).trim() : '')
