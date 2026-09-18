@@ -195,8 +195,20 @@ export default function ImageRequestsPage({ share = '' }) {
               const c = STATUS_COLOR[r.status] || STATUS_COLOR.requested
               return (
                 <tr key={r.id}>
+                  {/* 一覧を作る前に出した依頼は、実際に出した日に直せるようにする */}
                   <td style={{ ...td, whiteSpace: 'nowrap', color: C.sub }}>
-                    {(r.sent_at || r.created_at || '').slice(5, 10).replace('-', '/')}
+                    {share ? (
+                      (r.sent_at || r.created_at || '').slice(5, 10).replace('-', '/')
+                    ) : (
+                      <input type="date"
+                        defaultValue={(r.sent_at || r.created_at || '').slice(0, 10)}
+                        onBlur={e => {
+                          const v = e.target.value
+                          if (v && v !== (r.sent_at || r.created_at || '').slice(0, 10))
+                            patch(r.id, { sent_at: v })
+                        }}
+                        style={{ width: 128, fontSize: 11, padding: '2px 4px' }} />
+                    )}
                   </td>
                   <td style={{ ...td, whiteSpace: 'nowrap', color: C.sub }}>
                     {SOURCE_LABEL[r.source] || r.source}

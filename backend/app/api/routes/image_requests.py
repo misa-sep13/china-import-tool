@@ -131,6 +131,8 @@ class ImageRequestPatch(BaseModel):
     detail: Optional[str] = None
     ref_url: Optional[str] = None
     main_url: Optional[str] = None
+    # 依頼日。一覧を作る前に出した依頼を、実際に出した日に直せるように
+    sent_at: Optional[str] = None
 
 
 @router.patch("/{req_id:int}")
@@ -152,6 +154,14 @@ def update_request(req_id: int, data: ImageRequestPatch, request: Request,
         if value is None:
             continue
         if allowed is not None and field not in allowed:
+            continue
+        if field == "sent_at":
+            # 画面からは YYYY-MM-DD で来る。日付だけ分かれば足りる
+            try:
+                row.sent_at = datetime.fromisoformat(str(value)[:10]).replace(
+                    tzinfo=timezone.utc)
+            except ValueError:
+                raise HTTPException(400, "日付の形が違います（2026-09-11 の形で）")
             continue
         if field == "status":
             if value not in STATUSES:
