@@ -23,7 +23,9 @@ export default function ResearchPage() {
 
   // 商品登録はシートそのもの。採用したものだけを開く。
   // 別の画面を作ると同じ中身を二重に持つことになるため
-  const isFrame = tab !== 'old' && tab !== 'keep'
+  // iframeで配布版のHTMLを出すタブだけを並べる。除外する側で書くと、
+  // タブを足したときに入れ忘れて、中身のかわりにシートが出てしまう
+  const isFrame = ['sheet', 'scout', 'listing'].includes(tab)
 
   // iframeの中へ、APIのURLとログイン済みトークンを渡す。
   // 中のスクリプトはこれを見て保存先とAPIの向き先を決める。
