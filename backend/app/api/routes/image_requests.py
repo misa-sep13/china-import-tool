@@ -40,6 +40,7 @@ def _out(r: ImageRequest) -> dict:
         "doc_name": r.doc_name or "",
         "detail": r.detail or "",
         "ref_url": r.ref_url or "",
+        "main_url": r.main_url or "",
         "room_name": r.room_name or "",
         "sent_at": r.sent_at.isoformat() if r.sent_at else None,
         "status": r.status or "requested",
@@ -83,6 +84,7 @@ class ImageRequestIn(BaseModel):
     doc_name: str = ""
     detail: str = ""
     ref_url: str = ""
+    main_url: str = ""
     room_id: Optional[str] = None
     room_name: str = ""
     assignee: str = ""
@@ -104,6 +106,7 @@ def create_request(data: ImageRequestIn, db: Session = Depends(get_db)):
         doc_name=(data.doc_name or "").strip(),
         detail=data.detail or "",
         ref_url=(data.ref_url or "").strip(),
+        main_url=(data.main_url or "").strip(),
         room_id=data.room_id,
         room_name=(data.room_name or "").strip(),
         assignee=(data.assignee or "").strip(),
@@ -127,6 +130,7 @@ class ImageRequestPatch(BaseModel):
     name: Optional[str] = None
     detail: Optional[str] = None
     ref_url: Optional[str] = None
+    main_url: Optional[str] = None
 
 
 @router.patch("/{req_id:int}")

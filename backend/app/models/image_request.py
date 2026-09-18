@@ -27,7 +27,9 @@ class ImageRequest(Base):
     name = Column(String)                     # 商品名（短縮でよい）
     doc_name = Column(String)                 # 送ったWordのファイル名
     detail = Column(Text)                     # 依頼の中身・伝えたいこと
-    ref_url = Column(Text)                    # 参考URL（1688や競合ページ）
+    ref_url = Column(Text)                    # 競合のAmazon商品ページ
+    # 仕入元（1688）のページ。デザイナーが画像素材と実物の作りを見るのに要る
+    main_url = Column(Text)
 
     room_id = Column(String)                  # チャットワークのルーム
     room_name = Column(String)

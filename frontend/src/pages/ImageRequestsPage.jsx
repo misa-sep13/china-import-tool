@@ -41,7 +41,7 @@ export default function ImageRequestsPage({ share = '' }) {
   const [busy, setBusy] = useState(false)
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ sku: '', name: '', detail: '', ref_url: '',
-    assignee: '', due_date: '', source: 'rakuten' })
+    main_url: '', assignee: '', due_date: '', source: 'rakuten' })
 
   // 共有URLで開いているときは合言葉を毎回付ける。
   // ログインしていないので、これが唯一の通行証になる
@@ -78,8 +78,8 @@ export default function ImageRequestsPage({ share = '' }) {
     setBusy(true)
     try {
       await api.post('/image-requests', form, cfg())
-      setForm({ sku: '', name: '', detail: '', ref_url: '', assignee: '',
-        due_date: '', source: 'rakuten' })
+      setForm({ sku: '', name: '', detail: '', ref_url: '', main_url: '',
+        assignee: '', due_date: '', source: 'rakuten' })
       setAdding(false)
       await load()
     } catch (e) {
@@ -163,7 +163,11 @@ export default function ImageRequestsPage({ share = '' }) {
               <input type="date" value={form.due_date}
                 onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} />
             </Field>
-            <Field label="参考URL" w={240}>
+            <Field label="1688のURL" w={240}>
+              <input value={form.main_url}
+                onChange={e => setForm(f => ({ ...f, main_url: e.target.value }))} />
+            </Field>
+            <Field label="競合のAmazon URL" w={220}>
               <input value={form.ref_url}
                 onChange={e => setForm(f => ({ ...f, ref_url: e.target.value }))} />
             </Field>
@@ -216,10 +220,20 @@ export default function ImageRequestsPage({ share = '' }) {
                     {r.detail && (
                       <div style={{ fontSize: 11, color: C.sub }}>{r.detail}</div>
                     )}
-                    {r.ref_url && (
-                      <div><a href={r.ref_url} target="_blank" rel="noreferrer"
-                        style={{ fontSize: 11 }}>参考URL</a></div>
-                    )}
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      {r.main_url && (
+                        <a href={r.main_url} target="_blank" rel="noreferrer"
+                          style={{ fontSize: 11 }}
+                          title="仕入元のページ。画像素材と実物の作りはここで見られます">
+                          1688の商品ページ
+                        </a>
+                      )}
+                      {r.ref_url && (
+                        <a href={r.ref_url} target="_blank" rel="noreferrer"
+                          style={{ fontSize: 11 }}
+                          title="競合のAmazon商品ページ">競合のAmazon</a>
+                      )}
+                    </div>
                   </td>
                   <td style={td}>{r.assignee || '—'}</td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>{r.due_date || '—'}</td>
