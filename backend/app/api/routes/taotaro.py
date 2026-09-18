@@ -529,3 +529,25 @@ def debug_match_spec(url: str, spec: str):
             for s in (d.get("skus") or [])[:20]
         ],
     }
+
+
+@router.get("/probe")
+def probe(path: str):
+    """【一時】タオタロウAPIの口が存在するかを確かめる。読み取りだけ。
+
+    問い合わせ（質問管理）を取れる口があるかを調べるためのもの。
+    確認が済んだら消す。
+    """
+    from app.services.taotaro import _request
+    p = "/" + path.lstrip("/")
+    if not p.startswith("/api/v1/"):
+        raise HTTPException(400, "/api/v1/ で始まる経路だけ")
+    try:
+        d = _request(p, {"page": 1, "limit": 5})
+        keys = sorted(d.keys()) if isinstance(d, dict) else type(d).__name__
+        items = (d.get("items") if isinstance(d, dict) else None) or []
+        return {"ok": True, "path": p, "keys": keys,
+                "count": len(items),
+                "first": items[0] if items else None}
+    except taotaro.TaotaroError as e:
+        return {"ok": False, "path": p, "code": e.code, "message": e.message}
