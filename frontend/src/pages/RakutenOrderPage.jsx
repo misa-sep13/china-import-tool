@@ -890,7 +890,6 @@ export default function RakutenOrderPage() {
       qc.invalidateQueries(['rakuten-stock'])
     },
   })
-  const [editingQty, setEditingQty] = useState(null)
 
   const settings = allData?.settings || {}
   const thresholdDays = settings.threshold_days ?? 40
@@ -1387,33 +1386,22 @@ export default function RakutenOrderPage() {
                       </td>
                       <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{row.sku}</td>
                       <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name || '—'}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 600 }}>
-                        {editingQty?.id === row.id ? (
-                          <div style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: 'flex-end' }}>
-                            <input
-                              type="number" min={0} autoFocus
-                              value={editingQty.val}
-                              onChange={e => setEditingQty(v => ({ ...v, val: e.target.value }))}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') { changeQty.mutate({ id: row.id, qty: Number(editingQty.val) }); setEditingQty(null) }
-                                if (e.key === 'Escape') setEditingQty(null)
-                              }}
-                              style={{ width: 70, textAlign: 'center', fontSize: 13, padding: '2px 4px' }}
-                            />
-                            <button className="btn btn-primary btn-sm" style={{ fontSize: 11, padding: '2px 6px' }}
-                              onClick={() => { changeQty.mutate({ id: row.id, qty: Number(editingQty.val) }); setEditingQty(null) }}>✓</button>
-                            <button className="btn btn-secondary btn-sm" style={{ fontSize: 11, padding: '2px 6px' }}
-                              onClick={() => setEditingQty(null)}>✕</button>
-                          </div>
-                        ) : (
-                          <span
-                            onClick={() => setEditingQty({ id: row.id, val: row.qty })}
-                            title="クリックして数量を変更"
-                            style={{ cursor: 'pointer', padding: '2px 8px', borderRadius: 4, display: 'inline-block' }}
-                            onMouseEnter={e => e.target.style.background = '#f0f4ff'}
-                            onMouseLeave={e => e.target.style.background = 'transparent'}
-                          >{row.qty}</span>
-                        )}
+                      {/* 最低発注数があって、いったん多めに頼んでから減らすことがある
+                          （マウスピースケースを120で頼んで75に減らすなど）。
+                          クリックで入力欄に変わる作りだと気づけないので、
+                          最初から入力欄にしておく */}
+                      <td style={{ textAlign: 'right' }}>
+                        <input type="number" min="0" defaultValue={row.qty}
+                          title="発注数を直す（この記録だけ。仕入先への注文は変わりません）"
+                          onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                          onBlur={e => {
+                            const v = Number(e.target.value)
+                            if (!Number.isFinite(v) || v < 0) { e.target.value = row.qty; return }
+                            if (v === row.qty) return
+                            changeQty.mutate({ id: row.id, qty: v })
+                          }}
+                          style={{ width: 72, textAlign: 'right', padding: '2px 5px',
+                            fontSize: 13, fontWeight: 600 }} />
                       </td>
                       <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
                         <span style={{
