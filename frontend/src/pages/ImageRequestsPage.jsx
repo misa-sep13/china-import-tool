@@ -99,7 +99,7 @@ export default function ImageRequestsPage({ share = '' }) {
   }
 
   const shown = rows.filter(r => !q.trim()
-    || matchesQuery(q, [r.sku, r.name, r.doc_name, r.assignee, r.detail]))
+    || matchesQuery(q, [r.sku, r.name, r.doc_name, r.detail]))
 
   return (
     <div style={{ height: '100%', overflow: 'auto', padding: 2, minWidth: 0 }}>
@@ -117,7 +117,7 @@ export default function ImageRequestsPage({ share = '' }) {
           {doneCount > 0 && ` ／ 完了 ${doneCount}件`}
         </span>
         <input type="text" value={q} onChange={e => setQ(e.target.value)}
-          placeholder="SKU・商品名・担当で絞り込み"
+          placeholder="SKU・商品名・補足で絞り込み"
           className="search-input-ja" style={{ width: 220 }} />
         <label style={{ fontSize: 12, color: C.sub, display: 'flex',
           alignItems: 'center', gap: 5 }}>
@@ -155,14 +155,6 @@ export default function ImageRequestsPage({ share = '' }) {
               <input value={form.name}
                 onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
             </Field>
-            <Field label="担当" w={110}>
-              <input value={form.assignee}
-                onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))} />
-            </Field>
-            <Field label="希望納期" w={130}>
-              <input type="date" value={form.due_date}
-                onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} />
-            </Field>
             <Field label="1688のURL" w={240}>
               <input value={form.main_url}
                 onChange={e => setForm(f => ({ ...f, main_url: e.target.value }))} />
@@ -186,15 +178,15 @@ export default function ImageRequestsPage({ share = '' }) {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
-              {['依頼日', '', 'SKU', '商品名', '商品補足', '担当', '希望納期',
-                '進み具合', '連絡', ''].map((h, i) => (
+              {['依頼日', '', 'SKU', '商品名', '商品補足', '進み具合',
+                '連絡', ''].map((h, i) => (
                   <th key={i} style={th}>{h}</th>
                 ))}
             </tr>
           </thead>
           <tbody>
             {shown.length === 0 && (
-              <tr><td style={{ ...td, color: C.sub, padding: 20 }} colSpan={10}>
+              <tr><td style={{ ...td, color: C.sub, padding: 20 }} colSpan={8}>
                 {q ? `「${q}」に当てはまる依頼はありません。`
                   : '作業中の依頼はありません。'}
               </td></tr>
@@ -233,7 +225,7 @@ export default function ImageRequestsPage({ share = '' }) {
                     </div>
                   </td>
                   {/* デザイナーに伝えたいこと。シートの「商品補足」がそのまま入る */}
-                  <td style={td}>
+                  <td style={{ ...td, width: '34%' }}>
                     {share ? (
                       <span style={{ whiteSpace: 'pre-wrap' }}>{r.detail || '—'}</span>
                     ) : (
@@ -243,11 +235,9 @@ export default function ImageRequestsPage({ share = '' }) {
                           if (e.target.value !== r.detail)
                             patch(r.id, { detail: e.target.value })
                         }}
-                        style={{ width: 230, fontSize: 12 }} />
+                        style={{ width: '100%', minWidth: 300, fontSize: 12 }} />
                     )}
                   </td>
-                  <td style={td}>{r.assignee || '—'}</td>
-                  <td style={{ ...td, whiteSpace: 'nowrap' }}>{r.due_date || '—'}</td>
                   <td style={td}>
                     <select value={r.status} disabled={busy}
                       onChange={e => patch(r.id, { status: e.target.value })}
@@ -258,13 +248,13 @@ export default function ImageRequestsPage({ share = '' }) {
                       ))}
                     </select>
                   </td>
-                  <td style={td}>
+                  <td style={{ ...td, width: '26%' }}>
                     <input defaultValue={r.reply} placeholder="連絡・質問"
                       onBlur={e => {
                         if (e.target.value !== r.reply)
                           patch(r.id, { reply: e.target.value })
                       }}
-                      style={{ width: 170, fontSize: 12 }} />
+                      style={{ width: '100%', minWidth: 240, fontSize: 12 }} />
                   </td>
                   <td style={td}>
                     {!share && (
