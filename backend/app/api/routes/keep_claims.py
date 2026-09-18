@@ -472,7 +472,7 @@ class ImportRow(BaseModel):
     claimed_at: str = ""      # 記入日時。早い者勝ちの根拠なので、そのまま持ってくる
     owner: str = ""
     url: str = ""
-    status: str = ""          # ⏳キープ中 / ✅発送済（枠解放） / ❌期限切れ（消滅）
+    status: str = ""          # ⏳キープ中 / ✅配送依頼済（枠解放） / ❌期限切れ（消滅）
     shipped_at: str = ""
     supplier_url: str = ""
     memo: str = ""
@@ -485,6 +485,8 @@ class ImportIn(BaseModel):
 
 _STATUS_MAP = {
     "キープ": "keep",
+    # 画面では「配送依頼済」と呼ぶ。取り込み元のシートは「発送済」のままなので両方見る
+    "配送依頼": "shipped",
     "発送": "shipped",
     "期限切れ": "expired",
     "消滅": "expired",
