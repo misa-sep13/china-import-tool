@@ -171,7 +171,7 @@ export default function ImageRequestsPage({ share = '' }) {
               <input value={form.ref_url}
                 onChange={e => setForm(f => ({ ...f, ref_url: e.target.value }))} />
             </Field>
-            <Field label="依頼内容" w={320}>
+            <Field label="商品補足" w={320}>
               <input value={form.detail}
                 onChange={e => setForm(f => ({ ...f, detail: e.target.value }))} />
             </Field>
@@ -186,8 +186,8 @@ export default function ImageRequestsPage({ share = '' }) {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
-              {['依頼日', '', 'SKU', '商品名', '担当', '希望納期', '進み具合',
-                '納品先', '連絡', ''].map((h, i) => (
+              {['依頼日', '', 'SKU', '商品名', '商品補足', '担当', '希望納期',
+                '進み具合', '連絡', ''].map((h, i) => (
                   <th key={i} style={th}>{h}</th>
                 ))}
             </tr>
@@ -217,9 +217,6 @@ export default function ImageRequestsPage({ share = '' }) {
                     {r.doc_name && (
                       <div style={{ fontSize: 10, color: C.sub }}>{r.doc_name}</div>
                     )}
-                    {r.detail && (
-                      <div style={{ fontSize: 11, color: C.sub }}>{r.detail}</div>
-                    )}
                     <div style={{ display: 'flex', gap: 8 }}>
                       {r.main_url && (
                         <a href={r.main_url} target="_blank" rel="noreferrer"
@@ -235,6 +232,20 @@ export default function ImageRequestsPage({ share = '' }) {
                       )}
                     </div>
                   </td>
+                  {/* デザイナーに伝えたいこと。シートの「商品補足」がそのまま入る */}
+                  <td style={td}>
+                    {share ? (
+                      <span style={{ whiteSpace: 'pre-wrap' }}>{r.detail || '—'}</span>
+                    ) : (
+                      <textarea defaultValue={r.detail} rows={2}
+                        placeholder="商品補足（デザイナーに伝えたいこと）"
+                        onBlur={e => {
+                          if (e.target.value !== r.detail)
+                            patch(r.id, { detail: e.target.value })
+                        }}
+                        style={{ width: 230, fontSize: 12 }} />
+                    )}
+                  </td>
                   <td style={td}>{r.assignee || '—'}</td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>{r.due_date || '—'}</td>
                   <td style={td}>
@@ -246,15 +257,6 @@ export default function ImageRequestsPage({ share = '' }) {
                         <option key={s.value} value={s.value}>{s.label}</option>
                       ))}
                     </select>
-                  </td>
-                  <td style={td}>
-                    <input defaultValue={r.deliverable_url}
-                      placeholder="納品先URL"
-                      onBlur={e => {
-                        if (e.target.value !== r.deliverable_url)
-                          patch(r.id, { deliverable_url: e.target.value })
-                      }}
-                      style={{ width: 150, fontSize: 12 }} />
                   </td>
                   <td style={td}>
                     <input defaultValue={r.reply} placeholder="連絡・質問"
