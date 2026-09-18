@@ -26,7 +26,14 @@ api.interceptors.response.use(
   res => res,
   err => {
     const isLoginCall = err.config?.url?.includes('/auth/login')
-    if (err.response?.status === 401 && !isLoginCall && window.location.pathname !== '/welfare/work-public') {
+    // 合言葉で開く公開ページは、そもそもログインしていない。ここで
+    // ログイン画面へ飛ばすと、合言葉が違うだけなのに真っ白な404になり、
+    // 何が起きたのか分からなくなる。画面に理由を出させるため素通りさせる。
+    // ハッシュルーターなので、経路はパスではなくハッシュ側に入る
+    const PUBLIC = ['/welfare/work-public', '/keep-public', '/image-public']
+    const isPublic = PUBLIC.some(p => window.location.pathname.includes(p)
+      || (window.location.hash || '').includes(p))
+    if (err.response?.status === 401 && !isLoginCall && !isPublic) {
       localStorage.removeItem('auth_token')
       localStorage.removeItem('auth_role')
       if (!window.location.pathname.startsWith('/login')) {
