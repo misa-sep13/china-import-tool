@@ -774,7 +774,13 @@ async def update_product(product_id: int, data: RakutenProductIn, request: Reque
         RakutenProduct.sku == data.sku, RakutenProduct.id != product_id
     ).first()
     if dup:
-        raise HTTPException(400, "SKUが既に存在します")
+        if dup.is_active:
+            raise HTTPException(400, "SKUが既に存在します")
+        # 削除済みの商品が同じSKUを持っている。一覧に出ていないのに
+        # 「SKUが既に存在します」で止まると、直しようがなくなる。
+        # 名前を退避して、こちらに使わせる（新規登録の復活と同じ考え方）
+        dup.sku = f"__deleted__{dup.id}__{dup.sku}"
+        db.flush()
 
     old_stock = p.stock
     for k, v in data.model_dump(exclude_unset=True).items():
