@@ -27,6 +27,7 @@ import InventoryReflectionLogsPage from './pages/InventoryReflectionLogsPage'
 import WelfareInventoryPage from './pages/WelfareInventoryPage'
 import WelfareWorkPublicPage from './pages/WelfareWorkPublicPage'
 import KeepClaimsPublicPage from './pages/KeepClaimsPublicPage'
+import ImageRequestsPublicPage from './pages/ImageRequestsPublicPage'
 import FbaPlanPage from './pages/FbaPlanPage'
 import LoginPage from './pages/LoginPage'
 import ActivityHistoryPanel from './components/ActivityHistoryPanel'
@@ -92,6 +93,17 @@ function App() {
     return (
       <Routes>
         <Route path="/keep-public" element={<KeepClaimsPublicPage />} />
+      </Routes>
+    )
+  }
+
+  // 画像作成の依頼一覧。外注さんに渡して、進み具合を書き換えてもらう
+  if (location.pathname === '/image-public'
+      || (window.location.pathname.endsWith('/image-public')
+          && rawSearch.get('share'))) {
+    return (
+      <Routes>
+        <Route path="/image-public" element={<ImageRequestsPublicPage />} />
       </Routes>
     )
   }

@@ -4,6 +4,7 @@ from app.core.database import Base, engine
 from app.api.routes import products, orders, settings, fba, invoices, price_adjustments, analytics, shipment_orders, fba_plan, taotaro
 from app.api.routes import order_logic_routes
 from app.api.routes import keep_claims
+from app.api.routes import image_requests
 from app.api.routes import inventory_snapshots
 from app.api.routes import material_costs
 from app.api.routes import cost_histories
@@ -27,6 +28,7 @@ from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
 from app.models import daily_sales as daily_sales_models
 from app.models import keep_claim as keep_claim_models
+from app.models import image_request as image_request_models
 from app.models import price_log as price_log_models
 from app.models import rakuten_product as rakuten_product_models
 from app.models import rakuten_order as rakuten_order_models
@@ -1394,6 +1396,15 @@ async def auth_middleware(request: _StarletteRequest, call_next):
         if token and token == (app_config.KEEP_SHARE_TOKEN or ""):
             return await call_next(request)
 
+    # 画像作成の依頼一覧。外注さんが自分の進み具合を書き換えられるように、
+    # 同じ合言葉で通す。触れるのは進み具合・納品先・連絡だけで、
+    # 依頼の中身を書き換えたり消したりはできない（APIの側で弾いている）
+    if path.startswith("/api/image-requests"):
+        token = (request.query_params.get("share")
+                 or request.headers.get("x-image-share") or "")
+        if token and token == (app_config.KEEP_SHARE_TOKEN or ""):
+            return await call_next(request)
+
     # 就労支援の公開ページに出す商品写真。一覧そのものが公開なので、
     # 写真だけを隠しても意味がない。ブラウザに任せて取り直させないためのもの
     if (request.method == "GET" and path.startswith("/api/welfare/")
@@ -1449,6 +1460,7 @@ app.include_router(scout.router, prefix="/api")
 app.include_router(taotaro.router, prefix="/api")
 app.include_router(order_logic_routes.router, prefix="/api")
 app.include_router(keep_claims.router, prefix="/api")
+app.include_router(image_requests.router, prefix="/api")
 app.include_router(import_permit_routes.router, prefix="/api")
 app.include_router(chatwork_routes.router, prefix="/api")
 app.include_router(research_routes.router, prefix="/api")

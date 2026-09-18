@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import api from '../api/client'
 import ListingTab from './ListingTab'
 import KeepClaimsPage from './KeepClaimsPage'
+import ImageRequestsPage from './ImageRequestsPage'
 
 /**
  * リサーチ（競合リサーチシート ／ セラースカウト ／ 商品登録）。
@@ -70,6 +71,7 @@ export default function ResearchPage() {
           { k: 'sheet', l: '📋 競合リサーチシート' },
           { k: 'scout', l: '🔎 セラースカウト' },
           { k: 'keep', l: '🤝 商品キープ' },
+          { k: 'images', l: '🎨 画像依頼' },
           { k: 'listing', l: '🏷 商品登録（採用したもの）' },
           { k: 'old', l: '（旧）登録画面' },
         ].map(t => (
@@ -105,6 +107,10 @@ export default function ResearchPage() {
       ) : tab === 'keep' ? (
         <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
           <KeepClaimsPage />
+        </div>
+      ) : tab === 'images' ? (
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+          <ImageRequestsPage />
         </div>
       ) : (
         <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>

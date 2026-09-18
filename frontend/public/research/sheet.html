@@ -6110,6 +6110,29 @@ if(FIREBASE_CONFIG.databaseURL){
         const j = await res.json().catch(() => ({}));
         if(!res.ok) throw new Error(j.detail || ('HTTP ' + res.status));
         dStatus.textContent = '送りました：' + roomName + '　' + doc.name;
+        // 送ったことを画像依頼の一覧に残す。チャットの履歴をさかのぼらないと
+        // 「何を頼んでいて、いまどうなっているか」が分からなかった
+        try{
+          await fetch(API_BASE + '/image-requests', {
+            method: 'POST',
+            headers: Object.assign({'Content-Type': 'application/json'}, apiHeaders()),
+            body: JSON.stringify({
+              source: 'amazon',
+              research_id: research.id || null,
+              sku: (research.parentSku || '').trim(),
+              name: shortName(research) || (research.title || ''),
+              doc_name: doc.name,
+              ref_url: (research.rows || []).map(r => r && r.asin
+                ? 'https://www.amazon.co.jp/dp/' + String(r.asin).trim() : '')
+                .filter(Boolean)[0] || '',
+              room_id: String(room), room_name: roomName, sent: true,
+            }),
+          });
+        }catch(e){
+          // 一覧に残せなくても、送信そのものは済んでいる。送信を失敗扱いに
+          // しないよう、ここでは知らせるだけにする
+          dStatus.textContent += '（依頼一覧には残せませんでした）';
+        }
       }catch(e){
         dStatus.textContent = '送れませんでした：' + (e.message || e);
         dStatus.classList.add('warn');
