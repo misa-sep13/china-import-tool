@@ -482,7 +482,7 @@ function Row({ r, busy, onShip, onRelease, onDelete }) {
             <button className="btn btn-secondary" disabled={busy} onClick={onShip}
               style={{ fontSize: 12, padding: '4px 10px', whiteSpace: 'nowrap' }}
               title="画像制作を依頼した。ここで枠が空く">
-              画像制作依頼済にする
+              画像制作依頼済
             </button>
             <button className="btn btn-secondary" disabled={busy} onClick={onRelease}
               style={{ fontSize: 12, padding: '4px 10px', whiteSpace: 'nowrap' }}
