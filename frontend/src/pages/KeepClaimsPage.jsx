@@ -9,8 +9,8 @@ import api from '../api/client'
  *
  *   1. 早い者勝ち
  *   2. 親ASIN単位で独占（色違い・サイズ違いも丸ごと。相乗りNG）
- *   3. キープ枠は1人7個まで。代行会社へ配送依頼を出した時点で枠が空く
- *   4. 60日以内に配送依頼できなければ独占権は消滅
+ *   3. キープ枠は1人7個まで。画像制作を依頼した時点で枠が空く
+ *   4. 60日以内に画像制作を依頼できなければ独占権は消滅
  *
  * URLを貼るだけで登録でき、被っていればその場で止める。
  * ASINで見分けるので、色違いのページを貼っても同じ商品として当たる。
@@ -28,13 +28,13 @@ const card = {
 
 const STATUS = {
   keep: { label: '⏳ キープ中', color: C.key, bg: '#eff6ff' },
-  shipped: { label: '✅ 配送依頼済（枠解放）', color: C.good, bg: '#f0fdf4' },
+  shipped: { label: '✅ 画像制作依頼済（枠解放）', color: C.good, bg: '#f0fdf4' },
   expired: { label: '❌ 期限切れ（消滅）', color: C.bad, bg: '#fef2f2' },
   released: { label: '🔓 取り下げ', color: C.sub, bg: '#f8fafc' },
 }
 
 // 担当ごとの色。誰が押さえているか、ひと目で分かるようにする。
-// 地色は薄くして、状態（キープ中／配送依頼済）の見え方を邪魔しない
+// 地色は薄くして、状態（キープ中／画像制作依頼済）の見え方を邪魔しない
 const OWNER_COLORS = {
   C: { bg: '#f0fdfa', bar: '#14b8a6', text: '#0f766e' },   // みどり
   Y: { bg: '#fff7ed', bar: '#f97316', text: '#c2410c' },   // だいだい
@@ -318,7 +318,7 @@ export default function KeepClaimsPage({ share = '' }) {
           })}
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
-          {[['keep', 'キープ中'], ['shipped', '配送依頼済'],
+          {[['keep', 'キープ中'], ['shipped', '画像制作依頼済'],
             ['expired', '期限切れ'], ['all', 'すべて']].map(([k, l]) => (
             <button key={k} onClick={() => setFilter(k)}
               className={`btn ${filter === k ? 'btn-primary' : 'btn-secondary'}`}
@@ -358,7 +358,7 @@ export default function KeepClaimsPage({ share = '' }) {
             </button>
           )}
           <span style={{ fontSize: 11, color: C.sub }}>
-            親ASIN単位で独占／{data?.limit_days || 60}日以内に配送依頼しないと消滅
+            親ASIN単位で独占／{data?.limit_days || 60}日以内に画像制作を依頼しないと消滅
           </span>
         </div>
       </div>
@@ -425,7 +425,7 @@ function Row({ r, busy, onShip, onRelease, onDelete }) {
           )}
           {r.status === 'shipped' && r.shipped_at && (
             <span style={{ fontSize: 12, color: C.sub }}>
-              {r.shipped_at} 配送依頼（{r.days_elapsed}日）
+              {r.shipped_at} 画像制作依頼（{r.days_elapsed}日）
             </span>
           )}
           {/* 採用ぶんは上に固めてある。どこまでが採用ぶんか分かるよう
@@ -481,8 +481,8 @@ function Row({ r, busy, onShip, onRelease, onDelete }) {
           <>
             <button className="btn btn-secondary" disabled={busy} onClick={onShip}
               style={{ fontSize: 12, padding: '4px 10px', whiteSpace: 'nowrap' }}
-              title="代行会社へ配送依頼を出した。ここで枠が空く">
-              配送依頼済にする
+              title="画像制作を依頼した。ここで枠が空く">
+              画像制作依頼済にする
             </button>
             <button className="btn btn-secondary" disabled={busy} onClick={onRelease}
               style={{ fontSize: 12, padding: '4px 10px', whiteSpace: 'nowrap' }}
