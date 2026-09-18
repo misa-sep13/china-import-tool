@@ -1372,6 +1372,23 @@ def _cors_headers_for(request: _StarletteRequest) -> dict:
     return {}
 
 
+def _share_ok(request: _StarletteRequest, header_name: str) -> bool:
+    """合言葉つきのURLで来ているか。
+
+    合言葉に + が入っていると、URLの?以降では空白として解釈される。
+    手で組み立てたURLではこれが起きやすく、合っているのに弾かれて
+    「開かない」ことになる。空白を + に戻したものでも照らし合わせる。
+    """
+    want = (app_config.KEEP_SHARE_TOKEN or "")
+    if not want:
+        return False
+    got = (request.query_params.get("share")
+           or request.headers.get(header_name) or "")
+    if not got:
+        return False
+    return got == want or got.replace(" ", "+") == want
+
+
 @app.middleware("http")
 async def auth_middleware(request: _StarletteRequest, call_next):
     if request.method == "OPTIONS" or not auth_enabled():
@@ -1393,18 +1410,14 @@ async def auth_middleware(request: _StarletteRequest, call_next):
     # 通す。読むだけでなく書き込みも通すのは、相手も登録する必要があるため。
     # 触れるのは keep-claims だけで、他のAPIには一切届かない
     if path.startswith("/api/keep-claims"):
-        token = (request.query_params.get("share")
-                 or request.headers.get("x-keep-share") or "")
-        if token and token == (app_config.KEEP_SHARE_TOKEN or ""):
+        if _share_ok(request, "x-keep-share"):
             return await call_next(request)
 
     # 画像作成の依頼一覧。外注さんが自分の進み具合を書き換えられるように、
     # 同じ合言葉で通す。触れるのは進み具合・納品先・連絡だけで、
     # 依頼の中身を書き換えたり消したりはできない（APIの側で弾いている）
     if path.startswith("/api/image-requests"):
-        token = (request.query_params.get("share")
-                 or request.headers.get("x-image-share") or "")
-        if token and token == (app_config.KEEP_SHARE_TOKEN or ""):
+        if _share_ok(request, "x-image-share"):
             return await call_next(request)
 
     # 就労支援の公開ページに出す商品写真。一覧そのものが公開なので、

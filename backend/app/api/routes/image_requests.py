@@ -57,9 +57,13 @@ def _out(r: ImageRequest) -> dict:
 def _is_share(request: Request) -> bool:
     """合言葉つきで来ているか。外注さんの画面かどうかの判定に使う。"""
     from app.core.config import settings
-    token = (request.query_params.get("share")
-             or request.headers.get("x-image-share") or "")
-    return bool(token) and token == (getattr(settings, "KEEP_SHARE_TOKEN", "") or "")
+    want = getattr(settings, "KEEP_SHARE_TOKEN", "") or ""
+    got = (request.query_params.get("share")
+           or request.headers.get("x-image-share") or "")
+    if not (want and got):
+        return False
+    # 合言葉に + が入っていると、URLの?以降では空白として解釈される
+    return got == want or got.replace(" ", "+") == want
 
 
 @router.get("")
