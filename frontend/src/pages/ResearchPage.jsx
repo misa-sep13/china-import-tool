@@ -16,6 +16,10 @@ import ImageRequestsPage from './ImageRequestsPage'
  * 出品内容を仕上げる画面で、リサーチから登録まで画面を移らずに済ませたい
  * ため、同じタブの並びに置いている。
  */
+// このタブを開いている間だけ変わらない値。モジュールの読み込み時に1回だけ作る
+// （コンポーネントの中で作ると、再描画のたびにiframeが読み直されてしまう）
+const SESSION_ID = Date.now().toString(36)
+
 export default function ResearchPage() {
   const [tab, setTab] = useState('sheet')
   const frameRef = useRef(null)
@@ -48,7 +52,11 @@ export default function ResearchPage() {
     }
   }
 
-  const V = __BUILD_ID__
+  // ビルドIDだけだと、アプリ本体（index-*.js）が古いキャッシュのままのとき
+  // 古い ?v= を出し続け、シートを直したのに中身が変わらない。
+  // 画面を開くたびに変わる値も足して、iframeには必ず取り直させる。
+  // （シートはビルドの成果物ではなくハッシュが付かないため）
+  const V = `${__BUILD_ID__}-${SESSION_ID}`
   const sheetUrl = `${import.meta.env.BASE_URL}research/sheet.html?v=${V}`
   const scoutUrl = `${import.meta.env.BASE_URL}research/scout.html?v=${V}`
   const url = tab === 'scout' ? scoutUrl
