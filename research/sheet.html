@@ -4334,6 +4334,16 @@ if(FIREBASE_CONFIG.databaseURL){
       ad: n(/広告([\d.,]+)位/, KW_NO_RANK)
     };
   }
+  function ensureTitleChildren(research){
+    if(!Array.isArray(research.titleChildren)){
+      const old = (research.listingTitle || '').split('/').map(s => s.trim());
+      research.titleParent = research.titleParent || old[0] || '';
+      research.titleChildren = old.slice(1).filter(Boolean).map(t => ({name: '', title: t}));
+    }
+    // バリエーションは常にあるので、子は最低1行を開いておく（2026-09-14）
+    if(!research.titleChildren.length) research.titleChildren.push({name: '', title: '', suffix: ''});
+    return research.titleChildren;
+  }
   function collectKeywords(rows){
     const map = new Map();
     rows.forEach(row => {
@@ -6005,6 +6015,101 @@ if(FIREBASE_CONFIG.databaseURL){
     refreshers.push(() => { specCount.textContent = wordsOf(specTa.value).length + '語'; });
     body.appendChild(specTools.row);
 
+    const RE_ANS_SEARCH = /■\s*検索キーワード\s*\n([\s\S]*?)(?=\n\s*■|$)/;
+    const RE_ANS_MUST = /■\s*必須キーワード\s*\n([\s\S]*?)(?=\n\s*■|$)/;
+    // ③商品タイトル。「■商品タイトル（親）」と「■商品タイトル（子：カラー ホワイト）」。括弧は全角・半角どちらでも。
+    const RE_ANS_TPARENT = /■\s*商品タイトル\s*[（(]\s*親\s*[）)]\s*\n([\s\S]*?)(?=\n\s*■|$)/;
+    // 名称に括弧が入る（例：2個(ホワイト1個+イエロー1個)）ので、行末の閉じ括弧までを名称として取る（2026-09-12）。
+    const RE_ANS_TCHILD = /■\s*商品タイトル\s*[（(]\s*子\s*[：:]\s*([^\n]*?)\s*[）)]\s*\n([\s\S]*?)(?=\n\s*■|$)/g;
+    function applyAnswerPaste(txtIn, target){
+      const txt = normAnswerText(txtIn);   // 📋・罫線などの飾りを外してから見出しを探す（applyAllPaste にも渡る）
+      const firstLine = re => {
+        const m = String(txt || '').match(re);
+        if(!m) return null;
+        const l = m[1].split('\n').map(s => s.trim()).filter(Boolean)[0];
+        return l || null;
+      };
+      const sLine = firstLine(RE_ANS_SEARCH), mLine = firstLine(RE_ANS_MUST);
+      const tParent = firstLine(RE_ANS_TPARENT);
+      const tKids = [];
+      String(txt || '').replace(RE_ANS_TCHILD, (all, nm, body) => {
+        const l = body.split('\n').map(x => x.trim()).filter(Boolean)[0];
+        if(l) tKids.push({name: nm.trim(), title: l});
+        return all;
+      });
+      // 第2部（■商品説明／■画像作成指示書）があれば、①②③が無くても続きの applyAllPaste に回す
+      const hasAll = /■\s*(商品説明|画像作成指示書)\s*\n/.test(String(txt || ''));
+      if(sLine === null && mLine === null && tParent === null && !tKids.length && !hasAll) return false;
+      const clean = s => wordsOf(s.replace(/[、,，]/g, ' '));
+      const msgs = [];
+      if(sLine !== null){
+        edTools.push(searchTa.value);
+        searchTa.value = clean(sLine).join(' ');
+        const lim = Number(catSel.value), b = bytesOf(searchTa.value);
+        msgs.push('①に' + wordsOf(searchTa.value).length + '語（' + b + 'バイト'
+          + (b >= lim ? '。上限' + lim + 'を超えているので削ってください' : '') + '）');
+      }
+      if(mLine !== null){
+        const norm = w => w.normalize('NFKC').toLowerCase();
+        const have = new Set(wordsOf(searchTa.value).map(norm));
+        const got = clean(mLine);
+        const inSearch = got.filter(w => have.has(norm(w)));
+        const strange = got.filter(w => !have.has(norm(w)));
+        if(inSearch.length){
+          specTools.push(specTa.value);
+          specTa.value = inSearch.join(' ');
+          msgs.push('②に' + inSearch.length + '語');
+        }else{
+          msgs.push('②は①にある語が無かったので入れていません');
+        }
+        if(strange.length) msgs.push('①に無い語は②に入れていません：' + strange.slice(0, 6).join('・')
+          + (strange.length > 6 ? ' ほか' + (strange.length - 6) + '語' : ''));
+      }
+      // ③商品タイトル：親はそのまま。子は名称で突き合わせ（AIが「ホワイト」だけ書いても
+      // 「カラー ホワイト」に入るよう、どちらかがもう片方を含めば同じ子とみなす）。
+      // 名称で見つからなければ、まだ入っていない子へ上から順に入れる。
+      if(tParent !== null || tKids.length){
+        const norm = w => String(w || '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+        let n = 0;
+        if(tParent !== null){ research.titleParent = tParent; n++; }
+        const kids = ensureTitleChildren(research);
+        const used = new Set();
+        const rest = [];
+        tKids.forEach(k => {
+          const kn = norm(k.name);
+          const hit = kids.find((c, i) => !used.has(i) && kn && (norm(c.name) === kn || norm(c.name).includes(kn) || kn.includes(norm(c.name)) && norm(c.name)));
+          if(hit){ hit.title = k.title; used.add(kids.indexOf(hit)); n++; }
+          else rest.push(k);
+        });
+        rest.forEach(k => {
+          const i = kids.findIndex((c, j) => !used.has(j));
+          if(i >= 0){ kids[i].title = k.title; used.add(i); n++; }
+        });
+        const left = tKids.length - (n - (tParent !== null ? 1 : 0));
+        msgs.push('③に' + n + '本' + (left > 0 ? '（子' + left + '本は入れ先が無いので入れていません。商品仕様パネルでバリエーションを足してください）' : ''));
+        activeTitle = null;
+        drawTitles(); applyLock();
+      }
+      edSave(); edRefresh();
+      // ②を入れたあとで⑤の検査が走るよう、第2部の振り分けはここで呼ぶ（②の必須KWで5行を検査するため）
+      const more = hasAll ? applyAllPaste(txt) : false;
+      if(msgs.length){
+        const isTitle = !!(target && target.classList && target.classList.contains('tl-title'));
+        const isTop = target === searchTa || target === specTa || isTitle;
+        const st = target === specTa ? specTools.status : isTitle ? titleTools.status : isTop ? edTools.status : cStatus;
+        st.textContent = 'AIの答えから入れました：' + msgs.join('／')
+          + (more ? '／出品原稿の欄にも入れました' : '')
+          + (isTitle || !isTop ? '' : '（← 戻す で元に戻せます）');
+        if(!isTop) edTools.status.textContent = st.textContent;
+      }
+      return true;
+    }
+    [searchTa, specTa].forEach(t => t.addEventListener('paste', e => {
+      const txt = e.clipboardData ? e.clipboardData.getData('text') : '';
+      if(!applyAnswerPaste(txt, t)) return;    // ふつうの貼り付けはそのまま通す
+      e.preventDefault();
+    }));
+
     [searchTa, specTa].forEach(t => t.addEventListener('input', () => { edSave(); edRefresh(); }));
     catSel.addEventListener('change', () => { edSave(); edRefresh(); });
 
@@ -6675,6 +6780,41 @@ if(FIREBASE_CONFIG.databaseURL){
 
     // AIの答えを丸ごと貼られたら、■見出しで2つに切り分けて両方の欄に入れる。
     // 「貼るだけで済む」ようにしておかないと、結局その場で切り貼りする手間が残るため。
+    const RE_ALL_BUL = /■\s*商品説明\s*\n([\s\S]*?)(?=\n\s*■|$)/;
+    const RE_ALL_PER = /■\s*ターゲット顧客[^\n]*\n([\s\S]*?)(?=\n\s*■|$)/;
+    const RE_ALL_TONE = /■\s*(?:商品画像の)?色合い[^\n]*\n([\s\S]*?)(?=\n\s*■|$)/;
+    const RE_ALL_GUIDE = /■\s*画像作成指示書[^\n]*\n([\s\S]*?)(?=\n\s*■\s*(?:後半|仮置き|最終セルフチェック|登録前に確認)|$)/;
+    function applyAllPaste(txt){
+      const t = String(txt || '');
+      const b = t.match(RE_ALL_BUL), pe = t.match(RE_ALL_PER), co = t.match(RE_ALL_TONE), g = t.match(RE_ALL_GUIDE);
+      // ■商品説明か■画像作成指示書のどちらかが無ければSTEP2/3の回答ではない
+      if(!b && !g) return false;
+      if(research.draftLocked){
+        cStatus.textContent = '🔒 書き換え防止中です。鍵を外してから貼ってください';
+        cStatus.classList.add('warn');
+        return true;
+      }
+      const step2 = !!b && !g;   // STEP2の回答ならターゲット・色合いも揃っているはず
+      const got = [], miss = [];
+      if(b){
+        cTa.value = b[1].split('\n').map(x => x.trim()).filter(Boolean).join('\n');
+        got.push('⑤に' + cTa.value.split('\n').filter(Boolean).length + '行');
+      }
+      if(pe){ perTa.value = pe[1].trim(); got.push('ターゲット顧客'); } else if(step2) miss.push('■ターゲット顧客');
+      if(co){ toneTa.value = co[1].trim(); got.push('色合い'); } else if(step2) miss.push('■商品画像の色合い');
+      if(g){
+        let gb = g[1].trim();
+        const m = gb.match(/【各画像のテキスト(・デザイン)?構成案】/);
+        if(m) gb = gb.slice(m.index);
+        gTa.value = gb; got.push('画像作成指示書');
+      }
+      edSave(); edRefresh();
+      if(b) runCheck();
+      const msg = (step2 ? 'STEP2の回答から入れました：' : 'AIの答えから入れました：') + got.join('・')
+        + (miss.length ? '　※無かった見出し：' + miss.join('、') : '');
+      [cStatus, dStatus].forEach(st => { st.textContent = msg; st.classList.toggle('warn', !!miss.length); });
+      return true;
+    }
     function splitAnswer(text){
       const t = String(text || '');
       const mP = t.match(/■\s*ターゲット顧客[^\n]*\n([\s\S]*?)(?=\n\s*■|$)/);
@@ -6682,7 +6822,13 @@ if(FIREBASE_CONFIG.databaseURL){
       if(!mP || !mT) return null;
       return {persona: mP[1].trim(), tone: mT[1].trim()};
     }
+    [cTa, perTa, toneTa, gTa].forEach(ta => ta.addEventListener('paste', e => {
+      const txt = e.clipboardData ? e.clipboardData.getData('text') : '';
+      if(!applyAnswerPaste(txt, ta)) return;  // ふつうの貼り付けはそのまま通す（①②③＋第2部を全部読む）
+      e.preventDefault();
+    }));
     [perTa, toneTa].forEach(t => t.addEventListener('paste', e => {
+      if(e.defaultPrevented) return;         // まとめて貼り付けで処理済み
       const txt = e.clipboardData ? e.clipboardData.getData('text') : '';
       const got = splitAnswer(txt);
       if(!got) return;                       // ふつうの貼り付けはそのまま通す
