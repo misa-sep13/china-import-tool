@@ -5433,7 +5433,9 @@ if(FIREBASE_CONFIG.databaseURL){
       if(!p){ copyStatus.textContent = 'まず表に商品を入力するか、商品仕様・レビューを貼ってください'; return; }
       navigator.clipboard.writeText(p)
         .then(() => { copyStatus.textContent = 'コピーしました（' + p.length.toLocaleString('ja-JP')
-          + '文字）。ChatGPTなどに貼り付けてください（Claude in Chrome なら競合のAmazonページと1688も開いて読みます）'; })
+          + '文字）。ChatGPTなどに貼り、返ってきた答えを丸ごと'
+          + '「出品原稿をつくる」の①②③のどれかに貼ってください'
+          + '（Claude in Chrome なら競合のAmazonページと1688も開いて読みます）'; })
         .catch(() => { out.style.display = 'block'; out.textContent = p; copyStatus.textContent = '下に表示しました。選択してコピーしてください'; });
     });
     const runRow = el('div', 'an-row');
@@ -5771,12 +5773,25 @@ if(FIREBASE_CONFIG.databaseURL){
       return ta;
     };
 
+    // ①②③は「STEP1の回答を貼る」のが本筋なのに、欄には「仕分けると入ります」
+    // としか出ていなかった。どこに何を貼るのか画面だけで分かるようにする
+    const flowNote = el('div', 'an-note');
+    flowNote.innerHTML = '<b>進め方</b>　'
+      + '① 上の「📋 STEP1」を押してプロンプトをコピー　→　'
+      + '② ChatGPTなどに貼る　→　'
+      + '<b>③ 返ってきた答えを丸ごとコピーして、下の①②③のどれかに貼る</b>'
+      + '（見出しを見て①②③に自動で振り分けます）　→　'
+      + '④ 中身を確かめて直す　→　⑤ その下の「📋 STEP2」へ進む';
+    body.appendChild(flowNote);
+
+    const PH_PASTE = 'ここにSTEP1の答えを丸ごと貼ると、①②③に自動で振り分けます。'
+      + '「🔀 集めたKWを仕分ける」で入れることもできます。手で足しても構いません。';
     const searchTa = mkField('① 検索キーワード（Amazonの検索キーワード欄にそのまま貼る1行）',
-      'kwDraft', '仕分けると入ります。手で足しても構いません。');
+      'kwDraft', PH_PASTE);
     const edCount = el('span', 'an-count');
 
     const specTa = mkField('② 商品説明に入れる必須キーワード（プロンプトに差し込まれます）',
-      'kwSpec', '仕分けると入ります。');
+      'kwSpec', PH_PASTE);
     const specCount = el('span', 'an-count');
     // ③のタイトルは「親1本＋子（バリエーション）N本」。
     // プロンプトと検索KWの重複除去では、全部つなげた1本として扱う。
