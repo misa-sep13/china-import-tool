@@ -567,6 +567,9 @@
     display:flex;align-items:center;gap:6px;}
   .reg-cap button{margin-left:auto;font-size:10px;padding:1px 6px;}
   .reg-hint{font-size:10.5px;color:var(--ink-2);line-height:1.5;}
+  /* 仕入先の書き方の例。そのまま写す文字なので、地の文と区別する */
+  .reg-hint code{background:#eef2f7;border:1px solid var(--line);
+    border-radius:4px;padding:1px 5px;font-size:10.5px;color:var(--ink);}
   .reg-hint.warn{color:var(--warn);font-weight:700;}
   .reg-auto{font-size:11px;color:var(--ink-2);display:flex;flex-wrap:wrap;
     gap:4px 14px;align-items:center;}
@@ -7345,11 +7348,16 @@ if(FIREBASE_CONFIG.databaseURL){
       // ❶でSKUを決めたあと、❷で商品マスタに登録する前に入れるものなので、
       // 進めるボタンのすぐ上に置く。色ごとの欄は③商品タイトルの子から作る
       panel.appendChild(el('div', 'reg-sec',
-        '仕入先の言い方（❷の前に入れる。発注でどの色を買うかが決まります）'));
+        '仕入先の言い方（1688の選択肢の文字をそのまま。❷を押す前に）'));
       const supNote = el('div', 'reg-hint');
-      supNote.textContent = '③商品タイトルで色（子）を作ると、色ごとの欄になります。'
-        + 'ここが商品マスタの仕様になり、タオタロウへの発注で'
-        + 'どの色を買うかの決め手になります。';
+      supNote.innerHTML = '1688の色の選択肢に<b>書いてあるとおりの文字</b>を入れてください'
+        + '（例：<code>晨雾粉-站立小号20*9*5cm</code>）。'
+        + '発注のとき、この文字でどの色を買うかを見分けます。'
+        + '<b>日本語の色名や商品ページのタイトルでは当たりません。</b>'
+        + '当たらないと発注の画面で止まります（近い色を勝手に買うことはしません）。'
+        + '<br>③商品タイトルで色（子）を作ると、色ごとの欄になります。'
+        + '入れた文字は❷「📦 商品マスタに登録」で商品マスタの仕様になります'
+        + '（❷のあとに書いても入らないので、先に入れてください）。';
       panel.appendChild(supNote);
       const supGrid = el('div', 'brief-grid');
       panel.appendChild(supGrid);
