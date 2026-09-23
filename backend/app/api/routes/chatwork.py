@@ -7,6 +7,7 @@
 送り先とファイル名を確認させる作りにしてある。ここは送るだけ。
 """
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 
 from app.services import chatwork
 
@@ -36,6 +37,22 @@ def rooms():
                             detail="Chatworkのトークンが未設定です（CHATWORK_API_TOKEN）")
     return {"items": _call(chatwork.list_rooms),
             "default_room_id": chatwork.default_room()}
+
+
+class MessageIn(BaseModel):
+    room_id: str
+    body: str
+
+
+@router.post("/send-message")
+def send_message(data: MessageIn):
+    """本文だけ送る。
+
+    リサーチシートの⑦から「初回発注数とVINEをどうするか」を
+    聞くのに使う。作るのは外注さんだが、数を決めるのは自分なので、
+    画面から直接聞けるようにしてある。
+    """
+    return _call(chatwork.send_message, data.room_id, data.body)
 
 
 @router.post("/send-file")

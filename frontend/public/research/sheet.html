@@ -7297,6 +7297,108 @@ if(FIREBASE_CONFIG.databaseURL){
       };
       buildSupplierWords(supGrid, supField, research);
 
+      // --- 初回発注数とVINEをChatworkで聞く ---
+      // 作るのは外注さんだが、何個仕入れるか・VINEを使うかを決めるのは
+      // こちら。毎回やり取りが要るので、判断に必要な数字を添えて送れるようにする
+      const qtyRow = el('div', 'an-row');
+      const qtyBtn = el('button', 'mini', '💬 初回発注数とVINEを聞く');
+      qtyBtn.dataset.writes = '1';
+      qtyBtn.style.display = 'none';        // Chatworkが使えるときだけ出す
+      const qtySel = document.createElement('select');
+      qtySel.className = 'an-cat';
+      qtySel.style.display = 'none';
+      const qtyStatus = el('span', 'an-status');
+      qtyRow.appendChild(qtyBtn); qtyRow.appendChild(qtySel);
+      qtyRow.appendChild(qtyStatus);
+      panel.appendChild(qtyRow);
+
+      const QTY_ROOM_KEY = 'ars_chatwork_room';
+      if(API_BASE){
+        fetch(API_BASE + '/chatwork/status', {headers: apiHeaders()})
+          .then(r => r.json())
+          .then(st => {
+            if(!st || !st.configured) return;
+            qtyBtn.style.display = '';
+            qtySel.style.display = '';
+            const o0 = document.createElement('option');
+            o0.value = ''; o0.textContent = '送り先を選ぶ…';
+            qtySel.appendChild(o0);
+            return fetch(API_BASE + '/chatwork/rooms', {headers: apiHeaders()})
+              .then(r => r.json())
+              .then(d => {
+                (d.items || []).forEach(x => {
+                  const o = document.createElement('option');
+                  o.value = String(x.room_id);
+                  o.textContent = x.name + (x.can_post ? '' : '（書き込み不可）');
+                  if(!x.can_post) o.disabled = true;
+                  qtySel.appendChild(o);
+                });
+                const saved = localStorage.getItem(QTY_ROOM_KEY)
+                  || d.default_room_id || st.default_room_id || '';
+                if(saved) qtySel.value = String(saved);
+              });
+          })
+          .catch(() => { /* 未設定なら黙って出さない */ });
+      }
+      qtySel.addEventListener('change', () => {
+        if(qtySel.value) localStorage.setItem(QTY_ROOM_KEY, qtySel.value);
+      });
+
+      // 聞くときの本文。決めるのに要る数字（売価・原価・1688単価）を添える。
+      // これが無いと、受け取った側がシートを開き直すことになる
+      const qtyBody = () => {
+        const sku = (research.parentSku || data.parent_sku || '').trim();
+        const name = (shortName(research) || research.title || '').trim();
+        const kids = (research.titleChildren || [])
+          .map(c => (splitKidName(c.name) || '').trim()).filter(Boolean);
+        const lines = [];
+        lines.push('[info][title]初回発注数とVINEの確認[/title]');
+        lines.push((sku ? sku + '　' : '') + (name || '（商品名なし）'));
+        lines.push('');
+        if(kids.length){
+          kids.forEach(k => {
+            const cn = (research.cnNames || {})[k] || '';
+            lines.push('・' + k + (cn ? '（' + cn + '）' : '')
+              + '　初回 ___ 個 ／ VINE 要・不要');
+          });
+        }else{
+          lines.push('・初回 ___ 個 ／ VINE 要・不要');
+        }
+        // 判断の材料。表の1行目（起点にした競合）から拾う
+        const row0 = (research.rows || [])[0] || {};
+        const bits = [];
+        if(row0.price) bits.push('売価 ' + Number(row0.price).toLocaleString('ja-JP') + '円');
+        const p0 = ((row0.parts || [])[0] || {}).price;
+        if(p0) bits.push('1688単価 ' + p0 + '元');
+        if(row0.asin) bits.push('競合 https://www.amazon.co.jp/dp/' + row0.asin);
+        if(bits.length){ lines.push(''); lines.push(bits.join('　／　')); }
+        lines.push('[/info]');
+        return lines.join('\n');
+      };
+
+      qtyBtn.addEventListener('click', () => {
+        const room = qtySel.value;
+        if(!room){ qtyStatus.textContent = '送り先を選んでください'; return; }
+        const body = qtyBody();
+        const who = qtySel.options[qtySel.selectedIndex].textContent;
+        // 送ると相手に通知が飛ぶ。取り消せないので、送る前に中身を見せる
+        if(!confirm('次の内容を Chatwork「' + who + '」へ送ります。\n\n'
+          + body.replace(/\[\/?info\]|\[\/?title\]/g, '') + '\n\nよろしいですか？')) return;
+        qtyBtn.disabled = true;
+        qtyStatus.textContent = '送っています…';
+        fetch(API_BASE + '/chatwork/send-message', {
+          method: 'POST',
+          headers: Object.assign({'Content-Type': 'application/json'}, apiHeaders()),
+          body: JSON.stringify({room_id: room, body: body}),
+        })
+          .then(r => r.json().then(j => ({ok: r.ok, j})))
+          .then(({ok, j}) => {
+            qtyStatus.textContent = ok ? '送りました' : ('送れませんでした：' + (j.detail || ''));
+          })
+          .catch(() => { qtyStatus.textContent = 'サーバーに繋がりませんでした'; })
+          .finally(() => { qtyBtn.disabled = false; });
+      });
+
       panel.appendChild(el('div', 'reg-sec', '進める（❶→❹の順に押します）'));
       const ops = el('div', 'an-row');
       const prep = el('button', 'mini', '❶ 出品の準備（商品タイプ・SKU・JAN）');
