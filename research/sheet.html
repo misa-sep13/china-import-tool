@@ -7013,6 +7013,58 @@ if(FIREBASE_CONFIG.databaseURL){
     return j;
   }
 
+  // 軸の値（ブラック・M・2個/ブラック）をSKUの末尾にする。
+  // サーバー側の sku_suffix と同じ結果になるようにしてある
+  // （amazon_listings.py の _COLOR_WORDS / _SIZE_WORDS と同じ表）。
+  // ❶「出品の準備」を押さなくても、親SKUを入れた時点で子が埋まるように
+  // 画面側にも持たせた（2026-09-24）
+  const SKU_COLOR_WORDS = {
+    'ブラック': 'black', '黒': 'black', 'ホワイト': 'white', '白': 'white',
+    'グレー': 'gray', '灰': 'gray', 'ネイビー': 'navy', 'ブルー': 'blue',
+    '青': 'blue', 'レッド': 'red', '赤': 'red', 'ピンク': 'pink',
+    'グリーン': 'green', '緑': 'green', 'イエロー': 'yellow', '黄': 'yellow',
+    'ベージュ': 'beige', 'ブラウン': 'brown', '茶': 'brown',
+    'パープル': 'purple', '紫': 'purple', 'オレンジ': 'orange',
+    'シルバー': 'silver', '銀': 'silver', 'ゴールド': 'gold', '金': 'gold',
+    'カーキ': 'khaki', 'アイボリー': 'ivory', 'クリア': 'clear',
+    '透明': 'clear', 'モカ': 'mocha', 'グレージュ': 'greige',
+  };
+  const SKU_SIZE_WORDS = {
+    'エス': 's', 'エム': 'm', 'エル': 'l',
+    '小': 's', '中': 'm', '大': 'l',
+    'スモール': 's', 'ミディアム': 'm', 'ラージ': 'l',
+    'フリー': 'free', 'フリーサイズ': 'free',
+  };
+  function skuSuffixOne(v){
+    const s = String(v || '').trim();
+    if(!s) return '';
+    // 英数字だけならそのまま使える（M / XL / 120cm など）
+    const ascii = s.replace(/[^0-9A-Za-z]/g, '');
+    if(ascii && ascii.length === s.replace(/\s/g, '').length){
+      return ascii.toLowerCase().slice(0, 12);
+    }
+    for(const table of [SKU_COLOR_WORDS, SKU_SIZE_WORDS]){
+      if(table[s]) return table[s];
+      // 「ブラック（つや消し）」のような書き方も拾う
+      for(const k of Object.keys(table)){
+        if(s.indexOf(k) === 0) return table[k];
+      }
+    }
+    const num = s.replace(/[^0-9]/g, '');
+    return num ? num.slice(0, 6) : '';
+  }
+  function skuSuffix(value){
+    const v = String(value || '').trim();
+    if(!v) return '';
+    // 区切りがあれば、それぞれ直して繋ぐ（2個/ブラック → 2black）
+    if(/[/／・]/.test(v)){
+      const joined = v.split(/[/／・]/).map(p => skuSuffixOne(p.trim()))
+        .filter(Boolean).join('');
+      if(joined) return joined.slice(0, 16);
+    }
+    return skuSuffixOne(v);
+  }
+
   function buildRegister(box, research){
     let data = null;              // サーバーから読んだ登録の中身
     const status = el('span', 'an-status');
@@ -7133,28 +7185,46 @@ if(FIREBASE_CONFIG.databaseURL){
       pSku.type = 'text'; pSku.className = 'reg-sku';
       pSku.placeholder = '親SKU';
       pSku.value = data.parent_sku || '';
-      // 親を直したら子の頭も付いてくる。付いてこないと a06_black と
-      // a14_gray のように1つの商品で頭がばらばらになる
-      pSku.addEventListener('input', () => {
+      // 親を直したら子も付いてくる。
+      //  ・空の子は、親＋色の英字（a012_pink）で埋める。❶を押さなくても
+      //    親を入れた時点で入る（押すまで空なのは分かりにくい）
+      //  ・すでに入っている子は頭だけ差し替える。付いてこないと
+      //    a06_black と a14_gray のように1つの商品で頭がばらばらになる
+      const syncKidSkus = () => {
         const head = pSku.value.trim();
-        put('parent_sku', head);
-        if(!head) return;
+        if(!head) return 0;
+        const taken = new Set((data.children || [])
+          .map(c => (c.sku || '').trim()).filter(Boolean));
         let moved = 0;
-        (data.children || []).forEach(c => {
+        (data.children || []).forEach((c, i) => {
           const cur = (c.sku || '').trim();
-          if(!cur || cur.indexOf('_') < 0) return;
-          const suf = cur.slice(cur.indexOf('_') + 1);
-          if(cur !== head + '_' + suf){ c.sku = head + '_' + suf; moved++; }
+          if(cur){
+            if(cur.indexOf('_') < 0) return;      // 「_」が無いものは触らない
+            const suf = cur.slice(cur.indexOf('_') + 1);
+            const next = head + '_' + suf;
+            if(cur !== next){ c.sku = next; moved++; }
+            return;
+          }
+          // 空の子。色から作り、作れなければ連番（サーバーの prepare と同じ）
+          let suf = skuSuffix(c.axis1) || skuSuffix(c.axis2)
+            || String(i + 1);
+          let cand = head + '_' + suf;
+          let n = i + 1;
+          while(taken.has(cand)){ n++; cand = head + '_' + suf + n; }
+          c.sku = cand; taken.add(cand); moved++;
         });
-        if(moved){
-          putKids();
-          // 欄の中身だけ入れ替える。draw()を呼ぶと入力中の枠が閉じる
-          panel.querySelectorAll('input.reg-sku').forEach((el2, i) => {
-            if(i === 0) return;
-            const c = (data.children || [])[i - 1];
-            if(c && el2.value !== (c.sku || '')) el2.value = c.sku || '';
-          });
-        }
+        return moved;
+      };
+      pSku.addEventListener('input', () => {
+        put('parent_sku', pSku.value.trim());
+        if(!syncKidSkus()) return;
+        putKids();
+        // 欄の中身だけ入れ替える。draw()を呼ぶと入力中の枠が閉じる
+        panel.querySelectorAll('input.reg-sku').forEach((el2, i) => {
+          if(i === 0) return;
+          const c = (data.children || [])[i - 1];
+          if(c && el2.value !== (c.sku || '')) el2.value = c.sku || '';
+        });
       });
       sHead.appendChild(el('span', 'an-note', '親'));
       sHead.appendChild(pSku);
