@@ -3190,6 +3190,15 @@ if(FIREBASE_CONFIG.databaseURL){
       '助詞、句読点、カンマは原則使わず、半角スペース区切り。',
       '大文字小文字・全角半角だけの重複は削除。',
       '意味のある表記ゆれは使用可。',
+      '【同じ語を2回以上書かない】',
+      '検索キーワード欄は「語の集合」として扱われ、'
+        + '同じ語を何度書いても検索での効きは変わりません。'
+        + 'バイト数を無駄に食うだけなので、1回だけ書いてください。',
+      '「メイクブラシケース 自立」「メイクブラシケース 縦型」のように'
+        + 'フレーズを並べると「メイクブラシケース」が何度も出てしまいます。'
+        + '共通する語は1回にまとめ、'
+        + '「メイクブラシケース 自立 縦型」のように違う語だけを足してください。',
+      '出力する前に、同じ語が2回以上出ていないか必ず数えてください。',
       '【検索キーワードの上限】',
       'カテゴリーで違います。',
       '・服＆ファッション小物・シューズ＆バッグ・ジュエリー・時計：250バイト未満',
@@ -3385,6 +3394,8 @@ if(FIREBASE_CONFIG.databaseURL){
       '・競合間で仕様が異なる情報を勝手に確定していないか',
       '・一般論だけで新しい性能を作っていないか',
       '・キーワードを不自然に詰め込んでいないか',
+      '・検索キーワードに同じ語が2回以上出ていないか（数えて確認）',
+      '・検索キーワードの合計バイト数が上限未満に収まっているか（数えて確認）',
       '・レビュー1件だけを市場全体の問題として扱っていないか',
       '・根拠のない「改良」「耐久性向上」「高品質」を使用していないか',
       '・商品タイトル冒頭の【キャッチコピー】が全角12字以内か',
@@ -6088,9 +6099,20 @@ if(FIREBASE_CONFIG.databaseURL){
       const msgs = [];
       if(sLine !== null){
         edTools.push(searchTa.value);
-        searchTa.value = clean(sLine).join(' ');
+        // AIは「メイクブラシケース 自立」「メイクブラシケース 縦型」のように
+        // フレーズを並べがちで、同じ語が何度も入って上限を超える。
+        // 検索欄は語の集合なので、重複はバイトを食うだけ。貼る時点で落とす
+        const seen = new Set(), uniq = [];
+        clean(sLine).forEach(w => {
+          const key = w.normalize('NFKC').toLowerCase();
+          if(seen.has(key)) return;
+          seen.add(key); uniq.push(w);
+        });
+        const dropped = clean(sLine).length - uniq.length;
+        searchTa.value = uniq.join(' ');
         const lim = Number(catSel.value), b = bytesOf(searchTa.value);
-        msgs.push('①に' + wordsOf(searchTa.value).length + '語（' + b + 'バイト'
+        msgs.push('①に' + uniq.length + '語（' + b + 'バイト'
+          + (dropped ? '。同じ語' + dropped + '語は落としました' : '')
           + (b >= lim ? '。上限' + lim + 'を超えているので削ってください' : '') + '）');
       }
       if(mLine !== null){
