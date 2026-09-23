@@ -6581,11 +6581,39 @@ if(FIREBASE_CONFIG.databaseURL){
       if(!wordsOf(specTa.value).length) miss.push('②必須キーワード');
       navigator.clipboard.writeText(p)
         .then(() => { pStatus.textContent = 'コピーしました（' + p.length.toLocaleString('ja-JP')
-          + '文字）。ChatGPTなどに貼り、回答を⑤に貼ってください'
+          + '文字）。ChatGPTなどに貼り、返ってきた答えを丸ごとコピーして、'
+          + '下の「STEP2の答えをここに貼る」の欄に貼ってください'
           + (miss.length ? '　※' + miss.join('・') + 'が空のままです' : ''); })
         .catch(() => { pOut.style.display = 'block'; pOut.textContent = p;
                        pStatus.textContent = '下に表示しました。選択してコピーしてください'; });
       pStatus.classList.toggle('warn', !!miss.length);
+    });
+
+    // STEP2の答えを受ける欄。⑤・ターゲット顧客・色合いのどこに貼っても
+    // 振り分くが、貼り先が分からないと⑤にセルフチェックまで貼ってしまう。
+    // STEP1と同じように、貼り先を1か所に決めて置く
+    const p2Lab = el('label', null,
+      'STEP2の答えをここに貼る（⑤・ターゲット顧客・色合いに自動で振り分けます）');
+    p2Lab.classList.add('an-sep');
+    body.appendChild(p2Lab);
+    const p2Note = el('div', 'an-note');
+    p2Note.innerHTML = '上の「📋 STEP2」を押す　→　ChatGPTなどに貼る　→　'
+      + '<b>返ってきた答えを丸ごとコピーして、ここに貼る</b>。'
+      + '見出し（■商品説明／■ターゲット顧客／■商品画像の色合い）を見て、'
+      + '下の3つに振り分けます。'
+      + '「■最終セルフチェック」など残りは入りません（回答の中で確認してください）。';
+    body.appendChild(p2Note);
+    const p2Ta = document.createElement('textarea');
+    p2Ta.className = 'an-kwedit an-answer';
+    p2Ta.placeholder = 'ここにSTEP2の答えを丸ごと貼り付けてください';
+    body.appendChild(p2Ta);
+    p2Ta.addEventListener('paste', e => {
+      const txt = e.clipboardData ? e.clipboardData.getData('text') : '';
+      if(!applyAnswerPaste(txt, p2Ta)) return;   // 振り分けられない内容はそのまま
+      e.preventDefault();
+      // 中身は3つの欄へ移したので、この欄には残さない
+      // （STEP1と違い、⑤に本文がそのまま残るため控えを持つ必要がない）
+      p2Ta.value = '';
     });
 
     // ---- ⑤ 商品説明の本文（貼って保存＋チェック）----
