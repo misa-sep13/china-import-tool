@@ -3356,6 +3356,12 @@ if(FIREBASE_CONFIG.databaseURL){
       '【出力形式】',
       '📋 ■商品タイトル（親）',
       'タイトルのみ1行。見出しや記号は付けない。この行をそのまま③の親の欄に貼ります。',
+      '📋 ■商品タイトル（親・キャッチコピーなし）',
+      '同じ親タイトルから冒頭の【キャッチコピー】だけを外した形を1行。'
+        + '【】が商品に合わないときに人が選べるようにするためのものなので、'
+        + '本文（商品タイプ以降の語順）は上の親タイトルと同じにしてください。'
+        + '外したぶん短くなるので、必須キーワードで使っていない語を足して'
+        + '70〜80字程度に整えて構いません（足す語は検索キーワードのS→A→Bから）。',
       '📋 ■商品タイトル（子：バリエーション名）',
       '子ごとに上の見出しを繰り返し、タイトルだけを1行ずつ。「子：」の後ろは【自社で売る商品の事実】のバリエーション名（正式名）をそのまま書く。タイトル本文の末尾に付けるのは「タイトル末尾」の語。',
       '■商品タイトルの根拠',
@@ -3403,6 +3409,7 @@ if(FIREBASE_CONFIG.databaseURL){
       '📋 ■必須キーワード',
       '■除いた語',
       '📋 ■商品タイトル（親）',
+      '📋 ■商品タイトル（親・キャッチコピーなし）',
       '必要な場合：',
       '📋 ■商品タイトル（子：バリエーション名）',
       '■商品タイトルの根拠',
@@ -6053,6 +6060,9 @@ if(FIREBASE_CONFIG.databaseURL){
     const RE_ANS_TPARENT = /■\s*商品タイトル\s*[（(]\s*親\s*[）)]\s*\n([\s\S]*?)(?=\n\s*■|$)/;
     // 名称に括弧が入る（例：2個(ホワイト1個+イエロー1個)）ので、行末の閉じ括弧までを名称として取る（2026-09-12）。
     const RE_ANS_TCHILD = /■\s*商品タイトル\s*[（(]\s*子\s*[：:]\s*([^\n]*?)\s*[）)]\s*\n([\s\S]*?)(?=\n\s*■|$)/g;
+    // 【キャッチコピー】が商品に合わないことがあるので、外した案も作らせて選べるようにする。
+    // 上のRE_ANS_TPARENTは「（親）」に厳密一致するので、こちらとは取り違えない
+    const RE_ANS_TPARENT2 = /■\s*商品タイトル\s*[（(]\s*親\s*[・･]\s*キャッチコピーなし\s*[）)]\s*\n([\s\S]*?)(?=\n\s*■|$)/;
     function applyAnswerPaste(txtIn, target){
       const txt = normAnswerText(txtIn);   // 📋・罫線などの飾りを外してから見出しを探す（applyAllPaste にも渡る）
       const firstLine = re => {
@@ -6063,6 +6073,7 @@ if(FIREBASE_CONFIG.databaseURL){
       };
       const sLine = firstLine(RE_ANS_SEARCH), mLine = firstLine(RE_ANS_MUST);
       const tParent = firstLine(RE_ANS_TPARENT);
+      const tParent2 = firstLine(RE_ANS_TPARENT2);
       const tKids = [];
       String(txt || '').replace(RE_ANS_TCHILD, (all, nm, body) => {
         const l = body.split('\n').map(x => x.trim()).filter(Boolean)[0];
@@ -6071,7 +6082,8 @@ if(FIREBASE_CONFIG.databaseURL){
       });
       // 第2部（■商品説明／■画像作成指示書）があれば、①②③が無くても続きの applyAllPaste に回す
       const hasAll = /■\s*(商品説明|画像作成指示書)\s*\n/.test(String(txt || ''));
-      if(sLine === null && mLine === null && tParent === null && !tKids.length && !hasAll) return false;
+      if(sLine === null && mLine === null && tParent === null && tParent2 === null
+          && !tKids.length && !hasAll) return false;
       const clean = s => wordsOf(s.replace(/[、,，]/g, ' '));
       const msgs = [];
       if(sLine !== null){
@@ -6100,10 +6112,13 @@ if(FIREBASE_CONFIG.databaseURL){
       // ③商品タイトル：親はそのまま。子は名称で突き合わせ（AIが「ホワイト」だけ書いても
       // 「カラー ホワイト」に入るよう、どちらかがもう片方を含めば同じ子とみなす）。
       // 名称で見つからなければ、まだ入っていない子へ上から順に入れる。
-      if(tParent !== null || tKids.length){
+      if(tParent !== null || tParent2 !== null || tKids.length){
         const norm = w => String(w || '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
         let n = 0;
         if(tParent !== null){ research.titleParent = tParent; n++; }
+        // キャッチコピーなしの案は、③の「【】なしに切り替え」で使う。
+        // 入れ替えられるよう、両方を持っておく
+        if(tParent2 !== null) research.titleParentNoCatch = tParent2;
         const kids = ensureTitleChildren(research);
         const used = new Set();
         const rest = [];
@@ -6446,6 +6461,31 @@ if(FIREBASE_CONFIG.databaseURL){
         refreshers.push(sync);
         line.appendChild(ti);
         line.appendChild(cnt);
+        if(kind === '親'){
+          // STEP1は【キャッチコピー】あり／なしの2案を返す。【】が商品に
+          // 合わないことがあるので、ワンクリックで入れ替えられるようにする
+          const swap = el('button', 'mini tl-swap', '【】なしに切り替え');
+          swap.title = 'STEP1が出した「キャッチコピーなし」の案と入れ替えます。'
+            + '\nもう一度押すと元に戻ります。';
+          const swapSync = () => {
+            const other = (research.titleParentNoCatch || '').trim();
+            swap.style.display = other ? '' : 'none';
+            const nowHasCatch = /^【/.test((ti.value || '').trim());
+            swap.textContent = nowHasCatch ? '【】なしに切り替え' : '【】ありに戻す';
+          };
+          swap.addEventListener('click', () => {
+            const other = (research.titleParentNoCatch || '').trim();
+            if(!other) return;
+            // いま出ているほうを控えに回して入れ替える（何度でも往復できる）
+            research.titleParentNoCatch = (ti.value || '').trim();
+            ti.value = other;
+            research.titleParent = other;
+            edSave(); sync(); swapSync();
+          });
+          refreshers.push(swapSync);
+          line.appendChild(swap);
+          swapSync();
+        }
         if(kind === '子'){
           const del = el('button', 'mini danger tl-del', '✕');
           del.title = 'この子を削除します';
