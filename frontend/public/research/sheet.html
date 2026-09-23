@@ -664,6 +664,8 @@
   /* 出品原稿パネル */
   .an-body textarea.an-bullets{min-height:150px;}
   .an-body textarea.i-small{min-height:52px;}
+  /* STEP1の答えを貼る欄。回答は数千文字あるので、中が見える高さにする */
+  .an-body textarea.an-answer{min-height:120px;}
   .i-sub{font-size:11.5px;font-weight:700;color:var(--ink-2);margin:8px 0 2px;}
   /* ③ 商品タイトルの前に出す注意。ここを外すと検索に出ないので、
      書く前に必ず目に入る濃さにしてある */
@@ -5443,72 +5445,9 @@ if(FIREBASE_CONFIG.databaseURL){
     body.appendChild(runRow);
     body.appendChild(out);
 
-    // ---- 分析の結果 ----
-    // ChatGPTなどの回答を貼っておく欄。以前は「回答はChatGPT側に残るので不要」
-    // として外していたが、別のPCから見られず、後から読み返せなかったため戻した。
-    // 保存先はリサーチ単位（プロンプトも全商品まとめて1つのため）。
-    const anWrap = el('div', 'an-src');
-    const anHead = el('div', 'an-row');
-    const anToggle = el('button', 'mini', '📄 分析した結果を見る');
-    const anWhen = el('span', 'an-status');
-    anHead.appendChild(el('span', 'an-lead', '分析の結果'));
-    anHead.appendChild(anToggle);
-    anHead.appendChild(anWhen);
-    anWrap.appendChild(anHead);
-
-    const anBox = el('div', 'fb');
-    anBox.style.display = 'none';
-    const anTa = document.createElement('textarea');
-    anTa.placeholder = 'ChatGPTなどの回答をそのまま貼り付けてください。'
-      + '保存すると、次に開いたときも別のPCからも読めます';
-    anBox.appendChild(anTa);
-    const anRow = el('div', 'an-row');
-    const anSave = el('button', 'mini', '保存');
-    const anCopy = el('button', 'mini', '📋 コピー');
-    const anClear = el('button', 'mini danger', '🧹 クリア');
-    const anStatus = el('span', 'an-status');
-    [anSave, anCopy, anClear, anStatus].forEach(x => anRow.appendChild(x));
-    anBox.appendChild(anRow);
-    anWrap.appendChild(anBox);
-
-    function anLoad(){
-      const p = getPage(research.id) || {};
-      anTa.value = p.analysis || '';
-      const n = (p.analysis || '').length;
-      anWhen.textContent = n
-        ? '保存済み ' + n.toLocaleString('ja-JP') + '文字'
-        : 'まだありません';
-      anToggle.textContent = anBox.style.display === 'none'
-        ? (n ? '📄 分析した結果を見る' : '📄 分析した結果を貼る')
-        : '▲ 閉じる';
-    }
-    anToggle.addEventListener('click', () => {
-      anBox.style.display = anBox.style.display === 'none' ? 'block' : 'none';
-      anLoad();
-      if(anBox.style.display === 'block') anTa.focus();
-    });
-    anSave.addEventListener('click', () => {
-      savePage(research.id, {analysis: anTa.value.trim()});
-      anStatus.textContent = '保存しました';
-      anLoad();
-      setTimeout(() => { anStatus.textContent = ''; }, 2500);
-    });
-    anCopy.addEventListener('click', () => {
-      if(!anTa.value.trim()){ anStatus.textContent = 'まだ何もありません'; return; }
-      navigator.clipboard.writeText(anTa.value)
-        .then(() => { anStatus.textContent = 'コピーしました'; })
-        .catch(() => { anStatus.textContent = '選択してコピーしてください'; });
-    });
-    anClear.addEventListener('click', () => {
-      if(!anTa.value.trim()){ anStatus.textContent = 'すでに空です'; return; }
-      if(!confirm('保存してある分析の結果を消しますか？')) return;
-      anTa.value = '';
-      savePage(research.id, {analysis: ''});
-      anStatus.textContent = '消しました';
-      anLoad();
-    });
-    anLoad();
-    body.appendChild(anWrap);
+    // 分析の結果を貼る欄は「出品原稿をつくる」の先頭へ移した（2026-09-23）。
+    // STEP1の答えを貼る場所が2つあると、どちらに貼るのか分からなくなるため、
+    // 振り分けと保存を1か所にまとめた。保存先（analysis）は同じ。
 
     // 使い方の説明は右上の「📝 記入方法」にまとめた（2026-08-09 京平様の指示）。
     // ここに長文を置くと、毎回スクロールの邪魔になるため。
@@ -5758,25 +5697,69 @@ if(FIREBASE_CONFIG.databaseURL){
     // STEP1の答えを受ける欄。①②③のどれに貼っても振り分くが、
     // 「どこに貼ればいいのか」が画面から分からず、答えを丸ごと①に
     // 入れてしまう事故が起きた。貼り先を1か所に決めて先頭に置く。
-    const pasteLab = el('label', null, 'STEP1の答えをここに貼る（①②③に自動で振り分けます）');
+    //
+    // 貼った原文はここに残して保存する。以前は「分析の結果」という別の欄に
+    // 貼って保存していたが、貼る場所が2つあると、どちらに貼るのか分からない。
+    // 振り分けと保存を1か所でやる。
+    const pasteLab = el('label', null,
+      'STEP1の答えをここに貼る（①②③に自動で振り分けて、そのまま保存します）');
     pasteLab.classList.add('an-sep');
     body.appendChild(pasteLab);
     const pasteNote = el('div', 'an-note');
     pasteNote.innerHTML = '上の「📋 STEP1」を押す　→　ChatGPTなどに貼る　→　'
       + '<b>返ってきた答えを丸ごとコピーして、ここに貼る</b>。'
       + '見出し（■検索キーワード など）を見て、下の①②③に振り分けます。'
-      + 'そのあと中身を確かめて直し、④の「📋 STEP2」へ進んでください。';
+      + '貼った答えはそのまま残るので、あとから読み返せます'
+      + '（別のPCからも見られます）。'
+      + 'そのあと①②③を確かめて直し、④の「📋 STEP2」へ進んでください。';
     body.appendChild(pasteNote);
     const pasteTa = document.createElement('textarea');
-    pasteTa.className = 'an-kwedit i-small';
+    pasteTa.className = 'an-kwedit an-answer';
     pasteTa.placeholder = 'ここにSTEP1の答えを丸ごと貼り付けてください';
     body.appendChild(pasteTa);
+    const pasteRow = el('div', 'an-row');
+    const pasteStatus = el('span', 'an-status');
+    const pasteSave = el('button', 'mini', '保存');
+    const pasteCopy = el('button', 'mini', '📋 コピー');
+    const pasteClear = el('button', 'mini danger', '🧹 クリア');
+    [pasteSave, pasteCopy, pasteClear, pasteStatus].forEach(x => pasteRow.appendChild(x));
+    body.appendChild(pasteRow);
+
+    // 保存先はリサーチ単位（プロンプトも全商品まとめて1つのため）
+    const answerLoad = () => {
+      const p = getPage(research.id) || {};
+      pasteTa.value = p.analysis || '';
+    };
+    const answerSave = (msg) => {
+      savePage(research.id, {analysis: pasteTa.value.trim()});
+      if(msg){
+        pasteStatus.textContent = msg;
+        setTimeout(() => { pasteStatus.textContent = ''; }, 3000);
+      }
+    };
+    answerLoad();
+
     pasteTa.addEventListener('paste', e => {
       const txt = e.clipboardData ? e.clipboardData.getData('text') : '';
       if(!applyAnswerPaste(txt, pasteTa)) return;   // 振り分けられない内容はそのまま
       e.preventDefault();
-      // 中身は①②③へ移したので、この欄には残さない（二重に持つと混乱する）
+      pasteTa.value = txt;                          // 原文は残す（読み返し用）
+      answerSave('①②③に振り分けて、この答えも保存しました');
+    });
+    pasteSave.addEventListener('click', () => {
+      answerSave('保存しました');
+    });
+    pasteCopy.addEventListener('click', () => {
+      if(!pasteTa.value.trim()){ pasteStatus.textContent = 'まだ何もありません'; return; }
+      navigator.clipboard.writeText(pasteTa.value)
+        .then(() => { pasteStatus.textContent = 'コピーしました'; })
+        .catch(() => { pasteStatus.textContent = '選択してコピーしてください'; });
+    });
+    pasteClear.addEventListener('click', () => {
+      if(!pasteTa.value.trim()){ pasteStatus.textContent = 'すでに空です'; return; }
+      if(!confirm('保存してあるSTEP1の答えを消しますか？\n①②③に入れた内容は消えません。')) return;
       pasteTa.value = '';
+      answerSave('消しました');
     });
 
     const PH_PASTE = '上の欄にSTEP1の答えを貼ると、ここに入ります。手で直しても構いません。';
