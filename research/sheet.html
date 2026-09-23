@@ -6361,16 +6361,11 @@ if(FIREBASE_CONFIG.databaseURL){
     tGen.dataset.writes = '1';
     tGen.title = 'ブランド名／メインキーワード／関連ワード／サイズ・数量・色 の順で、'
       + '65字程度にまとめます。語はサジェストと競合タイトルの多い順から選びます';
-    const tPush = document.createElement('input');
-    tPush.type = 'text';
-    tPush.className = 'tl-name';
-    tPush.placeholder = '推したい点（例: 立てて入る）※任意';
-    tPush.value = research.titlePush || '';
-    tPush.title = '入れると【立てて入る】のようにブランド名の次に挟みます';
-    tPush.addEventListener('input', () => { research.titlePush = tPush.value; edSave(); });
     const tGenStatus = el('span', 'an-status');
     tGen.addEventListener('click', () => {
-      const t = buildTitle(research, tPush.value);
+      // 推したい点の欄は使われないので外した（2026-09-23）。
+      // 【キャッチコピー】はSTEP1が作るので、ここで手入力する必要がない
+      const t = buildTitle(research, '');
       if(!t){
         tGenStatus.textContent = '元になる語がありません。'
           + 'サジェストを取得するか、表に競合の商品名を入れてください';
@@ -6383,7 +6378,6 @@ if(FIREBASE_CONFIG.databaseURL){
       tGenStatus.textContent = t.length + '字で作りました。ここから手で直してください';
     });
     tAddRow.appendChild(tGen);
-    tAddRow.appendChild(tPush);
     tAddRow.appendChild(tGenStatus);
     body.appendChild(tAddRow);
 
