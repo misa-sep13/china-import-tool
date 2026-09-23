@@ -218,6 +218,9 @@
   .acc-del{flex:0 0 auto;color:var(--danger);border-color:var(--danger-line);padding:2px 6px;}
   .acc-add{align-self:flex-start;padding:3px 8px;font-size:10px;}
   .brief-cap{font-size:10.5px;font-weight:700;color:var(--ink-2);}
+  /* 仕入先ページへのリンク。色の選択肢を見にいくのに毎回使う */
+  .sup-links{display:flex;flex-wrap:wrap;gap:10px;padding:5px 0 2px;}
+  .sup-links a{font-size:11.5px;font-weight:600;color:var(--brand-d);}
   .brief-cell input,.brief-cell textarea{border:1px solid var(--line-2);
     border-radius:var(--r-sm);padding:5px 7px;font-size:11.5px;
     font-family:inherit;background:var(--surface);color:var(--ink);
@@ -8888,6 +8891,31 @@ if(FIREBASE_CONFIG.databaseURL){
     }
     field(gB, '本体URL（空なら1688 URL）', research.mainUrl,
           v => { research.mainUrl = v; }, 'w-url');
+
+    // 仕入先の書き方を写すには1688のページを見る必要がある。
+    // 表まで戻って探すのは手間なので、ここから直接開けるようにする。
+    // 本体URLが入っていればそれを、無ければ表の1688 URLを出す
+    const openUrls = (() => {
+      const main = (research.mainUrl || '').trim();
+      if(main) return [main];
+      return allUrls1688(research);
+    })();
+    if(openUrls.length){
+      const cell = el('div', 'brief-cell w-break');
+      cell.appendChild(el('div', 'brief-cap', '1688のページを開く（色の選択肢を見る）'));
+      const line = el('div', 'sup-links');
+      openUrls.slice(0, 5).forEach((u, i) => {
+        const a = document.createElement('a');
+        a.href = u;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = openUrls.length > 1 ? ('仕入先ページ' + (i + 1)) : '仕入先ページを開く';
+        a.title = u;
+        line.appendChild(a);
+      });
+      cell.appendChild(line);
+      gB.appendChild(cell);
+    }
 
     // 色違いがあるときは、色ごとの中国語名が要る。1つの欄に2色まとめて
     // 書くと、発注のときどちらのSKUを買うか決められない
