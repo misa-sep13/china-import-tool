@@ -5740,24 +5740,6 @@ if(FIREBASE_CONFIG.databaseURL){
     catSel.value = String(research.kwLimit);
     catSel.dataset.writes = '1';
     catRow.appendChild(catSel);
-    const splitBtn = el('button', 'primary', '🔀 集めたKWを仕分ける');
-    splitBtn.dataset.writes = '1';
-    splitBtn.title = '検索キーワード欄用と商品説明用に振り分けます。'
-      + '\n禁止語は除き、オーガニック順位が上（同順位ならCVが高い）語から順に使います。'
-      + '\n③商品タイトルがすでに入っていれば、そこにある語は検索キーワードから外します。';
-    // tool4sellerのKWはCVが0より大きい語しか残らない。よく売れている商品なら
-    // 数十語残るが、ニッチな商品だと数語しか残らず、しかもその数語は③の
-    // タイトルにも入っているので①が空になる。集める材料が無いので、作る道を出す。
-    // Anthropic APIを使うので、対応したサーバーから開いたときだけ出す
-    // （⚡商品画像の文字と同じ条件）
-    const aiBtn = el('button', 'mini imgtext-only', '🤖 AIに作ってもらう');
-    aiBtn.dataset.writes = '1';
-    aiBtn.title = '③商品タイトルと競合のレビュー・仕様から、'
-      + 'お客さんが検索しそうな語をAIに挙げてもらいます。'
-      + '\nKWが集まらない商品のときに使ってください（1商品1円ほど）。';
-    const splitStatus = el('span', 'an-status');
-    catRow.appendChild(splitBtn); catRow.appendChild(aiBtn);
-    catRow.appendChild(splitStatus);
     body.appendChild(catRow);
 
     // ---- 3つの欄 ----
@@ -5773,19 +5755,31 @@ if(FIREBASE_CONFIG.databaseURL){
       return ta;
     };
 
-    // ①②③は「STEP1の回答を貼る」のが本筋なのに、欄には「仕分けると入ります」
-    // としか出ていなかった。どこに何を貼るのか画面だけで分かるようにする
-    const flowNote = el('div', 'an-note');
-    flowNote.innerHTML = '<b>進め方</b>　'
-      + '① 上の「📋 STEP1」を押してプロンプトをコピー　→　'
-      + '② ChatGPTなどに貼る　→　'
-      + '<b>③ 返ってきた答えを丸ごとコピーして、下の①②③のどれかに貼る</b>'
-      + '（見出しを見て①②③に自動で振り分けます）　→　'
-      + '④ 中身を確かめて直す　→　⑤ その下の「📋 STEP2」へ進む';
-    body.appendChild(flowNote);
+    // STEP1の答えを受ける欄。①②③のどれに貼っても振り分くが、
+    // 「どこに貼ればいいのか」が画面から分からず、答えを丸ごと①に
+    // 入れてしまう事故が起きた。貼り先を1か所に決めて先頭に置く。
+    const pasteLab = el('label', null, 'STEP1の答えをここに貼る（①②③に自動で振り分けます）');
+    pasteLab.classList.add('an-sep');
+    body.appendChild(pasteLab);
+    const pasteNote = el('div', 'an-note');
+    pasteNote.innerHTML = '上の「📋 STEP1」を押す　→　ChatGPTなどに貼る　→　'
+      + '<b>返ってきた答えを丸ごとコピーして、ここに貼る</b>。'
+      + '見出し（■検索キーワード など）を見て、下の①②③に振り分けます。'
+      + 'そのあと中身を確かめて直し、④の「📋 STEP2」へ進んでください。';
+    body.appendChild(pasteNote);
+    const pasteTa = document.createElement('textarea');
+    pasteTa.className = 'an-kwedit i-small';
+    pasteTa.placeholder = 'ここにSTEP1の答えを丸ごと貼り付けてください';
+    body.appendChild(pasteTa);
+    pasteTa.addEventListener('paste', e => {
+      const txt = e.clipboardData ? e.clipboardData.getData('text') : '';
+      if(!applyAnswerPaste(txt, pasteTa)) return;   // 振り分けられない内容はそのまま
+      e.preventDefault();
+      // 中身は①②③へ移したので、この欄には残さない（二重に持つと混乱する）
+      pasteTa.value = '';
+    });
 
-    const PH_PASTE = 'ここにSTEP1の答えを丸ごと貼ると、①②③に自動で振り分けます。'
-      + '「🔀 集めたKWを仕分ける」で入れることもできます。手で足しても構いません。';
+    const PH_PASTE = '上の欄にSTEP1の答えを貼ると、ここに入ります。手で直しても構いません。';
     const searchTa = mkField('① 検索キーワード（Amazonの検索キーワード欄にそのまま貼る1行）',
       'kwDraft', PH_PASTE);
     const edCount = el('span', 'an-count');
@@ -5793,6 +5787,44 @@ if(FIREBASE_CONFIG.databaseURL){
     const specTa = mkField('② 商品説明に入れる必須キーワード（プロンプトに差し込まれます）',
       'kwSpec', PH_PASTE);
     const specCount = el('span', 'an-count');
+
+    // AIを使わない入れ方。STEP1のほうが結果はよいので、押し間違えないよう
+    // 折りたたんでおく（消すと、AIを使わず素早く入れたいときに戻せない）
+    const otherBox = document.createElement('details');
+    otherBox.className = 'adv';
+    const otherSum = document.createElement('summary');
+    otherSum.textContent = 'ほかの入れ方（AIを使わずに①②へ入れる）';
+    otherBox.appendChild(otherSum);
+    const otherNote = el('div', 'an-note');
+    otherNote.innerHTML = 'ふだんは上の<b>STEP1</b>を使ってください。'
+      + 'こちらは<b>③商品タイトルを作らず、語を選んだ根拠も出ません</b>。'
+      + 'AIに投げずにすぐ入れたいときや、STEP1のあとで語を足したいときに使います。'
+      + '<br><b>🔀 集めたKWを仕分ける</b>＝tool4sellerから取り込んだ語を、'
+      + '順位の上から①②へ配るだけです（禁止語と、③タイトルにある語は除きます）。'
+      + '<span class="imgtext-only"><br><b>🤖 AIに作ってもらう</b>＝'
+      + '①②だけをAIに挙げてもらいます（1商品1円ほど）。'
+      + 'KWが1語も取れない商品のための逃げ道です。</span>';
+    otherBox.appendChild(otherNote);
+    const otherRow = el('div', 'an-row');
+    const splitBtn = el('button', 'mini', '🔀 集めたKWを仕分ける');
+    splitBtn.dataset.writes = '1';
+    splitBtn.title = '検索キーワード欄用と商品説明用に振り分けます。'
+      + '\n禁止語は除き、オーガニック順位が上（同順位ならCVが高い）語から順に使います。'
+      + '\n③商品タイトルがすでに入っていれば、そこにある語は検索キーワードから外します。';
+    // tool4sellerのKWはCVが0より大きい語しか残らない。よく売れている商品なら
+    // 数十語残るが、ニッチな商品だと数語しか残らず、しかもその数語は③の
+    // タイトルにも入っているので①が空になる。集める材料が無いので、作る道を出す。
+    // Anthropic APIを使うので、対応したサーバーから開いたときだけ出す
+    const aiBtn = el('button', 'mini imgtext-only', '🤖 AIに作ってもらう');
+    aiBtn.dataset.writes = '1';
+    aiBtn.title = '③商品タイトルと競合のレビュー・仕様から、'
+      + 'お客さんが検索しそうな語をAIに挙げてもらいます。'
+      + '\nKWが集まらない商品のときに使ってください（1商品1円ほど）。';
+    const splitStatus = el('span', 'an-status');
+    otherRow.appendChild(splitBtn); otherRow.appendChild(aiBtn);
+    otherRow.appendChild(splitStatus);
+    otherBox.appendChild(otherRow);
+    body.appendChild(otherBox);
     // ③のタイトルは「親1本＋子（バリエーション）N本」。
     // プロンプトと検索KWの重複除去では、全部つなげた1本として扱う。
     const allTitles = () => [research.titleParent || '']
