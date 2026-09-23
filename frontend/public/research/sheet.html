@@ -691,6 +691,11 @@
   .tl-count{flex:0 0 auto;white-space:nowrap;}
   .title-line .tl-del{flex:0 0 auto;width:auto;padding:3px 8px;}
   .tl-warn{margin:0 0 2px 34px;display:block;}
+  /* 【】あり／なしの切り替え。注意書きではないので警告色にしない。
+     上の .tl-warn より後ろに置かないと display:block に負ける */
+  .tl-warn.tl-swapbox{background:#f8fafc;border-color:var(--line);
+    margin:6px 0 8px;display:flex;align-items:center;gap:2px;flex-wrap:wrap;}
+  .tl-swap-note{color:var(--ink-2);font-size:11.5px;}
   .tl-warn:empty{display:none;}
   .an-row .an-lead{font-size:11.5px;color:var(--ink-2);font-weight:700;}
   select.an-cat{width:auto;max-width:520px;font-size:11.5px;padding:4px 7px;
@@ -6306,32 +6311,43 @@ if(FIREBASE_CONFIG.databaseURL){
     tLabel.appendChild(tRule);
     body.appendChild(tLabel);
 
-    // メインキーワードの入れ忘れが一番効く抜け。tool4sellerの拡張で調べた語を
-    // タイトルに入れないと、そもそも検索に出ない。書く前に目に入る位置へ置く。
-    // 競合の商品ページもここから開けるようにして、調べ直しに戻らなくて済むように
-    const tWarn = el('div', 'tl-warn');
-    tWarn.appendChild(el('b', null, '⚠ メインキーワードを必ずタイトルに入れる'));
-    tWarn.appendChild(el('span', null,
-      'tool4sellerの拡張機能（キーワード検索）で、検索ボリュームと'
-      + 'コンバージョンのある語を確かめてから書いてください。'
-      + 'ここが入っていないと、どれだけ関連ワードを並べても検索に出ません。'));
-    const asins = [...new Set((research.rows || [])
-      .map(r => (r && r.asin ? String(r.asin).trim() : ''))
-      .filter(Boolean))];
-    if(asins.length){
-      const line = el('div', 'tl-warn-links');
-      line.appendChild(el('span', 'tl-warn-cap', '競合の商品ページ：'));
-      asins.forEach((a, i) => {
-        if(i) line.appendChild(document.createTextNode(' '));
-        const link = document.createElement('a');
-        link.href = 'https://www.amazon.co.jp/dp/' + a;
-        link.target = '_blank'; link.rel = 'noopener';
-        link.textContent = a;
-        line.appendChild(link);
-      });
-      tWarn.appendChild(line);
-    }
-    body.appendChild(tWarn);
+    // STEP1は【キャッチコピー】あり／なしの2案を返す。【】が商品に合わない
+    // ことがあるので、ワンクリックで入れ替えられるようにする。
+    // タイトル欄の右端に置くと気づかれないので、書く前に目が行く見出しの下へ。
+    const swapRow = el('div', 'tl-warn tl-swapbox');
+    const swapBtn = el('button', 'mini tl-swap', '【】なしに切り替え');
+    swapBtn.title = 'STEP1が出した「キャッチコピーなし」の案と入れ替えます。'
+      + '\nもう一度押すと元に戻ります。';
+    const swapNote = el('span', 'tl-swap-note', '');
+    swapRow.appendChild(swapBtn);
+    swapRow.appendChild(swapNote);
+    // 親の入力欄は drawTitles() のたびに作り直されるので、その都度探す
+    const parentInput = () => body.querySelector('.title-box .tl-title');
+    const swapSync = () => {
+      const other = (research.titleParentNoCatch || '').trim();
+      swapRow.style.display = other ? '' : 'none';
+      if(!other) return;
+      const nowHasCatch = /^【/.test((research.titleParent || '').trim());
+      swapBtn.textContent = nowHasCatch ? '【】なしに切り替え' : '【】ありに戻す';
+      swapNote.textContent = nowHasCatch
+        ? '　いまは【キャッチコピー】あり。外した案 → ' + other.slice(0, 28)
+          + (other.length > 28 ? '…' : '')
+        : '　いまは【】なし。付いた案 → ' + other.slice(0, 28)
+          + (other.length > 28 ? '…' : '');
+    };
+    swapBtn.addEventListener('click', () => {
+      const other = (research.titleParentNoCatch || '').trim();
+      if(!other) return;
+      // いま出ているほうを控えに回して入れ替える（何度でも往復できる）
+      research.titleParentNoCatch = (research.titleParent || '').trim();
+      research.titleParent = other;
+      const ti = parentInput();
+      if(ti) ti.value = other;
+      edSave(); edRefresh(); swapSync();
+    });
+    refreshers.push(swapSync);
+    body.appendChild(swapRow);
+    swapSync();
 
     const tBox = el('div', 'title-box');
     body.appendChild(tBox);
@@ -6483,31 +6499,6 @@ if(FIREBASE_CONFIG.databaseURL){
         refreshers.push(sync);
         line.appendChild(ti);
         line.appendChild(cnt);
-        if(kind === '親'){
-          // STEP1は【キャッチコピー】あり／なしの2案を返す。【】が商品に
-          // 合わないことがあるので、ワンクリックで入れ替えられるようにする
-          const swap = el('button', 'mini tl-swap', '【】なしに切り替え');
-          swap.title = 'STEP1が出した「キャッチコピーなし」の案と入れ替えます。'
-            + '\nもう一度押すと元に戻ります。';
-          const swapSync = () => {
-            const other = (research.titleParentNoCatch || '').trim();
-            swap.style.display = other ? '' : 'none';
-            const nowHasCatch = /^【/.test((ti.value || '').trim());
-            swap.textContent = nowHasCatch ? '【】なしに切り替え' : '【】ありに戻す';
-          };
-          swap.addEventListener('click', () => {
-            const other = (research.titleParentNoCatch || '').trim();
-            if(!other) return;
-            // いま出ているほうを控えに回して入れ替える（何度でも往復できる）
-            research.titleParentNoCatch = (ti.value || '').trim();
-            ti.value = other;
-            research.titleParent = other;
-            edSave(); sync(); swapSync();
-          });
-          refreshers.push(swapSync);
-          line.appendChild(swap);
-          swapSync();
-        }
         if(kind === '子'){
           const del = el('button', 'mini danger tl-del', '✕');
           del.title = 'この子を削除します';
