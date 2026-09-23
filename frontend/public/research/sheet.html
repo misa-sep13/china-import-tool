@@ -7271,6 +7271,32 @@ if(FIREBASE_CONFIG.databaseURL){
       // --- 進めるボタン ---
       // 押す順に番号を振る。どれから押すのか見て分からないと、
       // 検証から先に押して「SKUが無い」で止まる
+      // --- 仕入先の言い方（発注・商品マスタ用）---
+      // ❶でSKUを決めたあと、❷で商品マスタに登録する前に入れるものなので、
+      // 進めるボタンのすぐ上に置く。色ごとの欄は③商品タイトルの子から作る
+      panel.appendChild(el('div', 'reg-sec',
+        '仕入先の言い方（❷の前に入れる。発注でどの色を買うかが決まります）'));
+      const supNote = el('div', 'reg-hint');
+      supNote.textContent = '③商品タイトルで色（子）を作ると、色ごとの欄になります。'
+        + 'ここが商品マスタの仕様になり、タオタロウへの発注で'
+        + 'どの色を買うかの決め手になります。';
+      panel.appendChild(supNote);
+      const supGrid = el('div', 'brief-grid');
+      panel.appendChild(supGrid);
+      // buildSupplierWords が使う入力欄の作り方。リサーチ枠側と同じ形にする
+      const supField = (grid, label, value, onInput, cls) => {
+        const cell = el('div', 'brief-cell' + (cls ? ' ' + cls : ''));
+        cell.appendChild(el('div', 'brief-cap', label));
+        const i = document.createElement('input');
+        i.type = 'text';
+        i.value = value || '';
+        i.addEventListener('input', () => { onInput(i.value); scheduleSave(); });
+        cell.appendChild(i);
+        grid.appendChild(cell);
+        return i;
+      };
+      buildSupplierWords(supGrid, supField, research);
+
       panel.appendChild(el('div', 'reg-sec', '進める（❶→❹の順に押します）'));
       const ops = el('div', 'an-row');
       const prep = el('button', 'mini', '❶ 出品の準備（商品タイプ・SKU・JAN）');
@@ -8660,6 +8686,174 @@ if(FIREBASE_CONFIG.databaseURL){
     return p.length > 1 ? p.slice(1).join(' ') : t;
   }
 
+  // 仕入先の言い方（発注・商品マスタ用）。色ごとの中国語名・初回発注数・付属品。
+  //
+  // もとは枠の一番上「画像外注へ渡す情報」の中にあったが、色ごとの欄は
+  // ③商品タイトルの子から作られるので、そこにあると入力の順番が前後する。
+  // 実際に使うのは⑦でSKUを決めたあと、商品マスタに登録する前。
+  // ⑦の中で完結するように切り出した（2026-09-23）。
+  //
+  // gB    入れ先のグリッド（呼ぶ側が作る）
+  // field ラベル付きの入力欄を作る関数（呼ぶ側が渡す）
+  function buildSupplierWords(gB, field, research){
+
+    const kidNames = (research.titleChildren || [])
+      .map(c => (splitKidName(c.name) || '').trim()).filter(Boolean);
+
+    // 色違いが無いときだけ共通の欄を出す。両方あると、どちらが効くのか
+    // 分からなくなる
+    if(!kidNames.length){
+      field(gB, '中国語名（本体）', research.cnName,
+            v => { research.cnName = v; }, 'w-cn');
+    }
+    field(gB, '本体URL（空なら1688 URL）', research.mainUrl,
+          v => { research.mainUrl = v; }, 'w-url');
+
+    // 色違いがあるときは、色ごとの中国語名が要る。1つの欄に2色まとめて
+    // 書くと、発注のときどちらのSKUを買うか決められない
+    if(kidNames.length){
+      if(!research.cnNames || typeof research.cnNames !== 'object') research.cnNames = {};
+      // 初回に何個頼むかは色ごとに変える（売れ筋の色を多めにする）。
+      // 中国語名と同じ行に置けば、発注書を作るときここだけ見れば済む
+      if(!research.firstQty || typeof research.firstQty !== 'object') research.firstQty = {};
+      // Vineは色ごとに出す・出さないを決める。初回の発注数に
+      // Vine提供分（最大30個）を足しておく必要があるので、同じ行で見る
+      if(!research.vine || typeof research.vine !== 'object') research.vine = {};
+      // ③で色名を変える前に入れた値が、古い色名のまま残っていることがある。
+      // 今ある色だけにして、消えた色のぶんは落とす（別の色の欄に
+      // 古い中国語名が出ていると、違う色を発注してしまう）
+      [research.cnNames, research.firstQty, research.vine].forEach(m => {
+        Object.keys(m).forEach(k => {
+          if(kidNames.indexOf(k) < 0) delete m[k];
+        });
+      });
+      const cw = el('div', 'brief-cell w-acc');
+      cw.appendChild(el('div', 'brief-cap', '中国語名（色ごと）と初回の発注数'));
+      const cl = el('div', 'acc-list');
+      // 合計の表示。先に作っておく（constは巻き上がらないので、
+      // 入力欄の中から呼ぶより前に用意しておく必要がある）
+      const totalTxt = el('span', 'acc-total');
+      const drawTotal = () => {
+        const n = kidNames.reduce(
+          (a, k) => a + (Number(research.firstQty[k]) || 0), 0);
+        const v = kidNames.filter(k => research.vine[k]);
+        totalTxt.textContent = (n ? '合計 ' + n + '個' : '')
+          + (v.length ? '　／　VINE: ' + v.join('・') : '');
+      };
+      kidNames.forEach(k => {
+        const line = el('div', 'acc-line');
+        line.appendChild(el('span', 'acc-cap', k));
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.placeholder = cnColorHint(k);
+        inp.value = research.cnNames[k] || '';
+        inp.addEventListener('input', () => {
+          research.cnNames[k] = inp.value; scheduleSave();
+        });
+        line.appendChild(inp);
+        const q = document.createElement('input');
+        q.type = 'number'; q.min = '0'; q.className = 'acc-qty';
+        q.placeholder = '初回';
+        q.title = 'この色を初回に何個発注するか';
+        q.value = (research.firstQty[k] == null ? '' : research.firstQty[k]);
+        q.addEventListener('input', () => {
+          const v = q.value.trim();
+          research.firstQty[k] = v === '' ? null : (Number(v) || 0);
+          drawTotal(); scheduleSave();
+        });
+        line.appendChild(q);
+        // Vineを使う色に印を付ける。発注数を決めるときに提供分を
+        // 足し忘れると、売る在庫が足りなくなる
+        const vw = document.createElement('label');
+        vw.className = 'acc-vine';
+        vw.title = 'この色でVineを使う（提供分を初回の発注数に含めてください）';
+        const vc = document.createElement('input');
+        vc.type = 'checkbox';
+        vc.checked = !!research.vine[k];
+        vc.addEventListener('change', () => {
+          research.vine[k] = vc.checked; drawTotal(); scheduleSave();
+        });
+        vw.appendChild(vc);
+        vw.appendChild(document.createTextNode('VINE'));
+        line.appendChild(vw);
+        cl.appendChild(line);
+      });
+      // 合計。発注書に書く数と突き合わせる
+      const totalLine = el('div', 'acc-line');
+      totalLine.appendChild(el('span', 'acc-cap', ''));
+      totalLine.appendChild(totalTxt);
+      drawTotal();
+      cl.appendChild(totalLine);
+      cw.appendChild(cl);
+      gB.appendChild(cw);
+    }
+
+    // 付属品。1つのURLに本体と袋が入っている商品のように、一緒に頼むもの。
+    // 在庫には連動しない（本体と一緒に発注する行として出るだけ）
+    if(!Array.isArray(research.accessories)) research.accessories = [];
+    const accWrap = el('div', 'brief-cell w-acc w-break');
+    accWrap.appendChild(el('div', 'brief-cap',
+      kidNames.length
+        ? '付属品（どの色にも共通。一緒に発注するもの）'
+        : '付属品（一緒に発注するもの）'));
+    accWrap.appendChild(el('div', 'acc-note',
+      '本体のSKUに含まれているもの（「套装（収納袋＋眼罩耳塞）」など、'
+      + '本体を選べば一緒に届くもの）は入れません。'
+      + '別に頼むものだけ、URLと中国語名を入れてください'
+      + (kidNames.length
+         ? '。色ごとに分けて入れないでください（どの色にも共通です）' : '')));
+    const accList = el('div', 'acc-list');
+    accWrap.appendChild(accList);
+    const drawAcc = () => {
+      accList.innerHTML = '';
+      research.accessories.forEach((a, i) => {
+        const line = el('div', 'acc-line');
+        const mk = (ph, val, on) => {
+          const inp = document.createElement('input');
+          inp.type = 'text'; inp.placeholder = ph; inp.value = val || '';
+          inp.addEventListener('input', () => { on(inp.value); scheduleSave(); });
+          line.appendChild(inp);
+        };
+        mk('中国語名（例: 收纳袋）', a.name, v => { research.accessories[i].name = v; });
+        mk('URL（空なら本体と同じ）', a.url, v => { research.accessories[i].url = v; });
+        // 単価が無いと原価に乗らず、そのぶん利益を多く見積もる。
+        // 実際、収納袋の分が0円で登録されていた
+        const pr = document.createElement('input');
+        pr.type = 'number'; pr.step = 'any'; pr.min = '0'; pr.className = 'acc-price';
+        pr.placeholder = '単価(元)';
+        pr.title = 'この付属品の1個あたりの値段（元）。空だと原価に乗りません';
+        pr.value = (a.price == null ? '' : a.price);
+        pr.addEventListener('input', () => {
+          const v = pr.value.trim();
+          research.accessories[i].price = v === '' ? null : (Number(v) || 0);
+          scheduleSave();
+        });
+        line.appendChild(pr);
+        const q = document.createElement('input');
+        q.type = 'number'; q.min = '1'; q.className = 'acc-qty';
+        q.placeholder = '数'; q.value = (a.qty == null ? 1 : a.qty);
+        q.addEventListener('input', () => {
+          research.accessories[i].qty = Number(q.value) || 1; scheduleSave();
+        });
+        line.appendChild(q);
+        const del = el('button', 'mini acc-del', '✕');
+        del.title = 'この付属品を削除';
+        del.addEventListener('click', () => {
+          research.accessories.splice(i, 1); drawAcc(); scheduleSave();
+        });
+        line.appendChild(del);
+        accList.appendChild(line);
+      });
+      const add = el('button', 'mini acc-add', '＋ 付属品を追加');
+      add.addEventListener('click', () => {
+        research.accessories.push({name: '', url: '', qty: 1, price: null});
+        drawAcc(); scheduleSave();
+      });
+      accList.appendChild(add);
+    };
+    drawAcc();
+    gB.appendChild(accWrap);
+  }
   function buildResearch(research){
     const box = el('div', 'research');
     box.dataset.rid = research.id;
@@ -8748,11 +8942,12 @@ if(FIREBASE_CONFIG.databaseURL){
     if(ADOPTED_STATUSES.indexOf(research.status) >= 0){
       const brief = el('div', 'brief');
       brief.appendChild(el('div', 'brief-title',
-        '画像外注へ渡す情報 ＆ 商品マスタ登録用'));
+        '画像外注へ渡す情報'));
       // いつ入力すればよいかを書いておく。枠の一番上にあるので、
       // 何も決まっていない段階で埋めようとして手が止まっていた
       brief.appendChild(el('div', 'brief-when',
-        '③商品タイトルを決めたあとに入力します（色ごとの欄は③の子から作られます）'));
+        '③商品タイトルを決めたあとに入力します。'
+        + '仕入先の言い方（中国語名・付属品）は⑦に移しました'));
       // 2つの目的が混ざる場所なので、見出しを付けて分ける。
       // 上＝デザイナーへ渡すもの、下＝仕入先へ伝えるもの（発注と商品マスタ）
       const sub = (text, note) => {
@@ -8810,167 +9005,10 @@ if(FIREBASE_CONFIG.databaseURL){
       if(row0) area(gA, '商品備考（表と同じ）', row0.note, v => { row0.note = v; });
 
       // ---- 仕入先へ伝えるもの ----
-      const gB = sub('仕入先の言い方（発注・商品マスタ用）',
-                     '⑦の❶「出品の準備」でSKUを決めたあと、'
-                     + '❷「📦 商品マスタに登録」を押す前に入力 → '
-                     + 'ここが商品マスタの仕様になり、発注でどの色を買うかが決まります');
-
-      const kidNames = (research.titleChildren || [])
-        .map(c => (splitKidName(c.name) || '').trim()).filter(Boolean);
-
-      // 色違いが無いときだけ共通の欄を出す。両方あると、どちらが効くのか
-      // 分からなくなる
-      if(!kidNames.length){
-        field(gB, '中国語名（本体）', research.cnName,
-              v => { research.cnName = v; }, 'w-cn');
-      }
-      field(gB, '本体URL（空なら1688 URL）', research.mainUrl,
-            v => { research.mainUrl = v; }, 'w-url');
-
-      // 色違いがあるときは、色ごとの中国語名が要る。1つの欄に2色まとめて
-      // 書くと、発注のときどちらのSKUを買うか決められない
-      if(kidNames.length){
-        if(!research.cnNames || typeof research.cnNames !== 'object') research.cnNames = {};
-        // 初回に何個頼むかは色ごとに変える（売れ筋の色を多めにする）。
-        // 中国語名と同じ行に置けば、発注書を作るときここだけ見れば済む
-        if(!research.firstQty || typeof research.firstQty !== 'object') research.firstQty = {};
-        // Vineは色ごとに出す・出さないを決める。初回の発注数に
-        // Vine提供分（最大30個）を足しておく必要があるので、同じ行で見る
-        if(!research.vine || typeof research.vine !== 'object') research.vine = {};
-        // ③で色名を変える前に入れた値が、古い色名のまま残っていることがある。
-        // 今ある色だけにして、消えた色のぶんは落とす（別の色の欄に
-        // 古い中国語名が出ていると、違う色を発注してしまう）
-        [research.cnNames, research.firstQty, research.vine].forEach(m => {
-          Object.keys(m).forEach(k => {
-            if(kidNames.indexOf(k) < 0) delete m[k];
-          });
-        });
-        const cw = el('div', 'brief-cell w-acc');
-        cw.appendChild(el('div', 'brief-cap', '中国語名（色ごと）と初回の発注数'));
-        const cl = el('div', 'acc-list');
-        // 合計の表示。先に作っておく（constは巻き上がらないので、
-        // 入力欄の中から呼ぶより前に用意しておく必要がある）
-        const totalTxt = el('span', 'acc-total');
-        const drawTotal = () => {
-          const n = kidNames.reduce(
-            (a, k) => a + (Number(research.firstQty[k]) || 0), 0);
-          const v = kidNames.filter(k => research.vine[k]);
-          totalTxt.textContent = (n ? '合計 ' + n + '個' : '')
-            + (v.length ? '　／　VINE: ' + v.join('・') : '');
-        };
-        kidNames.forEach(k => {
-          const line = el('div', 'acc-line');
-          line.appendChild(el('span', 'acc-cap', k));
-          const inp = document.createElement('input');
-          inp.type = 'text';
-          inp.placeholder = cnColorHint(k);
-          inp.value = research.cnNames[k] || '';
-          inp.addEventListener('input', () => {
-            research.cnNames[k] = inp.value; scheduleSave();
-          });
-          line.appendChild(inp);
-          const q = document.createElement('input');
-          q.type = 'number'; q.min = '0'; q.className = 'acc-qty';
-          q.placeholder = '初回';
-          q.title = 'この色を初回に何個発注するか';
-          q.value = (research.firstQty[k] == null ? '' : research.firstQty[k]);
-          q.addEventListener('input', () => {
-            const v = q.value.trim();
-            research.firstQty[k] = v === '' ? null : (Number(v) || 0);
-            drawTotal(); scheduleSave();
-          });
-          line.appendChild(q);
-          // Vineを使う色に印を付ける。発注数を決めるときに提供分を
-          // 足し忘れると、売る在庫が足りなくなる
-          const vw = document.createElement('label');
-          vw.className = 'acc-vine';
-          vw.title = 'この色でVineを使う（提供分を初回の発注数に含めてください）';
-          const vc = document.createElement('input');
-          vc.type = 'checkbox';
-          vc.checked = !!research.vine[k];
-          vc.addEventListener('change', () => {
-            research.vine[k] = vc.checked; drawTotal(); scheduleSave();
-          });
-          vw.appendChild(vc);
-          vw.appendChild(document.createTextNode('VINE'));
-          line.appendChild(vw);
-          cl.appendChild(line);
-        });
-        // 合計。発注書に書く数と突き合わせる
-        const totalLine = el('div', 'acc-line');
-        totalLine.appendChild(el('span', 'acc-cap', ''));
-        totalLine.appendChild(totalTxt);
-        drawTotal();
-        cl.appendChild(totalLine);
-        cw.appendChild(cl);
-        gB.appendChild(cw);
-      }
-
-      // 付属品。1つのURLに本体と袋が入っている商品のように、一緒に頼むもの。
-      // 在庫には連動しない（本体と一緒に発注する行として出るだけ）
-      if(!Array.isArray(research.accessories)) research.accessories = [];
-      const accWrap = el('div', 'brief-cell w-acc w-break');
-      accWrap.appendChild(el('div', 'brief-cap',
-        kidNames.length
-          ? '付属品（どの色にも共通。一緒に発注するもの）'
-          : '付属品（一緒に発注するもの）'));
-      accWrap.appendChild(el('div', 'acc-note',
-        '本体のSKUに含まれているもの（「套装（収納袋＋眼罩耳塞）」など、'
-        + '本体を選べば一緒に届くもの）は入れません。'
-        + '別に頼むものだけ、URLと中国語名を入れてください'
-        + (kidNames.length
-           ? '。色ごとに分けて入れないでください（どの色にも共通です）' : '')));
-      const accList = el('div', 'acc-list');
-      accWrap.appendChild(accList);
-      const drawAcc = () => {
-        accList.innerHTML = '';
-        research.accessories.forEach((a, i) => {
-          const line = el('div', 'acc-line');
-          const mk = (ph, val, on) => {
-            const inp = document.createElement('input');
-            inp.type = 'text'; inp.placeholder = ph; inp.value = val || '';
-            inp.addEventListener('input', () => { on(inp.value); scheduleSave(); });
-            line.appendChild(inp);
-          };
-          mk('中国語名（例: 收纳袋）', a.name, v => { research.accessories[i].name = v; });
-          mk('URL（空なら本体と同じ）', a.url, v => { research.accessories[i].url = v; });
-          // 単価が無いと原価に乗らず、そのぶん利益を多く見積もる。
-          // 実際、収納袋の分が0円で登録されていた
-          const pr = document.createElement('input');
-          pr.type = 'number'; pr.step = 'any'; pr.min = '0'; pr.className = 'acc-price';
-          pr.placeholder = '単価(元)';
-          pr.title = 'この付属品の1個あたりの値段（元）。空だと原価に乗りません';
-          pr.value = (a.price == null ? '' : a.price);
-          pr.addEventListener('input', () => {
-            const v = pr.value.trim();
-            research.accessories[i].price = v === '' ? null : (Number(v) || 0);
-            scheduleSave();
-          });
-          line.appendChild(pr);
-          const q = document.createElement('input');
-          q.type = 'number'; q.min = '1'; q.className = 'acc-qty';
-          q.placeholder = '数'; q.value = (a.qty == null ? 1 : a.qty);
-          q.addEventListener('input', () => {
-            research.accessories[i].qty = Number(q.value) || 1; scheduleSave();
-          });
-          line.appendChild(q);
-          const del = el('button', 'mini acc-del', '✕');
-          del.title = 'この付属品を削除';
-          del.addEventListener('click', () => {
-            research.accessories.splice(i, 1); drawAcc(); scheduleSave();
-          });
-          line.appendChild(del);
-          accList.appendChild(line);
-        });
-        const add = el('button', 'mini acc-add', '＋ 付属品を追加');
-        add.addEventListener('click', () => {
-          research.accessories.push({name: '', url: '', qty: 1, price: null});
-          drawAcc(); scheduleSave();
-        });
-        accList.appendChild(add);
-      };
-      drawAcc();
-      gB.appendChild(accWrap);
+      // 「仕入先の言い方」は⑦へ移した（2026-09-23）。
+      // 色ごとの欄は③の子から作られるので、ここにあると入力の順番が
+      // 前後する。実際に使うのは⑦でSKUを決めたあと、商品マスタに
+      // 登録する前なので、⑦の中で完結させた（buildSupplierWords）
 
       box.appendChild(brief);
     }
