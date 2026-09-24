@@ -6634,13 +6634,49 @@ if(FIREBASE_CONFIG.databaseURL){
     p2Ta.className = 'an-kwedit an-answer';
     p2Ta.placeholder = 'ここにSTEP2の答えを丸ごと貼り付けてください';
     body.appendChild(p2Ta);
+    const p2Row = el('div', 'an-row');
+    const p2Save = el('button', 'mini', '💾 保存');
+    const p2Copy = el('button', 'mini', '📋 コピー');
+    const p2Clear = el('button', 'mini danger', '🧹 クリア');
+    const p2Status = el('span', 'an-status');
+    [p2Save, p2Copy, p2Clear, p2Status].forEach(x => p2Row.appendChild(x));
+    body.appendChild(p2Row);
+
+    // STEP1と同じく、貼った原文もそのまま残して保存する。
+    // 以前は3つの欄へ移したあと空にしていたが、貼った先から消えるため
+    // 入らなかったように見えてしまう。読み返しにも使うので残す。
+    const p2Load = () => {
+      const p = getPage(research.id) || {};
+      p2Ta.value = p.step2 || '';
+    };
+    const p2SaveNow = (msg) => {
+      savePage(research.id, {step2: p2Ta.value.trim()});
+      if(msg){
+        p2Status.textContent = msg;
+        setTimeout(() => { p2Status.textContent = ''; }, 3000);
+      }
+    };
+    p2Load();
+
     p2Ta.addEventListener('paste', e => {
       const txt = e.clipboardData ? e.clipboardData.getData('text') : '';
       if(!applyAnswerPaste(txt, p2Ta)) return;   // 振り分けられない内容はそのまま
       e.preventDefault();
-      // 中身は3つの欄へ移したので、この欄には残さない
-      // （STEP1と違い、⑤に本文がそのまま残るため控えを持つ必要がない）
+      p2Ta.value = txt;                          // 原文は残す（読み返し用）
+      p2SaveNow('⑤・ターゲット顧客・色合いに振り分けて、この答えも保存しました');
+    });
+    p2Save.addEventListener('click', () => { p2SaveNow('保存しました'); });
+    p2Copy.addEventListener('click', () => {
+      if(!p2Ta.value.trim()){ p2Status.textContent = 'まだ何もありません'; return; }
+      navigator.clipboard.writeText(p2Ta.value)
+        .then(() => { p2Status.textContent = 'コピーしました'; })
+        .catch(() => { p2Status.textContent = '選択してコピーしてください'; });
+    });
+    p2Clear.addEventListener('click', () => {
+      if(!p2Ta.value.trim()){ p2Status.textContent = 'すでに空です'; return; }
+      if(!confirm('保存してあるSTEP2の答えを消しますか？\n⑤・ターゲット顧客・色合いに入れた内容は消えません。')) return;
       p2Ta.value = '';
+      p2SaveNow('消しました');
     });
 
     // ---- ⑤ 商品説明の本文（貼って保存＋チェック）----
@@ -6943,7 +6979,11 @@ if(FIREBASE_CONFIG.databaseURL){
         gTa.value = gb; got.push('画像作成指示書');
       }
       edSave(); edRefresh();
-      if(b) runCheck();
+      // 5行を入れたら、その場で不備の検査も出す。
+      // （ここは以前 runCheck() を呼んでいたが、そんな関数は無く必ず例外になっていた。
+      //   例外で applyAnswerPaste が最後まで進まず、貼った原文を残す処理まで
+      //   届かなかったのが「STEP2の欄に残らない」の原因）
+      if(b) drawCheck(cOut, cTa.value, specTa.value);
       const msg = (step2 ? 'STEP2の回答から入れました：' : 'AIの答えから入れました：') + got.join('・')
         + (miss.length ? '　※無かった見出し：' + miss.join('、') : '');
       [cStatus, dStatus].forEach(st => { st.textContent = msg; st.classList.toggle('warn', !!miss.length); });
