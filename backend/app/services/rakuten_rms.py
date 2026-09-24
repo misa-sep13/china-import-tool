@@ -6,7 +6,7 @@ import os
 import base64
 import json
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import httpx
 
@@ -675,3 +675,151 @@ async def test_connection(service_secret: str, license_key: str) -> dict:
             return {"ok": False, "status": res.status_code, "detail": res.text[:200]}
     except Exception as e:
         return {"ok": False, "status": 0, "detail": str(e)}
+
+
+# ---------- 発送処理（発送待ちの確認と発送完了報告） ----------
+#
+# RMSの画面は一度に299件しかメールを送れない（この店舗だけの不具合）。
+# APIは画面を通らないのでその制限を受けない。
+#
+# 発送完了報告は updateOrderShippingAsync（1回100注文まで・非同期）。
+# 伝票番号はCSVで先に入れてあるので、ここでやるのは「注文を締める」こと。
+# shippingDetailId を指定せずに送ると発送情報が「追加」になり、伝票番号が
+# 二重に並ぶ。必ず getOrder で既存のIDを読んでから更新する。
+
+SHIPPING_BATCH = 100          # updateOrderShippingAsync の上限
+# getOrder は1回100件まで。発送待ちは数百件あるので上限で取る
+GET_ORDER_BATCH = 100
+_API_INTERVAL_SEC = 1.0       # 仕様書「1秒に1リクエストまでを目安に」
+
+
+async def _post_rms(path: str, body: dict, headers: dict, timeout: int = 60):
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        return await client.post(
+            f"{RMS_BASE}{path}",
+            headers={**headers, "Content-Type": "application/json; charset=utf-8"},
+            content=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        )
+
+
+async def fetch_sub_statuses(service_secret: str, license_key: str) -> list[dict]:
+    """店舗が設定したサブステータスの一覧（本日発送分・あざみ分など）。"""
+    headers = _auth_header(service_secret, license_key)
+    try:
+        res = await _post_rms("/2.0/order/getSubStatusList", {}, headers, timeout=30)
+        if not res.is_success:
+            return []
+        data = res.json()
+    except Exception:
+        return []
+    out = []
+    for s in (data.get("SubStatusModelList") or data.get("subStatusList") or []):
+        sid = s.get("subStatusId") or s.get("id")
+        name = s.get("subStatusName") or s.get("name") or ""
+        if sid is not None:
+            out.append({"id": sid, "name": name})
+    return out
+
+
+def _shipping_rows(order: dict) -> list[dict]:
+    """注文の中の発送情報。送付先（basketId）ごとに1つ以上ある。
+
+    発送完了報告に要るのは basketId と shippingDetailId。項目名が仕様と
+    違っていても気づけるよう、拾えたかどうかを呼び出し側で数えている。
+    """
+    rows = []
+    for pkg in order.get("PackageModelList") or []:
+        basket_id = pkg.get("basketId")
+        ships = pkg.get("ShippingModelList") or []
+        if not ships:
+            rows.append({"basket_id": basket_id, "shipping_detail_id": None,
+                         "delivery_company": "", "shipping_number": "",
+                         "shipping_date": ""})
+            continue
+        for sh in ships:
+            rows.append({
+                "basket_id": basket_id,
+                "shipping_detail_id": sh.get("shippingDetailId"),
+                "delivery_company": str(sh.get("deliveryCompany") or ""),
+                "shipping_number": str(sh.get("shippingNumber") or ""),
+                "shipping_date": str(sh.get("shippingDate") or ""),
+            })
+    return rows
+
+
+async def fetch_shipping_targets(service_secret: str, license_key: str,
+                                 days: int = 45) -> dict:
+    """発送待ち（orderProgress=300）の注文を、発送情報つきで取ってくる。
+
+    伝票番号が入っているか、どのサブステータスかを画面で見るためのもの。
+    ここで basketId と shippingDetailId が取れていれば、そのまま発送完了
+    報告に回せる。
+    """
+    headers = _auth_header(service_secret, license_key)
+    now = datetime.now(timezone(timedelta(hours=9)))
+    start = now - timedelta(days=days)
+
+    order_numbers: list[str] = []
+    page = 1
+    while page <= 30:
+        body = {
+            "dateType": 1,
+            "startDatetime": start.strftime("%Y-%m-%dT00:00:00+0900"),
+            "endDatetime": now.strftime("%Y-%m-%dT%H:%M:%S+0900"),
+            "orderProgressList": [300],       # 発送待ち
+            "PaginationRequestModel": {"requestRecordsAmount": 1000,
+                                       "requestPage": page},
+        }
+        res = await _post_rms("/2.0/order/searchOrder", body, headers)
+        if not res.is_success:
+            break
+        data = res.json()
+        nums = []
+        for item in (data.get("orderNumberList") or []):
+            num = item if isinstance(item, str) else (item.get("orderNumber") or "")
+            if num:
+                nums.append(str(num))
+        order_numbers.extend(nums)
+        pag = data.get("PaginationResponseModel") or {}
+        if page >= (pag.get("totalPages") or 1) or not nums:
+            break
+        page += 1
+        await asyncio.sleep(_API_INTERVAL_SEC)
+
+    orders = []
+    found_basket = found_detail = 0
+    for i in range(0, len(order_numbers), GET_ORDER_BATCH):
+        batch = order_numbers[i:i + GET_ORDER_BATCH]
+        res = await _post_rms("/2.0/order/getOrder",
+                              {"orderNumberList": batch, "version": 10}, headers)
+        if not res.is_success:
+            continue
+        for o in (res.json().get("OrderModelList") or []):
+            ships = _shipping_rows(o)
+            if any(s["basket_id"] is not None for s in ships):
+                found_basket += 1
+            if any(s["shipping_detail_id"] is not None for s in ships):
+                found_detail += 1
+            orderer = o.get("OrdererModel") or {}
+            orders.append({
+                "order_number": str(o.get("orderNumber") or ""),
+                "order_date": str(o.get("orderDatetime") or "")[:10],
+                "sub_status_id": o.get("subStatusId"),
+                "sub_status_name": o.get("subStatusName") or "",
+                "delivery_name": o.get("deliveryName") or "",
+                "orderer": f"{orderer.get('familyName') or ''}{orderer.get('firstName') or ''}",
+                "total_price": o.get("totalPrice"),
+                "shipments": ships,
+                # 伝票番号がひとつでも入っていれば、発送完了報告に出せる
+                "has_number": any(s["shipping_number"] for s in ships),
+            })
+        if i + GET_ORDER_BATCH < len(order_numbers):
+            await asyncio.sleep(_API_INTERVAL_SEC)
+
+    return {
+        "orders": orders,
+        "total": len(orders),
+        # 項目名が仕様と違っていたらここが0になる。気づかず進まないための印
+        "diagnostics": {"with_basket_id": found_basket,
+                        "with_shipping_detail_id": found_detail},
+    }

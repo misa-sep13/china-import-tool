@@ -3501,6 +3501,48 @@ async def debug_rms_orders(db: Session = Depends(get_db)):
     return {"status": res.status_code, "body": res.json()}
 
 
+@router.get("/shipping/targets")
+async def rakuten_shipping_targets(days: int = 45, db: Session = Depends(get_db)):
+    """発送待ちの注文と、入っている発送情報を返す。
+
+    RMSの画面は一度に299件しかメールを送れないので、伝票番号CSVを上げた
+    あとの確認と発送完了報告をこちらでできるようにする。まずは確認だけ。
+
+    サブステータス（本日発送分・あざみ分・在庫切れ1 など）で分けて見たいので、
+    注文ごとのサブステータスも返す。
+    """
+    from app.services import rakuten_rms
+
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません")
+
+    subs = await rakuten_rms.fetch_sub_statuses(
+        settings.rms_service_secret, settings.rms_license_key)
+    data = await rakuten_rms.fetch_shipping_targets(
+        settings.rms_service_secret, settings.rms_license_key, days=days)
+
+    name_by_id = {str(s["id"]): s["name"] for s in subs}
+    counts: dict[str, int] = {}
+    for o in data["orders"]:
+        sid = o.get("sub_status_id")
+        key = str(sid) if sid is not None else ""
+        if not o.get("sub_status_name"):
+            o["sub_status_name"] = name_by_id.get(key, "")
+        counts[key] = counts.get(key, 0) + 1
+
+    groups = [{"id": "", "name": "サブステータスなし", "count": counts.get("", 0)}]
+    for s in subs:
+        key = str(s["id"])
+        groups.append({"id": key, "name": s["name"], "count": counts.get(key, 0)})
+    # 一覧に無いサブステータスが注文側に出ていたら、それも出す
+    for key, n in counts.items():
+        if key and key not in {g["id"] for g in groups}:
+            groups.append({"id": key, "name": name_by_id.get(key, key), "count": n})
+
+    return {**data, "groups": groups}
+
+
 @router.get("/rms/debug-order-detail")
 async def debug_rms_order_detail(db: Session = Depends(get_db)):
     """デバッグ用: getOrderの生レスポンスを返す（直近3日の先頭1件）"""

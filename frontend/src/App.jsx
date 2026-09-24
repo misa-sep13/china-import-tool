@@ -13,6 +13,7 @@ import RakutenProductsPage from './pages/RakutenProductsPage'
 import RakutenStockPage from './pages/RakutenStockPage'
 import RakutenSettingsPage from './pages/RakutenSettingsPage'
 import RakutenInvoicePage from './pages/RakutenInvoicePage'
+import RakutenShippingPage from './pages/RakutenShippingPage'
 import ImportPermitPage from './pages/ImportPermitPage'
 import WholesalePage from './pages/WholesalePage'
 import RakutenSalesPage from './pages/RakutenSalesPage'
@@ -194,6 +195,9 @@ function App() {
         <NavLink to="/rakuten/products" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🏷️ 商品マスタ
         </NavLink>
+        <NavLink to="/rakuten/shipping" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          🚚 発送処理
+        </NavLink>
         <NavLink to="/rakuten/invoices" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📄 仕入管理
         </NavLink>
@@ -261,6 +265,7 @@ function App() {
           <Route path="/rakuten/sales" element={<RakutenSalesPage />} />
           <Route path="/rakuten/daily-sales" element={<RakutenDailySalesPage />} />
           <Route path="/rakuten/products" element={<RakutenProductsPage />} />
+          <Route path="/rakuten/shipping" element={<RakutenShippingPage />} />
           <Route path="/rakuten/invoices" element={<RakutenInvoicePage />} />
           <Route path="/import-permits" element={<ImportPermitPage />} />
           <Route path="/wholesale" element={<WholesalePage />} />
