@@ -269,23 +269,11 @@ export default function RakutenInvoicePage() {
       <div className="card" style={{ marginBottom: 16 }}>
         <h3 style={{ marginBottom: 6 }}>ファイルを用意せずに取り込む</h3>
         <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
-          インボイスはタオタロウから、許可書は保管済みから。
-          便と許可書を選んで「読み込む」を押してください。ダウンロードは要りません。
+          先に輸入許可書を選び、「この許可書に合う便を探す」を押すと、
+          貨物重量と個数の合う便が入ります。あとは「読み込む」だけです。
+          便が分かっているときは直接選んでも構いません。ダウンロードは要りません。
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          <div className="form-group">
-            <label>配送依頼（インボイスの代わり）</label>
-            <select value={apiSid} onChange={e => { setApiSid(e.target.value); reset() }}
-              style={{ width: '100%', padding: '6px 8px' }}>
-              <option value="">選んでください</option>
-              {sendOrders.map(x => (
-                <option key={x.sid} value={x.sid}>
-                  {x.sn || x.sid}　{x.state_label}　{x.total_send_fee}元
-                  {x.count_weight ? `　${x.count_weight}kg` : ''}
-                </option>
-              ))}
-            </select>
-          </div>
           <div className="form-group">
             <label>輸入許可書（保管済み）</label>
             <select value={apiPermitId} onChange={e => { setApiPermitId(e.target.value); reset() }}
@@ -295,6 +283,19 @@ export default function RakutenInvoicePage() {
                 <option key={p.id} value={p.id}>
                   {p.permit_date || p.mail_date || '日付なし'}
                   {p.permit_no || '(番号なし)'}　¥{(p.total_tax || 0).toLocaleString()}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>配送依頼（インボイスの代わり）</label>
+            <select value={apiSid} onChange={e => { setApiSid(e.target.value); reset() }}
+              style={{ width: '100%', padding: '6px 8px' }}>
+              <option value="">選んでください</option>
+              {sendOrders.map(x => (
+                <option key={x.sid} value={x.sid}>
+                  {x.sn || x.sid}　{x.state_label}　{x.total_send_fee}元
+                  {x.count_weight ? `　${x.count_weight}kg` : ''}
                 </option>
               ))}
             </select>
