@@ -377,6 +377,10 @@ def _detect_campaign(
 
     「母乳パッド」と「パッド」のように、片方がもう片方の一部になっている
     キーワードは取り合いにしない。長いほう（＝具体的なほう）を採る。
+
+    英字のキーワードは、前後に英字が続いていたら当てない。「BP2枚希望」の
+    頭のBを review-B（ヘアゴム）が拾ってしまい、BP（母乳パッド）希望の方が
+    全員ヘアゴムで登録されていた。数字は続いてよい（「I2」＝3in1充電コード）。
     """
     kw_code: list[tuple[str, str]] = []
     for c in campaigns:
@@ -389,7 +393,7 @@ def _detect_campaign(
     def _pick(text: str, min_len: int) -> str | None:
         t = (text or "").lower()
         hits = [(kw, code) for kw, code in kw_code
-                if len(kw) >= min_len and kw.lower() in t]
+                if len(kw) >= min_len and _kw_in(kw, t)]
         if not hits:
             return None
         best_kw, best_code = hits[0]          # 一番長く当たったもの
@@ -412,10 +416,24 @@ def _detect_campaign(
     return None
 
 
+def _kw_in(kw: str, text_lower: str) -> bool:
+    """キーワードがその文章に出てくるか。
+
+    英字・数字だけでできたキーワード（A / B / BP など）は、前後に英字が
+    続いていたら別の語の一部なので当てない。「BP2枚」の頭のBを review-B が
+    拾っていた。数字が続くのは許す（「I2」は 3in1充電コードの指定）。
+    """
+    k = kw.lower()
+    if kw.isascii() and kw.isalnum():
+        return re.search(r"(?<![a-z])" + re.escape(k) + r"(?![a-z])",
+                         text_lower) is not None
+    return k in text_lower
+
+
 def _pick_has_hits(text: str, kw_code: list, min_len: int) -> bool:
     """その文章にキャンペーンのキーワードが1つでも出てくるか。"""
     t = (text or "").lower()
-    return any(len(kw) >= min_len and kw.lower() in t for kw, _ in kw_code)
+    return any(len(kw) >= min_len and _kw_in(kw, t) for kw, _ in kw_code)
 
 
 _CONFIRM_RE = re.compile(r"(.{0,25})承知(?:いた|致)しました")
