@@ -2893,6 +2893,58 @@ def rakuten_stored_permit(permit_id: int, db: Session = Depends(get_db)):
     }
 
 
+@router.get("/invoices/weight-check")
+def rakuten_weight_check(sid: int, permit_id: int | None = None,
+                         db: Session = Depends(get_db)):
+    """便の重量を突き合わせる。
+
+    タオタロウの請求は「計費重量」で立つ。かさばる荷物は箱の大きさで料金が
+    決まるので、実重量より大きくなるのが普通。ただし実重量でも容積重量でも
+    説明がつかない数字が入っていたら、それは請求のミスなので指摘したい。
+
+    あわせて、実重量の合計が輸入許可書の貨物重量と合っているかも見る。
+    合わなければ、税関に申告した荷物とこちらの荷物が食い違っている。
+    """
+    from app.models.import_permit import ImportPermit
+    from app.services import taotaro
+    from app.services.permit_mail import parse_permit_cargo
+    import openpyxl
+
+    try:
+        raw = taotaro.invoice_workbook(int(sid))
+    except taotaro.TaotaroError as e:
+        raise HTTPException(502, e.message)
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(raw))
+    except Exception as e:
+        raise HTTPException(400, f"Excel読み込みエラー: {e}")
+
+    parsed = _parse_rakuten_invoice_workbook(wb)
+    permit = {}
+    if permit_id:
+        row = db.query(ImportPermit).filter(ImportPermit.id == permit_id).first()
+        if row and row.pdf:
+            permit = parse_permit_cargo(_permit_text(row.pdf))
+
+    out = invoice_calc.check_box_weights(
+        parsed.get("box_data") or {},
+        parsed.get("international_freight") or 0,
+        permit.get("cargo_weight") or 0,
+        permit.get("package_count") or 0,
+    )
+    out["invoice_no"] = parsed.get("invoice_no")
+    out["permit"] = permit
+    try:
+        d = taotaro.get_send_order(int(sid))
+        out["sn"] = d.get("sn")
+        out["delivery_name"] = d.get("delivery_name")
+        # 便の一覧に出ている重量。請求の根拠がこれで合っているかを見る
+        out["taotaro_weight"] = d.get("count_weight")
+    except taotaro.TaotaroError:
+        pass
+    return out
+
+
 @router.post("/invoices/parse-excel")
 async def rakuten_parse_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """タオタロウ形式ExcelをパースしてSKU・単価を返す"""

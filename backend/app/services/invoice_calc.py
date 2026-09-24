@@ -864,3 +864,92 @@ def calc_tariff_tax(
                 result[k]["consumption_tax_jpy"] += diff
                 result[k]["total_tax_jpy"] += diff
     return result
+
+
+# ---------- 重量の突き合わせ ----------
+#
+# タオタロウの請求は「計費重量」で立つ。かさばる荷物は実重量ではなく
+# 箱の大きさで料金が決まるため、実重量より大きくなるのが普通。
+# ただし、実重量でも容積重量でもない数字が入っていたらそれは請求のミスなので、
+# 箱ごとに見分けられるようにする。
+#
+# 容積重量の係数（1立方メートルあたり何kgとみなすか）は業者ごとに違う。
+# 推測せず、箱ごとの体積と計費重量から逆算する。
+
+# 逆算した係数がこの幅を外れる箱は、体積で立てた請求とはみなさない
+_VOLUME_K_MIN, _VOLUME_K_MAX = 100.0, 1200.0
+# 丸めの誤差。これを超えて大きいときだけ指摘する
+_WEIGHT_TOLERANCE_KG = 0.5
+
+
+def _median(values: list) -> float:
+    if not values:
+        return 0.0
+    s = sorted(values)
+    n = len(s)
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+
+
+def check_box_weights(box_data: dict, international_freight: float = 0.0,
+                      permit_weight: float = 0.0,
+                      permit_packages: int = 0) -> dict:
+    """箱ごとの実重量・体積・計費重量を突き合わせる。
+
+    見たいのは2つ。
+      ・請求の根拠（計費重量）が、実重量とも容積重量とも違っていないか
+      ・実重量の合計が、輸入許可書の貨物重量と合っているか
+        （合わなければ、申告した荷物とこちらの荷物が食い違っている）
+    """
+    boxes = box_data.get("boxes") or {}
+    rows = []
+    ratios = []
+    for no in sorted(boxes.keys(), key=lambda x: (isinstance(x, str), x)):
+        b = boxes[no] or {}
+        actual = float(b.get("actual_weight") or 0)
+        volume = float(b.get("volume") or 0)
+        billing = float(b.get("billing_weight") or 0)
+        if volume > 0 and billing > actual:
+            k = billing / volume
+            if _VOLUME_K_MIN <= k <= _VOLUME_K_MAX:
+                ratios.append(k)
+        rows.append({"box": no, "l": b.get("l"), "w": b.get("w"), "h": b.get("h"),
+                     "actual_weight": round(actual, 3), "volume": round(volume, 4),
+                     "billing_weight": round(billing, 3)})
+
+    k = round(_median(ratios), 1)
+    for r in rows:
+        vw = round(r["volume"] * k, 3) if k else 0.0
+        r["volume_weight"] = vw
+        expected = max(r["actual_weight"], vw)
+        r["expected_weight"] = round(expected, 3)
+        # 実重量でも容積重量でも説明がつかない請求だけを指摘する
+        r["over"] = bool(expected > 0 and r["billing_weight"] > expected + _WEIGHT_TOLERANCE_KG)
+        r["basis"] = ("体積" if vw > r["actual_weight"] else "実重量") if k else "実重量"
+
+    total_actual = round(sum(r["actual_weight"] for r in rows), 3)
+    total_billing = round(sum(r["billing_weight"] for r in rows), 3)
+    total_volume = round(sum(r["volume"] for r in rows), 4)
+    extra_kg = round(total_billing - total_actual, 3)
+    unit = round(international_freight / total_billing, 4) if total_billing else 0.0
+
+    permit_diff = None
+    if permit_weight:
+        permit_diff = round(total_actual - float(permit_weight), 3)
+
+    return {
+        "boxes": rows,
+        "box_count": len(rows),
+        "total_actual_weight": total_actual,
+        "total_billing_weight": total_billing,
+        "total_volume": total_volume,
+        "volume_k": k,                       # 1m3を何kgとみなしているか（逆算）
+        "international_freight": round(float(international_freight or 0), 2),
+        "freight_per_kg": unit,              # 元/kg
+        "extra_kg": extra_kg,                # 実重量との差
+        "extra_cny": round(extra_kg * unit, 2),
+        "over_boxes": [r["box"] for r in rows if r["over"]],
+        "permit_weight": round(float(permit_weight or 0), 3),
+        "permit_packages": int(permit_packages or 0),
+        "permit_weight_diff": permit_diff,   # 実重量 − 許可書の貨物重量
+        "packages_match": (bool(permit_packages) and int(permit_packages) == len(rows)),
+    }

@@ -145,6 +145,7 @@ def parse_permit_text(text: str) -> dict:
     return {
         "is_permit": looks_like_permit(text),
         "permit_no": _declaration_no(text),
+        **parse_permit_cargo(text),
         "permit_date": _permit_date(text),
         "permit_cny": _find(
             r"仕入書価格\s+[A-Z]\s+-\s+CIF\s+-\s+CNY\s+-\s+([\d,\.]+)",
@@ -156,6 +157,29 @@ def parse_permit_text(text: str) -> dict:
         "consumption_tax": ctax,
         "local_consumption_tax": ltax,
     }
+
+
+def parse_permit_cargo(text: str) -> dict:
+    """許可書から荷物そのものの情報を読む。
+
+    金額とは別に、貨物重量・個数・入港年月日・船便か航空便かが載っている。
+    どの便の許可書かを突き合わせるのと、タオタロウの請求重量と照らすのに使う。
+    読めなければ0や空で返す（原本は残るので、あとから目で見られる）。
+    """
+    weight = _find(r"貨物重量\s*([\d,]+\.?\d*)\s*KGM", text,
+                   lambda x: float(x.replace(",", "")), 0.0) or 0.0
+    packages = _find(r"貨物個数\s*([\d,]+)\s*[A-Z]{2}", text,
+                     lambda x: int(x.replace(",", "")), 0) or 0
+    arrival = _find(r"入港年月日\s*(\d{4}/\d{1,2}/\d{1,2})", text, str, "") or ""
+    # 1枚目の左上に <SEA/IMP> か <AIR/IMP> が入る。通関料（船便のみ）の判定に使える
+    transport = ""
+    if re.search(r"<\s*SEA\s*/", text):
+        transport = "sea"
+    elif re.search(r"<\s*AIR\s*/", text):
+        transport = "air"
+    return {"cargo_weight": weight, "package_count": packages,
+            "arrival_date": arrival.replace("/", "-") if arrival else "",
+            "transport": transport}
 
 
 def _connect():

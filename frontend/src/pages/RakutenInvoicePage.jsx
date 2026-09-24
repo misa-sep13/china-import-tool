@@ -43,6 +43,7 @@ export default function RakutenInvoicePage() {
 
   function reset() {
     setValidation(null); setParsed(null); setPdfResult(null); setCalculated(null); setSaved(null)
+    setWeightCheck(null)
     setForm({ invoice_no: '', invoice_date: '', exchange_rate: 20.0, domestic_freight: 0, international_freight: 0, import_tax_jpy: 0 })
   }
 
@@ -54,6 +55,8 @@ export default function RakutenInvoicePage() {
   const [apiPermitId, setApiPermitId] = useState('')
   const [apiLoading, setApiLoading] = useState(false)
   const [apiInfo, setApiInfo] = useState(null)
+  // 重量の突き合わせ。請求の根拠（計費重量）と、許可書に申告した重量を照らす
+  const [weightCheck, setWeightCheck] = useState(null)
   const [sendOrders, setSendOrders] = useState([])
   const [storedPermits, setStoredPermits] = useState([])
 
@@ -112,6 +115,12 @@ export default function RakutenInvoicePage() {
           ? '金額が合いません。便と許可書の組み合わせをご確認ください'
           : '許可書からCNY金額を読めなかったので、突き合わせは省略しました',
       })
+      // 重量の突き合わせ。取れなくても取り込みは続けたいので、失敗は黙って流す
+      try {
+        const wRes = await api.get('/rakuten/invoices/weight-check',
+          { params: { sid: Number(apiSid), permit_id: Number(apiPermitId) } })
+        setWeightCheck(wRes.data)
+      } catch { /* 箱シートが無い便もある */ }
     } catch (err) {
       alert('読み込みエラー: ' + (err.response?.data?.detail || err.message))
     } finally {
@@ -299,6 +308,9 @@ export default function RakutenInvoicePage() {
               箱ごとの重量も入っているので、国際送料は実測重量で配ります。
             </div>
           </div>
+        )}
+        {weightCheck && weightCheck.box_count > 0 && (
+          <WeightCheckCard w={weightCheck} />
         )}
       </div>
 
@@ -746,6 +758,124 @@ export default function RakutenInvoicePage() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+/**
+ * 重量の突き合わせ。
+ *
+ * タオタロウの請求は「計費重量」で立つ。かさばる荷物は箱の大きさで料金が
+ * 決まるので、実重量より大きくなるのは普通のこと。問題なのは、実重量でも
+ * 容積重量でも説明がつかない数字が入っている箱。そこだけを指す。
+ *
+ * あわせて、実重量の合計が輸入許可書の貨物重量と合っているかも見る。
+ * 合わなければ、税関に申告した荷物とこちらの荷物が食い違っている。
+ */
+function WeightCheckCard({ w }) {
+  const over = (w.over_boxes || []).length > 0
+  const permitDiff = w.permit_weight_diff
+  const permitOk = w.permit_weight > 0 && Math.abs(permitDiff) <= 1
+  const th = { padding: '4px 8px', textAlign: 'right', fontSize: 11, color: '#64748b',
+    background: '#f8fafc', whiteSpace: 'nowrap' }
+  const td = { padding: '4px 8px', textAlign: 'right', fontSize: 12,
+    borderTop: '1px solid #e2e8f0', whiteSpace: 'nowrap' }
+
+  return (
+    <div style={{ marginTop: 12, border: '1px solid #e2e8f0', borderRadius: 8,
+      padding: 12, background: '#fff' }}>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+        ⚖️ 重量の突き合わせ
+      </div>
+
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 13,
+        marginBottom: 10 }}>
+        <span>実重量の合計 <b>{w.total_actual_weight}kg</b></span>
+        <span>請求の根拠（計費重量） <b>{w.total_billing_weight}kg</b></span>
+        <span>体積の合計 {w.total_volume}m³</span>
+        {w.volume_k > 0 && (
+          <span style={{ color: '#64748b' }}>
+            容積重量の換算 1m³ ＝ {w.volume_k}kg（実データから逆算）
+          </span>
+        )}
+      </div>
+
+      {/* 実重量で払った場合との差。容積重量での請求は普通なので、
+          金額を出すだけで「取られすぎ」とは書かない */}
+      {w.freight_per_kg > 0 && (
+        <div style={{ fontSize: 12, color: '#475569', marginBottom: 10 }}>
+          国際送料 {w.international_freight}元 ÷ {w.total_billing_weight}kg ＝
+          <b> {w.freight_per_kg}元/kg</b>。
+          実重量との差 {w.extra_kg}kg ぶんで <b>{w.extra_cny}元</b>。
+          <span style={{ color: '#64748b' }}>
+            　かさばる荷物を容積重量で請求するのは通常の扱いです。
+          </span>
+        </div>
+      )}
+
+      <div style={{ overflow: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', minWidth: 520 }}>
+          <thead>
+            <tr>
+              <th style={{ ...th, textAlign: 'left' }}>箱</th>
+              <th style={th}>実重量</th>
+              <th style={th}>体積</th>
+              <th style={th}>容積重量</th>
+              <th style={th}>計費重量</th>
+              <th style={{ ...th, textAlign: 'left' }}>根拠</th>
+            </tr>
+          </thead>
+          <tbody>
+            {w.boxes.map(b => (
+              <tr key={b.box} style={{ background: b.over ? '#fef2f2' : undefined }}>
+                <td style={{ ...td, textAlign: 'left' }}>{b.box}</td>
+                <td style={td}>{b.actual_weight}kg</td>
+                <td style={td}>{b.volume}m³</td>
+                <td style={td}>{b.volume_weight}kg</td>
+                <td style={{ ...td, fontWeight: 700,
+                  color: b.over ? '#dc2626' : '#0f172a' }}>
+                  {b.billing_weight}kg
+                </td>
+                <td style={{ ...td, textAlign: 'left', color: '#64748b' }}>
+                  {b.over ? '⚠ どちらでも説明がつきません' : b.basis}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {over && (
+        <div style={{ marginTop: 8, fontSize: 12, color: '#991b1b', background: '#fef2f2',
+          border: '1px solid #fecaca', borderRadius: 6, padding: '6px 10px' }}>
+          箱 {w.over_boxes.join('、')} の計費重量が、実重量とも容積重量とも合いません。
+          タオタロウに確認する価値があります。
+        </div>
+      )}
+
+      {/* 許可書との突き合わせ。ここが合わないほうが重い話 */}
+      {w.permit_weight > 0 ? (
+        <div style={{ marginTop: 8, fontSize: 12,
+          color: permitOk ? '#166534' : '#991b1b',
+          background: permitOk ? '#f0fdf4' : '#fef2f2',
+          border: `1px solid ${permitOk ? '#bbf7d0' : '#fecaca'}`,
+          borderRadius: 6, padding: '6px 10px' }}>
+          輸入許可書の貨物重量 {w.permit_weight}kg
+          {w.permit_packages ? ` / ${w.permit_packages}個口` : ''}
+          　実重量との差 {permitDiff}kg
+          {w.permit_packages
+            ? `（箱数 ${w.box_count} と${w.packages_match ? '一致' : '不一致'}）`
+            : ''}
+          {permitOk
+            ? '　申告した荷物と一致しています。'
+            : '　申告した荷物とこちらの荷物が食い違っています。便の組み合わせが違う可能性もあります。'}
+        </div>
+      ) : (
+        <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
+          許可書から貨物重量を読めませんでした（原本は保管されています）。
         </div>
       )}
     </div>
