@@ -461,6 +461,7 @@ def verify_allocation(
     import_tax_jpy: float,
     permit_columns: list | None = None,
     customs_fee_jpy: float = 0,
+    unknown_alloc: dict | None = None,
 ) -> dict:
     """配賦結果を検算する。総額が合っていても配り方が偏っていることはあるので、
     「配り切れたか」だけでなく「どこへ配ったか」も見る。
@@ -468,6 +469,11 @@ def verify_allocation(
     NGが出たら保存を止める。誤った原価が最新版として出回るほうが危ないため。
     戻り値: {"ok": bool, "checks": [{name, ok, level, detail}, ...]}
     level: "error"=保存を止める / "warn"=保存はするが画面に出す
+
+    unknown_alloc: マスタに無い明細へ配られた額。渡されたらこれを使う。
+      送料は重量で配るので、未登録の明細が「金額は小さいが大きい箱」だと、
+      金額のカバー率から期待値を出す昔のやり方では合わなくなる。
+      （梱包箱が7行未登録の便で、金額では7.4%なのに運賃は33%を負担していた）
     """
     checks: list[dict] = []
 
@@ -479,38 +485,58 @@ def verify_allocation(
 
     # ① 送料の配賦: 配った送料 ＋ 未登録分 ＝ 便の運賃
     alloc_freight = sum(r.get("freight_alloc_cny") or 0 for r in all_rows)
-    expected_freight = total_freight_cny * covered_ratio
+    if unknown_alloc is not None:
+        unknown_freight = float(unknown_alloc.get("freight_cny") or 0)
+        expected_freight = total_freight_cny - unknown_freight
+        note_f = (f"（便の運賃{round(total_freight_cny, 2)}元 − "
+                  f"未登録分{round(unknown_freight, 2)}元）")
+    else:
+        expected_freight = total_freight_cny * covered_ratio
+        note_f = (f"（便の運賃{round(total_freight_cny, 2)}元 × "
+                  f"カバー率{coverage.get('coverage_rate')}%）")
     diff_f = abs(alloc_freight - expected_freight)
     add(
         "送料の配賦",
         diff_f <= max(1.0, total_freight_cny * 0.005),
         "error",
-        f"配賦{round(alloc_freight, 2)}元 / 期待{round(expected_freight, 2)}元"
-        f"（便の運賃{round(total_freight_cny, 2)}元 × カバー率{coverage.get('coverage_rate')}%）",
+        f"配賦{round(alloc_freight, 2)}元 / 期待{round(expected_freight, 2)}元{note_f}",
     )
 
     # ② 税額の配賦: 配った税 ＋ 未登録分 ＝ 便の税
     alloc_tax = sum(r.get("tax_alloc_jpy") or 0 for r in all_rows)
-    expected_tax = import_tax_jpy * covered_ratio
+    if unknown_alloc is not None:
+        unknown_tax = float(unknown_alloc.get("tax_jpy") or 0)
+        expected_tax = import_tax_jpy - unknown_tax
+        note_t = f"（便の税¥{round(import_tax_jpy)} − 未登録分¥{round(unknown_tax)}）"
+    else:
+        expected_tax = import_tax_jpy * covered_ratio
+        note_t = (f"（便の税¥{round(import_tax_jpy)} × "
+                  f"カバー率{coverage.get('coverage_rate')}%）")
     diff_t = abs(alloc_tax - expected_tax)
     add(
         "税額の配賦",
         diff_t <= max(10.0, import_tax_jpy * 0.005),
         "error",
-        f"配賦¥{round(alloc_tax)} / 期待¥{round(expected_tax)}"
-        f"（便の税¥{round(import_tax_jpy)} × カバー率{coverage.get('coverage_rate')}%）",
+        f"配賦¥{round(alloc_tax)} / 期待¥{round(expected_tax)}{note_t}",
     )
 
     # ③ 通関料の配賦: 配った通関料 ＋ 未登録分 ＝ 便の通関料
     if customs_fee_jpy > 0:
         alloc_fee = sum(r.get("customs_fee_alloc_jpy") or 0 for r in all_rows)
-        expected_fee = customs_fee_jpy * covered_ratio
+        if unknown_alloc is not None:
+            unknown_fee = float(unknown_alloc.get("customs_fee_jpy") or 0)
+            expected_fee = customs_fee_jpy - unknown_fee
+            note_c = (f"（便の通関料¥{round(customs_fee_jpy)} − "
+                      f"未登録分¥{round(unknown_fee)}）")
+        else:
+            expected_fee = customs_fee_jpy * covered_ratio
+            note_c = (f"（便の通関料¥{round(customs_fee_jpy)} × "
+                      f"カバー率{coverage.get('coverage_rate')}%）")
         add(
             "通関料の配賦",
             abs(alloc_fee - expected_fee) <= max(5.0, customs_fee_jpy * 0.01),
             "error",
-            f"配賦¥{round(alloc_fee)} / 期待¥{round(expected_fee)}"
-            f"（便の通関料¥{round(customs_fee_jpy)} × カバー率{coverage.get('coverage_rate')}%）",
+            f"配賦¥{round(alloc_fee)} / 期待¥{round(expected_fee)}{note_c}",
         )
 
     # ④ 許可書の実額と配賦額の一致（欄ごとの実額を使っている場合のみ）
@@ -523,11 +549,17 @@ def verify_allocation(
             for c in cols
         )
         if permit_total > 0:
+            if unknown_alloc is not None:
+                expected_permit = permit_total - float(unknown_alloc.get("tax_jpy") or 0)
+                note_p = f"許可書の実額¥{round(permit_total)} − 未登録分"
+            else:
+                expected_permit = permit_total * covered_ratio
+                note_p = f"許可書の実額¥{round(permit_total)} × カバー率"
             add(
                 "許可書との一致",
-                abs(alloc_tax - permit_total * covered_ratio) <= max(10.0, permit_total * 0.01),
+                abs(alloc_tax - expected_permit) <= max(10.0, permit_total * 0.01),
                 "error",
-                f"許可書の実額¥{round(permit_total)} × カバー率 vs 配賦¥{round(alloc_tax)}",
+                f"{note_p} vs 配賦¥{round(alloc_tax)}",
             )
             # 許可書に税額があるのに1円も配られていない（配り忘れ）
             add(

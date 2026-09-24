@@ -3218,6 +3218,10 @@ def _rakuten_build_cost_rows(data: "RakutenInvoiceIn", db: Session):
     rows = []
     material_rows = []
     unknown = 0
+    # マスタに無い明細へ配られた額。検算の期待値に使う。
+    # 送料は重量で配るので、未登録の明細が「金額は小さいが大きい箱」だと
+    # 金額のカバー率からは出せない
+    unknown_alloc = {"freight_cny": 0.0, "tax_jpy": 0.0, "customs_fee_jpy": 0.0}
     for idx, item in enumerate(data.items):
         item_total = item_totals[idx]
         freight_alloc = freight_by_index.get(idx, 0.0)
@@ -3247,6 +3251,9 @@ def _rakuten_build_cost_rows(data: "RakutenInvoiceIn", db: Session):
 
         if kind == invoice_calc.KIND_UNKNOWN:
             unknown += 1
+            unknown_alloc["freight_cny"] += freight_alloc
+            unknown_alloc["tax_jpy"] += tax_alloc_jpy
+            unknown_alloc["customs_fee_jpy"] += fee_alloc
             continue
 
         set_size = (product.set_size or 1) if product else 1
@@ -3270,6 +3277,7 @@ def _rakuten_build_cost_rows(data: "RakutenInvoiceIn", db: Session):
         import_tax_jpy=import_tax_jpy,
         permit_columns=data.permit_columns,
         customs_fee_jpy=customs_fee,
+        unknown_alloc=unknown_alloc,
     )
 
     return {
