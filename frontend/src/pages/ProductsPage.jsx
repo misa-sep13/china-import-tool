@@ -285,15 +285,14 @@ export default function ProductsPage() {
               <thead>
                 <tr>
                   <th>SKU</th>
-                  <th>商品名</th>
+                  <th style={{ minWidth: 280 }}>商品名</th>
                   <th>区分</th>
                   <th>仕様</th>
-                  <th>お客様専用メモ</th>
                   <th style={{ textAlign: 'right' }}>単価(元)</th>
                   <th style={{ textAlign: 'right' }}>仕入原価(円)</th>
                   <th style={{ textAlign: 'right' }}>販売価格(円)</th>
                   <th style={{ textAlign: 'right' }}>FBA手数料</th>
-                  <th style={{ textAlign: 'right' }}>Amazon手数料率</th>
+                  <th style={{ textAlign: 'right', width: 56 }}>手数料</th>
                   <th style={{ textAlign: 'right' }}>利益額</th>
                   <th style={{ textAlign: 'right' }}>利益率</th>
                   <th>備考</th>
@@ -306,7 +305,7 @@ export default function ProductsPage() {
                   return (
                     <tr key={p.id}>
                       <td style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap' }}>{p.sku}</td>
-                      <td style={{ maxWidth: 180 }}>
+                      <td style={{ maxWidth: 320, minWidth: 260 }}>
                         {inlineEdit?.id === p.id ? (
                           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                             <input
@@ -314,7 +313,7 @@ export default function ProductsPage() {
                               value={inlineEdit.value}
                               onChange={e => setInlineEdit(v => ({ ...v, value: e.target.value }))}
                               onKeyDown={e => handleInlineKeyDown(e, p.id)}
-                              style={{ fontSize: 13, padding: '2px 6px', border: '1px solid #3b82f6', borderRadius: 4, width: 140 }}
+                              style={{ fontSize: 13, padding: '2px 6px', border: '1px solid #3b82f6', borderRadius: 4, width: 240 }}
                             />
                             <button className="btn btn-primary btn-sm"
                               onClick={() => saveInlineName.mutate({ id: p.id, name: inlineEdit.value })}
@@ -352,9 +351,6 @@ export default function ProductsPage() {
                       <td style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }} title={p.spec}>
                         {p.spec || <span style={{ color: '#bbb' }}>-</span>}
                       </td>
-                      <td style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: '#666' }} title={p.customer_memo}>
-                        {p.customer_memo || <span style={{ color: '#bbb' }}>-</span>}
-                      </td>
                       <td style={{ textAlign: 'right' }}>
                         {p.price ? `${p.price.toLocaleString()} 元` : <span style={{ color: '#bbb' }}>-</span>}
                       </td>
@@ -367,7 +363,7 @@ export default function ProductsPage() {
                       <td style={{ textAlign: 'right' }}>
                         {p.fba_fee ? `¥${p.fba_fee.toLocaleString()}` : <span style={{ color: '#bbb' }}>-</span>}
                       </td>
-                      <td style={{ textAlign: 'right', fontSize: 12 }}>
+                      <td style={{ textAlign: 'right', fontSize: 12, width: 56 }}>
                         {((p.amazon_fee_rate ?? 0.1) * 100).toFixed(0)}%
                       </td>
                       <td style={{ textAlign: 'right', fontWeight: 600, color: profit ? (profit.profit >= 0 ? '#16a34a' : '#dc2626') : '#bbb' }}>
