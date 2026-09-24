@@ -368,6 +368,15 @@ def _detect_campaign(
     （例: アームカバーの商品名に含まれる F を拾って review-F と誤判定）、
     商品名に対しては2文字以上のキーワードだけを使う。
     1文字キーワードはお客様が明示的に書いたメッセージにのみ適用する。
+
+    プレゼントの候補が2つ以上出てくる文章からは、どれか1つを選ばない。
+    「選べるプレゼント」の案内文には全商品の名前が並んでいるので、そこから
+    一番長いキーワードを拾っていた結果、その文で返信した人が全員おなじ
+    商品になっていた（ブラパッド希望の方がヘアゴムで登録されていた）。
+    判定できない行は空のまま出して、画面で選んでもらう。
+
+    「母乳パッド」と「パッド」のように、片方がもう片方の一部になっている
+    キーワードは取り合いにしない。長いほう（＝具体的なほう）を採る。
     """
     kw_code: list[tuple[str, str]] = []
     for c in campaigns:
@@ -377,19 +386,36 @@ def _detect_campaign(
             kw_code.append((kw, c.code))
     kw_code.sort(key=lambda x: len(x[0]), reverse=True)
 
+    def _pick(text: str, min_len: int) -> str | None:
+        t = (text or "").lower()
+        hits = [(kw, code) for kw, code in kw_code
+                if len(kw) >= min_len and kw.lower() in t]
+        if not hits:
+            return None
+        best_kw, best_code = hits[0]          # 一番長く当たったもの
+        for kw, code in hits[1:]:
+            if code != best_code and kw.lower() not in best_kw.lower():
+                return None                   # 別の商品も出てくる。決められない
+        return best_code
+
     # 1) お客様が書いた本文（「Gでお願いします」等）は全キーワードで判定
-    msg_lower = (message or "").lower()
-    for kw, code in kw_code:
-        if kw.lower() in msg_lower:
-            return code
+    code = _pick(message, 1)
+    if code:
+        return code
+    # 本文に他の商品も混ざっていた場合は、商品名で埋めずに空で返す
+    if message and _pick_has_hits(message, kw_code, 1):
+        return None
 
     # 2) 本文に指定が無い場合のみ商品名で補完（ガーゼ・母乳パッド等の商品紐づけ用）
     if allow_item_fallback:
-        item_lower = (item_name or "").lower()
-        for kw, code in kw_code:
-            if len(kw) >= 2 and kw.lower() in item_lower:
-                return code
+        return _pick(item_name, 2)
     return None
+
+
+def _pick_has_hits(text: str, kw_code: list, min_len: int) -> bool:
+    """その文章にキャンペーンのキーワードが1つでも出てくるか。"""
+    t = (text or "").lower()
+    return any(len(kw) >= min_len and kw.lower() in t for kw, _ in kw_code)
 
 
 _CONFIRM_RE = re.compile(r"(.{0,25})承知(?:いた|致)しました")
