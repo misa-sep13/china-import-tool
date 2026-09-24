@@ -35,6 +35,12 @@ const INSPECT = [
   ['var6', '下げ札取り外し'],
 ]
 
+// 動画撮影のオプションはAPIにも仕様書にも無い。現場スタッフが読む
+// 「その他のご要望」に定型文を入れて頼む。新商品のページを作るときに
+// 写真では分からない使い勝手を見たい、という用途のもの。
+// 日本語だけでは伝わらないので中国語を添える
+const VIDEO_REQ = '動画撮影をお願いします（開封・全体・動作が分かるもの）／请拍摄视频（开箱、整体、使用方法）'
+
 // FBAはまだAPIで指定できない（タオタロウ確認済み・2026-09）。
 // 対応したらこの行と、下の remark への差し込みを外す
 const FBA_NOTE = 'FBA行きです。APIで指定できないため、そちらでFBAに変更をお願いします。'
@@ -362,6 +368,29 @@ function Row({ r, i, patch, pickSku }) {
                     {labelText}
                   </label>
                 ))}
+                {/* 仕様書に無いので、その他のご要望に定型文を入れて頼む。
+                    チェックを外したら定型文だけを消し、手で書いた分は残す */}
+                <label style={{ fontSize: 12, display: 'flex',
+                  alignItems: 'center', gap: 4 }}
+                  title="その他のご要望に文章を入れて頼みます（有料になることがあります）">
+                  <input type="checkbox" style={check}
+                    checked={(r.inspect.var7 || '').includes(VIDEO_REQ)}
+                    onChange={e => {
+                      const cur = (r.inspect.var7 || '').trim()
+                      let next
+                      if (e.target.checked) {
+                        next = cur ? `${VIDEO_REQ}／${cur}` : VIDEO_REQ
+                      } else {
+                        next = cur.replace(VIDEO_REQ, '')
+                          .replace(/^[／\/\s]+|[／\/\s]+$/g, '').trim()
+                      }
+                      const ins = { ...r.inspect }
+                      if (next) ins.var7 = next
+                      else delete ins.var7
+                      patch(i, { otherOn: !!next, inspect: ins })
+                    }} />
+                  🎥 動画撮影
+                </label>
                 {/* タオタロウの画面と同じ並び。チェックを入れると下の欄に書ける。
                     外したときは書きかけを消す。残ったまま送ると、頼んでいない
                     ことが現場へ伝わってしまう */}
