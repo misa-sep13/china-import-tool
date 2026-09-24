@@ -33,14 +33,32 @@ const th = {
 }
 const td = { padding: '6px 8px', fontSize: 12, borderTop: `1px solid ${C.line}` }
 
+/**
+ * このまま発送完了報告に出すと困る注文を見分ける。
+ * 番号抜けがいちばん多いが、配送会社や発送日が欠けていても報告は通らない。
+ */
+function badReason(o) {
+  const ships = o.shipments || []
+  if (!ships.length) return '発送情報がありません'
+  const miss = ships.filter(s => !s.shipping_number)
+  if (miss.length === ships.length) return '伝票番号が入っていません'
+  if (miss.length) return '伝票番号が入っていない送付先があります'
+  if (ships.some(s => !s.delivery_company)) return '配送会社が入っていません'
+  if (ships.some(s => !s.shipping_date)) return '発送日が入っていません'
+  return ''
+}
+
 export default function RakutenShippingPage() {
   const [data, setData] = useState(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [days, setDays] = useState(45)
   const [group, setGroup] = useState('ALL')
-  const [onlyMissing, setOnlyMissing] = useState(false)
+  const [onlyBad, setOnlyBad] = useState(false)
   const [q, setQ] = useState('')
+  // メールを送る対象。注文番号で持つ
+  const [picked, setPicked] = useState(() => new Set())
+  const [showPicked, setShowPicked] = useState(false)
 
   const load = useCallback(async () => {
     setBusy(true)
@@ -58,14 +76,30 @@ export default function RakutenShippingPage() {
   const orders = data?.orders || []
   const shown = useMemo(() => orders.filter(o => {
     if (group !== 'ALL' && String(o.sub_status_id ?? '') !== group) return false
-    if (onlyMissing && o.has_number) return false
+    if (onlyBad && !badReason(o)) return false
     if (q.trim() && !matchesQuery(q, [o.order_number, o.orderer,
       ...(o.shipments || []).map(s => s.shipping_number)])) return false
     return true
-  }), [orders, group, onlyMissing, q])
+  }), [orders, group, onlyBad, q])
 
-  const missing = orders.filter(o => !o.has_number).length
+  const badCount = orders.filter(badReason).length
   const diag = data?.diagnostics
+  const pickedOrders = useMemo(
+    () => orders.filter(o => picked.has(o.order_number)), [orders, picked])
+
+  const toggle = (num) => setPicked(prev => {
+    const next = new Set(prev)
+    if (next.has(num)) next.delete(num); else next.add(num)
+    return next
+  })
+  // 表示中のものをまとめて選ぶ。絞り込んだ状態で押せば、その分だけ入る
+  const pickShown = () => setPicked(prev => {
+    const next = new Set(prev)
+    shown.forEach(o => next.add(o.order_number))
+    return next
+  })
+  const shownAllPicked = shown.length > 0
+    && shown.every(o => picked.has(o.order_number))
 
   return (
     <div style={{ padding: 2, minWidth: 0 }}>
@@ -100,21 +134,22 @@ export default function RakutenShippingPage() {
           <>
             <span style={{ fontSize: 13 }}>
               発送待ち <b>{data.total}</b>件
-              {missing > 0 && (
+              {badCount > 0 && (
                 <span style={{ color: C.bad, fontWeight: 700 }}>
-                  　伝票番号なし {missing}件
+                  　要確認 {badCount}件
                 </span>
               )}
             </span>
-            <label style={{
-              fontSize: 12, color: C.sub, display: 'flex', alignItems: 'center',
-              gap: 4,
-            }}>
-              <input type="checkbox" checked={onlyMissing}
-                onChange={e => setOnlyMissing(e.target.checked)}
-                style={{ width: 'auto' }} />
-              伝票番号が入っていないものだけ
-            </label>
+            <button className="btn btn-sm"
+              onClick={() => setOnlyBad(v => !v)}
+              style={{
+                fontSize: 12,
+                background: onlyBad ? '#fee2e2' : '#f1f5f9',
+                color: onlyBad ? '#991b1b' : '#334155',
+                border: `1px solid ${onlyBad ? '#fca5a5' : C.line}`,
+              }}>
+              ⚠ 要確認だけ出す（{badCount}）
+            </button>
             <input value={q} onChange={e => setQ(e.target.value)}
               placeholder="注文番号・お名前・伝票番号で絞り込み"
               className="search-input-ja" style={{ width: 240 }} />
@@ -132,6 +167,81 @@ export default function RakutenShippingPage() {
               onClick={() => setGroup(g.id)}
               label={g.name || `サブステータス ${g.id}`} count={g.count} />
           ))}
+        </div>
+      )}
+
+      {/* サブステータスの名前が取れないときは、なぜ取れないのかを出す。
+          番号だけ並んで理由が分からない、をなくすため */}
+      {data && (data.groups || []).some(g => g.id && !g.name) && (
+        <div style={{ marginBottom: 12, fontSize: 11, color: C.sub,
+          background: '#f8fafc', border: `1px solid ${C.line}`,
+          borderRadius: 6, padding: '6px 10px' }}>
+          サブステータスの名前を取れませんでした。応答の様子：
+          <code style={{ fontSize: 11 }}>
+            {JSON.stringify(data.sub_status_debug)}
+          </code>
+        </div>
+      )}
+
+      {/* メールを送る対象を選ぶ。1件ずつ開かずに済むようにする */}
+      {data && (
+        <div className="card" style={{ marginBottom: 12, display: 'flex',
+          gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-sm btn-secondary" style={{ fontSize: 12 }}
+            onClick={pickShown} disabled={shown.length === 0}>
+            表示中をすべて選ぶ（{shown.length}）
+          </button>
+          <button className="btn btn-sm btn-secondary" style={{ fontSize: 12 }}
+            onClick={() => setPicked(new Set())} disabled={picked.size === 0}>
+            選択を解除
+          </button>
+          <span style={{ fontSize: 13 }}>
+            選択中 <b style={{ color: picked.size ? C.key : C.sub }}>{picked.size}</b>件
+          </span>
+          {picked.size > 0 && (
+            <button className="btn btn-sm" style={{ fontSize: 12 }}
+              onClick={() => setShowPicked(v => !v)}>
+              {showPicked ? '▲ 選んだものを閉じる' : '▼ 選んだものを一覧で見る'}
+            </button>
+          )}
+          <span style={{ fontSize: 11, color: C.warn, marginLeft: 'auto' }}>
+            発送完了報告（メール送信）はこのあと付けます
+          </span>
+        </div>
+      )}
+
+      {/* 選んだものだけの一覧。RMSの画面を1件ずつ開かずに確かめられる */}
+      {showPicked && picked.size > 0 && (
+        <div className="card" style={{ marginBottom: 12, padding: 0,
+          overflow: 'auto', maxHeight: 320 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>{['注文番号', 'お名前', '配送会社', 'お荷物伝票番号', '発送日', '']
+                .map(h => <th key={h} style={th}>{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {pickedOrders.map(o => {
+                const s0 = (o.shipments || [])[0] || {}
+                const bad = badReason(o)
+                return (
+                  <tr key={o.order_number} style={{ background: bad ? '#fff7ed' : undefined }}>
+                    <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}>
+                      {o.order_number}
+                    </td>
+                    <td style={td}>{o.orderer}</td>
+                    <td style={td}>
+                      {CARRIER[s0.delivery_company] || s0.delivery_company || '—'}
+                    </td>
+                    <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}>
+                      {s0.shipping_number || '—'}
+                    </td>
+                    <td style={{ ...td, color: C.sub }}>{s0.shipping_date || '—'}</td>
+                    <td style={{ ...td, color: C.bad, fontSize: 11 }}>{bad}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -160,8 +270,20 @@ export default function RakutenShippingPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
+                <th style={{ ...th, width: 30 }}>
+                  <input type="checkbox" checked={shownAllPicked}
+                    onChange={e => e.target.checked
+                      ? pickShown()
+                      : setPicked(prev => {
+                        const next = new Set(prev)
+                        shown.forEach(o => next.delete(o.order_number))
+                        return next
+                      })}
+                    style={{ width: 'auto' }}
+                    title="表示中をすべて選ぶ" />
+                </th>
                 {['注文番号', '注文日', 'サブステータス', 'お名前', '配送会社',
-                  'お荷物伝票番号', '発送日', '送付先ID', '発送明細ID'].map(h => (
+                  'お荷物伝票番号', '発送日', '要確認'].map(h => (
                     <th key={h} style={th}>{h}</th>
                   ))}
               </tr>
@@ -174,9 +296,17 @@ export default function RakutenShippingPage() {
               )}
               {shown.map(o => {
                 const ships = (o.shipments && o.shipments.length) ? o.shipments : [{}]
+                const bad = badReason(o)
+                const on = picked.has(o.order_number)
                 return ships.map((s, i) => (
                   <tr key={`${o.order_number}-${i}`}
-                    style={{ background: o.has_number ? undefined : '#fff7ed' }}>
+                    style={{ background: on ? '#eff6ff' : bad ? '#fff7ed' : undefined }}>
+                    <td style={td}>
+                      {i === 0 && (
+                        <input type="checkbox" checked={on} style={{ width: 'auto' }}
+                          onChange={() => toggle(o.order_number)} />
+                      )}
+                    </td>
                     <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}>
                       {i === 0 ? o.order_number : ''}
                     </td>
@@ -205,11 +335,8 @@ export default function RakutenShippingPage() {
                     <td style={{ ...td, whiteSpace: 'nowrap', color: C.sub }}>
                       {s.shipping_date || '—'}
                     </td>
-                    <td style={{ ...td, color: C.sub, fontSize: 11 }}>
-                      {s.basket_id ?? '—'}
-                    </td>
-                    <td style={{ ...td, color: C.sub, fontSize: 11 }}>
-                      {s.shipping_detail_id ?? '—'}
+                    <td style={{ ...td, color: C.bad, fontSize: 11 }}>
+                      {i === 0 ? bad : ''}
                     </td>
                   </tr>
                 ))
