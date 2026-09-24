@@ -1990,9 +1990,23 @@ if(FIREBASE_CONFIG.databaseURL){
            return window.parent[k]; }catch(e){ /* 別オリジンなら諦める */ }
     return '';
   }
-  const API_BASE = arsCfg('__ARS_API__').replace(/\/$/, '');
-  const SHEET_API = API_BASE ? API_BASE + '/amazon-research/sheet' : null;
-  const AUTH_TOKEN = arsCfg('__ARS_TOKEN__');
+  // 読み込みの時点では、親がまだ値を入れ終わっていないことがある。
+  // ここで空のまま焼き付けてしまうと、以降ずっと保存先なし（＝このPCの中だけ）に
+  // なり、しかもそれが画面に出ないので気づけない。
+  // 多くの場所が文字列として直に使うため形は変えず、空だったときだけ
+  // あとから入った値を拾い直せるようにしておく。
+  let API_BASE = arsCfg('__ARS_API__').replace(/\/$/, '');
+  let SHEET_API = API_BASE ? API_BASE + '/amazon-research/sheet' : null;
+  let AUTH_TOKEN = arsCfg('__ARS_TOKEN__');
+  /** 親から値が渡ってきていれば取り込む。取れたら true */
+  function refreshApiCfg(){
+    if(!API_BASE){
+      const b = arsCfg('__ARS_API__').replace(/\/$/, '');
+      if(b){ API_BASE = b; SHEET_API = b + '/amazon-research/sheet'; }
+    }
+    if(!AUTH_TOKEN) AUTH_TOKEN = arsCfg('__ARS_TOKEN__');
+    return !!SHEET_API;
+  }
   function apiHeaders(){
     const h = {'Content-Type': 'application/json'};
     if(AUTH_TOKEN) h['Authorization'] = 'Bearer ' + AUTH_TOKEN;
@@ -2014,9 +2028,15 @@ if(FIREBASE_CONFIG.databaseURL){
   let serverSaving = false;
   // サーバーへ送る。打鍵のたびに叩かないよう1.5秒まとめる
   function saveServer(){
-    if(!SHEET_API) return;
     clearTimeout(serverSaveTimer);
     serverSaveTimer = setTimeout(async () => {
+      // 読み込みの時点で取れていなくても、あとから入っていることがある
+      if(!refreshApiCfg()){
+        // 保存先が分からないまま黙っていると、手元にしか残っていないことに
+        // 気づけない。別のPCで開くと、そこまでの作業が丸ごと見えなくなる
+        setStatus('⚠ このPCの中にしか保存されていません（画面を開き直してください）', true);
+        return;
+      }
       if(serverSaving) { saveServer(); return; }
       serverSaving = true;
       try{
@@ -2025,6 +2045,7 @@ if(FIREBASE_CONFIG.databaseURL){
           body: JSON.stringify({data: state}),
         });
         if(!res.ok) throw new Error('HTTP ' + res.status);
+        setStatus('保存しました（' + nowLabel() + '）');
       }catch(e){
         // 保存できなくても手元(localStorage)には残っているので、作業は止めない
         setStatus('⚠ サーバーに保存できませんでした（手元には残っています）', true);
@@ -10199,6 +10220,12 @@ if(FIREBASE_CONFIG.databaseURL){
   // 別のPCで編集した内容もここで反映される。手元が空でなくても、
   // サーバーにあるものが正であるとして上書きする（保存先を一本化したため）。
   (async function loadFromServer(){
+    // 親（アプリ側）が値を入れ終わるのを少し待つ。ここで諦めると、
+    // サーバーの内容を読まないまま手元のもので進み、そのあとの保存で
+    // 別のPCの作業を上書きしてしまう
+    for(let i = 0; i < 20 && !refreshApiCfg(); i++){
+      await new Promise(r => setTimeout(r, 100));
+    }
     if(!SHEET_API) return;
     try{
       const res = await fetch(SHEET_API, {headers: apiHeaders()});
