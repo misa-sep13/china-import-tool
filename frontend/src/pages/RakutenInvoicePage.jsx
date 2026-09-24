@@ -801,6 +801,7 @@ function WeightCheckCard({ w }) {
             容積重量の換算 1m³ ＝ {w.volume_k}kg（実データから逆算）
           </span>
         )}
+        <span style={{ color: '#64748b' }}>計費重量は1kg単位で切り上げ</span>
       </div>
 
       {/* 実重量で払った場合との差。容積重量での請求は普通なので、
@@ -848,11 +849,17 @@ function WeightCheckCard({ w }) {
         </table>
       </div>
 
-      {over && (
+      {over ? (
         <div style={{ marginTop: 8, fontSize: 12, color: '#991b1b', background: '#fef2f2',
           border: '1px solid #fecaca', borderRadius: 6, padding: '6px 10px' }}>
-          箱 {w.over_boxes.join('、')} の計費重量が、実重量とも容積重量とも合いません。
-          タオタロウに確認する価値があります。
+          箱 {w.over_boxes.join('、')} の計費重量が、実重量を切り上げた数とも
+          容積重量とも合いません。タオタロウに確認する価値があります。
+        </div>
+      ) : (
+        <div style={{ marginTop: 8, fontSize: 12, color: '#166534', background: '#f0fdf4',
+          border: '1px solid #bbf7d0', borderRadius: 6, padding: '6px 10px' }}>
+          どの箱も、実重量の切り上げか容積重量で説明がつきます。
+          請求の立て方に不自然なところはありません。
         </div>
       )}
 

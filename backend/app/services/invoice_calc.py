@@ -7,6 +7,7 @@
 明細の分類（classify_invoice_lines）もここに置く。1便に楽天商品・Amazon商品・
 発送資材が混ざるため、どちらのマスタも見て振り分ける必要がある。
 """
+import math
 import re
 
 
@@ -878,16 +879,19 @@ def calc_tariff_tax(
 
 # 逆算した係数がこの幅を外れる箱は、体積で立てた請求とはみなさない
 _VOLUME_K_MIN, _VOLUME_K_MAX = 100.0, 1200.0
-# 丸めの誤差。これを超えて大きいときだけ指摘する
-_WEIGHT_TOLERANCE_KG = 0.5
+# 計費重量は1kg単位で切り上げられる。さらに、インボイスの体積は小数第2位までしか
+# 入っていないので、体積から出した重量には1kg弱の幅が出る。
+# 実データ（便710800・8箱）は、実重量の切り上げか 体積×166.7 のどちらかで
+# すべて説明がついた。誤って指摘しないよう、この幅を見込んでから判定する
+_WEIGHT_TOLERANCE_KG = 1.0
 
 
 def _median(values: list) -> float:
     if not values:
         return 0.0
-    s = sorted(values)
-    n = len(s)
-    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+    v = sorted(values)
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
 
 
 def check_box_weights(box_data: dict, international_freight: float = 0.0,
@@ -920,11 +924,13 @@ def check_box_weights(box_data: dict, international_freight: float = 0.0,
     for r in rows:
         vw = round(r["volume"] * k, 3) if k else 0.0
         r["volume_weight"] = vw
-        expected = max(r["actual_weight"], vw)
-        r["expected_weight"] = round(expected, 3)
+        # 請求は「実重量と容積重量の大きいほう」を1kg単位で切り上げたもの
+        expected = math.ceil(max(r["actual_weight"], vw)) if (r["actual_weight"] or vw) else 0
+        r["expected_weight"] = expected
         # 実重量でも容積重量でも説明がつかない請求だけを指摘する
-        r["over"] = bool(expected > 0 and r["billing_weight"] > expected + _WEIGHT_TOLERANCE_KG)
-        r["basis"] = ("体積" if vw > r["actual_weight"] else "実重量") if k else "実重量"
+        r["over"] = bool(expected > 0
+                         and r["billing_weight"] > expected + _WEIGHT_TOLERANCE_KG)
+        r["basis"] = ("体積" if vw > r["actual_weight"] else "実重量の切り上げ") if k else "実重量の切り上げ"
 
     total_actual = round(sum(r["actual_weight"] for r in rows), 3)
     total_billing = round(sum(r["billing_weight"] for r in rows), 3)
