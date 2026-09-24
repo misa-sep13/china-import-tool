@@ -129,7 +129,8 @@ export default function RakutenShippingPage() {
             label="すべて" count={orders.length} />
           {(data.groups || []).map(g => (
             <Tab key={g.id || 'none'} on={group === g.id}
-              onClick={() => setGroup(g.id)} label={g.name} count={g.count} />
+              onClick={() => setGroup(g.id)}
+              label={g.name || `サブステータス ${g.id}`} count={g.count} />
           ))}
         </div>
       )}
@@ -143,11 +144,14 @@ export default function RakutenShippingPage() {
           border: `1px solid ${diag.with_shipping_detail_id > 0 ? '#bbf7d0' : '#fcd34d'}`,
           color: diag.with_shipping_detail_id > 0 ? '#166534' : '#92400e',
         }}>
-          発送完了報告に要る値：送付先ID {diag.with_basket_id}件 ／
-          発送明細ID {diag.with_shipping_detail_id}件（{data.total}件中）
-          {diag.with_shipping_detail_id > 0
-            ? '　この2つが取れていれば、発送完了報告まで作れます。'
-            : '　発送明細IDが取れていません。このまま報告すると発送情報が二重に登録されるので、報告は付けられません。'}
+          発送完了報告に要る値：{data.total}件のうち
+          送付先IDが取れたもの {diag.with_basket_id}件、
+          発送明細IDが取れたもの {diag.with_shipping_detail_id}件。
+          {diag.with_shipping_detail_id === 0
+            ? '発送明細IDが取れていません。このまま報告すると発送情報が二重に登録されるので、報告は付けられません。'
+            : diag.with_shipping_detail_id < data.total
+              ? `残り ${data.total - diag.with_shipping_detail_id}件はまだ発送情報がありません（伝票番号が未入力の注文です）。それ以外は発送完了報告に出せます。`
+              : '全件そろっています。発送完了報告まで作れます。'}
         </div>
       )}
 
@@ -180,7 +184,10 @@ export default function RakutenShippingPage() {
                       {i === 0 ? o.order_date : ''}
                     </td>
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                      {i === 0 ? (o.sub_status_name || '—') : ''}
+                      {i === 0
+                        ? (o.sub_status_name
+                          || (o.sub_status_id ? `サブステータス ${o.sub_status_id}` : '—'))
+                        : ''}
                     </td>
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>
                       {i === 0 ? o.orderer : ''}

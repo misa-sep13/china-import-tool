@@ -702,23 +702,68 @@ async def _post_rms(path: str, body: dict, headers: dict, timeout: int = 60):
         )
 
 
-async def fetch_sub_statuses(service_secret: str, license_key: str) -> list[dict]:
-    """店舗が設定したサブステータスの一覧（本日発送分・あざみ分など）。"""
+def _walk_sub_statuses(node, out: dict):
+    """応答のどこにサブステータスが入っていても拾えるようにする。
+
+    入れ子の名前（SubStatusModelList など）が仕様と違っていても、
+    subStatusId と subStatusName の組を見つけたら拾う。
+    """
+    if isinstance(node, dict):
+        sid = name = None
+        for k, v in node.items():
+            kl = k.lower().replace("_", "")
+            if kl in ("substatusid", "id") and isinstance(v, (int, str)):
+                sid = str(v)
+            elif kl in ("substatusname", "name") and isinstance(v, str):
+                name = v
+        if sid is not None and name:
+            out.setdefault(sid, name)
+        for v in node.values():
+            _walk_sub_statuses(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            _walk_sub_statuses(v, out)
+
+
+async def fetch_sub_statuses(service_secret: str, license_key: str) -> dict:
+    """店舗が設定したサブステータスの一覧（本日発送分・あざみ分など）。
+
+    仕様書に応答の形が載っていないので、叩いてみて中を探す。
+    取れなかったときに黙って番号表示にならないよう、様子も一緒に返す。
+    """
     headers = _auth_header(service_secret, license_key)
-    try:
-        res = await _post_rms("/2.0/order/getSubStatusList", {}, headers, timeout=30)
-        if not res.is_success:
-            return []
-        data = res.json()
-    except Exception:
-        return []
-    out = []
-    for s in (data.get("SubStatusModelList") or data.get("subStatusList") or []):
-        sid = s.get("subStatusId") or s.get("id")
-        name = s.get("subStatusName") or s.get("name") or ""
-        if sid is not None:
-            out.append({"id": sid, "name": name})
-    return out
+    attempts = [
+        ("/2.0/order/getSubStatusList", {}),
+        ("/2.0/order/getSubStatusList/", {}),
+        ("/2.0/order/getSubStatusList",
+         {"PaginationRequestModel": {"requestRecordsAmount": 100,
+                                     "requestPage": 1}}),
+    ]
+    debug = []
+    for path, body in attempts:
+        try:
+            res = await _post_rms(path, body, headers, timeout=30)
+        except Exception as e:
+            debug.append({"path": path, "error": type(e).__name__})
+            continue
+        info = {"path": path, "status": res.status_code}
+        if res.is_success:
+            try:
+                data = res.json()
+            except Exception:
+                data = {}
+            info["keys"] = list(data.keys())[:8] if isinstance(data, dict) else []
+            found: dict = {}
+            _walk_sub_statuses(data, found)
+            debug.append({**info, "found": len(found)})
+            if found:
+                return {"items": [{"id": k, "name": v} for k, v in found.items()],
+                        "debug": debug}
+        else:
+            info["body"] = str(res.text)[:200]
+            debug.append(info)
+        await asyncio.sleep(_API_INTERVAL_SEC)
+    return {"items": [], "debug": debug}
 
 
 def _shipping_rows(order: dict) -> list[dict]:

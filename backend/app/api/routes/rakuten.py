@@ -3517,8 +3517,9 @@ async def rakuten_shipping_targets(days: int = 45, db: Session = Depends(get_db)
     if not settings.rms_service_secret or not settings.rms_license_key:
         raise HTTPException(400, "RMS APIキーが設定されていません")
 
-    subs = await rakuten_rms.fetch_sub_statuses(
+    sub_res = await rakuten_rms.fetch_sub_statuses(
         settings.rms_service_secret, settings.rms_license_key)
+    subs = sub_res["items"]
     data = await rakuten_rms.fetch_shipping_targets(
         settings.rms_service_secret, settings.rms_license_key, days=days)
 
@@ -3540,7 +3541,8 @@ async def rakuten_shipping_targets(days: int = 45, db: Session = Depends(get_db)
         if key and key not in {g["id"] for g in groups}:
             groups.append({"id": key, "name": name_by_id.get(key, key), "count": n})
 
-    return {**data, "groups": groups}
+    # サブステータスの名前が取れなかったときに気づけるよう、様子も返す
+    return {**data, "groups": groups, "sub_status_debug": sub_res.get("debug")}
 
 
 @router.get("/rms/debug-order-detail")
