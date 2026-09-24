@@ -57,6 +57,9 @@ export default function RakutenInvoicePage() {
   const [apiInfo, setApiInfo] = useState(null)
   // 重量の突き合わせ。請求の根拠（計費重量）と、許可書に申告した重量を照らす
   const [weightCheck, setWeightCheck] = useState(null)
+  // 許可書から便を探した結果。実重量の合計と箱数で突き合わせる
+  const [matching, setMatching] = useState(false)
+  const [matchResult, setMatchResult] = useState(null)
   const [sendOrders, setSendOrders] = useState([])
   const [storedPermits, setStoredPermits] = useState([])
 
@@ -67,6 +70,25 @@ export default function RakutenInvoicePage() {
     api.get('/import-permits/', { params: { kind: 'permit' } })
       .then(r => setStoredPermits(r.data.items || [])).catch(() => {})
   }, [])
+
+  // 許可書がどの便のものかを探す。
+  // 便の一覧に出ている重量は請求用（容積ぶん込み）なので使えない。
+  // インボイスの箱シートの実重量を足したものが、許可書の貨物重量に当たる
+  async function handleFindShipment() {
+    if (!apiPermitId) return
+    setMatching(true)
+    setMatchResult(null)
+    try {
+      const r = await api.get('/rakuten/invoices/match-permit',
+        { params: { permit_id: Number(apiPermitId) } })
+      setMatchResult(r.data)
+      if (r.data.best_sid) { setApiSid(String(r.data.best_sid)); reset() }
+    } catch (err) {
+      alert('便を探せませんでした: ' + (err.response?.data?.detail || err.message))
+    } finally {
+      setMatching(false)
+    }
+  }
 
   async function handleApiLoad() {
     if (!apiSid || !apiPermitId) return
@@ -283,12 +305,19 @@ export default function RakutenInvoicePage() {
             disabled={apiLoading || !apiSid || !apiPermitId}>
             {apiLoading ? '読み込み中…' : '読み込む'}
           </button>
+          {/* 便が決まらないときはこちら。許可書の貨物重量と箱数から探す */}
+          <button className="btn btn-secondary" onClick={handleFindShipment}
+            disabled={matching || !apiPermitId}
+            title="許可書の貨物重量・貨物個数に合う便を探して選びます">
+            {matching ? '探しています…' : '🔍 この許可書に合う便を探す'}
+          </button>
           {storedPermits.length === 0 && (
             <span style={{ fontSize: 12, color: '#b45309' }}>
               保管された許可書がありません。「輸入許可書」の画面で先に取り込んでください
             </span>
           )}
         </div>
+        {matchResult && <MatchResult r={matchResult} />}
         {apiInfo && (
           <div style={{ marginTop: 12, fontSize: 13, color: '#475569' }}>
             <div>
@@ -883,6 +912,49 @@ function WeightCheckCard({ w }) {
       ) : (
         <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
           許可書から貨物重量を読めませんでした（原本は保管されています）。
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+/**
+ * 許可書から便を探した結果。
+ *
+ * 許可書に載っているのは実重量と個数。タオタロウの一覧に出ている重量は
+ * 請求用（容積ぶんを含む）なので、そのままでは合わない。インボイスの
+ * 箱シートの実重量を足したものが、許可書の貨物重量に当たる。
+ */
+function MatchResult({ r }) {
+  const p = r.permit || {}
+  return (
+    <div style={{ marginTop: 12, fontSize: 12, border: '1px solid #e2e8f0',
+      borderRadius: 8, padding: '8px 12px', background: '#fff' }}>
+      <div style={{ color: '#475569', marginBottom: 6 }}>
+        許可書：貨物重量 <b>{p.cargo_weight}kg</b>
+        {p.package_count ? ` / ${p.package_count}個口` : ''}
+        {p.arrival_date ? `　入港 ${p.arrival_date}` : ''}
+        {p.transport === 'sea' ? '　船便' : p.transport === 'air' ? '　航空便' : ''}
+      </div>
+      {r.ok ? (
+        <div style={{ color: '#166534' }}>
+          合う便が見つかりました。上の「配送依頼」に選んであります。
+        </div>
+      ) : (
+        <div style={{ color: '#b45309' }}>{r.message}</div>
+      )}
+      {(r.candidates || []).length > 0 && (
+        <div style={{ marginTop: 6, color: '#475569' }}>
+          {r.candidates.map(c => (
+            <div key={c.sid} style={{ padding: '2px 0',
+              fontWeight: c.match ? 700 : 400,
+              color: c.match ? '#166534' : '#64748b' }}>
+              {c.match ? '✓' : '　'} {c.sn}　{c.created_at}　
+              実重量 {c.actual_weight}kg（差 {c.weight_diff}kg）　
+              {c.box_count}箱{c.box_match ? '・個数一致' : ''}
+            </div>
+          ))}
         </div>
       )}
     </div>

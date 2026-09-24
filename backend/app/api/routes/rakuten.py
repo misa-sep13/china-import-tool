@@ -2893,6 +2893,117 @@ def rakuten_stored_permit(permit_id: int, db: Session = Depends(get_db)):
     }
 
 
+# 便のインボイスから出した箱の要約。同じ便を何度も落とさないよう覚えておく。
+# 出荷済みの便のインボイスは後から変わらないので、期限は設けない
+_BOX_SUMMARY_CACHE: dict[int, dict] = {}
+
+
+def _send_order_box_summary(sid: int) -> dict:
+    """便のインボイスから実重量の合計と箱数を出す。
+
+    輸入許可書に載っているのは実重量と個数。タオタロウの一覧に出ている
+    重量は請求用（容積ぶんを含む）なので、そのままでは照合に使えない。
+    箱シートの実重量を足したものが、許可書の貨物重量に当たる。
+    """
+    sid = int(sid)
+    if sid in _BOX_SUMMARY_CACHE:
+        return _BOX_SUMMARY_CACHE[sid]
+    from app.services import taotaro
+    import openpyxl
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(taotaro.invoice_workbook(sid)))
+    except Exception:
+        return {"ok": False, "actual_weight": 0.0, "box_count": 0}
+    bd = invoice_calc.parse_box_sheets(wb)
+    boxes = bd.get("boxes") or {}
+    out = {
+        "ok": bool(boxes),
+        "actual_weight": round(
+            sum(float(b.get("actual_weight") or 0) for b in boxes.values()), 3),
+        "billing_weight": bd.get("total_billing_weight") or 0.0,
+        "box_count": len(boxes),
+    }
+    if out["ok"]:
+        _BOX_SUMMARY_CACHE[sid] = out
+    return out
+
+
+@router.get("/invoices/match-permit")
+def rakuten_match_permit(permit_id: int, limit: int = 6,
+                         db: Session = Depends(get_db)):
+    """この輸入許可書がどの便のものかを探す。
+
+    許可書の貨物重量・貨物個数と、便の実重量の合計・箱数を突き合わせる。
+    金額より確実で、日付の推測も要らない。
+
+    便のインボイスは1件ずつ落とすことになるので、入港日より前に出された便を
+    日付の近い順に limit 件だけ見る。一度見た便は覚えておく。
+    """
+    from app.models.import_permit import ImportPermit
+    from app.services import taotaro
+    from app.services.permit_mail import parse_permit_cargo
+
+    row = db.query(ImportPermit).filter(ImportPermit.id == permit_id).first()
+    if not row or not row.pdf:
+        raise HTTPException(404, "保管された許可書が見つかりません")
+    cargo = parse_permit_cargo(_permit_text(row.pdf))
+    if not cargo.get("cargo_weight"):
+        return {"ok": False, "permit": cargo, "candidates": [],
+                "message": "許可書から貨物重量を読めませんでした。便は手で選んでください。"}
+
+    try:
+        orders = taotaro.list_send_orders(page=1, limit=30).get("items") or []
+    except taotaro.TaotaroError as e:
+        raise HTTPException(502, e.message)
+
+    arrival = cargo.get("arrival_date") or ""
+    def _key(o):
+        # 入港日に近い便から見る。作成日しか無いので、そこからの日数で測る
+        d = str(o.get("created_at") or "")[:10]
+        if not (arrival and d):
+            return (1, 9999)
+        return (0, abs((_d(arrival) - _d(d)).days)) if _d(arrival) and _d(d) else (1, 9999)
+
+    def _d(v):
+        try:
+            return datetime.strptime(v, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            return None
+
+    ordered = sorted(orders, key=_key)[:max(1, min(int(limit), 12))]
+
+    want_w = float(cargo["cargo_weight"])
+    want_n = int(cargo.get("package_count") or 0)
+    candidates = []
+    for o in ordered:
+        sid = o.get("sid")
+        if not sid:
+            continue
+        b = _send_order_box_summary(sid)
+        if not b.get("ok"):
+            continue
+        diff = round(b["actual_weight"] - want_w, 3)
+        candidates.append({
+            "sid": sid, "sn": o.get("sn"),
+            "state_label": o.get("state_label"),
+            "created_at": str(o.get("created_at") or "")[:10],
+            "actual_weight": b["actual_weight"],
+            "billing_weight": b["billing_weight"],
+            "box_count": b["box_count"],
+            "weight_diff": diff,
+            "box_match": bool(want_n and b["box_count"] == want_n),
+            # 1kg以内に収まり、箱数も合うものだけを「一致」と呼ぶ
+            "match": bool(abs(diff) <= 1.0 and (not want_n or b["box_count"] == want_n)),
+        })
+        if candidates[-1]["match"]:
+            break
+    candidates.sort(key=lambda c: (not c["match"], abs(c["weight_diff"])))
+    best = candidates[0] if candidates and candidates[0]["match"] else None
+    return {"ok": bool(best), "permit": cargo, "candidates": candidates,
+            "best_sid": best["sid"] if best else None,
+            "message": "" if best else "合う便が見つかりませんでした。手で選んでください。"}
+
+
 @router.get("/invoices/weight-check")
 def rakuten_weight_check(sid: int, permit_id: int | None = None,
                          db: Session = Depends(get_db)):
