@@ -356,7 +356,13 @@ def sync_adopted(workspace: str = "default", owner: str = "Y",
     except (ValueError, TypeError):
         return {"added": 0, "items": [], "detail": "リサーチシートを読めませんでした"}
 
-    live = db.query(KeepClaim).filter(KeepClaim.status == "keep").all()
+    # キープ中だけでなく、画像制作を依頼した（shipped）ものも「すでにある」と
+    # みなす。shipped は枠を使い終わったのではなく、独占したまま次の工程へ
+    # 進んだ状態なので、取り込み直すと同じ商品が二重に並んでしまう。
+    # 手で足すときの被り判定（create / check）も keep と shipped を見ており、
+    # ここだけ keep しか見ていなかったので揃える。
+    live = (db.query(KeepClaim)
+            .filter(KeepClaim.status.in_(["keep", "shipped"])).all())
     have_asin = {r.asin for r in live if r.asin}
     have_url = {r.url for r in live if r.url}
 
@@ -386,8 +392,8 @@ def sync_adopted(workspace: str = "default", owner: str = "Y",
         if not url:
             skipped.append({"title": title, "why": "ASINもURLも入っていません"})
             continue
-        # まだキープ中のものだけ「すでにある」とみなす。
-        # 発送済み・期限切れのものは枠が空いているので、また採用したなら
+        # キープ中・画像制作依頼済みのものは「すでにある」とみなして飛ばす。
+        # 期限切れ・手放したものは枠が空いているので、また採用したなら
         # 入れ直す（前に一度扱った商品を二度と載せられないのはおかしい）
         if (asin and asin in have_asin) or url in have_url:
             # すでにあるものは足さないが、シート側でメモを書き足して
