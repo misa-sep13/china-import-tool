@@ -389,7 +389,7 @@ function Row({ r, i, patch, pickSku }) {
                       else delete ins.var7
                       patch(i, { otherOn: !!next, inspect: ins })
                     }} />
-                  🎥 動画撮影
+                  🎥 動画撮影 ※初回のみ
                 </label>
                 {/* タオタロウの画面と同じ並び。チェックを入れると下の欄に書ける。
                     外したときは書きかけを消す。残ったまま送ると、頼んでいない

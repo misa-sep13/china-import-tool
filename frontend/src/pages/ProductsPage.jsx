@@ -5,11 +5,14 @@ import { normalizeSearch } from '../searchUtil'
 
 const CATEGORIES = ['標準', 'ファッション', '大型']
 
+// 画像URL・リパックは使っていないので編集欄から外した（値と列はそのまま）
 const EMPTY = {
-  sku: '', fnsku: '', asin: '', name: '', buy_url: '', photo_url: '',
+  sku: '', fnsku: '', asin: '', name: '', buy_url: '',
   color: '', size: '', spec: '', customer_memo: '', price: '', cost_jpy: '',
-  repack: '', note: '',
+  note: '',
   set_size: 1, extra_stock: 0, amazon_fee_rate: 0.1, category: '標準',
+  // 発注用付属品。本体と一緒にタオタロウへ頼むもの。在庫には連動しない
+  purchase_components: '',
 }
 const EDITABLE_FIELDS = Object.keys(EMPTY)
 
@@ -464,20 +467,17 @@ export default function ProductsPage() {
                   </div>
                 </div>
                 <div className="form-group">
+                  {/* FBA以外の場所にある在庫。発注数の計算では
+                      FBA在庫＋輸送中＋この数、として扱う */}
                   <label>別個数在庫</label>
                   <input type="number" min={0} {...f('extra_stock')} />
+                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>
+                    FBA以外の手元在庫。発注数の計算に足されます
+                  </div>
                 </div>
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
                   <label>仕入URL（1688/TAOBao）</label>
                   <input {...f('buy_url')} placeholder="https://detail.1688.com/..." />
-                </div>
-                <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                  <label>画像URL</label>
-                  <input {...f('photo_url')} />
-                </div>
-                <div className="form-group">
-                  <label>リパック</label>
-                  <input {...f('repack')} />
                 </div>
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
                   <label>仕様（Excel出力用・色/サイズをまとめた表記）</label>
@@ -491,6 +491,20 @@ export default function ProductsPage() {
                   <label>備考</label>
                   <textarea {...f('note')} rows={2} style={{ resize: 'vertical' }} />
                 </div>
+                {/* 本体と一緒に頼む付属品。楽天マスタと同じ作り。
+                    在庫には連動しないが、頼まないと本体だけ届く */}
+                <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                  <label>発注用付属品（在庫連動しない）</label>
+                  <div style={{ fontSize: 11, color: '#64748b', margin: '2px 0 8px' }}>
+                    本体と一緒にタオタロウへ頼むもの（収納袋・替えゴムなど）。
+                    発注時にこの行が本体の下に足されます。FBA在庫の計算には入りません。
+                  </div>
+                  <AccessoryEditor
+                    value={form.purchase_components || ''}
+                    onChange={v => setForm(p => ({ ...p, purchase_components: v }))}
+                    allProducts={products}
+                  />
+                </div>
               </div>
               {error && <p className="error-msg">{error}</p>}
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
@@ -503,6 +517,99 @@ export default function ProductsPage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * 発注用付属品の編集。楽天マスタの「発注用付属品」と同じ作りで、
+ * 中身（JSON文字列）の形もそろえてある。
+ *
+ * 本体と一緒に頼まないと本体だけ届くものを並べる。SKUは任意で、
+ * 商品マスタに無いもの（1つの1688ページに同梱されている収納袋など）は
+ * 発注先URLと仕様だけで頼める。
+ */
+function AccessoryEditor({ value, onChange, allProducts = [] }) {
+  const parse = (v) => { try { return JSON.parse(v || '[]') } catch { return [] } }
+  const items = parse(value)
+  // 全部消したら空文字で保存する。null だと API 側で「変更なし」になる
+  const update = (next) => onChange(next.length > 0 ? JSON.stringify(next) : '')
+  const addRow = () => update([...items, {
+    sku: '', qty: 1, buy_url: '', supplier_spec: '', price: '',
+    customer_memo: '', notes: '',
+  }])
+  const removeRow = (i) => update(items.filter((_, n) => n !== i))
+  const setField = (i, k, v) => update(items.map((it, n) => n === i ? { ...it, [k]: v } : it))
+
+  const lab = { fontSize: 11, color: '#64748b', marginBottom: 2 }
+  const box = { border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px 12px',
+    marginBottom: 10, background: '#f8fafc' }
+
+  return (
+    <div>
+      {items.map((it, i) => (
+        <div key={i} style={box}>
+          <div style={{ display: 'flex', justifyContent: 'space-between',
+            alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ fontSize: 12, color: '#64748b' }}>付属品 {i + 1}</span>
+            <button type="button" className="btn btn-sm"
+              style={{ fontSize: 11, background: '#fee2e2', color: '#991b1b' }}
+              onClick={() => removeRow(i)}>✕ 削除</button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <div style={lab}>SKU（商品マスタから選ぶ — 空欄でも可）</div>
+              <select value={it.sku || ''} onChange={e => setField(i, 'sku', e.target.value)}>
+                <option value="">— 選ばない（発注先URLを直接入れる）—</option>
+                {allProducts.map(p => (
+                  <option key={p.id} value={p.sku}>
+                    {p.sku}{p.name ? ` - ${p.name}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <div style={lab}>発注先URL（1688/TAOBAO）</div>
+              <input value={it.buy_url || ''} placeholder="https://detail.1688.com/..."
+                onChange={e => setField(i, 'buy_url', e.target.value)} />
+            </div>
+            <div>
+              <div style={lab}>仕様（中国語）</div>
+              <input value={it.supplier_spec || ''} placeholder="例: 收纳袋 灰色"
+                onChange={e => setField(i, 'supplier_spec', e.target.value)} />
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <div style={lab}>単価（元）</div>
+                <input type="number" step="0.01" value={it.price ?? ''} placeholder="0.19"
+                  onChange={e => setField(i, 'price', e.target.value === '' ? '' : Number(e.target.value))} />
+              </div>
+              <div style={{ width: 80 }}>
+                {/* 本体1つにつき何個いるか。発注数はこれを掛けた数になる */}
+                <div style={lab}>数量</div>
+                <input type="number" min={1} value={it.qty || 1}
+                  style={{ textAlign: 'center' }}
+                  onChange={e => setField(i, 'qty', Number(e.target.value))} />
+              </div>
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <div style={lab}>お客様専用メモ（タオタロウG列）</div>
+              <input value={it.customer_memo || ''}
+                placeholder="例: 本体と同じ色でお願いします"
+                onChange={e => setField(i, 'customer_memo', e.target.value)} />
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <div style={lab}>備考（タオタロウH列）</div>
+              <input value={it.notes || ''}
+                placeholder="例: チャック袋に入っているものをお願いします"
+                onChange={e => setField(i, 'notes', e.target.value)} />
+            </div>
+          </div>
+        </div>
+      ))}
+      <button type="button" className="btn btn-secondary btn-sm" onClick={addRow}>
+        ＋ 付属品を追加
+      </button>
     </div>
   )
 }

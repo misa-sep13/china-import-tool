@@ -503,7 +503,8 @@ def _expand_purchase_components(item: "OrderItem", db: Session) -> list:
             "qty": item.qty * comp_qty,
             "price": comp_price or 0,
             "repack": "",
-            "note": comp.get("note", ""),
+            # 画面は楽天と同じ notes で持つ。古いデータの note も拾う
+            "note": comp.get("notes") or comp.get("note") or "",
             "set_size": 1,
             "asin": "",
             "fnsku": "",
