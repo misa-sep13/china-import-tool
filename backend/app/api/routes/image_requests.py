@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import func as sa_func
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -43,6 +44,7 @@ def _out(r: ImageRequest) -> dict:
         "main_url": r.main_url or "",
         "room_name": r.room_name or "",
         "sent_at": r.sent_at.isoformat() if r.sent_at else None,
+        "sort_order": r.sort_order if r.sort_order is not None else r.id,
         "status": r.status or "requested",
         "status_label": STATUS_LABEL.get(r.status or "requested", ""),
         "assignee": r.assignee or "",
@@ -72,7 +74,12 @@ def list_requests(include_done: int = 0, db: Session = Depends(get_db)):
     q = db.query(ImageRequest).filter(ImageRequest.is_deleted == False)
     if not include_done:
         q = q.filter(ImageRequest.status != "done")
-    rows = q.order_by(ImageRequest.created_at.desc()).all()
+    # 新しく足したものが下に来るように、古い順。上下に動かした並びが
+    # あればそちらを優先する（sort_order を入れていないものは作った順）
+    rows = q.order_by(
+        sa_func.coalesce(ImageRequest.sort_order, ImageRequest.id).asc(),
+        ImageRequest.id.asc(),
+    ).all()
     done = (db.query(ImageRequest)
             .filter(ImageRequest.is_deleted == False,
                     ImageRequest.status == "done").count())
@@ -176,6 +183,40 @@ def update_request(req_id: int, data: ImageRequestPatch, request: Request,
     db.commit()
     db.refresh(row)
     return _out(row)
+
+
+@router.post("/{req_id:int}/move")
+def move_request(req_id: int, direction: str, request: Request,
+                 db: Session = Depends(get_db)):
+    """並びをひとつ上／下へ動かす。
+
+    順番は sort_order で持つ。入れていない行は作った順（id）を使うので、
+    動かすときに関係する2行ぶんだけ値を確定させて入れ替える。
+    """
+    if _is_share(request):
+        raise HTTPException(403, "この画面からは並べ替えられません")
+    if direction not in ("up", "down"):
+        raise HTTPException(400, "up か down を指定してください")
+
+    rows = (db.query(ImageRequest)
+            .filter(ImageRequest.is_deleted == False)
+            .order_by(sa_func.coalesce(ImageRequest.sort_order,
+                                       ImageRequest.id).asc(),
+                      ImageRequest.id.asc())
+            .all())
+    idx = next((i for i, r in enumerate(rows) if r.id == req_id), None)
+    if idx is None:
+        raise HTTPException(404, "見つかりません")
+    other = idx - 1 if direction == "up" else idx + 1
+    if other < 0 or other >= len(rows):
+        return {"ok": True, "moved": False}   # 端なので動かさない
+
+    a, b = rows[idx], rows[other]
+    a_key = a.sort_order if a.sort_order is not None else a.id
+    b_key = b.sort_order if b.sort_order is not None else b.id
+    a.sort_order, b.sort_order = b_key, a_key
+    db.commit()
+    return {"ok": True, "moved": True}
 
 
 @router.delete("/{req_id:int}")

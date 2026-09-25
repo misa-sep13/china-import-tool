@@ -189,6 +189,7 @@ def _migrate():
         ("products","purchase_components",   "ALTER TABLE products ADD COLUMN purchase_components TEXT"),
         # 画像依頼：仕入元（1688）のページ。デザイナーが素材を見るのに要る
         ("image_requests","main_url",        "ALTER TABLE image_requests ADD COLUMN main_url TEXT"),
+        ("image_requests","sort_order",        "ALTER TABLE image_requests ADD COLUMN sort_order INTEGER"),
         ("products","is_component",          "ALTER TABLE products ADD COLUMN is_component BOOLEAN DEFAULT FALSE"),
         # 発送用の梱包資材フラグ（宅配袋等）。商品原価には計上せず資材費として集計する
         ("products","is_material",           "ALTER TABLE products ADD COLUMN is_material BOOLEAN DEFAULT FALSE"),

@@ -42,6 +42,10 @@ class ImageRequest(Base):
     reply = Column(Text)                      # 外注さんからの連絡
     deliverable_url = Column(Text)            # 納品先（ギガファイル等）
 
+    # 並び順。画面で上下に動かせるようにするためのもの。
+    # 新しく足したものが下に来るよう、作った順（id）を初期値にする
+    sort_order = Column(Integer, index=True, nullable=True)
+
     done_at = Column(DateTime(timezone=True), nullable=True)
     is_deleted = Column(Boolean, default=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

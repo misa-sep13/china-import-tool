@@ -87,6 +87,18 @@ export default function ImageRequestsPage({ share = '' }) {
     } finally { setBusy(false) }
   }
 
+  // 並びを1つ上／下へ。外注さんの画面（share）では出さない
+  const move = async (r, direction) => {
+    setBusy(true)
+    try {
+      await api.post(`/image-requests/${r.id}/move`, null,
+        cfg({ params: { direction } }))
+      await load()
+    } catch (e) {
+      alert(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
   const remove = async (r) => {
     if (!window.confirm(`${r.sku || r.name} の依頼を消します。よろしいですか？`)) return
     setBusy(true)
@@ -178,15 +190,16 @@ export default function ImageRequestsPage({ share = '' }) {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
-              {['依頼日', '', 'SKU', '商品名', '商品補足', '進み具合',
-                '連絡', ''].map((h, i) => (
+              {[...(share ? [] : ['並び']), '依頼日', '', 'SKU', '商品名',
+                '商品補足', '進み具合', '連絡', ''].map((h, i) => (
                   <th key={i} style={th}>{h}</th>
                 ))}
             </tr>
           </thead>
           <tbody>
             {shown.length === 0 && (
-              <tr><td style={{ ...td, color: C.sub, padding: 20 }} colSpan={8}>
+              <tr><td style={{ ...td, color: C.sub, padding: 20 }}
+                colSpan={share ? 8 : 9}>
                 {q ? `「${q}」に当てはまる依頼はありません。`
                   : '作業中の依頼はありません。'}
               </td></tr>
@@ -195,6 +208,16 @@ export default function ImageRequestsPage({ share = '' }) {
               const c = STATUS_COLOR[r.status] || STATUS_COLOR.requested
               return (
                 <tr key={r.id}>
+                  {!share && (
+                    <td style={{ ...td, whiteSpace: 'nowrap', padding: '2px 4px' }}>
+                      <button className="btn btn-sm" title="ひとつ上へ"
+                        style={{ fontSize: 10, padding: '0 5px' }}
+                        onClick={() => move(r, 'up')} disabled={busy}>▲</button>
+                      <button className="btn btn-sm" title="ひとつ下へ"
+                        style={{ fontSize: 10, padding: '0 5px', marginLeft: 2 }}
+                        onClick={() => move(r, 'down')} disabled={busy}>▼</button>
+                    </td>
+                  )}
                   {/* 一覧を作る前に出した依頼は、実際に出した日に直せるようにする */}
                   <td style={{ ...td, whiteSpace: 'nowrap', color: C.sub }}>
                     {share ? (
@@ -284,6 +307,7 @@ export default function ImageRequestsPage({ share = '' }) {
       </div>
 
       <div style={{ fontSize: 11, color: C.sub, marginTop: 8, lineHeight: 1.8 }}>
+        新しく足したものが下に並びます。▲▼ で順番を入れ替えられます。
         進み具合を「完了」にすると、この一覧から消えます（「完了したものも出す」で戻せます）。
         {!share && <><br />
           リサーチシートで「💬 Chatworkで送る」を押すと、ここに自動で1件増えます。
