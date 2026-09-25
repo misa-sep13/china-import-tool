@@ -79,6 +79,10 @@ export default function RakutenShippingPage() {
   const [sendCarrier, setSendCarrier] = useState('')
   const [sending, setSending] = useState('')
   const [sendResult, setSendResult] = useState(null)
+  // 送り終えた注文。一覧はすぐには変わらない（楽天側の処理が非同期）ので、
+  // 選び直したときに二重で送ってしまわないよう、こちらで覚えておく
+  const [sentShip, setSentShip] = useState(() => new Set())
+  const [sentConfirm, setSentConfirm] = useState(() => new Set())
 
   const load = useCallback(async () => {
     setBusy(true)
@@ -118,11 +122,12 @@ export default function RakutenShippingPage() {
   // 表示中のものをまとめて選ぶ。絞り込んだ状態で押せば、その分だけ入る
   const pickShown = () => setPicked(prev => {
     const next = new Set(prev)
-    shown.forEach(o => next.add(o.order_number))
+    shown.forEach(o => { if (!sentShip.has(o.order_number)) next.add(o.order_number) })
     return next
   })
-  const shownAllPicked = shown.length > 0
-    && shown.every(o => picked.has(o.order_number))
+  const selectable = shown.filter(o => !sentShip.has(o.order_number))
+  const shownAllPicked = selectable.length > 0
+    && selectable.every(o => picked.has(o.order_number))
 
   // 受注承諾メール。注文確認を出すと楽天からメールが出る
   const sendConfirm = async () => {
@@ -139,6 +144,9 @@ export default function RakutenShippingPage() {
       const r = await api.post('/rakuten/shipping/confirm-orders',
         { order_numbers: [...picked] })
       setSendResult({ kind: '受注承諾メール', ...r.data })
+      const done = new Set([...picked])
+      setSentConfirm(prev => new Set([...prev, ...done]))
+      setPicked(new Set())
     } catch (e) {
       alert('送れませんでした: ' + (e.response?.data?.detail || e.message))
     } finally { setSending('') }
@@ -167,6 +175,9 @@ export default function RakutenShippingPage() {
         delivery_company: sendCarrier || null,
       })
       setSendResult({ kind: '発送メール', ...r.data })
+      const done = new Set([...picked])
+      setSentShip(prev => new Set([...prev, ...done]))
+      setPicked(new Set())
     } catch (e) {
       alert('送れませんでした: ' + (e.response?.data?.detail || e.message))
     } finally { setSending('') }
@@ -314,7 +325,7 @@ export default function RakutenShippingPage() {
           gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn btn-sm btn-secondary" style={{ fontSize: 12 }}
             onClick={pickShown} disabled={shown.length === 0}>
-            表示中をすべて選ぶ（{shown.length}）
+            表示中をすべて選ぶ（{selectable.length}）
           </button>
           <button className="btn btn-sm btn-secondary" style={{ fontSize: 12 }}
             onClick={() => setPicked(new Set())} disabled={picked.size === 0}>
@@ -356,6 +367,7 @@ export default function RakutenShippingPage() {
           <button className="btn btn-primary btn-sm" style={{ fontSize: 12 }}
             onClick={sendConfirm} disabled={!!sending}>
             {sending === 'confirm' ? '送信中…' : '📧 受注承諾メールを送る'}
+            {[...picked].some(n => sentConfirm.has(n)) ? '（送信済みを含みます）' : ''}
           </button>
 
           <span style={{ borderLeft: `1px solid ${C.line}`, height: 22 }} />
@@ -509,14 +521,18 @@ export default function RakutenShippingPage() {
                 const ships = (o.shipments && o.shipments.length) ? o.shipments : [{}]
                 const bad = badReason(o)
                 const on = picked.has(o.order_number)
+                const sent = sentShip.has(o.order_number)
                 return ships.map((s, i) => (
                   <tr key={`${o.order_number}-${i}`}
-                    style={{ background: on ? '#eff6ff' : bad ? '#fff7ed' : undefined }}>
+                    style={{ background: sent ? '#f0fdf4'
+                      : on ? '#eff6ff' : bad ? '#fff7ed' : undefined,
+                      color: sent ? C.sub : undefined }}>
                     <td style={td}>
-                      {i === 0 && (
-                        <input type="checkbox" checked={on} style={{ width: 'auto' }}
-                          onChange={() => toggle(o.order_number)} />
-                      )}
+                      {i === 0 && (sent
+                        ? <span title="この画面から送信済み。二重に送らないよう、選べないようにしています"
+                          style={{ fontSize: 14 }}>✓</span>
+                        : <input type="checkbox" checked={on} style={{ width: 'auto' }}
+                          onChange={() => toggle(o.order_number)} />)}
                     </td>
                     <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}>
                       {i === 0 ? o.order_number : ''}
@@ -546,8 +562,9 @@ export default function RakutenShippingPage() {
                     <td style={{ ...td, whiteSpace: 'nowrap', color: C.sub }}>
                       {s.shipping_date || '—'}
                     </td>
-                    <td style={{ ...td, color: C.bad, fontSize: 11 }}>
-                      {i === 0 ? bad : ''}
+                    <td style={{ ...td, fontSize: 11,
+                      color: sent ? C.good : C.bad }}>
+                      {i !== 0 ? '' : sent ? '発送メール送信済み' : bad}
                     </td>
                   </tr>
                 ))
