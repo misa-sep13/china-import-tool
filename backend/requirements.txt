@@ -1,6 +1,8 @@
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
-sqlalchemy>=2.0.30
+# 2.1 で postgresql:// の既定ドライバが psycopg(v3) に変わり、起動できなくなった。
+# 上限を付けて、勝手に上がらないようにする
+sqlalchemy>=2.0.30,<2.1
 alembic>=1.13.1
 pydantic>=2.7.1
 pydantic-settings>=2.2.1
