@@ -1,17 +1,25 @@
-fastapi>=0.111.0
-uvicorn[standard]>=0.29.0
-# 2.1 で postgresql:// の既定ドライバが psycopg(v3) に変わり、起動できなくなった。
-# 上限を付けて、勝手に上がらないようにする
+# 版を固定してある。
+#
+# 以前は「これ以上なら何でも」という書き方だったので、Renderがデプロイの
+# たびに最新を取りに行き、こちらが何も触っていない日に突然落ちた。
+# （sqlalchemy 2.1 で postgresql:// の既定ドライバが psycopg2 から psycopg に
+#   変わり、入れていない psycopg を読みに行って起動できなくなった）
+#
+# 上げたいときは、この番号を書き換えて、1つずつ確かめてから上げる。
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+# 2.1 は上のとおり接続の既定が変わる。接続URLでドライバを指定して回避して
+# いるが、他にも変更が入るため、上げるときは確かめてからにする
 sqlalchemy>=2.0.30,<2.1
-alembic>=1.13.1
-pydantic>=2.7.1
-pydantic-settings>=2.2.1
-python-multipart>=0.0.9
-openpyxl>=3.1.2
-pdfplumber>=0.11.0
-Pillow>=10.0.0
-httpx>=0.27.0
-python-amazon-sp-api>=1.9.0
-psycopg2-binary>=2.9.9
-beautifulsoup4>=4.12.0
-google-auth>=2.29.0
+alembic==1.20.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+python-multipart==0.0.32
+openpyxl==3.1.5
+pdfplumber==0.11.10
+Pillow==12.3.0
+httpx==0.28.1
+python-amazon-sp-api==2.1.23
+psycopg2-binary==2.9.13
+beautifulsoup4==4.15.0
+google-auth==2.58.1
