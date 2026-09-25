@@ -83,6 +83,8 @@ export default function RakutenShippingPage() {
   // 選び直したときに二重で送ってしまわないよう、こちらで覚えておく
   const [sentShip, setSentShip] = useState(() => new Set())
   const [sentConfirm, setSentConfirm] = useState(() => new Set())
+  // 発送完了報告は非同期。受付の返事とは別に、処理の結果を見に行く
+  const [reportResult, setReportResult] = useState(null)
 
   const load = useCallback(async () => {
     setBusy(true)
@@ -181,6 +183,18 @@ export default function RakutenShippingPage() {
     } catch (e) {
       alert('送れませんでした: ' + (e.response?.data?.detail || e.message))
     } finally { setSending('') }
+  }
+
+  // 発送完了報告（非同期）の結果。締まったかどうかはここでしか分からない
+  const checkResult = async (requestId) => {
+    setReportResult({ loading: true })
+    try {
+      const r = await api.get('/rakuten/shipping/report-result',
+        { params: { request_id: requestId } })
+      setReportResult(r.data)
+    } catch (e) {
+      setReportResult({ error: e.response?.data?.detail || e.message })
+    }
   }
 
   const saveNames = async () => {
@@ -418,6 +432,22 @@ export default function RakutenShippingPage() {
             <div>発送情報が無いため送れなかった注文 {sendResult.skipped.length}件：
               {sendResult.skipped.slice(0, 5).join('、')}
               {sendResult.skipped.length > 5 ? ' ほか' : ''}
+            </div>
+          )}
+          {(sendResult.request_ids || []).length > 0 && (
+            <div style={{ marginTop: 6 }}>
+              <button className="btn btn-sm btn-secondary" style={{ fontSize: 11 }}
+                onClick={() => checkResult(sendResult.request_ids[0])}>
+                楽天側の処理結果を見る
+              </button>
+              {reportResult && (
+                <pre style={{ fontSize: 10, background: '#fff', padding: 8,
+                  borderRadius: 4, marginTop: 6, maxHeight: 220,
+                  overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+                  {reportResult.loading ? '確認中…'
+                    : JSON.stringify(reportResult, null, 1)}
+                </pre>
+              )}
             </div>
           )}
           {(sendResult.errors || []).length > 0 && (
