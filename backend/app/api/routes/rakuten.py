@@ -3536,10 +3536,12 @@ async def rakuten_shipping_targets(days: int = 45, db: Session = Depends(get_db)
     for s in subs:
         key = str(s["id"])
         groups.append({"id": key, "name": s["name"], "count": counts.get(key, 0)})
-    # 一覧に無いサブステータスが注文側に出ていたら、それも出す
+    # 一覧に無いサブステータスが注文側に出ていたら、それも出す。
+    # 名前が取れなかったものは空のままにする（番号を名前として入れてしまうと、
+    # 画面が「取れた」と判断して理由を出さなくなる）
     for key, n in counts.items():
         if key and key not in {g["id"] for g in groups}:
-            groups.append({"id": key, "name": name_by_id.get(key, key), "count": n})
+            groups.append({"id": key, "name": name_by_id.get(key, ""), "count": n})
 
     # サブステータスの名前が取れなかったときに気づけるよう、様子も返す
     return {**data, "groups": groups, "sub_status_debug": sub_res.get("debug")}

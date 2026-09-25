@@ -733,28 +733,34 @@ async def fetch_sub_statuses(service_secret: str, license_key: str) -> dict:
     """
     headers = _auth_header(service_secret, license_key)
     attempts = [
-        ("/2.0/order/getSubStatusList", {}),
-        ("/2.0/order/getSubStatusList/", {}),
-        ("/2.0/order/getSubStatusList",
+        ("POST", "/2.0/order/getSubStatusList", {}),
+        ("POST", "/2.0/order/getSubStatusList/", {}),
+        ("POST", "/2.0/order/getSubStatusList",
          {"PaginationRequestModel": {"requestRecordsAmount": 100,
                                      "requestPage": 1}}),
+        ("GET", "/2.0/order/getSubStatusList", None),
     ]
     debug = []
-    for path, body in attempts:
+    for method, path, body in attempts:
         try:
-            res = await _post_rms(path, body, headers, timeout=30)
+            if method == "GET":
+                async with httpx.AsyncClient(timeout=30) as client:
+                    res = await client.get(f"{RMS_BASE}{path}", headers=headers)
+            else:
+                res = await _post_rms(path, body, headers, timeout=30)
         except Exception as e:
-            debug.append({"path": path, "error": type(e).__name__})
+            debug.append({"m": method, "path": path, "error": type(e).__name__})
             continue
-        info = {"path": path, "status": res.status_code}
+        info = {"m": method, "path": path, "status": res.status_code}
         if res.is_success:
             try:
                 data = res.json()
             except Exception:
                 data = {}
-            info["keys"] = list(data.keys())[:8] if isinstance(data, dict) else []
             found: dict = {}
             _walk_sub_statuses(data, found)
+            # 中身の頭を持ち帰る。項目名が仕様と違っていても、これを見れば直せる
+            info["sample"] = str(data)[:300]
             debug.append({**info, "found": len(found)})
             if found:
                 return {"items": [{"id": k, "name": v} for k, v in found.items()],
