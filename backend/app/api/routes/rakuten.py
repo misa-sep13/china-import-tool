@@ -3577,12 +3577,12 @@ def rakuten_save_sub_status_names(data: SubStatusNamesIn,
 
 @router.get("/shipping/can-report")
 async def rakuten_can_report(db: Session = Depends(get_db)):
-    """発送完了報告のAPIが使えるかだけを確かめる。何も変えない。"""
+    """発送メールと受注承諾メールのAPIが使えるかを確かめる。何も変えない。"""
     from app.services import rakuten_rms
     settings = _get_or_create_settings(db)
     if not settings.rms_service_secret or not settings.rms_license_key:
         raise HTTPException(400, "RMS APIキーが設定されていません")
-    return await rakuten_rms.check_shipping_report_allowed(
+    return await rakuten_rms.check_api_allowed(
         settings.rms_service_secret, settings.rms_license_key)
 
 

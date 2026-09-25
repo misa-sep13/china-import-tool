@@ -135,8 +135,8 @@ export default function RakutenShippingPage() {
       const r = await api.get('/rakuten/shipping/can-report')
       setCanReport(r.data)
     } catch (e) {
-      setCanReport({ ok: false, status: 0,
-        body: e.response?.data?.detail || e.message })
+      setCanReport({ error: { label: '確認できませんでした', ok: false,
+        status: 0, body: e.response?.data?.detail || e.message } })
     }
   }
 
@@ -277,18 +277,16 @@ export default function RakutenShippingPage() {
           )}
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8,
             alignItems: 'center' }}>
-            {canReport && (
-              <span style={{ fontSize: 11,
-                color: canReport.ok ? C.good : C.bad }}>
-                {canReport.ok
-                  ? '発送完了報告のAPIは使えます'
-                  : `発送完了報告のAPIが使えません（${canReport.status}）`}
+            {canReport && Object.values(canReport).map((r, i) => (
+              <span key={i} style={{ fontSize: 11,
+                color: r.ok ? C.good : C.bad }}>
+                {r.ok ? `✓ ${r.label}` : `✕ ${r.label}（${r.status}）`}
               </span>
-            )}
+            ))}
             <button className="btn btn-sm btn-secondary" style={{ fontSize: 11 }}
               onClick={checkReport}
-              title="中身が空のリクエストを1本投げて、権限があるかだけ見ます。注文は変わりません">
-              発送完了報告が使えるか確かめる
+              title="中身が空のリクエストを1本ずつ投げて、権限があるかだけ見ます。注文は変わりません">
+              メールのAPIが使えるか確かめる
             </button>
           </span>
         </div>
