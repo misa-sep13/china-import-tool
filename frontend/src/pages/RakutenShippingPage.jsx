@@ -73,6 +73,12 @@ export default function RakutenShippingPage() {
   const [naming, setNaming] = useState(false)
   const [names, setNames] = useState({})
   const [canReport, setCanReport] = useState(null)
+  // メール送信。発送日は既定で今日。空欄にすると、いま入っている値のまま送る
+  const [sendDate, setSendDate] = useState(() => new Date()
+    .toLocaleDateString('sv-SE'))
+  const [sendCarrier, setSendCarrier] = useState('')
+  const [sending, setSending] = useState('')
+  const [sendResult, setSendResult] = useState(null)
 
   const load = useCallback(async () => {
     setBusy(true)
@@ -117,6 +123,54 @@ export default function RakutenShippingPage() {
   })
   const shownAllPicked = shown.length > 0
     && shown.every(o => picked.has(o.order_number))
+
+  // 受注承諾メール。注文確認を出すと楽天からメールが出る
+  const sendConfirm = async () => {
+    const n = picked.size
+    if (!n) return
+    const ask = [
+      `選んだ ${n}件に受注承諾メールを送ります。`,
+      '',
+      '楽天から実際にお客様へメールが届きます。よろしいですか？',
+    ].join('\n')
+    if (!window.confirm(ask)) return
+    setSending('confirm'); setSendResult(null)
+    try {
+      const r = await api.post('/rakuten/shipping/confirm-orders',
+        { order_numbers: [...picked] })
+      setSendResult({ kind: '受注承諾メール', ...r.data })
+    } catch (e) {
+      alert('送れませんでした: ' + (e.response?.data?.detail || e.message))
+    } finally { setSending('') }
+  }
+
+  // 発送メール。発送完了報告を出すと、注文が発送済になってメールが出る
+  const sendShipping = async () => {
+    const n = picked.size
+    if (!n) return
+    const bad = pickedOrders.filter(badReason).length
+    const lines = [`選んだ ${n}件を発送完了にします。`]
+    lines.push(sendDate ? `発送日：${sendDate}` : '発送日：いまの値のまま')
+    if (sendCarrier) {
+      lines.push(`配送会社：${CARRIER[sendCarrier]}（選んだ全件を上書き）`)
+    }
+    if (bad) {
+      lines.push('', `※ 要確認が ${bad}件あります。弾かれる可能性があります。`)
+    }
+    lines.push('', '楽天から実際にお客様へ発送メールが届きます。よろしいですか？')
+    if (!window.confirm(lines.join('\n'))) return
+    setSending('ship'); setSendResult(null)
+    try {
+      const r = await api.post('/rakuten/shipping/report', {
+        order_numbers: [...picked],
+        shipping_date: sendDate || null,
+        delivery_company: sendCarrier || null,
+      })
+      setSendResult({ kind: '発送メール', ...r.data })
+    } catch (e) {
+      alert('送れませんでした: ' + (e.response?.data?.detail || e.message))
+    } finally { setSending('') }
+  }
 
   const saveNames = async () => {
     try {
@@ -289,6 +343,81 @@ export default function RakutenShippingPage() {
               メールのAPIが使えるか確かめる
             </button>
           </span>
+        </div>
+      )}
+
+      {/* メールを送る。文面は楽天のテンプレートで、こちらは報告するだけ */}
+      {data && picked.size > 0 && (
+        <div className="card" style={{ marginBottom: 12, display: 'flex',
+          gap: 12, alignItems: 'center', flexWrap: 'wrap',
+          border: '1px solid #bfdbfe', background: '#eff6ff' }}>
+          <b style={{ fontSize: 13 }}>選んだ {picked.size}件に</b>
+
+          <button className="btn btn-primary btn-sm" style={{ fontSize: 12 }}
+            onClick={sendConfirm} disabled={!!sending}>
+            {sending === 'confirm' ? '送信中…' : '📧 受注承諾メールを送る'}
+          </button>
+
+          <span style={{ borderLeft: `1px solid ${C.line}`, height: 22 }} />
+
+          <label style={{ fontSize: 12, color: C.sub }}>
+            発送日
+            <input type="date" value={sendDate}
+              onChange={e => setSendDate(e.target.value)}
+              style={{ width: 140, marginLeft: 4, fontSize: 12 }} />
+          </label>
+          <label style={{ fontSize: 12, color: C.sub }}>
+            配送会社
+            <select value={sendCarrier}
+              onChange={e => setSendCarrier(e.target.value)}
+              style={{ width: 150, marginLeft: 4, fontSize: 12 }}>
+              <option value="">いまの値のまま</option>
+              {Object.entries(CARRIER).map(([code, name]) => (
+                <option key={code} value={code}>{name}</option>
+              ))}
+            </select>
+          </label>
+          <button className="btn btn-primary btn-sm"
+            style={{ fontSize: 12, background: '#16a34a' }}
+            onClick={sendShipping} disabled={!!sending}>
+            {sending === 'ship' ? '送信中…' : '🚚 発送メールを送る（発送完了報告）'}
+          </button>
+
+          <span style={{ fontSize: 11, color: C.sub, width: '100%' }}>
+            発送日を空欄にすると、いま入っている値のまま報告します。
+            配送会社を選ぶと、選んだ注文すべてがその会社で上書きされます。
+            文面は楽天のテンプレートで、こちらは報告するだけです。
+          </span>
+        </div>
+      )}
+
+      {/* 送った結果。弾かれた注文は注文番号つきで出す */}
+      {sendResult && (
+        <div style={{ marginBottom: 12, fontSize: 12, padding: '8px 10px',
+          borderRadius: 6,
+          background: (sendResult.errors || []).length ? '#fffbeb' : '#f0fdf4',
+          border: `1px solid ${(sendResult.errors || []).length ? '#fcd34d' : '#bbf7d0'}`,
+          color: (sendResult.errors || []).length ? '#92400e' : '#166534' }}>
+          <b>{sendResult.kind}</b>：
+          {sendResult.request_ids
+            ? `${sendResult.target}件を受け付けました（処理は楽天側で順に行われます）`
+            : `${sendResult.ok}件を送りました`}
+          {(sendResult.skipped || []).length > 0 && (
+            <div>発送情報が無いため送れなかった注文 {sendResult.skipped.length}件：
+              {sendResult.skipped.slice(0, 5).join('、')}
+              {sendResult.skipped.length > 5 ? ' ほか' : ''}
+            </div>
+          )}
+          {(sendResult.errors || []).length > 0 && (
+            <div style={{ marginTop: 4 }}>
+              弾かれたもの {sendResult.errors.length}件：
+              {sendResult.errors.slice(0, 8).map((e, i) => (
+                <div key={i} style={{ fontSize: 11 }}>
+                  {e.order_number || '（注文番号なし）'} — {e.message}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

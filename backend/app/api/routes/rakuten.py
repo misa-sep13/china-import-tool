@@ -3586,6 +3586,114 @@ async def rakuten_can_report(db: Session = Depends(get_db)):
         settings.rms_service_secret, settings.rms_license_key)
 
 
+class ShippingSendIn(BaseModel):
+    order_numbers: List[str]
+    # 空欄なら、いま入っている値をそのまま使う
+    shipping_date: Optional[str] = None
+    delivery_company: Optional[str] = None
+
+
+@router.post("/shipping/confirm-orders")
+async def rakuten_confirm_orders(data: ShippingSendIn,
+                                 db: Session = Depends(get_db)):
+    """注文確認（受注承諾メール）を送る。"""
+    from app.services import rakuten_rms
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません")
+    nums = [n.strip() for n in (data.order_numbers or []) if n.strip()]
+    if not nums:
+        raise HTTPException(400, "注文が選ばれていません")
+    return await rakuten_rms.confirm_orders(
+        settings.rms_service_secret, settings.rms_license_key, nums)
+
+
+@router.post("/shipping/report")
+async def rakuten_report_shipping(data: ShippingSendIn,
+                                  db: Session = Depends(get_db)):
+    """発送完了報告（発送メール）を送る。
+
+    送る中身は、画面から渡された注文番号をもとに、その場で getOrder を
+    取り直して組み立てる。発送明細IDを指定せずに送ると発送情報が「追加」に
+    なり、伝票番号が二重に並ぶため、既にある明細のIDを必ず付ける。
+    """
+    from app.services import rakuten_rms
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません")
+    nums = [n.strip() for n in (data.order_numbers or []) if n.strip()]
+    if not nums:
+        raise HTTPException(400, "注文が選ばれていません")
+
+    date = (data.shipping_date or "").strip()
+    company = (data.delivery_company or "").strip()
+
+    headers = rakuten_rms._auth_header(settings.rms_service_secret,
+                                       settings.rms_license_key)
+    models, skipped = [], []
+    for i in range(0, len(nums), 100):
+        batch = nums[i:i + 100]
+        res = await rakuten_rms._post_rms(
+            "/2.0/order/getOrder", {"orderNumberList": batch, "version": 10},
+            headers)
+        if not res.is_success:
+            raise HTTPException(502, f"注文の取り直しに失敗しました（{res.status_code}）")
+        for o in (res.json().get("OrderModelList") or []):
+            baskets = []
+            for pkg in o.get("PackageModelList") or []:
+                basket_id = pkg.get("basketId")
+                if basket_id is None:
+                    continue
+                ships = []
+                for sh in (pkg.get("ShippingModelList") or []):
+                    m = {"shippingDetailId": sh.get("shippingDetailId")}
+                    c = company or str(sh.get("deliveryCompany") or "")
+                    if c:
+                        m["deliveryCompany"] = c
+                    d = date or str(sh.get("shippingDate") or "")
+                    if d:
+                        m["shippingDate"] = d
+                    ships.append(m)
+                if not ships:
+                    # まだ発送情報が無い送付先。配送会社と日付が分かるときだけ足す
+                    if company and date:
+                        ships.append({"deliveryCompany": company,
+                                      "shippingDate": date})
+                    else:
+                        continue
+                baskets.append({"basketId": basket_id,
+                                "ShippingModelList": ships})
+            num = str(o.get("orderNumber") or "")
+            if baskets:
+                models.append({"orderNumber": num,
+                               "BasketidModelList": baskets})
+            else:
+                skipped.append(num)
+        if i + 100 < len(nums):
+            await asyncio.sleep(1.0)
+
+    if not models:
+        raise HTTPException(
+            400, "送れる注文がありませんでした。発送情報が無い注文は、"
+                 "配送会社と発送日を指定してください。")
+
+    out = await rakuten_rms.report_shipping(
+        settings.rms_service_secret, settings.rms_license_key, models)
+    return {**out, "skipped": skipped, "target": len(models)}
+
+
+@router.get("/shipping/report-result")
+async def rakuten_report_result(request_id: str,
+                                db: Session = Depends(get_db)):
+    """発送完了報告（非同期）の処理結果を見る。"""
+    from app.services import rakuten_rms
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません")
+    return await rakuten_rms.get_shipping_result(
+        settings.rms_service_secret, settings.rms_license_key, request_id)
+
+
 @router.get("/rms/debug-order-detail")
 async def debug_rms_order_detail(db: Session = Depends(get_db)):
     """デバッグ用: getOrderの生レスポンスを返す（直近3日の先頭1件）"""

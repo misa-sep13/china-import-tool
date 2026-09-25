@@ -908,3 +908,95 @@ async def fetch_shipping_targets(service_secret: str, license_key: str,
         "diagnostics": {"with_basket_id": found_basket,
                         "with_shipping_detail_id": found_detail},
     }
+
+
+# ---------- 発送完了報告・注文確認（メールの送信） ----------
+#
+# RMSの画面は一度に299件しかメールを送れない。APIは画面を通らないので
+# その制限を受けない。送るのは次の2つだけ。
+#   ・発送メール    updateOrderShippingAsync（100注文ずつ・非同期）
+#   ・受注承諾メール confirmOrder
+#
+# メールの文面は楽天側のテンプレート。こちらからは「報告する」だけで、
+# 実際に送るのは楽天。
+
+
+def _messages(res) -> list[dict]:
+    """応答の MessageModelList を取り出す。形が違っても落ちない。"""
+    try:
+        data = res.json()
+    except Exception:
+        return [{"messageType": "ERROR", "message": str(res.text)[:200]}]
+    if isinstance(data, dict):
+        return data.get("MessageModelList") or []
+    return []
+
+
+async def confirm_orders(service_secret: str, license_key: str,
+                         order_numbers: list[str]) -> dict:
+    """注文確認（受注承諾メール）。100件ずつ送る。"""
+    headers = _auth_header(service_secret, license_key)
+    ok, errors = 0, []
+    for i in range(0, len(order_numbers), SHIPPING_BATCH):
+        chunk = order_numbers[i:i + SHIPPING_BATCH]
+        try:
+            res = await _post_rms("/2.0/order/confirmOrder/",
+                                  {"orderNumberList": chunk}, headers)
+        except Exception as e:
+            errors.append({"order_number": "", "message": f"通信に失敗しました（{type(e).__name__}）"})
+            continue
+        bad = 0
+        for m in _messages(res):
+            if (m.get("messageType") or "").upper() == "ERROR":
+                bad += 1
+                errors.append({"order_number": m.get("orderNumber") or "",
+                               "message": m.get("message") or "",
+                               "code": m.get("messageCode") or ""})
+        ok += max(0, len(chunk) - bad)
+        if i + SHIPPING_BATCH < len(order_numbers):
+            await asyncio.sleep(_API_INTERVAL_SEC)
+    return {"ok": ok, "errors": errors}
+
+
+async def report_shipping(service_secret: str, license_key: str,
+                          models: list[dict]) -> dict:
+    """発送完了報告（発送メール）。100注文ずつ、非同期で投げる。
+
+    models は仕様書どおりの OrderShippingModel の並び。
+    受付だけが同期で返り、実際の反映は非同期なので requestId を持ち帰る。
+    """
+    headers = _auth_header(service_secret, license_key)
+    request_ids, errors = [], []
+    for i in range(0, len(models), SHIPPING_BATCH):
+        chunk = models[i:i + SHIPPING_BATCH]
+        try:
+            res = await _post_rms("/2.0/order/updateOrderShippingAsync/",
+                                  {"OrderShippingModelList": chunk}, headers)
+        except Exception as e:
+            errors.append({"order_number": "",
+                           "message": f"通信に失敗しました（{type(e).__name__}）"})
+            continue
+        for m in _messages(res):
+            if (m.get("messageType") or "").upper() == "ERROR":
+                errors.append({"order_number": m.get("orderNumber") or "",
+                               "message": m.get("message") or "",
+                               "code": m.get("messageCode") or ""})
+            elif m.get("requestId"):
+                request_ids.append(m["requestId"])
+        if i + SHIPPING_BATCH < len(models):
+            await asyncio.sleep(_API_INTERVAL_SEC)
+    return {"request_ids": request_ids, "errors": errors,
+            "sent": len(models) - len({e["order_number"] for e in errors if e["order_number"]})}
+
+
+async def get_shipping_result(service_secret: str, license_key: str,
+                              request_id: str) -> dict:
+    """発送完了報告（非同期）の処理結果。30日間は見られる。"""
+    headers = _auth_header(service_secret, license_key)
+    res = await _post_rms("/2.0/order/getResultUpdateOrderShippingAsync/",
+                          {"requestId": request_id}, headers)
+    try:
+        data = res.json()
+    except Exception:
+        data = {"raw": str(res.text)[:300]}
+    return {"status": res.status_code, "data": data}
