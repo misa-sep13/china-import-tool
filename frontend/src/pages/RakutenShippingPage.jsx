@@ -33,6 +33,10 @@ const th = {
 }
 const td = { padding: '6px 8px', fontSize: 12, borderTop: `1px solid ${C.line}` }
 
+// 日本郵便（1003）は追跡を付けずに出すので、伝票番号が無くても普通のこと。
+// ここを見ないと、日本郵便の注文が毎回まるごと要確認になってしまう
+const NO_TRACKING_CARRIERS = new Set(['1003'])
+
 /**
  * このまま発送完了報告に出すと困る注文を見分ける。
  * 番号抜けがいちばん多いが、配送会社や発送日が欠けていても報告は通らない。
@@ -40,10 +44,16 @@ const td = { padding: '6px 8px', fontSize: 12, borderTop: `1px solid ${C.line}` 
 function badReason(o) {
   const ships = o.shipments || []
   if (!ships.length) return '発送情報がありません'
-  const miss = ships.filter(s => !s.shipping_number)
-  if (miss.length === ships.length) return '伝票番号が入っていません'
-  if (miss.length) return '伝票番号が入っていない送付先があります'
+  // 配送会社が先。これが無いと「追跡が要るのかどうか」も決められない
   if (ships.some(s => !s.delivery_company)) return '配送会社が入っていません'
+  // 追跡を付けない配送会社は、伝票番号が無くても問題にしない
+  const needNumber = ships.filter(
+    s => !NO_TRACKING_CARRIERS.has(String(s.delivery_company || '')))
+  const miss = needNumber.filter(s => !s.shipping_number)
+  if (needNumber.length && miss.length === needNumber.length) {
+    return '伝票番号が入っていません'
+  }
+  if (miss.length) return '伝票番号が入っていない送付先があります'
   if (ships.some(s => !s.shipping_date)) return '発送日が入っていません'
   return ''
 }
