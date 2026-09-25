@@ -3520,10 +3520,16 @@ async def rakuten_shipping_targets(days: int = 45, db: Session = Depends(get_db)
     sub_res = await rakuten_rms.fetch_sub_statuses(
         settings.rms_service_secret, settings.rms_license_key)
     subs = sub_res["items"]
+    # 一覧を取るAPIは権限が無く401になる。こちらで付けた名前があれば使う
+    try:
+        saved_names = json.loads(settings.sub_status_names or "{}")
+    except (ValueError, TypeError):
+        saved_names = {}
     data = await rakuten_rms.fetch_shipping_targets(
         settings.rms_service_secret, settings.rms_license_key, days=days)
 
     name_by_id = {str(s["id"]): s["name"] for s in subs}
+    name_by_id.update({str(k): v for k, v in saved_names.items() if v})
     counts: dict[str, int] = {}
     for o in data["orders"]:
         sid = o.get("sub_status_id")
@@ -3535,7 +3541,8 @@ async def rakuten_shipping_targets(days: int = 45, db: Session = Depends(get_db)
     groups = [{"id": "", "name": "サブステータスなし", "count": counts.get("", 0)}]
     for s in subs:
         key = str(s["id"])
-        groups.append({"id": key, "name": s["name"], "count": counts.get(key, 0)})
+        groups.append({"id": key, "name": name_by_id.get(key, s["name"]),
+                       "count": counts.get(key, 0)})
     # 一覧に無いサブステータスが注文側に出ていたら、それも出す。
     # 名前が取れなかったものは空のままにする（番号を名前として入れてしまうと、
     # 画面が「取れた」と判断して理由を出さなくなる）
@@ -3545,6 +3552,38 @@ async def rakuten_shipping_targets(days: int = 45, db: Session = Depends(get_db)
 
     # サブステータスの名前が取れなかったときに気づけるよう、様子も返す
     return {**data, "groups": groups, "sub_status_debug": sub_res.get("debug")}
+
+
+class SubStatusNamesIn(BaseModel):
+    names: dict
+
+
+@router.put("/shipping/sub-status-names")
+def rakuten_save_sub_status_names(data: SubStatusNamesIn,
+                                  db: Session = Depends(get_db)):
+    """サブステータスの名前を覚える。
+
+    一覧を取るAPI（getSubStatusList）は、この店舗の鍵では権限が無く401に
+    なる。番号のままだと見分けられないので、こちらで名前を付けられるように
+    した。RMSで権限が付いたら、そちらの名前が優先される。
+    """
+    settings = _get_or_create_settings(db)
+    clean = {str(k).strip(): str(v).strip()
+             for k, v in (data.names or {}).items() if str(k).strip()}
+    settings.sub_status_names = json.dumps(clean, ensure_ascii=False)
+    db.commit()
+    return {"ok": True, "names": clean}
+
+
+@router.get("/shipping/can-report")
+async def rakuten_can_report(db: Session = Depends(get_db)):
+    """発送完了報告のAPIが使えるかだけを確かめる。何も変えない。"""
+    from app.services import rakuten_rms
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません")
+    return await rakuten_rms.check_shipping_report_allowed(
+        settings.rms_service_secret, settings.rms_license_key)
 
 
 @router.get("/rms/debug-order-detail")

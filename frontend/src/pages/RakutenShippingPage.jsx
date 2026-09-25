@@ -59,6 +59,10 @@ export default function RakutenShippingPage() {
   // メールを送る対象。注文番号で持つ
   const [picked, setPicked] = useState(() => new Set())
   const [showPicked, setShowPicked] = useState(false)
+  // サブステータスの名前。一覧を取るAPIが権限不足で401なので、自分で付ける
+  const [naming, setNaming] = useState(false)
+  const [names, setNames] = useState({})
+  const [canReport, setCanReport] = useState(null)
 
   const load = useCallback(async () => {
     setBusy(true)
@@ -66,6 +70,9 @@ export default function RakutenShippingPage() {
     try {
       const r = await api.get('/rakuten/shipping/targets', { params: { days } })
       setData(r.data)
+      const init = {}
+      for (const g of r.data.groups || []) if (g.id) init[g.id] = g.name || ''
+      setNames(init)
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally {
@@ -100,6 +107,28 @@ export default function RakutenShippingPage() {
   })
   const shownAllPicked = shown.length > 0
     && shown.every(o => picked.has(o.order_number))
+
+  const saveNames = async () => {
+    try {
+      await api.put('/rakuten/shipping/sub-status-names', { names })
+      setNaming(false)
+      await load()
+    } catch (e) {
+      alert('保存できませんでした: ' + (e.response?.data?.detail || e.message))
+    }
+  }
+
+  // 発送完了報告のAPIが使えるか。中身が空のリクエストを1本投げるだけで、
+  // 注文は何も変わらない
+  const checkReport = async () => {
+    try {
+      const r = await api.get('/rakuten/shipping/can-report')
+      setCanReport(r.data)
+    } catch (e) {
+      setCanReport({ ok: false, status: 0,
+        body: e.response?.data?.detail || e.message })
+    }
+  }
 
   return (
     <div style={{ padding: 2, minWidth: 0 }}>
@@ -170,16 +199,48 @@ export default function RakutenShippingPage() {
         </div>
       )}
 
-      {/* サブステータスの名前が取れないときは、なぜ取れないのかを出す。
-          番号だけ並んで理由が分からない、をなくすため */}
-      {data && (data.groups || []).some(g => g.id && !g.name) && (
-        <div style={{ marginBottom: 12, fontSize: 11, color: C.sub,
-          background: '#f8fafc', border: `1px solid ${C.line}`,
-          borderRadius: 6, padding: '6px 10px' }}>
-          サブステータスの名前を取れませんでした。応答の様子：
-          <code style={{ fontSize: 11 }}>
-            {JSON.stringify(data.sub_status_debug)}
-          </code>
+      {/* サブステータスの一覧を取るAPIは、この店舗の鍵では権限が無く401になる。
+          番号のままだと見分けられないので、こちらで名前を付けられるようにした */}
+      {data && (data.groups || []).some(g => g.id && !g.name) && !naming && (
+        <div style={{ marginBottom: 12, fontSize: 12, color: '#92400e',
+          background: '#fffbeb', border: '1px solid #fcd34d',
+          borderRadius: 6, padding: '6px 10px', display: 'flex',
+          alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span>
+            サブステータスの名前を楽天から取れません（このAPIだけ権限がありません）。
+            ここで名前を付けると、次から表示されます。
+          </span>
+          <button className="btn btn-sm btn-secondary" style={{ fontSize: 12 }}
+            onClick={() => setNaming(true)}>名前を付ける</button>
+        </div>
+      )}
+
+      {naming && data && (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>
+            番号に名前を付けます（本日発送分・あざみ分・在庫切れ1 など）。
+            覚えておくので、付けるのは一度だけです。
+          </div>
+          {(data.groups || []).filter(g => g.id).map(g => (
+            <div key={g.id} style={{ display: 'flex', gap: 8, alignItems: 'center',
+              marginBottom: 6 }}>
+              <span style={{ fontFamily: 'monospace', fontSize: 12, width: 90,
+                color: C.sub }}>{g.id}</span>
+              <span style={{ fontSize: 11, color: C.sub, width: 60 }}>
+                {g.count}件
+              </span>
+              <input value={names[g.id] ?? ''} placeholder="例: 本日発送分"
+                onChange={e => setNames(v => ({ ...v, [g.id]: e.target.value }))}
+                style={{ width: 240, fontSize: 12 }} />
+            </div>
+          ))}
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <button className="btn btn-primary btn-sm" onClick={saveNames}>
+              保存する
+            </button>
+            <button className="btn btn-secondary btn-sm"
+              onClick={() => setNaming(false)}>やめる</button>
+          </div>
         </div>
       )}
 
@@ -204,8 +265,21 @@ export default function RakutenShippingPage() {
               {showPicked ? '▲ 選んだものを閉じる' : '▼ 選んだものを一覧で見る'}
             </button>
           )}
-          <span style={{ fontSize: 11, color: C.warn, marginLeft: 'auto' }}>
-            発送完了報告（メール送信）はこのあと付けます
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: 8,
+            alignItems: 'center' }}>
+            {canReport && (
+              <span style={{ fontSize: 11,
+                color: canReport.ok ? C.good : C.bad }}>
+                {canReport.ok
+                  ? '発送完了報告のAPIは使えます'
+                  : `発送完了報告のAPIが使えません（${canReport.status}）`}
+              </span>
+            )}
+            <button className="btn btn-sm btn-secondary" style={{ fontSize: 11 }}
+              onClick={checkReport}
+              title="中身が空のリクエストを1本投げて、権限があるかだけ見ます。注文は変わりません">
+              発送完了報告が使えるか確かめる
+            </button>
           </span>
         </div>
       )}

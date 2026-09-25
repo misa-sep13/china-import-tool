@@ -772,6 +772,26 @@ async def fetch_sub_statuses(service_secret: str, license_key: str) -> dict:
     return {"items": [], "debug": debug}
 
 
+async def check_shipping_report_allowed(service_secret: str,
+                                        license_key: str) -> dict:
+    """発送完了報告のAPIが、この店舗の鍵で使えるかだけを確かめる。
+
+    サブステータス一覧のAPIが401（権限なし）だったので、報告のほうも
+    使えるとは限らない。中身が空のリクエストを1本だけ投げて、返ってくる
+    のが「権限がない」か「内容が不正」かを見る。空なので何も変わらない。
+    """
+    headers = _auth_header(service_secret, license_key)
+    try:
+        res = await _post_rms("/2.0/order/updateOrderShippingAsync/",
+                              {"OrderShippingModelList": []}, headers, timeout=30)
+    except Exception as e:
+        return {"ok": False, "status": 0, "reason": type(e).__name__}
+    body = str(res.text)[:300]
+    # 401 は権限が無い。それ以外（400や200のエラー応答）は、口は開いている
+    denied = res.status_code == 401 or "Un-Authorised" in body
+    return {"ok": not denied, "status": res.status_code, "body": body}
+
+
 def _shipping_rows(order: dict) -> list[dict]:
     """注文の中の発送情報。送付先（basketId）ごとに1つ以上ある。
 

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, Date
+from sqlalchemy import Column, Integer, String, Float, Boolean, Date, Text
 from app.core.database import Base
 
 class RakutenSettings(Base):
@@ -21,3 +21,7 @@ class RakutenSettings(Base):
     rms_service_secret  = Column(String,  nullable=True)    # SP411150_xxx
     rms_license_key     = Column(String,  nullable=True)    # SL411150_xxx
     rms_key_expires_at  = Column(Date,    nullable=True)    # APIキー有効期限
+    # サブステータスの名前（本日発送分・あざみ分など）。
+    # 一覧を取るAPIは権限が無く401になるので、こちらで名前を持つ。
+    # JSON文字列 '{"262970":"本日発送分","305715":"あざみ分"}'
+    sub_status_names    = Column(Text,    nullable=True)
