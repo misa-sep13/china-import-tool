@@ -536,14 +536,14 @@ def _issue_jan(db: Session, sku: str, name: str, test: bool = False) -> str:
     バリエーションでは子の数だけ続けて呼ぶ。台帳に書き込む前に次を採ると
     同じ番号になってしまうので、1件ごとに flush して確定させる。
     """
-    from app.api.routes.amazon_research import _get_settings, _make_jan
+    from app.api.routes.amazon_research import (_get_settings, _make_jan,
+                                                next_jan_seq)
     st = _get_settings(db)
     prefix = (st.gs1_prefix or "").strip()
     if not prefix.isdigit() or len(prefix) not in (7, 9):
         raise HTTPException(
             400, "先にGS1事業者コード（7桁か9桁）を設定してください")
-    last = db.query(JanCode).order_by(JanCode.item_seq.desc()).first()
-    seq = (last.item_seq or 0) + 1 if last else 1
+    seq = next_jan_seq(db)
     code = _make_jan(prefix, seq)
     db.add(JanCode(code=code, item_seq=seq, sku=sku or None,
                    name=name or None,

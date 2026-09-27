@@ -498,6 +498,28 @@ def _check_digit(body12: str) -> str:
     return str((10 - total % 10) % 10)
 
 
+# 前のAmazonアカウントで使った商品アイテムコードは、二度と発番しない。
+# GS1の一覧（2026-09-27 時点）で 1〜87 が使用済み。うち多くは
+# 「GTIN使用中」で過去のASINに紐づいており、同じ番号で別の商品を
+# 出そうとすると弾かれる。台帳（jan_codes）が空の環境や、
+# 消えた場合に 1 から採り直してしまうため、下限として持っておく。
+#
+# 増やすことはあっても、減らしてはいけない。
+JAN_SEQ_FLOOR = 87
+
+
+def next_jan_seq(db: Session) -> int:
+    """次に使える商品アイテムコード。
+
+    台帳の最大値と、過去に使い切った分（JAN_SEQ_FLOOR）の
+    両方を超えた番号を返す。台帳だけを見ると、空のときに
+    使用済みの番号を出してしまう。
+    """
+    last = db.query(JanCode).order_by(JanCode.item_seq.desc()).first()
+    used = (last.item_seq or 0) if last else 0
+    return max(used, JAN_SEQ_FLOOR) + 1
+
+
 def _make_jan(prefix: str, seq: int) -> str:
     room = 12 - len(prefix)          # 商品アイテムコードに使える桁数
     if room <= 0:
@@ -543,8 +565,7 @@ def issue_jan(data: JanIssueIn, db: Session = Depends(get_db)):
     if not prefix.isdigit() or len(prefix) not in (7, 9):
         raise HTTPException(400, "先にGS1事業者コード（7桁か9桁）を設定してください")
 
-    last = db.query(JanCode).order_by(JanCode.item_seq.desc()).first()
-    seq = (last.item_seq or 0) + 1 if last else 1
+    seq = next_jan_seq(db)
     code = _make_jan(prefix, seq)
     if db.query(JanCode).filter(JanCode.code == code).first():
         raise HTTPException(409, "その番号はすでに使われています")
