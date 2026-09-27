@@ -44,10 +44,22 @@ def main() -> int:
     # 2) 重い受注取得(60日) — GitHubランナーのメモリで実行
     order_qty_cap = settings.get("order_qty_cap", 3) or 0
     print(f"受注データ取得中（60日分、1注文キャップ={order_qty_cap}）...")
-    sku_sales, sku_daily = asyncio.run(
-        fetch_sales_by_sku(secret, license_key, days=60, include_daily=True,
-                           order_qty_cap=order_qty_cap)
-    )
+    try:
+        sku_sales, sku_daily = asyncio.run(
+            fetch_sales_by_sku(secret, license_key, days=60, include_daily=True,
+                               order_qty_cap=order_qty_cap)
+        )
+    except Exception as e:
+        # 楽天RMSは定期メンテナンスで止まる（503 / ES01-02 API In Maintenance）。
+        # こちらに直すところは無く、翌日の実行で通る。失敗にすると毎回
+        # 通知メールが飛んで、本当の異常に気づけなくなるので静かに終える
+        msg = str(e)
+        if "ES01-02" in msg or "In Maintenance" in msg or "HTTP 503" in msg:
+            print("楽天RMSがメンテナンス中のため、今回は何もせず終わります。")
+            print(f"（楽天からの応答: {msg[:200]}）")
+            print("次の定時実行で取り直します。")
+            return 0
+        raise
     print(f"取得SKU数: {len(sku_sales)}")
 
     with httpx.Client(timeout=180, headers=auth_headers) as c:
