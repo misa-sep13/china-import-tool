@@ -578,6 +578,8 @@
   .reg-hint code{background:#eef2f7;border:1px solid var(--line);
     border-radius:4px;padding:1px 5px;font-size:10.5px;color:var(--ink);}
   .reg-hint.warn{color:var(--warn);font-weight:700;}
+  /* 画像追加の結果。入らなかったときに理由を出す */
+  .img-status{margin:4px 0 2px;}
   .reg-auto{font-size:11px;color:var(--ink-2);display:flex;flex-wrap:wrap;
     gap:4px 14px;align-items:center;}
   .reg-auto b{color:var(--ok,#15803d);width:100%;}
@@ -7820,17 +7822,61 @@ if(FIREBASE_CONFIG.databaseURL){
     file.style.display = 'none';
     box.appendChild(file);
 
+    const imgStatus = el('div', 'reg-hint img-status');
+    imgStatus.style.display = 'none';
+    box.appendChild(imgStatus);
+    const imgSay = (msg, warn) => {
+      imgStatus.textContent = msg || '';
+      imgStatus.style.display = msg ? '' : 'none';
+      imgStatus.classList.toggle('warn', !!warn);
+    };
+
     async function upload(files){
-      const list = [...files].filter(f => f.type.indexOf('image/') === 0);
-      if(!list.length) return;
+      // 以前は fetch の結果を見ていなかったので、大きすぎる・形式が違うなどで
+      // 断られても画面が変わらないだけで、理由が分からなかった（2026-09-27）
+      const all = [...files];
+      if(!all.length) return;
+      const list = all.filter(f => (f.type || '').indexOf('image/') === 0);
+      const skipped = all.length - list.length;
+      if(!list.length){
+        imgSay('画像ファイルを選んでください（' + all.length + '件は画像ではありません）', true);
+        return;
+      }
+      let ok = 0;
+      const errs = [];
+      imgSay(list.length + '枚を追加しています…');
       for(const f of list){
+        // 8MBを超えるとサーバーが断る。送る前に気づけるようにする
+        if(f.size > 8 * 1024 * 1024){
+          errs.push(f.name + '：大きすぎます（'
+            + (f.size / 1024 / 1024).toFixed(1) + 'MB。8MBまで）');
+          continue;
+        }
         const fd = new FormData();
         fd.append('file', f);
-        await fetch(API_BASE + '/amazon-listings/' + data.id + '/images'
-          + (target ? '?child_id=' + target : ''),
-          {method: 'POST', headers: apiHeaders(), body: fd});
+        try{
+          const res = await fetch(API_BASE + '/amazon-listings/' + data.id + '/images'
+            + (target ? '?child_id=' + target : ''),
+            {method: 'POST', headers: apiHeaders(), body: fd});
+          if(res.ok){ ok++; continue; }
+          let detail = 'HTTP ' + res.status;
+          try{
+            const j = await res.json();
+            if(j && j.detail) detail = typeof j.detail === 'string'
+              ? j.detail : JSON.stringify(j.detail);
+          }catch(e){}
+          errs.push(f.name + '：' + detail);
+        }catch(e){
+          errs.push(f.name + '：サーバーに繋がりませんでした');
+        }
       }
       await reload();
+      const msgs = [];
+      if(ok) msgs.push(ok + '枚を追加しました');
+      if(skipped) msgs.push(skipped + '件は画像ではないので飛ばしました');
+      if(errs.length) msgs.push('入らなかったもの → ' + errs.join(' ／ '));
+      imgSay(msgs.join('　'), !!errs.length);
+      if(!errs.length) setTimeout(() => imgSay(''), 4000);
     }
     file.addEventListener('change', () => { upload(file.files); file.value = ''; });
 
