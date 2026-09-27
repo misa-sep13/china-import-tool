@@ -7372,11 +7372,16 @@ if(FIREBASE_CONFIG.databaseURL){
       panel.appendChild(el('div', 'reg-sec', '商品画像'));
       const imgBox = el('div', 'reg-part');
       panel.appendChild(imgBox);
+      // 結果の表示は imgBox の外に置く。drawImages は box を作り直すので、
+      // 中に置くと「追加しています…」のまま消えて結果が見えない
+      const imgStatus = el('div', 'reg-hint img-status');
+      imgStatus.style.display = 'none';
+      panel.appendChild(imgStatus);
       async function reloadImages(){
         data = await regApi('/' + data.id);
-        drawImages(imgBox, data, reloadImages);
+        drawImages(imgBox, data, reloadImages, imgStatus);
       }
-      drawImages(imgBox, data, reloadImages);
+      drawImages(imgBox, data, reloadImages, imgStatus);
 
       // --- よく聞かれる項目（全商品に共通）---
       panel.appendChild(el('div', 'reg-sec', 'よく聞かれる項目（全商品に共通）'));
@@ -7792,7 +7797,7 @@ if(FIREBASE_CONFIG.databaseURL){
   //
   // Amazonは画像をURLで取りに来るので、サーバーに預けて公開URLで読ませる。
   // バリエーションは色ごとに分けられる（入れていない子は共通を使う）。
-  function drawImages(box, data, reload){
+  function drawImages(box, data, reload, imgStatus){
     box.innerHTML = '';
     let target = null;                 // null＝共通
     const kids = (data.children || []).filter(c => c.id);
@@ -7822,10 +7827,8 @@ if(FIREBASE_CONFIG.databaseURL){
     file.style.display = 'none';
     box.appendChild(file);
 
-    const imgStatus = el('div', 'reg-hint img-status');
-    imgStatus.style.display = 'none';
-    box.appendChild(imgStatus);
     const imgSay = (msg, warn) => {
+      if(!imgStatus) return;
       imgStatus.textContent = msg || '';
       imgStatus.style.display = msg ? '' : 'none';
       imgStatus.classList.toggle('warn', !!warn);
