@@ -7182,14 +7182,37 @@ if(FIREBASE_CONFIG.databaseURL){
       clearTimeout(saveTimer);
       saveTimer = setTimeout(flush, 800);
     }
+    // サーバーの返りを data に取り込む。
+    // data 自体と data.children の各要素は、画面の欄が参照を
+    // 持ったままなので、入れ物を作り直さず中身を更新する。
+    // 子は id で照らし合わせる（並び順が変わってもずれない）。
+    function mergeData(got){
+      if(!got) return;
+      const oldKids = data.children || [];
+      const kept = [];
+      (got.children || []).forEach(nc => {
+        const cur = oldKids.find(o => o.id === nc.id);
+        if(cur){ Object.assign(cur, nc); kept.push(cur); }
+        else kept.push(nc);
+      });
+      Object.keys(got).forEach(k => { if(k !== 'children') data[k] = got[k]; });
+      if(got.children) data.children = kept;
+    }
+
     async function flush(){
       clearTimeout(saveTimer);
       const body = Object.assign({}, pending);
       Object.keys(pending).forEach(k => delete pending[k]);
       if(!Object.keys(body).length) return;
       try{
-        data = await regApi('/' + data.id,
+        const got = await regApi('/' + data.id,
           {method: 'PUT', body: JSON.stringify(body)});
+        // 返りで data ごと入れ替えない。子の欄の input は
+        // data.children の中身（c）を直接つかんでいるので、
+        // 別の配列に差し替えると c が迷子になり、
+        // 以降の打鍵がどこにも届かなくなる（保存されない）。
+        // 入れ物はそのままにして、中身だけ書き戻す。
+        mergeData(got);
         status.textContent = '保存しました';
         status.classList.remove('warn');
         setTimeout(() => { if(status.textContent === '保存しました') status.textContent = ''; }, 2000);
@@ -7378,7 +7401,7 @@ if(FIREBASE_CONFIG.databaseURL){
       imgStatus.style.display = 'none';
       panel.appendChild(imgStatus);
       async function reloadImages(){
-        data = await regApi('/' + data.id);
+        mergeData(await regApi('/' + data.id));
         drawImages(imgBox, data, reloadImages, imgStatus);
       }
       drawImages(imgBox, data, reloadImages, imgStatus);
@@ -7664,7 +7687,7 @@ if(FIREBASE_CONFIG.databaseURL){
             body: JSON.stringify({listing_ids: [data.id], dry_run: false})});
           drawSubmit(out, r.results[0]);
           opStatus.textContent = '';
-          data = await regApi('/' + data.id);
+          mergeData(await regApi('/' + data.id));
           draw();
         }catch(e){ opStatus.textContent = String(e.message || e); }
         finally{ sub.disabled = false; }
