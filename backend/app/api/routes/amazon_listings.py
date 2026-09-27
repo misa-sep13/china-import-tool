@@ -250,6 +250,20 @@ def list_listings(db: Session = Depends(get_db)):
     return {"rows": rows}
 
 
+@router.get("/by-research/{research_id}")
+def find_by_research(research_id: str, db: Session = Depends(get_db)):
+    """このリサーチの登録レコードがすでにあるかだけを返す。
+
+    ⑦を開いたとき、すでに始めてあるならボタンを押さずに
+    中身を出したい。sync は無ければ作ってしまうので、
+    開いただけでレコードができないよう、読むだけの口を別に用意する。
+    一覧（GET ""）でも分かるが、あちらはシート全体を読むので重い。
+    """
+    row = (db.query(AmazonListing)
+           .filter(AmazonListing.research_id == research_id).first())
+    return {"listing_id": row.id if row else None}
+
+
 # ---------- 取り込み ----------
 
 @router.post("/sync/{research_id}")

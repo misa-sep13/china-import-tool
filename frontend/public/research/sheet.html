@@ -7137,9 +7137,18 @@ if(FIREBASE_CONFIG.databaseURL){
     if(!API_BASE){
       rBox.appendChild(el('div', 'an-note',
         '一元管理の画面から開くと、ここからAmazonへ出品できます。'));
-    }else{
-      buildRegister(rBox, research);
+      return box;
     }
+
+    // 中身を組むのは▼を開いたとき。
+    // この段はリサーチの数だけ作られるので、最初から組むと
+    // 開いていない欄のぶんまでサーバーに聞きに行ってしまう。
+    let built = false;
+    box.addEventListener('toggle', () => {
+      if(!box.open || built) return;
+      built = true;
+      buildRegister(rBox, research);
+    });
     return box;
   }
 
@@ -7173,6 +7182,23 @@ if(FIREBASE_CONFIG.databaseURL){
         status.classList.add('warn');
       }finally{ startBtn.disabled = false; }
     });
+
+    // すでに登録を始めてあるものは、⑦を開いただけで中身を出す。
+    // 毎回「商品登録する」を押すのは、続きを見たいだけのときに余分。
+    // ただし sync は無ければ作ってしまうので、開いただけでは呼ばない。
+    // 読むだけの by-research で確かめ、あるときだけ読み込む。
+    // （開いただけでレコードができると、見ただけのリサーチが
+    // 登録済み扱いになってしまう）
+    (async () => {
+      try{
+        const hit = await regApi('/by-research/' + encodeURIComponent(research.id));
+        if(!hit || !hit.listing_id) return;
+        data = await regApi('/' + hit.listing_id);
+        panel.style.display = 'block';
+        startBtn.style.display = 'none';
+        draw();
+      }catch(e){ /* 見つからなければボタンのままでよい */ }
+    })();
 
     // 保存はまとめて。打つたびに送ると重いので、少し待ってから
     let saveTimer = null;
