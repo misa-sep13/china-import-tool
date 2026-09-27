@@ -1817,6 +1817,17 @@ def _remember_asked(db: Session, product_type: str, issues: list,
     return added
 
 
+@router.get("/product-type-schema/{product_type}")
+def product_type_schema(product_type: str, name: str = ""):
+    """項目の定義をそのまま見る。
+
+    unit_count のように value だけでなく type（単位）も要るものがあり、
+    「フィールド type に十分な値がありません」と言われたときに、
+    何を送ればよいかを確かめるために使う。name を省くと項目名の一覧。
+    """
+    return amazon_api.fetch_raw_property(product_type, name)
+
+
 @router.get("/product-type-memo/{product_type}")
 def get_memo(product_type: str, db: Session = Depends(get_db)):
     """そのカテゴリで覚えている値と、これまでに聞かれた項目。"""

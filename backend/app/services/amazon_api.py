@@ -1642,6 +1642,44 @@ _FILLED_BY_TOOL = {
 }
 
 
+def fetch_raw_property(product_type: str, name: str) -> dict:
+    """1つの項目の定義を、Amazonが返したまま返す。
+
+    unit_count のように value だけでなく type（単位）も要る項目があり、
+    どんな形で送ればよいかは定義を見ないと分からない。
+    画面で「足りない」と言われたときに、中身を確かめるために使う。
+    """
+    pt = (product_type or "").strip().upper()
+    if not pt:
+        return {"ok": False, "error": "商品タイプがありません"}
+    try:
+        params = urllib.parse.urlencode({
+            "marketplaceIds": _RESEARCH_MP,
+            "sellerId": _seller_id(),
+            "productType": pt,
+            "requirements": "LISTING",
+            "locale": "ja_JP",
+        })
+        meta = _call_sp_api(f"/definitions/2020-09-01/productTypes/{pt}?{params}")
+        url = (meta.get("schema") or {}).get("link", {}).get("resource")
+        if not url:
+            return {"ok": False, "error": "定義の場所が返ってきませんでした"}
+        with urllib.request.urlopen(urllib.request.Request(url), timeout=30) as res:
+            schema = json.loads(res.read())
+    except Exception as e:
+        return {"ok": False, "error": f"定義を読めませんでした（{type(e).__name__}: {e}）"[:300]}
+
+    props = schema.get("properties") or {}
+    if name:
+        p = props.get(name)
+        if p is None:
+            near = [k for k in props if name.lower() in k.lower()][:20]
+            return {"ok": False, "error": f"{name} は定義にありません",
+                    "near": near}
+        return {"ok": True, "product_type": pt, "name": name, "schema": p}
+    return {"ok": True, "product_type": pt, "names": sorted(props.keys())}
+
+
 def fetch_product_type_schema(product_type: str) -> dict:
     """その商品タイプの必須項目を、画面に出せる形にして返す。
 
