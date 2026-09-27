@@ -46,8 +46,8 @@ export default function WorkStatusPublicPage() {
         </span>
       </div>
       <div style={{ padding: 14, maxWidth: 1400, margin: '0 auto' }}>
-        {/* 外注さんの画面なので、書いた質問は「ゆな」から出たものになる */}
-        <WorkStatusPage share={share} me="yuna" />
+        {/* 外注さんの画面なので、書いた質問は staff から出たものになる */}
+        <WorkStatusPage share={share} me="staff" />
       </div>
     </div>
   )

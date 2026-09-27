@@ -18,12 +18,17 @@ const C = {
   good: '#16a34a', warn: '#b45309', bad: '#dc2626', key: '#2563eb',
 }
 
-// 誰の番か。一覧の主役なので、色ではっきり分ける
+// 誰の番か。一覧の主役なので、色ではっきり分ける。
+// 名前ではなく役割で持つ（owner＝ゆな、staff＝外注さん）。
+// 外注さんが交代しても保存済みのデータを直さなくて済む
 const BALL_COLOR = {
-  misa: { bg: '#fef2f2', fg: '#b91c1c' },   // こちらが止めている
-  yuna: { bg: '#eff6ff', fg: '#1d4ed8' },   // 向こうが動いている
-  none: { bg: '#f1f5f9', fg: '#475569' },   // 待ちなし
+  owner: { bg: '#fef2f2', fg: '#b91c1c' },  // ゆなが止めている
+  staff: { bg: '#eff6ff', fg: '#1d4ed8' },  // 外注さんが動いている
+  none:  { bg: '#f1f5f9', fg: '#475569' },  // 待ちなし
 }
+
+// 質問を書いた人の見せ方
+const WHO_LABEL = { owner: 'ゆな', staff: '外注さん' }
 
 const CHANNEL_LABEL = { amazon: 'Amazon', rakuten: '楽天' }
 
@@ -32,7 +37,7 @@ const td = { padding: '6px 8px', borderTop: `1px solid ${C.line}`, fontSize: 12,
 const th = { padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap',
   fontSize: 12, color: C.sub, background: '#f8fafc' }
 
-export default function WorkStatusPage({ share = '', me = 'misa' }) {
+export default function WorkStatusPage({ share = '', me = 'owner' }) {
   const [rows, setRows] = useState([])
   const [stages, setStages] = useState([])
   const [balls, setBalls] = useState([])
@@ -276,8 +281,8 @@ export default function WorkStatusPage({ share = '', me = 'misa' }) {
                       <div key={n.id} style={{ marginBottom: 8, paddingBottom: 8,
                         borderBottom: `1px solid ${C.line}` }}>
                         <div style={{ fontSize: 12, color: C.text }}>
-                          <b style={{ color: n.who === 'yuna' ? C.key : C.warn }}>
-                            {n.who === 'yuna' ? 'ゆな' : 'みさ'}
+                          <b style={{ color: n.who === 'staff' ? C.key : C.warn }}>
+                            {WHO_LABEL[n.who] || n.who}
                           </b>
                           ：{n.body}
                         </div>

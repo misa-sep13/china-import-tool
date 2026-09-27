@@ -35,9 +35,12 @@ STAGE_LABEL = {
     "done": "完了",
 }
 
-# 誰の番か。これが一覧の主役なので、迷わないよう3つだけにしてある
-BALLS = ["misa", "yuna", "none"]
-BALL_LABEL = {"misa": "みさ確認待ち", "yuna": "ゆな対応中", "none": "待ちなし"}
+# 誰の番か。これが一覧の主役なので、迷わないよう3つだけにしてある。
+# 名前ではなく役割で持つ。外注さんが交代しても
+# 保存済みのデータを直さなくて済むようにするため。
+BALLS = ["owner", "staff", "none"]
+BALL_LABEL = {"owner": "ゆな確認待ち", "staff": "外注さん対応中",
+              "none": "待ちなし"}
 
 
 def _note_out(n: WorkNote) -> dict:
@@ -62,8 +65,8 @@ def _out(r: WorkStatus) -> dict:
         "memo": r.memo or "",
         "stage": r.stage or "adopted",
         "stage_label": STAGE_LABEL.get(r.stage or "adopted", r.stage or ""),
-        "ball": r.ball or "yuna",
-        "ball_label": BALL_LABEL.get(r.ball or "yuna", ""),
+        "ball": r.ball or "staff",
+        "ball_label": BALL_LABEL.get(r.ball or "staff", ""),
         "notes": [_note_out(n) for n in notes],
         # 答えの出ていない質問の数。一覧で赤く出して抜けを防ぐ
         "open_count": len([n for n in notes if not (n.answer or "").strip()]),
@@ -104,7 +107,7 @@ class WorkIn(BaseModel):
     name: Optional[str] = ""
     memo: Optional[str] = ""
     stage: Optional[str] = "adopted"
-    ball: Optional[str] = "yuna"
+    ball: Optional[str] = "staff"
 
 
 @router.post("")
@@ -209,7 +212,7 @@ class NoteIn(BaseModel):
 def add_note(row_id: int, data: NoteIn, db: Session = Depends(get_db)):
     """質問・連絡を足す。外注さんからも足せる（聞くのが仕事なので）。
 
-    足すと相手の番になる。聞いた人がゆななら、みさの確認待ち。
+    足すと相手の番になる。外注さんが聞いたなら、ゆなの確認待ち。
     ここを手で変えなくて済むようにしておかないと、
     「聞いたのに気づかれない」が起きる。
     """
@@ -219,10 +222,10 @@ def add_note(row_id: int, data: NoteIn, db: Session = Depends(get_db)):
     body = (data.body or "").strip()
     if not body:
         raise HTTPException(400, "中身が空です")
-    who = (data.who or "").strip() or "yuna"
+    who = (data.who or "").strip() or "staff"
     n = WorkNote(work_id=row.id, who=who, body=body)
     db.add(n)
-    row.ball = "misa" if who == "yuna" else "yuna"
+    row.ball = "owner" if who == "staff" else "staff"
     db.commit()
     db.refresh(row)
     return _out(row)
@@ -244,8 +247,8 @@ def answer_note(row_id: int, note_id: int, data: AnswerIn,
     n.answered_at = datetime.now(timezone.utc) if n.answer else None
     row = db.query(WorkStatus).filter(WorkStatus.id == row_id).first()
     if row and n.answer:
-        # 聞いた人の番に戻す（みさが答えたなら、ゆなが動く番）
-        row.ball = "yuna" if (n.who or "") == "yuna" else "misa"
+        # 聞いた人の番に戻す（ゆなが答えたなら、外注さんが動く番）
+        row.ball = "staff" if (n.who or "") == "staff" else "owner"
     db.commit()
     db.refresh(row)
     return _out(row)

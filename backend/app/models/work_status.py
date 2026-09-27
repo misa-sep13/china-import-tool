@@ -31,8 +31,10 @@ class WorkStatus(Base):
 
     # いまの工程。リサーチシートの並びに合わせてある
     stage = Column(String, default="adopted", index=True)
-    # 誰の番か。misa / yuna / none（待ちなし＝完了や保留）
-    ball = Column(String, default="yuna", index=True)
+    # 誰の番か。owner（ゆな）/ staff（外注さん）/ none（待ちなし）。
+    # 名前ではなく役割で持つ。外注さんが交代しても
+    # 保存済みのデータを直さなくて済む
+    ball = Column(String, default="staff", index=True)
 
     sort_order = Column(Integer, index=True, nullable=True)
     done_at = Column(DateTime(timezone=True), nullable=True)
@@ -57,7 +59,7 @@ class WorkNote(Base):
     id = Column(Integer, primary_key=True, index=True)
     work_id = Column(Integer, ForeignKey("work_statuses.id"), index=True)
 
-    who = Column(String)                      # 聞いた人（misa / yuna）
+    who = Column(String)                      # 聞いた人（owner / staff）
     body = Column(Text)                       # 質問・連絡
     answer = Column(Text)                     # 答え。空なら未回答
     answered_at = Column(DateTime(timezone=True), nullable=True)
