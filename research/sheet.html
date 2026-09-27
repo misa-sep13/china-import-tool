@@ -7858,9 +7858,16 @@ if(FIREBASE_CONFIG.databaseURL){
         const fd = new FormData();
         fd.append('file', f);
         try{
+          // ファイル送信では Content-Type を自分で付けてはいけない。
+          // apiHeaders() は application/json を付けるので、それを使うと
+          // multipart の境界が入らず、サーバーがファイルを読めない
+          // （"Field required" になる）。認証だけを手で足す
+          const h = {};
+          const tk = String(arsCfgEarly('__ARS_TOKEN__') || AUTH_TOKEN || '');
+          if(tk) h['Authorization'] = 'Bearer ' + tk;
           const res = await fetch(API_BASE + '/amazon-listings/' + data.id + '/images'
             + (target ? '?child_id=' + target : ''),
-            {method: 'POST', headers: apiHeaders(), body: fd});
+            {method: 'POST', headers: h, body: fd});
           if(res.ok){ ok++; continue; }
           let detail = 'HTTP ' + res.status;
           try{
