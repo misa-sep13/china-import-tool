@@ -987,6 +987,34 @@ def _wrap_attr(name: str, value, mp: str) -> list:
             if value.get(k):
                 one[k] = {"value": float(value[k]), "unit": "centimeters"}
         return [one]
+
+    # ユニット数は「いくつ」と「何の単位で」の2つが要る。
+    # value だけ送ると「フィールド type に十分な値がありません」で弾かれる。
+    #   value … 数値（文字列だと通らない）
+    #   type  … {language_tag, value} の入れ子。単位は自由入力
+    # 画面からは数だけ入れてもらい、単位は「個」を既定にする。
+    # 「3個」「5 セット」のように単位ごと書かれていたら、それを読む
+    if name == "unit_count":
+        num, unit = value, "個"
+        if isinstance(value, dict):          # すでに形が整っているとき
+            num = value.get("value", value.get("count"))
+            unit = value.get("type") or value.get("unit") or unit
+        else:
+            m = re.match(r"\s*([0-9]+(?:\.[0-9]+)?)\s*(.*)$", str(value))
+            if m:
+                num = m.group(1)
+                if m.group(2).strip():
+                    unit = m.group(2).strip()
+        try:
+            num = float(num)
+            if num == int(num):
+                num = int(num)
+        except (TypeError, ValueError):
+            return [{"value": value, "marketplace_id": mp}]
+        return [{"value": num,
+                 "type": {"language_tag": "ja_JP", "value": str(unit)},
+                 "marketplace_id": mp}]
+
     return [{"value": value, "marketplace_id": mp}]
 
 
