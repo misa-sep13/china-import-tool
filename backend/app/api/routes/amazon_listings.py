@@ -1270,6 +1270,104 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
     return a
 
 
+@router.post("/{listing_id:int}/verify")
+def verify_listing(listing_id: int, db: Session = Depends(get_db)):
+    """出したあと、Amazonから読み戻して送った内容と突き合わせる。
+
+    送りっぱなしだと「登録はできたのに親子が繋がっていない」
+    「画像が入っていない」に気づけない。実際にそうなっていて、
+    あとから商品ページを見て分かった。ここで機械的に確かめる。
+
+    画像が正しい色のものかまでは見られない（枚数しか分からない）。
+    そこは人が商品ページを見るしかないので、リンクも返す。
+    """
+    row = db.get(AmazonListing, listing_id)
+    if not row:
+        raise HTTPException(404, "ありません")
+
+    kids = (db.query(AmazonListingChild)
+            .filter(AmazonListingChild.listing_id == row.id)
+            .order_by(AmazonListingChild.sort_order).all())
+    if not kids:
+        raise HTTPException(400, "出品するSKUがありません")
+
+    has_variation = len(kids) > 1
+    parent_sku = ((row.parent_sku or "").strip()
+                  or (kids[0].sku or "").split("_")[0])
+
+    imgs = (db.query(AmazonListingImage)
+            .filter(AmazonListingImage.listing_id == row.id).all())
+    # 色ごとに入れていない画像は「共通」として全SKUに使われる
+    shared = len([i for i in imgs if i.child_id is None])
+
+    out = []
+    ng = 0
+
+    # ---- 親 ----
+    if has_variation:
+        got = amazon_api.fetch_listing(parent_sku)
+        notes = []
+        if not got.get("found"):
+            notes.append(got.get("error") or "見つかりません")
+        else:
+            if not got.get("variation_theme"):
+                notes.append("バリエーションテーマが入っていません")
+        if notes:
+            ng += 1
+        out.append({
+            "kind": "親", "sku": parent_sku, "ok": not notes,
+            "asin": got.get("asin"), "notes": notes,
+            "url": (f"https://www.amazon.co.jp/dp/{got['asin']}"
+                    if got.get("asin") else None),
+        })
+
+    # ---- 子 ----
+    for c in kids:
+        if not c.sku:
+            continue
+        got = amazon_api.fetch_listing(c.sku)
+        notes = []
+        if not got.get("found"):
+            notes.append(got.get("error") or "見つかりません")
+        else:
+            # 親子の繋がり。ここが切れるとバリエーションが崩れる
+            if has_variation:
+                p = (got.get("parent_sku") or "").strip()
+                if not p:
+                    notes.append("親に紐づいていません（単独の商品になっています）")
+                elif p != parent_sku:
+                    notes.append(f"別の親に紐づいています（{p}）")
+            # 画像。送ったぶんが入っているか
+            mine = len([i for i in imgs if i.child_id == c.id])
+            want = mine + shared
+            have = got.get("image_count") or 0
+            if want and not have:
+                notes.append(f"画像が1枚も入っていません（送ったのは{want}枚）")
+            elif want and have < want:
+                notes.append(f"画像が足りません（Amazon {have}枚 / 送ったのは{want}枚）")
+            if not got.get("fnsku"):
+                notes.append("FNSKUがまだ出ていません（FBA在庫を作ると出ます）")
+            for i in (got.get("issues") or []):
+                if i.get("severity") in ("ERROR", "WARNING"):
+                    notes.append(f"Amazonからの指摘: {i.get('message')}")
+        if notes:
+            ng += 1
+        out.append({
+            "kind": "子" if has_variation else "単品", "sku": c.sku,
+            "ok": not notes, "asin": got.get("asin"),
+            "fnsku": got.get("fnsku"), "color": got.get("color"),
+            "images": got.get("image_count"), "notes": notes,
+            "url": (f"https://www.amazon.co.jp/dp/{got['asin']}"
+                    if got.get("asin") else None),
+        })
+
+    return {
+        "ok": ng == 0, "ng": ng, "items": out,
+        "note": ("画像が正しい色のものかまでは分かりません。"
+                 "商品ページを開いて目で確かめてください"),
+    }
+
+
 @router.post("/submit")
 def submit(body: SubmitIn, db: Session = Depends(get_db)):
     """選んだものをAmazonへ出す。

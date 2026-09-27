@@ -1862,6 +1862,89 @@ def _strip_html(text: str) -> str:
     return t.strip()[:2000]
 
 
+def fetch_listing(sku: str) -> dict:
+    """出したあとのSKUを、Amazonから読み戻す。
+
+    送って終わりにすると、登録はできたのに親子が繋がっていない・
+    画像が入っていない、といった崩れに気づけない。実際にどうなったかは
+    Amazon側を見るしかないので、出したあとに突き合わせるために使う。
+
+    summaries … ASIN・商品名・状態
+    attributes … 実際に入っている値（親子の紐づき・画像・バリエーション）
+    issues    … Amazonが見つけた問題
+    """
+    token = _get_access_token()
+    params = urllib.parse.urlencode({
+        "marketplaceIds": _RESEARCH_MP,
+        "includedData": "summaries,attributes,issues,relationships",
+        "issueLocale": "ja_JP",
+    })
+    url = (f"https://sellingpartnerapi-fe.amazon.com/listings/2021-08-01/items/"
+           f"{_seller_id()}/{urllib.parse.quote(sku)}?{params}")
+    req = urllib.request.Request(url, headers={"x-amz-access-token": token})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as res:
+            d = json.loads(res.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {"ok": False, "found": False, "error": "Amazonにまだありません"}
+        body = ""
+        try:
+            body = e.read().decode()[:300]
+        except Exception:
+            pass
+        return {"ok": False, "found": False,
+                "error": f"読み戻せませんでした（HTTP {e.code}）{body}"}
+    except Exception as e:
+        return {"ok": False, "found": False,
+                "error": f"読み戻せませんでした（{type(e).__name__}）"}
+
+    s = (d.get("summaries") or [{}])[0]
+    attrs = d.get("attributes") or {}
+
+    def first(name, key="value"):
+        v = attrs.get(name)
+        if isinstance(v, list) and v:
+            x = v[0]
+            return x.get(key) if isinstance(x, dict) else x
+        return None
+
+    # 画像。main と PT01〜PT08 のうち、実際に入っているものを数える
+    img_keys = ["main_product_image_locator"] + [
+        f"other_product_image_locator_{i}" for i in range(1, 9)]
+    images = [k for k in img_keys if attrs.get(k)]
+
+    # 親子の紐づき。子には親SKUとテーマが入る
+    rel = (d.get("relationships") or [{}])[0].get("relationships") or []
+    parent = None
+    theme = None
+    for r in rel:
+        if not isinstance(r, dict):
+            continue
+        if r.get("parentSkus"):
+            parent = (r.get("parentSkus") or [None])[0]
+        theme = r.get("variationTheme") or theme
+    # relationships が空でも、属性側に入っていることがある
+    if not parent:
+        parent = first("child_parent_sku_relationship", "parent_sku")
+    if not theme:
+        theme = first("variation_theme", "name")
+
+    return {
+        "ok": True, "found": True, "sku": sku,
+        "asin": s.get("asin"), "fnsku": s.get("fnSku"),
+        "item_name": s.get("itemName"),
+        "status": s.get("status") or [],
+        "parent_sku": parent,
+        "variation_theme": theme,
+        "color": first("color"),
+        "image_count": len(images),
+        "image_keys": images,
+        "issues": [{"message": i.get("message"), "severity": i.get("severity")}
+                   for i in (d.get("issues") or []) if isinstance(i, dict)],
+    }
+
+
 def submit_listing(sku: str, product_type: str, attributes: dict,
                    issue_locale: str = "ja_JP", validate_only: bool = False) -> dict:
     """1商品をAmazonへ出品する。
