@@ -9202,6 +9202,44 @@ if(FIREBASE_CONFIG.databaseURL){
       cl.appendChild(totalLine);
       cw.appendChild(cl);
       gB.appendChild(cw);
+    }else{
+      // 色違いが無い商品でも、何個頼むか・VINEを使うかは決める。
+      // 色ごとの欄しか無かったので、単品だとどこにも
+      // 書けず、チャットワークで聞いた答えの置き場が無かった。
+      // 色ごとと同じ形で、固定のキー（''）にしまっておく。
+      if(!research.firstQty || typeof research.firstQty !== 'object') research.firstQty = {};
+      if(!research.vine || typeof research.vine !== 'object') research.vine = {};
+      const cw1 = el('div', 'brief-cell w-acc');
+      cw1.appendChild(el('div', 'brief-cap', '初回の発注数'));
+      const cl1 = el('div', 'acc-list');
+      const line1 = el('div', 'acc-line');
+      line1.appendChild(el('span', 'acc-cap', ''));
+      const q1 = document.createElement('input');
+      q1.type = 'number'; q1.min = '0'; q1.className = 'acc-qty';
+      q1.placeholder = '初回';
+      q1.title = '初回に何個発注するか';
+      q1.value = (research.firstQty[''] == null ? '' : research.firstQty['']);
+      q1.addEventListener('input', () => {
+        const v = q1.value.trim();
+        research.firstQty[''] = v === '' ? null : (Number(v) || 0);
+        scheduleSave();
+      });
+      line1.appendChild(q1);
+      const vw1 = document.createElement('label');
+      vw1.className = 'acc-vine';
+      vw1.title = 'Vineを使う（提供分を初回の発注数に含めてください）';
+      const vc1 = document.createElement('input');
+      vc1.type = 'checkbox';
+      vc1.checked = !!research.vine[''];
+      vc1.addEventListener('change', () => {
+        research.vine[''] = vc1.checked; scheduleSave();
+      });
+      vw1.appendChild(vc1);
+      vw1.appendChild(document.createTextNode('VINE'));
+      line1.appendChild(vw1);
+      cl1.appendChild(line1);
+      cw1.appendChild(cl1);
+      gB.appendChild(cw1);
     }
 
     // 付属品。1つのURLに本体と袋が入っている商品のように、一緒に頼むもの。
