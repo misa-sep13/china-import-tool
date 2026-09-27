@@ -9368,6 +9368,22 @@ if(FIREBASE_CONFIG.databaseURL){
       const wasAdopted = ADOPTED_STATUSES.indexOf(before) >= 0;
       if(nowAdopted && !wasAdopted) research.adoptedAt = Date.now();
       if(!nowAdopted) research.adoptedAt = null;
+      // 採用になったら状況確認シートに1行作る。
+      // ここで作っておかないと、外注さんは
+      // 「今何をやる商品なのか」をチャットで聞くしかなくなる。
+      // 同じ枠から二重には作らない（サーバー側で見ている）。
+      // 失敗してもリサーチの作業は止めない
+      if(nowAdopted && !wasAdopted && API_BASE){
+        fetch(API_BASE + '/work-status/sync', {
+          method: 'POST', headers: apiHeaders(),
+          body: JSON.stringify({
+            channel: 'amazon',
+            research_id: String(research.id || ''),
+            sku: (research.parentSku || '').trim(),
+            name: (shortName(research) || research.title || '').trim(),
+          }),
+        }).catch(() => {});
+      }
       render(); scheduleSave();
     });
     stBox.appendChild(stSel);

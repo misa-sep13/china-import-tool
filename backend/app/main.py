@@ -5,6 +5,7 @@ from app.api.routes import products, orders, settings, fba, invoices, price_adju
 from app.api.routes import order_logic_routes
 from app.api.routes import keep_claims
 from app.api.routes import image_requests
+from app.api.routes import work_status
 from app.api.routes import inventory_snapshots
 from app.api.routes import material_costs
 from app.api.routes import cost_histories
@@ -58,6 +59,7 @@ from app.models import amazon_listing as amazon_listing_models
 from app.models import amazon_research_page as amazon_research_page_models
 from app.models import amazon_product_type_memo as amazon_product_type_memo_models
 from app.models import import_permit as import_permit_models
+from app.models import work_status as work_status_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -1478,6 +1480,7 @@ app.include_router(taotaro.router, prefix="/api")
 app.include_router(order_logic_routes.router, prefix="/api")
 app.include_router(keep_claims.router, prefix="/api")
 app.include_router(image_requests.router, prefix="/api")
+app.include_router(work_status.router, prefix="/api")
 app.include_router(import_permit_routes.router, prefix="/api")
 app.include_router(chatwork_routes.router, prefix="/api")
 app.include_router(research_routes.router, prefix="/api")

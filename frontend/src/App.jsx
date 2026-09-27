@@ -29,6 +29,8 @@ import WelfareInventoryPage from './pages/WelfareInventoryPage'
 import WelfareWorkPublicPage from './pages/WelfareWorkPublicPage'
 import KeepClaimsPublicPage from './pages/KeepClaimsPublicPage'
 import ImageRequestsPublicPage from './pages/ImageRequestsPublicPage'
+import WorkStatusPublicPage from './pages/WorkStatusPublicPage'
+import WorkStatusPage from './pages/WorkStatusPage'
 import FbaPlanPage from './pages/FbaPlanPage'
 import LoginPage from './pages/LoginPage'
 import ActivityHistoryPanel from './components/ActivityHistoryPanel'
@@ -109,6 +111,17 @@ function App() {
     )
   }
 
+  // 状況確認シート。外注さんに渡して、誰待ちかを見てもらう
+  if (location.pathname === '/work-public'
+      || (window.location.pathname.endsWith('/work-public')
+          && rawSearch.get('share'))) {
+    return (
+      <Routes>
+        <Route path="/work-public" element={<WorkStatusPublicPage />} />
+      </Routes>
+    )
+  }
+
   if (authEnabled === null) {
     return <div style={{ padding: 40, color: '#64748b' }}>読み込み中...</div>
   }
@@ -154,6 +167,9 @@ function App() {
         </NavLink>
         <NavLink to="/research" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🔍 リサーチ・商品登録
+        </NavLink>
+        <NavLink to="/work-status" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          📋 状況確認シート
         </NavLink>
         <NavLink to="/ads" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📢 広告管理
@@ -275,6 +291,7 @@ function App() {
           <Route path="/rakuten/keyword-analysis" element={<KeywordAnalysisPage />} />
           <Route path="/rakuten/seo" element={<SeoPage />} />
           <Route path="/research" element={<ResearchPage />} />
+          <Route path="/work-status" element={<WorkStatusPage />} />
           <Route path="/rakuten/research" element={<RakutenResearchPage />} />
           <Route path="/welfare/inventory" element={<WelfareInventoryPage />} />
           <Route path="/welfare/work-public" element={<WelfareWorkPublicPage />} />

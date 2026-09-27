@@ -1,0 +1,333 @@
+import { useCallback, useEffect, useState } from 'react'
+import api from '../api/client'
+import { matchesQuery } from '../searchUtil'
+
+/**
+ * 状況確認シート。商品ごとに「いま誰の番か」と質問のやり取りを持つ。
+ *
+ * チャットワークだけでやり取りしていると話が流れてしまい、
+ * 「これは誰の番なのか」「この質問は答えたのか」が分からなくなる。
+ * 外注さんから一覧で見たいという声が出たので作った。
+ *
+ * 1行＝商品（SKU）1つ。Amazonも楽天も同じ並びに出す。
+ * 外注さん用に、この一覧だけを見せる共有URLがある（WorkStatusPublicPage）。
+ */
+
+const C = {
+  line: '#e5e7eb', sub: '#64748b', text: '#0f172a',
+  good: '#16a34a', warn: '#b45309', bad: '#dc2626', key: '#2563eb',
+}
+
+// 誰の番か。一覧の主役なので、色ではっきり分ける
+const BALL_COLOR = {
+  misa: { bg: '#fef2f2', fg: '#b91c1c' },   // こちらが止めている
+  yuna: { bg: '#eff6ff', fg: '#1d4ed8' },   // 向こうが動いている
+  none: { bg: '#f1f5f9', fg: '#475569' },   // 待ちなし
+}
+
+const CHANNEL_LABEL = { amazon: 'Amazon', rakuten: '楽天' }
+
+const td = { padding: '6px 8px', borderTop: `1px solid ${C.line}`, fontSize: 12,
+  verticalAlign: 'top' }
+const th = { padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap',
+  fontSize: 12, color: C.sub, background: '#f8fafc' }
+
+export default function WorkStatusPage({ share = '', me = 'misa' }) {
+  const [rows, setRows] = useState([])
+  const [stages, setStages] = useState([])
+  const [balls, setBalls] = useState([])
+  const [includeDone, setIncludeDone] = useState(false)
+  const [q, setQ] = useState('')
+  const [onlyMine, setOnlyMine] = useState(false)
+  const [err, setErr] = useState('')
+  const [open, setOpen] = useState({})       // 質問欄を開いている行
+  const [draft, setDraft] = useState({})     // 書きかけの質問
+  const [ans, setAns] = useState({})         // 書きかけの答え
+  const [adding, setAdding] = useState(false)
+  const [form, setForm] = useState({ sku: '', name: '', channel: 'amazon' })
+
+  // 共有URLで開いているときは合言葉を毎回付ける。
+  // ログインしていないので、これが唯一の通行証になる
+  const cfg = useCallback((extra = {}) => (
+    share ? { ...extra, params: { ...(extra.params || {}), share },
+      headers: { ...(extra.headers || {}), 'x-work-share': share } } : extra
+  ), [share])
+
+  const load = useCallback(async () => {
+    setErr('')
+    try {
+      const r = await api.get('/work-status',
+        cfg({ params: { include_done: includeDone ? 1 : 0 } }))
+      setRows(r.data.items || [])
+      setStages(r.data.stages || [])
+      setBalls(r.data.balls || [])
+    } catch (e) {
+      setErr(e?.response?.data?.detail || '読み込めませんでした')
+    }
+  }, [cfg, includeDone])
+
+  useEffect(() => { load() }, [load])
+
+  const patch = async (id, body) => {
+    try {
+      const r = await api.patch(`/work-status/${id}`, body, cfg())
+      setRows(rs => rs.map(x => (x.id === id ? r.data : x)))
+    } catch (e) {
+      setErr(e?.response?.data?.detail || '保存できませんでした')
+    }
+  }
+
+  const ask = async (id) => {
+    const body = (draft[id] || '').trim()
+    if (!body) return
+    try {
+      const r = await api.post(`/work-status/${id}/notes`,
+        { who: me, body }, cfg())
+      setRows(rs => rs.map(x => (x.id === id ? r.data : x)))
+      setDraft(d => ({ ...d, [id]: '' }))
+    } catch (e) {
+      setErr(e?.response?.data?.detail || '送れませんでした')
+    }
+  }
+
+  const reply = async (id, noteId) => {
+    const answer = (ans[noteId] || '').trim()
+    if (!answer) return
+    try {
+      const r = await api.patch(`/work-status/${id}/notes/${noteId}`,
+        { answer }, cfg())
+      setRows(rs => rs.map(x => (x.id === id ? r.data : x)))
+      setAns(a => ({ ...a, [noteId]: '' }))
+    } catch (e) {
+      setErr(e?.response?.data?.detail || '送れませんでした')
+    }
+  }
+
+  const add = async () => {
+    if (!form.sku.trim() && !form.name.trim()) return
+    try {
+      await api.post('/work-status', form, cfg())
+      setForm({ sku: '', name: '', channel: 'amazon' })
+      setAdding(false)
+      load()
+    } catch (e) {
+      setErr(e?.response?.data?.detail || '追加できませんでした')
+    }
+  }
+
+  const del = async (id) => {
+    if (!window.confirm('この行を消します。よろしいですか？')) return
+    try {
+      await api.delete(`/work-status/${id}`, cfg())
+      setRows(rs => rs.filter(x => x.id !== id))
+    } catch (e) {
+      setErr(e?.response?.data?.detail || '消せませんでした')
+    }
+  }
+
+  const shown = rows.filter(r => {
+    if (onlyMine && r.ball !== me) return false
+    if (!q.trim()) return true
+    return matchesQuery(q, [r.sku, r.name, r.memo])
+  })
+
+  // 自分の番のものが何件あるか。まずここを見てもらう
+  const mine = rows.filter(r => r.ball === me).length
+  const openQ = rows.reduce((a, r) => a + (r.open_count || 0), 0)
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center',
+        flexWrap: 'wrap', marginBottom: 10 }}>
+        <input value={q} onChange={e => setQ(e.target.value)}
+          placeholder="SKU・商品名で絞り込み"
+          style={{ padding: '6px 10px', border: `1px solid ${C.line}`,
+            borderRadius: 6, fontSize: 13, width: 220 }} />
+        <label style={{ fontSize: 12, color: C.sub, display: 'flex',
+          alignItems: 'center', gap: 4 }}>
+          <input type="checkbox" checked={onlyMine}
+            onChange={e => setOnlyMine(e.target.checked)} />
+          自分の番だけ（{mine}件）
+        </label>
+        <label style={{ fontSize: 12, color: C.sub, display: 'flex',
+          alignItems: 'center', gap: 4 }}>
+          <input type="checkbox" checked={includeDone}
+            onChange={e => setIncludeDone(e.target.checked)} />
+          完了も出す
+        </label>
+        {openQ > 0 && (
+          <span style={{ fontSize: 12, color: C.bad, fontWeight: 600 }}>
+            答え待ちの質問 {openQ}件
+          </span>
+        )}
+        {!share && (
+          <button onClick={() => setAdding(v => !v)}
+            style={{ marginLeft: 'auto', padding: '6px 12px', fontSize: 12,
+              border: `1px solid ${C.key}`, background: '#fff', color: C.key,
+              borderRadius: 6, cursor: 'pointer' }}>
+            ＋ 追加
+          </button>
+        )}
+      </div>
+
+      {err && <div style={{ color: C.bad, fontSize: 12, marginBottom: 8 }}>{err}</div>}
+
+      {adding && !share && (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10,
+          padding: 10, background: '#f8fafc', borderRadius: 6 }}>
+          <select value={form.channel}
+            onChange={e => setForm(f => ({ ...f, channel: e.target.value }))}
+            style={{ fontSize: 12, padding: '5px 8px' }}>
+            <option value="amazon">Amazon</option>
+            <option value="rakuten">楽天</option>
+          </select>
+          <input value={form.sku} placeholder="SKU"
+            onChange={e => setForm(f => ({ ...f, sku: e.target.value }))}
+            style={{ fontSize: 12, padding: '5px 8px', width: 120 }} />
+          <input value={form.name} placeholder="商品名"
+            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+            style={{ fontSize: 12, padding: '5px 8px', flex: 1 }} />
+          <button onClick={add}
+            style={{ fontSize: 12, padding: '5px 14px', border: 'none',
+              background: C.key, color: '#fff', borderRadius: 6,
+              cursor: 'pointer' }}>追加</button>
+        </div>
+      )}
+
+      <table style={{ width: '100%', borderCollapse: 'collapse',
+        background: '#fff', border: `1px solid ${C.line}` }}>
+        <thead>
+          <tr>
+            <th style={th}>店</th>
+            <th style={th}>SKU</th>
+            <th style={th}>商品名</th>
+            <th style={th}>いま誰の番</th>
+            <th style={th}>工程</th>
+            <th style={th}>メモ</th>
+            <th style={th}>質問</th>
+            {!share && <th style={th}></th>}
+          </tr>
+        </thead>
+        <tbody>
+          {shown.map(r => {
+            const bc = BALL_COLOR[r.ball] || BALL_COLOR.none
+            const isOpen = !!open[r.id]
+            return [
+              <tr key={r.id}>
+                <td style={{ ...td, color: C.sub, whiteSpace: 'nowrap' }}>
+                  {CHANNEL_LABEL[r.channel] || r.channel}
+                </td>
+                <td style={{ ...td, fontWeight: 600, whiteSpace: 'nowrap' }}>{r.sku}</td>
+                <td style={td}>{r.name}</td>
+                <td style={td}>
+                  <select value={r.ball}
+                    onChange={e => patch(r.id, { ball: e.target.value })}
+                    style={{ fontSize: 12, padding: '3px 6px', border: 'none',
+                      borderRadius: 4, fontWeight: 600,
+                      background: bc.bg, color: bc.fg, cursor: 'pointer' }}>
+                    {balls.map(b => (
+                      <option key={b.key} value={b.key}>{b.label}</option>
+                    ))}
+                  </select>
+                </td>
+                <td style={td}>
+                  <select value={r.stage}
+                    onChange={e => patch(r.id, { stage: e.target.value })}
+                    style={{ fontSize: 12, padding: '3px 6px' }}>
+                    {stages.map(s => (
+                      <option key={s.key} value={s.key}>{s.label}</option>
+                    ))}
+                  </select>
+                </td>
+                <td style={td}>
+                  <input defaultValue={r.memo}
+                    onBlur={e => {
+                      if (e.target.value !== r.memo) patch(r.id, { memo: e.target.value })
+                    }}
+                    placeholder="申し送り"
+                    style={{ fontSize: 12, padding: '3px 6px', width: '100%',
+                      border: `1px solid ${C.line}`, borderRadius: 4 }} />
+                </td>
+                <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                  <button onClick={() => setOpen(o => ({ ...o, [r.id]: !o[r.id] }))}
+                    style={{ fontSize: 12, padding: '3px 10px',
+                      border: `1px solid ${r.open_count ? C.bad : C.line}`,
+                      background: r.open_count ? '#fef2f2' : '#fff',
+                      color: r.open_count ? C.bad : C.sub,
+                      borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}>
+                    {r.open_count ? `未回答 ${r.open_count}` : `やり取り ${r.notes.length}`}
+                  </button>
+                </td>
+                {!share && (
+                  <td style={td}>
+                    <button onClick={() => del(r.id)}
+                      style={{ fontSize: 11, padding: '3px 8px', border: 'none',
+                        background: 'none', color: C.sub, cursor: 'pointer' }}>
+                      削除
+                    </button>
+                  </td>
+                )}
+              </tr>,
+              isOpen && (
+                <tr key={`${r.id}-notes`}>
+                  <td colSpan={share ? 7 : 8}
+                    style={{ ...td, background: '#f8fafc' }}>
+                    {r.notes.map(n => (
+                      <div key={n.id} style={{ marginBottom: 8, paddingBottom: 8,
+                        borderBottom: `1px solid ${C.line}` }}>
+                        <div style={{ fontSize: 12, color: C.text }}>
+                          <b style={{ color: n.who === 'yuna' ? C.key : C.warn }}>
+                            {n.who === 'yuna' ? 'ゆな' : 'みさ'}
+                          </b>
+                          ：{n.body}
+                        </div>
+                        {n.answer ? (
+                          <div style={{ fontSize: 12, color: C.good,
+                            marginTop: 3, paddingLeft: 14 }}>
+                            → {n.answer}
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', gap: 6, marginTop: 4,
+                            paddingLeft: 14 }}>
+                            <input value={ans[n.id] || ''}
+                              onChange={e => setAns(a => ({ ...a, [n.id]: e.target.value }))}
+                              onKeyDown={e => { if (e.key === 'Enter') reply(r.id, n.id) }}
+                              placeholder="答えを書く"
+                              style={{ fontSize: 12, padding: '4px 8px', flex: 1,
+                                border: `1px solid ${C.line}`, borderRadius: 4 }} />
+                            <button onClick={() => reply(r.id, n.id)}
+                              style={{ fontSize: 12, padding: '4px 12px',
+                                border: 'none', background: C.good, color: '#fff',
+                                borderRadius: 4, cursor: 'pointer' }}>答える</button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input value={draft[r.id] || ''}
+                        onChange={e => setDraft(d => ({ ...d, [r.id]: e.target.value }))}
+                        onKeyDown={e => { if (e.key === 'Enter') ask(r.id) }}
+                        placeholder="質問・連絡を書く（送ると相手の番になります）"
+                        style={{ fontSize: 12, padding: '5px 8px', flex: 1,
+                          border: `1px solid ${C.line}`, borderRadius: 4 }} />
+                      <button onClick={() => ask(r.id)}
+                        style={{ fontSize: 12, padding: '5px 14px', border: 'none',
+                          background: C.key, color: '#fff', borderRadius: 4,
+                          cursor: 'pointer' }}>送る</button>
+                    </div>
+                  </td>
+                </tr>
+              ),
+            ]
+          })}
+          {!shown.length && (
+            <tr><td colSpan={share ? 7 : 8}
+              style={{ ...td, color: C.sub, textAlign: 'center', padding: 24 }}>
+              {rows.length ? '絞り込みに合うものがありません' : 'まだ1件もありません'}
+            </td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
