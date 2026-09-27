@@ -7570,7 +7570,14 @@ if(FIREBASE_CONFIG.databaseURL){
       const sub = el('button', 'primary', '❹ Amazonへ出品する');
       sub.dataset.writes = '1';
       const opStatus = el('span', 'an-status');
-      [prep, mas, val, sub, opStatus].forEach(x => ops.appendChild(x));
+      // 出したあとに、Amazonから読み戻して突き合わせる。
+      // 送りっぱなしだと、登録はできたのに親子が繋がっていない・
+      // 画像が入っていない、という崩れに気づけない
+      const chk = el('button', 'mini', '🔍 登録結果を確かめる');
+      chk.title = 'Amazonから読み戻して、親子の繋がり・画像の枚数・'
+        + 'FNSKUを送った内容と突き合わせます。\n'
+        + '画像が正しい色のものかまでは分からないので、商品ページも開けます。';
+      [prep, mas, val, sub, chk, opStatus].forEach(x => ops.appendChild(x));
       panel.appendChild(ops);
       panel.appendChild(el('div', 'reg-hint',
         '❶ SKUとJANを決める　→　❷ 発注できるようにする（ここから発注可）'
@@ -7632,6 +7639,22 @@ if(FIREBASE_CONFIG.databaseURL){
         finally{ val.disabled = false; }
       });
 
+      chk.addEventListener('click', async () => {
+        chk.disabled = true;
+        opStatus.textContent = 'Amazonから読み戻しています…（SKUの数だけかかります）';
+        try{
+          const r = await regApi('/' + data.id + '/verify', {method: 'POST'});
+          drawVerify(out, r);
+          opStatus.textContent = r.ok
+            ? 'すべて送ったとおりに入っています'
+            : '食い違いが ' + r.ng + '件あります（下に出しました）';
+          opStatus.classList.toggle('warn', !r.ok);
+        }catch(e){
+          opStatus.textContent = String(e.message || e);
+        }finally{
+          chk.disabled = false;
+        }
+      });
       sub.addEventListener('click', async () => {
         if(!confirm('Amazonへ出品します。よろしいですか？')) return;
         sub.disabled = true; opStatus.textContent = '送っています…';
@@ -7934,6 +7957,38 @@ if(FIREBASE_CONFIG.databaseURL){
   }
 
   // 検証の結果を出す。足りない項目はその場で入れられるようにする
+  // 読み戻した結果を出す。何がどう違うかと、目で見るためのリンク
+  function drawVerify(out, r){
+    out.innerHTML = '';
+    const head = el('div', 'reg-check');
+    head.appendChild(el('b', r.ok ? 'ok' : 'ng',
+      r.ok ? 'Amazonの中身は送ったとおりです'
+           : '送った内容と違うところが ' + r.ng + '件あります'));
+    head.appendChild(el('div', 'reg-hint', r.note || ''));
+    out.appendChild(head);
+
+    (r.items || []).forEach(x => {
+      const d = el('div', 'reg-check');
+      const bits = [];
+      if(x.asin) bits.push('ASIN ' + x.asin);
+      if(x.fnsku) bits.push('FNSKU ' + x.fnsku);
+      if(x.color) bits.push(x.color);
+      if(x.images != null) bits.push('画像' + x.images + '枚');
+      d.appendChild(el('b', x.ok ? 'ok' : 'ng',
+        x.kind + ' ' + x.sku + '：' + (x.ok ? '問題なし' : '要確認')));
+      if(bits.length) d.appendChild(el('div', 'reg-hint', bits.join('　／　')));
+      (x.notes || []).forEach(n => d.appendChild(el('div', 'reg-issue', '・' + n)));
+      if(x.url){
+        const line = el('div', 'sup-links');
+        const a = document.createElement('a');
+        a.href = x.url; a.target = '_blank'; a.rel = 'noopener';
+        a.textContent = '商品ページを見る（画像が合っているか目で確かめる）';
+        line.appendChild(a);
+        d.appendChild(line);
+      }
+      out.appendChild(d);
+    });
+  }
   function drawValidate(out, v){
     out.innerHTML = '';
     (v.checked || []).forEach(x => {
