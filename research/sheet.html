@@ -515,6 +515,10 @@
   .status-filter button.on[data-f="listed"]{background:#7c3aed;}
   .status-filter button.on[data-f="hold"]{background:#d97706;}
   .status-filter button.on[data-f="rejected"]{background:#6b7280;}
+  /* SKUの絞り込み。件数が増えて目で追えなくなったので付けた */
+  .sku-search{width:230px;padding:5px 9px;border:1px solid var(--line-2);
+    border-radius:6px;font-size:12px;}
+  .sku-search:focus{outline:2px solid var(--brand);outline-offset:-1px;}
   .filter-empty{background:#fff;border:1px dashed #cfd8e3;border-radius:8px;padding:24px;
     text-align:center;color:#8a95a3;font-size:12.5px;}
 
@@ -1205,6 +1209,9 @@
     <button data-f="listed">商品登録済み</button>
     <button data-f="rejected">不採用</button>
   </span>
+  <input type="search" id="skuSearch" class="sku-search"
+         placeholder="SKU・商品名・ASINで絞り込み（例: a016 / クリップボード）"
+         title="親SKU・子SKU・リサーチ名・商品タイトル・ライバル商品名・ASIN・商品備考・中国語名から探します（Escで消去）">
   <button id="csvBtn">CSVエクスポート</button>
   <button id="printBtn">印刷 / PDF保存</button>
   <button id="shareBtn" class="mini">共有URLをコピー</button>
@@ -9908,7 +9915,37 @@ if(FIREBASE_CONFIG.databaseURL){
     if(q && (q === 'all' || STATUS_LABEL[q])) statusFilter = q;
   }catch(e){}
   function resStatus(r){ return STATUS_LABEL[r.status] ? r.status : 'active'; }
-  function matchesFilter(r){ return statusFilter === 'all' || resStatus(r) === statusFilter; }
+
+  // SKUで探す。40件を超えると目で追えないので、絞り込みを付けた。
+  // 親SKU（a016）だけでなく子SKU（a016_pink）でも当たるようにする。
+  // リサーチ名と商品名（短縮）も見るので「クリップボード」でも探せる
+  let skuQuery = '';
+  const skuSearchInput = document.getElementById('skuSearch');
+  const normQ = s => String(s || '').normalize('NFKC').trim().toLowerCase();
+  function matchesQuery(r){
+    if(!skuQuery) return true;
+    const hay = [
+      // SKU
+      r.parentSku,
+      ...(r.regChildren || []).map(c => c && c.sku),
+      // 名前まわり
+      r.title, r.shortName, r.comment, r.imgNote,
+      r.titleParent,
+      ...(r.titleChildren || []).map(c => c && c.title),
+      ...(r.titleChildren || []).map(c => c && c.name),
+      // 表の中身。ライバル商品名・ASIN・備考でも探せるように
+      ...(r.rows || []).map(x => x && x.competitor),
+      ...(r.rows || []).map(x => x && x.asin),
+      ...(r.rows || []).map(x => x && x.note),
+      // 仕入先の言い方（中国語名）
+      ...Object.values(r.cnNames || {}),
+      r.cnName,
+    ].map(normQ).filter(Boolean);
+    return hay.some(x => x.indexOf(skuQuery) >= 0);
+  }
+  function matchesFilter(r){
+    return (statusFilter === 'all' || resStatus(r) === statusFilter) && matchesQuery(r);
+  }
   const FILTER_LABELS = Object.assign({all:'すべて'}, STATUS_LABEL);
   const filterBtns = [...document.querySelectorAll('#statusFilter button')];
   function updateFilterUI(){
@@ -9926,6 +9963,26 @@ if(FIREBASE_CONFIG.databaseURL){
     try{ localStorage.setItem(FILTER_KEY, statusFilter); }catch(e){}
     render();
   }));
+
+  // 打つたびに絞る。件数が多いので、少し待ってからにする
+  if(skuSearchInput){
+    let skuTimer = null;
+    skuSearchInput.addEventListener('input', () => {
+      clearTimeout(skuTimer);
+      skuTimer = setTimeout(() => {
+        const q = normQ(skuSearchInput.value);
+        if(q === skuQuery) return;
+        skuQuery = q;
+        render();
+      }, 200);
+    });
+    // Escで消せるようにする（×を探さなくてよい）
+    skuSearchInput.addEventListener('keydown', e => {
+      if(e.key === 'Escape' && skuSearchInput.value){
+        skuSearchInput.value = ''; skuQuery = ''; render();
+      }
+    });
+  }
 
   function render(){
     rowUpdaters = [];
@@ -9945,7 +10002,11 @@ if(FIREBASE_CONFIG.databaseURL){
     vis.forEach(r => container.appendChild(buildResearch(r)));
     if(!vis.length){
       container.appendChild(el('div', 'filter-empty',
-        FILTER_LABELS[statusFilter] + 'のリサーチはありません。'));
+        skuQuery
+          ? '「' + skuSearchInput.value.trim() + '」に当たるものはありません'
+            + (statusFilter === 'all' ? '' : '（' + FILTER_LABELS[statusFilter] + 'の中で）')
+            + '。Escで検索を消せます。'
+          : FILTER_LABELS[statusFilter] + 'のリサーチはありません。'));
     }
     updateFilterUI();
   }
