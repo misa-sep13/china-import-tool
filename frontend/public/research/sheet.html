@@ -7040,31 +7040,6 @@ if(FIREBASE_CONFIG.databaseURL){
     };
     iBtn.addEventListener('click', copyImage);
 
-    // ---- ⑦ 商品マスタ登録＆Amazon出品 --------------------------------
-    //
-    // ここまでで作った出品原稿を、そのままAmazonへ出すところ。
-    // 別の画面に移らず、同じ流れで最後まで進められるようにしてある。
-    //
-    // Amazon出品だけの場所ではない。商品マスタの登録（＝発注できる
-    // ようにする）もここでやるので、見出しに両方を出しておく。
-    // 「商品登録（Amazon）」だと、発注の準備がここだと気づけない。
-    //
-    // 中身は一元管理のサーバー（/api/amazon-listings）とやり取りする。
-    // 配布版（一元管理の外）では使えないので、その旨だけ出す。
-    const rLabel = el('label', null, '⑦ 商品マスタ登録＆Amazon出品');
-    rLabel.classList.add('an-sep');
-    body.appendChild(rLabel);
-
-    const rBox = el('div', 'reg-box');
-    body.appendChild(rBox);
-
-    if(!API_BASE){
-      rBox.appendChild(el('div', 'an-note',
-        '一元管理の画面から開くと、ここからAmazonへ出品できます。'));
-    }else{
-      buildRegister(rBox, research);
-    }
-
     edRefresh();
     // 鍵の状態を最後に反映する（全部の欄と道具が出来上がってから）
     applyLock();
@@ -7141,6 +7116,31 @@ if(FIREBASE_CONFIG.databaseURL){
       if(joined) return joined.slice(0, 16);
     }
     return skuSuffixOne(v);
+  }
+
+  // ---- ⑦ 商品マスタ登録＆Amazon出品（独立した段）----------------
+  //
+  // もとは「出品原稿をつくる」の中に入れていたが、
+  //   ・原稿を書くのと、出して登録するのとでやることが違う
+  //   ・原稿の欄が長いので、毎回そこまでスクロールさせられる
+  // という理由で、同じ高さの3つ目の段として切り出した（2026-09-27）。
+  // 中身（buildRegister）はそのまま。
+  function buildRegisterPanel(research){
+    const box = el('details', 'analyze');
+    box.appendChild(el('summary', null, '⑦ 商品マスタ登録＆Amazon出品'));
+    const body = el('div', 'an-body');
+    box.appendChild(body);
+
+    const rBox = el('div', 'reg-box');
+    body.appendChild(rBox);
+
+    if(!API_BASE){
+      rBox.appendChild(el('div', 'an-note',
+        '一元管理の画面から開くと、ここからAmazonへ出品できます。'));
+    }else{
+      buildRegister(rBox, research);
+    }
+    return box;
   }
 
   function buildRegister(box, research){
@@ -9488,6 +9488,7 @@ if(FIREBASE_CONFIG.databaseURL){
 
     box.appendChild(buildAnalyzePanel(research));
     box.appendChild(buildListingPanel(research));
+    box.appendChild(buildRegisterPanel(research));
 
     const delFoot = el('div', 'research-foot');
     delFoot.appendChild(delRes);
