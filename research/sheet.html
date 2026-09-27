@@ -7752,6 +7752,10 @@ if(FIREBASE_CONFIG.databaseURL){
         }else{
           input = document.createElement('input');
           input.type = 'text';
+          // ユニット数は数と単位の2つが要る。単位を書かなければ「個」にする
+          if(f.name === 'unit_count'){
+            input.placeholder = '例: 1（単位を変えるなら「3枚」「5セット」のように）';
+          }
         }
         input.value = attrs[f.name] == null ? '' : attrs[f.name];
         input.addEventListener('change', () => {
