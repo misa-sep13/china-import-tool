@@ -200,8 +200,9 @@ input:focus, select:focus, textarea:focus { border-color: #e94560; }
 .modal {
   background: #fff;
   border-radius: 12px;
-  padding: 28px 32px;
-  width: 640px;
+  padding: 28px 36px;
+  /* 選ぶときに勢いで枠の外を押してしまう、という声があったので広げた */
+  width: 780px;
   max-width: 95vw;
   max-height: 90vh;
   overflow-y: auto;
