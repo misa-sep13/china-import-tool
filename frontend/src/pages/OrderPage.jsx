@@ -476,13 +476,6 @@ export default function OrderPage() {
                 <table className="sticky-table">
                   <thead>
                     <tr>
-                      <th style={{ width: 36, cursor: 'pointer' }} onClick={toggleAll}>
-                        <input type="checkbox"
-                          checked={allDisplayedChecked}
-                          onChange={toggleAll}
-                          onClick={e => e.stopPropagation()}
-                        />
-                      </th>
                       <th>SKU</th>
                       <th>商品名</th>
                       <th>色/サイズ</th>
@@ -495,7 +488,18 @@ export default function OrderPage() {
                       <th>日販</th>
                       <th>成長率</th>
                       <th>発注数</th>
-                      <th>発注</th>
+                      {/* チェックは発注ボタンの右。楽天の発注画面と同じ並びにしてある */}
+                      <th style={{ whiteSpace: 'nowrap' }}>
+                        発注
+                        <label style={{ marginLeft: 8, fontSize: 11, fontWeight: 400,
+                          color: '#64748b', cursor: 'pointer', userSelect: 'none' }}>
+                          <input type="checkbox"
+                            checked={allDisplayedChecked}
+                            onChange={toggleAll}
+                            style={{ verticalAlign: 'middle', marginRight: 2 }} />
+                          全選択
+                        </label>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -504,16 +508,6 @@ export default function OrderPage() {
                       const rowBg = isChecked ? '#eff6ff' : item.needs_order ? '#fff7ed' : undefined
                       return (
                       <tr key={item.product_id} style={{ background: rowBg }}>
-                        <td
-                          style={{ textAlign: 'center', cursor: 'pointer' }}
-                          onClick={() => toggleSelect(item.product_id)}
-                        >
-                          <input type="checkbox"
-                            checked={isChecked}
-                            onChange={() => toggleSelect(item.product_id)}
-                            onClick={e => e.stopPropagation()}
-                          />
-                        </td>
                         <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{item.sku}</td>
                         <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {item.name}
@@ -549,18 +543,26 @@ export default function OrderPage() {
                           />
                         </td>
                         <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
-                          {justOrdered.has(item.product_id) ? (
-                            <span style={{ color: '#16a34a', fontWeight: 700, fontSize: 12 }}>✓ 発注済</span>
-                          ) : (
-                            <button
-                              className="btn btn-primary"
-                              style={{ padding: '4px 12px', fontSize: 12 }}
-                              disabled={ordering === item.product_id || item.qty <= 0}
-                              onClick={() => recordOrder(item)}
-                            >
-                              {ordering === item.product_id ? '...' : '発注'}
-                            </button>
-                          )}
+                          <div style={{ display: 'flex', alignItems: 'center',
+                            gap: 6, justifyContent: 'center' }}>
+                            {justOrdered.has(item.product_id) ? (
+                              <span style={{ color: '#16a34a', fontWeight: 700, fontSize: 12 }}>✓ 発注済</span>
+                            ) : (
+                              <button
+                                className="btn btn-primary"
+                                style={{ padding: '4px 12px', fontSize: 12 }}
+                                disabled={ordering === item.product_id || item.qty <= 0}
+                                onClick={() => recordOrder(item)}
+                              >
+                                {ordering === item.product_id ? '...' : '発注'}
+                              </button>
+                            )}
+                            <input type="checkbox"
+                              checked={isChecked}
+                              title="チェックした行がまとめての発注・Excelの対象になります"
+                              onChange={() => toggleSelect(item.product_id)}
+                              style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                          </div>
                         </td>
                       </tr>
                       )
@@ -568,8 +570,8 @@ export default function OrderPage() {
                   </tbody>
                   <tfoot>
                     <tr>
-                      {/* 合計行は「発注数」列に数を出す。前12列＋発注数＋発注ボタンで計14列 */}
-                      <td colSpan={12} style={{ textAlign: 'right', fontWeight: 700, paddingTop: 12 }}>
+                      {/* 合計行は「発注数」列に数を出す。前11列＋発注数＋発注で計13列 */}
+                      <td colSpan={11} style={{ textAlign: 'right', fontWeight: 700, paddingTop: 12 }}>
                         選択中
                       </td>
                       <td style={{ textAlign: 'right', fontWeight: 700 }}>
