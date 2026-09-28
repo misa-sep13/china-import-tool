@@ -84,6 +84,9 @@ export default function TaotaroOrderModal({
           // 現場に伝えないと違うものが届く指示が書かれている。
           // FBA行きはまだAPIで指定できないので、そのお願いも足しておく
           // （毎回手で書くと、書き忘れた便が普通の配送で来てしまう）
+          // FBA納品。Amazon（ASINあり）は既定で入れるが、外せるようにする。
+          // 一時的に自宅へ送ってもらう、ということがあるため
+          fba: !!x.asin,
           remark: [x.note || '', x.asin ? FBA_NOTE : ''].filter(Boolean).join(' / '),
           inspect: x.inspect || {},
           // 「その他」は、タオタロウの画面と同じくチェックを入れてから書く形。
@@ -136,7 +139,7 @@ export default function TaotaroOrderModal({
           product_id: t.product_id, sku_id: t.skuId,
           remark: t.remark || '',
           asin: t.asin || '', fnsku: t.fnsku || '',
-          fba: t.asin ? '1' : '0',
+          fba: t.fba ? '1' : '0',
           inspect: t.inspect || {},
           remember_sku: true,
           remember_inspect: !!t.rememberInspect,
@@ -350,6 +353,11 @@ function Row({ r, i, patch, pickSku }) {
             {/* 外したチェックは 0 で残るので、中身のあるものだけ数える */}
             {Object.values(r.inspect || {}).some(v =>
               typeof v === 'string' ? v.trim() : v) && ' （指定あり）'}
+            {/* 閉じていてもFBAかどうかは見えるようにする。開かないと
+                分からないと、付け忘れ・外し忘れに気づけない */}
+            {r.fba && (
+              <span style={{ color: C.good, fontWeight: 700 }}> 📦FBA</span>
+            )}
           </button>
 
           {open && (
@@ -369,6 +377,28 @@ function Row({ r, i, patch, pickSku }) {
                     {labelText}
                   </label>
                 ))}
+                {/* FBA納品。仕様書（2026-09-28版）に載った fba 項目で送る。
+                    ASINが無い商品には付けられない（送り先が決まらない） */}
+                <label style={{ fontSize: 12, display: 'flex',
+                  alignItems: 'center', gap: 4,
+                  color: r.asin ? C.text : C.sub }}
+                  title={r.asin
+                    ? 'タオタロウにFBA納品として扱ってもらいます'
+                    : 'ASINが無い商品にはFBA納品を付けられません'}>
+                  <input type="checkbox" style={check}
+                    checked={!!r.fba} disabled={!r.asin}
+                    onChange={e => {
+                      const on = e.target.checked
+                      // 備考のお願い文も、チェックに合わせて出し入れする
+                      const rest = (r.remark || '')
+                        .split(' / ').filter(x => x && x !== FBA_NOTE)
+                      patch(i, {
+                        fba: on,
+                        remark: (on ? [...rest, FBA_NOTE] : rest).join(' / '),
+                      })
+                    }} />
+                  📦 FBA納品
+                </label>
                 {/* 仕様書に無いので、その他のご要望に定型文を入れて頼む。
                     チェックを外したら定型文だけを消し、手で書いた分は残す */}
                 <label style={{ fontSize: 12, display: 'flex',
