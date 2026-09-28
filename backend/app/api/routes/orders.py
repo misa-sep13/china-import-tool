@@ -74,6 +74,10 @@ class OrderItem(BaseModel):
     stock: int
     recommended_qty: int
     qty: int  # 最終発注数（ユーザーが調整可能）
+    # 'air' なら備考に「航空便予定」が入る。1商品を2便に分けるときは、
+    # 画面側で航空便ぶんと船便ぶんの2行にして送る
+    shipping: str = ""
+
 
 class ExportRequest(BaseModel):
     items: List[OrderItem]
@@ -138,6 +142,14 @@ def _run_preview_job(job_id: str):
             .all()
         )
 
+        # 船便・航空便の振り分けに使う日数。FBA納品プランと同じ設定を見る
+        from app.api.routes.fba_plan import _build_settings as _plan_settings
+        plan = _plan_settings(db.query(OrderSettings).first())
+        sea_lead = (plan["lt_order_to_warehouse"] + plan["lt_shipping_request"]
+                    + plan["lt_sea_to_fba"])
+        air_lead = (plan["lt_order_to_warehouse"] + plan["lt_shipping_request"]
+                    + plan["lt_air_to_fba"])
+
         result = []
         for p in products:
             inv = inventory.get(p.fnsku, {})
@@ -159,6 +171,26 @@ def _run_preview_job(job_id: str):
                 sales_7=s7, sales_15=s15, sales_30=s30, sales_60=s60,
                 set_size=p.set_size or 1, s=s, sales_90=s90,
             )
+            # 船便・航空便の振り分け。Amazonの設定（FBA納品プランの
+            # リードタイム詳細）をそのまま使う。
+            #   ・日販が「保留判断」を下回る    → 送らない
+            #   ・パイプライン残日数が「航空便判断」以下 → 航空便を使う
+            #   ・それ以外                      → すべて船便
+            # 航空便に回すのは「船便が届くまでに足りない分」だけで、
+            # 残りは船便。1商品を2便に分けられる
+            pipeline_days = int(stock / daily) if daily > 0 else 9999
+            air_qty = 0
+            ship_method = "sea"
+            if daily < plan["hold_daily_threshold"]:
+                ship_method = "hold"
+            elif pipeline_days <= plan["air_threshold_days"]:
+                shortage = round(daily * sea_lead - stock)
+                air_qty = min(max(0, calc.qty * (p.set_size or 1)), max(0, shortage))
+                ship_method = "air" if air_qty > 0 else "sea"
+            # 画面は販売単位（セット数）で扱うので、そろえて返す
+            unit = max(1, p.set_size or 1)
+            air_sets = -(-air_qty // unit) if air_qty > 0 else 0
+
             result.append({
                 "product_id": p.id,
                 "sku": p.sku or "",
@@ -310,6 +342,13 @@ def _run_stock_job(job_id: str):
                 "recommended_qty": calc.qty,
                 "recommended_pieces": needed_pieces,
                 "qty": max(0, calc.qty),
+                # 船便・航空便の振り分け
+                "ship_method": ship_method,
+                "air_qty": min(air_sets, max(0, calc.qty)),
+                "pipeline_days": pipeline_days,
+                "sea_lead_days": sea_lead,
+                "air_lead_days": air_lead,
+                "air_threshold_days": plan["air_threshold_days"],
             })
 
         with _jobs_lock:
@@ -541,7 +580,10 @@ def export_excel(req: ExportRequest, db: Session = Depends(get_db)):
             "qty_sets": item.qty,
             "price": item.price,
             "repack": item.repack,
-            "note": item.note,
+            # 航空便の行だけ備考に印を入れる。現場はこの欄を見て便を分ける
+            "note": (("航空便予定 / " + item.note) if item.shipping == "air"
+                     and "航空便予定" not in (item.note or "")
+                     else item.note),
             "set_size": item.set_size,
             "asin": item.asin,
             "fnsku": item.fnsku,

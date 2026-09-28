@@ -15,6 +15,9 @@ export default function OrderPage() {
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
   const [qtyOverrides, setQtyOverrides] = useState({})
+  // 航空便に回す数。既定はサーバーの振り分け（船便が届くまでに足りない分）。
+  // 手で直したいこともあるので、入力欄にしてある
+  const [airOverrides, setAirOverrides] = useState({})
   const [ordering, setOrdering] = useState(null)
   const [justOrdered, setJustOrdered] = useState(new Set())
   const [search, setSearch] = useState('')
@@ -257,9 +260,27 @@ export default function OrderPage() {
     sessionStorage.removeItem('order_items')
   }
 
+  /** 航空便に回す数。手で直していればその値、無ければサーバーの振り分け */
+  const airOf = (item) => {
+    const v = airOverrides[item.product_id]
+    return v === undefined || v === '' ? (item.air_qty || 0) : Number(v)
+  }
+
+  /** 1商品を航空便ぶんと船便ぶんの2行に分ける。0の便は作らない */
+  const splitByShipping = (list) => {
+    const out = []
+    list.forEach(item => {
+      const air = Math.min(Number(airOf(item)) || 0, item.qty)
+      if (air > 0) out.push({ ...item, qty: air, shipping: 'air' })
+      if (item.qty - air > 0) out.push({ ...item, qty: item.qty - air, shipping: 'sea' })
+    })
+    return out
+  }
+
   const handleExport = async () => {
     // フィルタ・検索で今は隠れている行も、チェック済みなら出力対象に含める
-    const targets = allItems.filter(item => currentSelected.has(item.product_id) && item.qty > 0)
+    const picked = allItems.filter(item => currentSelected.has(item.product_id) && item.qty > 0)
+    const targets = splitByShipping(picked)
     if (!targets.length) { setError('選択された商品がないか、発注数が0です'); return }
     setExporting(true)
     try {
@@ -272,7 +293,7 @@ export default function OrderPage() {
       window.URL.revokeObjectURL(url)
       qc.invalidateQueries(['orderHistory'])
       // Excel出力＝発注済みリストに記録されるので、画面の発注済にも反映する
-      applyOrderedLocally(targets.map(t => ({ product_id: t.product_id, qty: t.qty })))
+      applyOrderedLocally(picked.map(t => ({ product_id: t.product_id, qty: t.qty })))
       setQtyOverrides({})
       setSelected(null)
     } catch {
@@ -488,6 +509,11 @@ export default function OrderPage() {
                       <th>日販</th>
                       <th>成長率</th>
                       <th>発注数</th>
+                      {/* 航空便に回す数。残りが船便になる。
+                          Amazon設定の「航空便判断」以下の商品だけ数が入る */}
+                      <th title="船便が届くまでに足りない分を航空便に回します。残りは船便です">
+                        航空便
+                      </th>
                       {/* チェックは発注ボタンの右。楽天の発注画面と同じ並びにしてある */}
                       <th style={{ whiteSpace: 'nowrap' }}>
                         発注
@@ -543,6 +569,29 @@ export default function OrderPage() {
                           />
                         </td>
                         <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                          {item.ship_method === 'hold' ? (
+                            <span style={{ fontSize: 11, color: '#94a3b8' }}
+                              title="日販が保留判断を下回っています">—</span>
+                          ) : (
+                            <input
+                              type="number" min={0} max={item.qty}
+                              className="qty-input"
+                              value={airOverrides[item.product_id] ?? (item.air_qty || 0)}
+                              title={item.ship_method === 'air'
+                                ? `残${item.pipeline_days}日 ≦ 航空便判断${item.air_threshold_days}日。`
+                                  + `船便（${item.sea_lead_days}日）が届くまでに足りない分です`
+                                : `残${item.pipeline_days}日。航空便判断（${item.air_threshold_days}日）より長いので船便だけです`}
+                              onChange={e => setAirOverrides(p => ({
+                                ...p, [item.product_id]: e.target.value }))}
+                              style={{
+                                width: 56,
+                                borderColor: airOf(item) > 0 ? '#2563eb' : undefined,
+                                color: airOf(item) > 0 ? '#2563eb' : undefined,
+                              }}
+                            />
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
                           <div style={{ display: 'flex', alignItems: 'center',
                             gap: 6, justifyContent: 'center' }}>
                             {justOrdered.has(item.product_id) ? (
@@ -570,12 +619,15 @@ export default function OrderPage() {
                   </tbody>
                   <tfoot>
                     <tr>
-                      {/* 合計行は「発注数」列に数を出す。前11列＋発注数＋発注で計13列 */}
+                      {/* 合計行は「発注数」列に数を出す。前11列＋発注数＋航空便＋発注で計14列 */}
                       <td colSpan={11} style={{ textAlign: 'right', fontWeight: 700, paddingTop: 12 }}>
                         選択中
                       </td>
                       <td style={{ textAlign: 'right', fontWeight: 700 }}>
                         {selectedItems.reduce((s, i) => s + i.qty, 0)} 個
+                      </td>
+                      <td style={{ textAlign: 'center', fontWeight: 700, color: '#2563eb' }}>
+                        {selectedItems.reduce((s, i) => s + Math.min(airOf(i), i.qty), 0) || ''}
                       </td>
                       <td></td>
                     </tr>
