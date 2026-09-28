@@ -99,6 +99,17 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
     }
   }
 
+  // やり取りを消す。テストや書き間違いが残ると、答えの要る質問が埋もれる
+  const removeNote = async (id, noteId) => {
+    if (!window.confirm('このやり取りを消します。よろしいですか？')) return
+    try {
+      const r = await api.delete(`/work-status/${id}/notes/${noteId}`, cfg())
+      setRows(rs => rs.map(x => (x.id === id ? r.data : x)))
+    } catch (e) {
+      setErr(e?.response?.data?.detail || '消せませんでした')
+    }
+  }
+
   const reply = async (id, noteId) => {
     const answer = (ans[noteId] || '').trim()
     if (!answer) return
@@ -306,11 +317,21 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
                     {r.notes.map(n => (
                       <div key={n.id} style={{ marginBottom: 8, paddingBottom: 8,
                         borderBottom: `1px solid ${C.line}` }}>
-                        <div style={{ fontSize: 12, color: C.text }}>
-                          <b style={{ color: n.who === 'staff' ? C.key : C.warn }}>
-                            {WHO_LABEL[n.who] || n.who}
-                          </b>
-                          ：{n.body}
+                        <div style={{ fontSize: 12, color: C.text,
+                          display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                          <span style={{ flex: 1 }}>
+                            <b style={{ color: n.who === 'staff' ? C.key : C.warn }}>
+                              {WHO_LABEL[n.who] || n.who}
+                            </b>
+                            ：{n.body}
+                          </span>
+                          {!share && (
+                            <button onClick={() => removeNote(r.id, n.id)}
+                              title="このやり取りを消す"
+                              style={{ fontSize: 11, color: C.bad,
+                                background: 'none', border: 'none',
+                                cursor: 'pointer', padding: 0 }}>削除</button>
+                          )}
                         </div>
                         {n.answer ? (
                           <div style={{ fontSize: 12, color: C.good,

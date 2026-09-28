@@ -241,6 +241,31 @@ def update_row(row_id: int, data: WorkPatch, request: Request,
     return _out(row)
 
 
+@router.delete("/{row_id:int}/notes/{note_id:int}")
+def delete_note(row_id: int, note_id: int, request: Request,
+                db: Session = Depends(get_db)):
+    """やり取りを1件消す。
+
+    テストで書いたものや、書き間違えたものが残り続けると、
+    本当に答えの要る質問が埋もれる。外注さんの画面からは消せない
+    （相手の書いたものまで消えてしまうため）。
+    """
+    if _is_share(request):
+        raise HTTPException(403, "この画面からは削除できません")
+    note = (db.query(WorkNote)
+            .filter(WorkNote.id == note_id, WorkNote.work_id == row_id)
+            .first())
+    if not note:
+        raise HTTPException(404, "見つかりません")
+    db.delete(note)
+    db.commit()
+    row = db.query(WorkStatus).filter(WorkStatus.id == row_id).first()
+    if not row:
+        raise HTTPException(404, "見つかりません")
+    db.refresh(row)
+    return _out(row)
+
+
 @router.delete("/{row_id:int}")
 def delete_row(row_id: int, request: Request, db: Session = Depends(get_db)):
     """消す。実際には印を付けるだけ（間違えても戻せるように）。"""
