@@ -531,6 +531,72 @@ def debug_match_spec(url: str, spec: str):
     }
 
 
+# ---------- 試算・判定（2026-09-24 提供開始） ----------
+#
+# 上流に行かないので速い。リサーチ権限も不要。
+# 応答はこちらで組み替えず、そのまま画面へ渡す（実物の形を見ていないため、
+# 勝手に整形すると項目を落とす）。
+
+class QuoteIn(BaseModel):
+    price_jpy: float                      # 日本での売価（円）
+    length_cm: Optional[float] = None
+    width_cm: Optional[float] = None
+    height_cm: Optional[float] = None
+    weight_g: Optional[float] = None
+    qty: Optional[int] = None             # 既定 500
+    units_per_carton: Optional[int] = None
+    route: Optional[str] = None           # 既定は船便（標準）
+    cost_cny: Optional[float] = None      # 入れると採算判定が付く
+    duty_rate_pct: Optional[float] = None # 省略すると0%で計算される
+    lang: Optional[str] = "ja"
+
+
+class ScreeningIn(BaseModel):
+    product_name: str
+    # 文字列で送る。真偽値だとエラーになる（仕様書の注意）
+    power: Optional[str] = None           # none / usb / battery / ac
+    wireless: Optional[str] = None        # none / bt / wifi / other
+    food_contact: Optional[bool] = None
+    for_children: Optional[bool] = None
+    lookalike: Optional[bool] = None
+    health_claim: Optional[bool] = None   # 効能を書く予定か。判定が変わる
+    lang: Optional[str] = "ja"
+
+
+class FreightIn(BaseModel):
+    length_cm: Optional[float] = None
+    width_cm: Optional[float] = None
+    height_cm: Optional[float] = None
+    weight_g: Optional[float] = None
+    units_per_carton: Optional[int] = None
+    product_name: Optional[str] = None
+    has_battery: Optional[bool] = None    # こちらは真偽値
+    lang: Optional[str] = "ja"
+
+
+def _clean(data) -> dict:
+    """未入力の項目は送らない。既定値があるものは向こうに任せる。"""
+    return {k: v for k, v in data.model_dump().items() if v not in (None, "")}
+
+
+@router.post("/tools/quote")
+def tools_quote(data: QuoteIn):
+    """売価から、工場に払える上限を逆算する。"""
+    return _call(taotaro.tools_quote, _clean(data))
+
+
+@router.post("/tools/screening")
+def tools_screening(data: ScreeningIn):
+    """日本に入れるのに認証が要るかを見る。"""
+    return _call(taotaro.tools_screening, _clean(data))
+
+
+@router.post("/tools/freight")
+def tools_freight(data: FreightIn):
+    """ルート別の1個あたり国際送料。"""
+    return _call(taotaro.tools_freight, _clean(data))
+
+
 @router.get("/probe")
 def probe(path: str):
     """【一時】タオタロウAPIの口が存在するかを確かめる。読み取りだけ。

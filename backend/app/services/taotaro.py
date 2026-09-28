@@ -937,3 +937,45 @@ def send_order_states(pages: int = 3) -> dict:
         if not d.get("has_more_pages"):
             break
     return out
+
+
+# ---------- 試算・判定（2026-09-24 提供開始） ----------
+#
+# 上流（1688・淘宝）に一切アクセスしない。数字を入れると数字が返るだけなので
+# 速く、リサーチ権限も要らない。
+#   quote     … 日本での売価から、工場に払える上限を逆算
+#   screening … 日本に入れるのに認証が要るか（電安法・電波法・食衛法・PSC・薬機法）
+#   freight   … ルート別の1個あたり国際送料
+#
+# 応答の形は実物を見ていないので、こちらで組み替えない。そのまま画面へ渡す。
+
+
+def tools_quote(payload: dict) -> dict:
+    """売価から、工場に払える上限を逆算する。
+
+    採算が取れないと allowance_cny が null で返る。「仕入値0でも赤字」
+    という意味なので、0として扱わないこと（仕様書の注意）。
+    """
+    if not payload.get("price_jpy"):
+        raise TaotaroError("日本での売価（円）を入れてください")
+    return _request("/api/v1/tools/quote", body=payload, method="POST")
+
+
+def tools_screening(payload: dict) -> dict:
+    """日本に入れるのに認証が要るかを見る。
+
+    power と wireless は文字列（none / usb / battery / ac、
+    none / bt / wifi / other）。真偽値で送るとエラーになる。
+    """
+    if not (payload.get("product_name") or "").strip():
+        raise TaotaroError("商品名を入れてください")
+    return _request("/api/v1/tools/screening", body=payload, method="POST")
+
+
+def tools_freight(payload: dict) -> dict:
+    """ルート別の1個あたり国際送料。
+
+    荷姿がルートの上限を超えるものは比較から外れ、blocked_routes に
+    理由つきで入る（送れないルートの値段は出さない）。
+    """
+    return _request("/api/v1/tools/freight", body=payload, method="POST")

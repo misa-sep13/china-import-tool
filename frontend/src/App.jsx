@@ -15,6 +15,7 @@ import RakutenSettingsPage from './pages/RakutenSettingsPage'
 import RakutenInvoicePage from './pages/RakutenInvoicePage'
 import RakutenShippingPage from './pages/RakutenShippingPage'
 import MercariConvertPage from './pages/MercariConvertPage'
+import TaotaroToolsPage from './pages/TaotaroToolsPage'
 import ImportPermitPage from './pages/ImportPermitPage'
 import WholesalePage from './pages/WholesalePage'
 import RakutenSalesPage from './pages/RakutenSalesPage'
@@ -169,6 +170,9 @@ function App() {
         <NavLink to="/research" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🔍 リサーチ・商品登録
         </NavLink>
+        <NavLink to="/taotaro-tools" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          🧮 仕入れ試算
+        </NavLink>
         <NavLink to="/work-status" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📋 状況確認シート
         </NavLink>
@@ -299,6 +303,7 @@ function App() {
           <Route path="/rakuten/research" element={<RakutenResearchPage />} />
           <Route path="/welfare/inventory" element={<WelfareInventoryPage />} />
           <Route path="/mercari-convert" element={<MercariConvertPage />} />
+          <Route path="/taotaro-tools" element={<TaotaroToolsPage />} />
           <Route path="/welfare/work-public" element={<WelfareWorkPublicPage />} />
         </Routes>
       </main>
