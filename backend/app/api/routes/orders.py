@@ -33,6 +33,40 @@ _jobs: dict = {}
 _jobs_lock = threading.Lock()
 
 
+def _plan_leads(db):
+    """船便・航空便の振り分けに使う設定と日数。FBA納品プランと同じものを見る。"""
+    from app.api.routes.fba_plan import _build_settings as _plan_settings
+    plan = _plan_settings(db.query(OrderSettings).first())
+    sea_lead = (plan["lt_order_to_warehouse"] + plan["lt_shipping_request"]
+                + plan["lt_sea_to_fba"])
+    air_lead = (plan["lt_order_to_warehouse"] + plan["lt_shipping_request"]
+                + plan["lt_air_to_fba"])
+    return plan, sea_lead, air_lead
+
+
+def _shipping_split(plan, sea_lead, daily, stock, order_sets, set_size):
+    """船便と航空便に振り分ける。
+
+      ・日販が「保留判断」を下回る            → 送らない
+      ・パイプライン残日数が「航空便判断」以下 → 航空便を使う
+      ・それ以外                              → すべて船便
+
+    航空便に回すのは「船便が届くまでに足りない分」だけで、残りは船便。
+    1商品を2便に分けられる。返すのは画面と同じ販売単位（セット数）。
+    """
+    unit = max(1, set_size or 1)
+    pipeline_days = int(stock / daily) if daily > 0 else 9999
+    if daily < plan["hold_daily_threshold"]:
+        return "hold", 0, pipeline_days
+    if pipeline_days > plan["air_threshold_days"]:
+        return "sea", 0, pipeline_days
+    shortage = round(daily * sea_lead - stock)
+    air_pieces = min(max(0, order_sets * unit), max(0, shortage))
+    air_sets = -(-air_pieces // unit) if air_pieces > 0 else 0
+    air_sets = min(air_sets, max(0, order_sets))
+    return ("air" if air_sets > 0 else "sea"), air_sets, pipeline_days
+
+
 def _prune_jobs():
     """古い・完了済みのジョブをメモリから掃除する。
     ジョブは結果（全商品リスト）を保持したまま_jobsに残り続けるため、
@@ -143,12 +177,7 @@ def _run_preview_job(job_id: str):
         )
 
         # 船便・航空便の振り分けに使う日数。FBA納品プランと同じ設定を見る
-        from app.api.routes.fba_plan import _build_settings as _plan_settings
-        plan = _plan_settings(db.query(OrderSettings).first())
-        sea_lead = (plan["lt_order_to_warehouse"] + plan["lt_shipping_request"]
-                    + plan["lt_sea_to_fba"])
-        air_lead = (plan["lt_order_to_warehouse"] + plan["lt_shipping_request"]
-                    + plan["lt_air_to_fba"])
+        plan, sea_lead, air_lead = _plan_leads(db)
 
         result = []
         for p in products:
@@ -171,25 +200,11 @@ def _run_preview_job(job_id: str):
                 sales_7=s7, sales_15=s15, sales_30=s30, sales_60=s60,
                 set_size=p.set_size or 1, s=s, sales_90=s90,
             )
-            # 船便・航空便の振り分け。Amazonの設定（FBA納品プランの
-            # リードタイム詳細）をそのまま使う。
-            #   ・日販が「保留判断」を下回る    → 送らない
-            #   ・パイプライン残日数が「航空便判断」以下 → 航空便を使う
-            #   ・それ以外                      → すべて船便
-            # 航空便に回すのは「船便が届くまでに足りない分」だけで、
-            # 残りは船便。1商品を2便に分けられる
-            pipeline_days = int(stock / daily) if daily > 0 else 9999
-            air_qty = 0
-            ship_method = "sea"
-            if daily < plan["hold_daily_threshold"]:
-                ship_method = "hold"
-            elif pipeline_days <= plan["air_threshold_days"]:
-                shortage = round(daily * sea_lead - stock)
-                air_qty = min(max(0, calc.qty * (p.set_size or 1)), max(0, shortage))
-                ship_method = "air" if air_qty > 0 else "sea"
-            # 画面は販売単位（セット数）で扱うので、そろえて返す
-            unit = max(1, p.set_size or 1)
-            air_sets = -(-air_qty // unit) if air_qty > 0 else 0
+            from app.services.calc import weighted_daily as _weighted_daily
+            daily = _weighted_daily(s7, s15, s30, s60, s90, s)
+            stock = available + inbound + ordered + processing + (p.extra_stock or 0)
+            ship_method, air_sets, pipeline_days = _shipping_split(
+                plan, sea_lead, daily, stock, max(0, calc.qty), p.set_size)
 
             result.append({
                 "product_id": p.id,
@@ -226,6 +241,13 @@ def _run_preview_job(job_id: str):
                 "qty": calc.qty,
                 "needs_order": calc.qty > 0,
                 "growth_rate": growth_rate_pct(s7, s15, s90),
+                # 船便・航空便の振り分け（全在庫リストと同じ）
+                "ship_method": ship_method,
+                "air_qty": air_sets,
+                "pipeline_days": pipeline_days,
+                "sea_lead_days": sea_lead,
+                "air_lead_days": air_lead,
+                "air_threshold_days": plan["air_threshold_days"],
             })
 
         with _jobs_lock:
@@ -280,6 +302,8 @@ def _run_stock_job(job_id: str):
             .all()
         )
 
+        plan, sea_lead, air_lead = _plan_leads(db)
+
         result = []
         for p in products:
             inv = inventory.get(p.fnsku, {})
@@ -305,6 +329,8 @@ def _run_stock_job(job_id: str):
             from app.services.calc import weighted_daily
             daily = weighted_daily(s7, s15, s30, s60, s90, s)
             stock = available + inbound + ordered + processing + (p.extra_stock or 0)
+            ship_method, air_sets, pipeline_days = _shipping_split(
+                plan, sea_lead, daily, stock, max(0, calc.qty), p.set_size)
             from app.services.calc import calc_sale_extra_days
             needed_pieces = round(daily * calc.growth * (s.lead_days + calc_sale_extra_days(s)) - stock) if daily > 0 else 0
 
@@ -344,7 +370,7 @@ def _run_stock_job(job_id: str):
                 "qty": max(0, calc.qty),
                 # 船便・航空便の振り分け
                 "ship_method": ship_method,
-                "air_qty": min(air_sets, max(0, calc.qty)),
+                "air_qty": air_sets,
                 "pipeline_days": pipeline_days,
                 "sea_lead_days": sea_lead,
                 "air_lead_days": air_lead,
