@@ -71,17 +71,43 @@ def _sent_at(msg) -> datetime:
 
 
 def _find_folder(im, want: str) -> str:
-    """フォルダ名は日本語だと符号化されているので、読める名前で探す。"""
+    """読める名前でフォルダを探す。
+
+    日本語のフォルダ名は符号化されているうえ、受信トレイの下にあると
+    「INBOX.配送依頼」のような階層つきの名前になる。名前をそのまま比べると
+    見つからないので、末尾の一段でも照合する。
+    サーバーが返した名前（raw）をそのまま使って開く（組み立て直すと
+    変形UTF-7の変換で取りこぼす）。
+    """
     typ, boxes = im.list()
+    exact, tail = None, None
     for b in boxes or []:
         line = b.decode(errors="replace") if isinstance(b, bytes) else str(b)
         raw = permit_mail.mailer._list_name(line)
         if not raw:
             continue
-        if permit_mail._utf7_decode(raw) == want:
-            return raw
+        label = permit_mail._utf7_decode(raw)
+        if label == want:
+            exact = raw
+            break
+        # 「INBOX.配送依頼」「INBOX/配送依頼」のどちらの区切りでも拾う
+        last = re.split(r"[./]", label)[-1]
+        if last == want and tail is None:
+            tail = raw
+    found = exact or tail
+    if found:
+        return found
+    # 見つからなかったときは、何があったのかを伝える。名前が少し違うだけの
+    # ことが多いので、一覧を添える
+    names = []
+    for b in boxes or []:
+        line = b.decode(errors="replace") if isinstance(b, bytes) else str(b)
+        raw = permit_mail.mailer._list_name(line)
+        if raw:
+            names.append(permit_mail._utf7_decode(raw))
     raise permit_mail.PermitMailError(
-        f"フォルダ「{want}」が見つかりませんでした")
+        f"フォルダ「{want}」が見つかりませんでした。"
+        f"あるのは：{'、'.join(names[:30])}")
 
 
 def collect(folder: str = "配送依頼", days: int = 365,
