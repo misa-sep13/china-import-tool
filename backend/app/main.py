@@ -192,6 +192,8 @@ def _migrate():
         ("products","purchase_components",   "ALTER TABLE products ADD COLUMN purchase_components TEXT"),
         # 画像依頼：仕入元（1688）のページ。デザイナーが素材を見るのに要る
         ("image_requests","main_url",        "ALTER TABLE image_requests ADD COLUMN main_url TEXT"),
+        # リサーチシートの認証チェックの結果（JSON文字列）
+        ("amazon_research_pages","cert", "ALTER TABLE amazon_research_pages ADD COLUMN cert TEXT"),
         # 状況確認シートの工程。プルダウン1つから、3つのチェックに変えた
         ("work_statuses","step_order",   "ALTER TABLE work_statuses ADD COLUMN step_order BOOLEAN DEFAULT FALSE"),
         ("work_statuses","step_image",   "ALTER TABLE work_statuses ADD COLUMN step_image BOOLEAN DEFAULT FALSE"),

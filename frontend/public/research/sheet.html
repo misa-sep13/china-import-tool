@@ -5378,6 +5378,126 @@ if(FIREBASE_CONFIG.databaseURL){
         + '。👁 見る で順位を確認できます。STEP1のプロンプトにも自動で入ります';
     });
 
+    // ⚖️ 認証チェック（タオタロウの判定API・2026-09-24提供開始）
+    //
+    // 電安法・電波法・食品衛生法・PSC・薬機法に当たるかを見る。
+    // 上流（1688）には行かないので、商品が決まる前でも押せる。
+    // 薬機法は物ではなく「書き方」で決まることがあるため、効能をうたう予定か
+    // どうかで判定が変わる（同じ着圧ソックスでも黄と緑に分かれる）。
+    const certName = document.createElement('input');
+    certName.className = 'sug-in';
+    certName.placeholder = '商品名（例: ワイヤレスイヤホン）';
+    certName.title = 'この名前で判定します。空なら商品タイトルかリサーチ名を使います';
+    const certSel = (opts, title) => {
+      const sl = document.createElement('select');
+      sl.className = 'sug-in';
+      sl.title = title;
+      opts.forEach(([v, l]) => {
+        const o = document.createElement('option');
+        o.value = v; o.textContent = l; sl.appendChild(o);
+      });
+      return sl;
+    };
+    const certPower = certSel([['', '電源：未選択'], ['none', '電源なし'],
+      ['usb', 'USB'], ['battery', '電池・バッテリー'], ['ac', 'コンセント']],
+      'コンセントを使うものは電気用品安全法（PSE）に当たります');
+    const certWireless = certSel([['', '無線：未選択'], ['none', '無線なし'],
+      ['bt', 'Bluetooth'], ['wifi', 'Wi-Fi'], ['other', 'その他の無線']],
+      'Bluetooth・Wi-Fiは電波法（技適）に当たります');
+    const certFlag = (key, label, title) => {
+      const lab = el('label', 'sug-deep');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      lab.title = title;
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(label));
+      return {lab: lab, cb: cb, key: key};
+    };
+    const certFlags = [
+      certFlag('food_contact', '食品に触れる', '皿・水筒・調理器具など。食品衛生法'),
+      certFlag('for_children', '子ども向け', '乳幼児が口に入れる可能性のある玩具など'),
+      certFlag('lookalike', '既存商品に似ている', '意匠・商標の確認が要る場合があります'),
+      certFlag('health_claim', '効能をうたう予定',
+        '「むくみが取れる」などを書く予定か。薬機法の判定が変わります'),
+    ];
+    const certBtn = el('button', 'mini', '⚖️ 判定する');
+    certBtn.title = '日本に入れるのに認証が要るかを見ます。1688のページは見に行きません';
+    const certStatus = el('span', 'an-status');
+    const fbCert = el('div', 'fb');
+
+    /** 保存してある判定結果を画面に出す */
+    function drawCert(){
+      fbCert.textContent = '';
+      const pg = getPage(pick.value) || {};
+      let c = pg.cert;
+      // サーバーへはJSON文字列で送っているので、読むときに戻す
+      if(typeof c === 'string'){
+        try{ c = JSON.parse(c); }catch(e){ c = null; }
+      }
+      if(!c){
+        fbCert.appendChild(el('div', 'src-how',
+          'まだ判定していません。商品名を入れて「⚖️ 判定する」を押してください。'));
+        return;
+      }
+      const head = el('div', 'an-row');
+      head.appendChild(el('span', null, String(c.verdict || '') + ' '));
+      head.appendChild(el('b', null, c.summary || c.message || '判定結果'));
+      fbCert.appendChild(head);
+      // 該当・非該当・輸送・知財。項目名は実物を見ていないので、
+      // 分かるものを出しつつ、返ってきたものは全部見られるようにする
+      [['applicable', '該当した制度'], ['not_applicable', '非該当を確認した制度'],
+       ['transport', '輸送（リチウム電池）'], ['ip_checks', '知財の確認事項']
+      ].forEach(([k, label]) => {
+        if(c[k] == null) return;
+        const box = el('div', 'src-how');
+        box.appendChild(el('b', null, label + '：'));
+        box.appendChild(document.createTextNode(
+          typeof c[k] === 'string' ? c[k] : JSON.stringify(c[k])));
+        fbCert.appendChild(box);
+      });
+      const dt = document.createElement('details');
+      dt.appendChild(el('summary', null, '返ってきた内容をすべて見る'));
+      const pre = document.createElement('pre');
+      pre.style.cssText = 'font-size:11px;white-space:pre-wrap;overflow:auto;max-height:260px';
+      pre.textContent = JSON.stringify(c, null, 1);
+      dt.appendChild(pre);
+      fbCert.appendChild(dt);
+    }
+
+    certBtn.addEventListener('click', async () => {
+      if(!refreshApiCfg() || !API_BASE){
+        certStatus.textContent = '⚠ 一元管理の画面から開いてください';
+        return;
+      }
+      const id = pick.value;                 // 押した時点の商品へ保存する
+      const pg = getPage(id) || {};
+      const name = (certName.value || pg.title || research.name || '').trim();
+      if(!name){ certStatus.textContent = '商品名を入れてください'; certName.focus(); return; }
+      const body = {product_name: name};
+      if(certPower.value) body.power = certPower.value;
+      if(certWireless.value) body.wireless = certWireless.value;
+      certFlags.forEach(f => { if(f.cb.checked) body[f.key] = true; });
+      certBtn.disabled = true;
+      certStatus.textContent = '判定中...';
+      try{
+        const res = await fetch(API_BASE + '/taotaro/tools/screening',
+          {method: 'POST', headers: apiHeaders(), body: JSON.stringify(body)});
+        const j = await res.json();
+        if(!res.ok){
+          certStatus.textContent = '判定できませんでした：' + (j.detail || res.status);
+          return;
+        }
+        const data = (j && j.data) ? j.data : j;
+        savePage(id, {cert: JSON.stringify(data)});
+        certStatus.textContent = String(data.verdict || '') + ' 判定しました';
+        drawCert();
+      }catch(e){
+        certStatus.textContent = '判定できませんでした：' + e.message;
+      }finally{
+        certBtn.disabled = false;
+      }
+    });
+
     const srcDefs = [
       {name:'商品仕様', node:fbSpec, unit:'字', auto:true,
        how:'ASINを入れると SP-API から自動で入ります（手作業は不要）',
@@ -5404,6 +5524,15 @@ if(FIREBASE_CONFIG.databaseURL){
          + '⚡が出るのは、取り込みサーバーが動いていてAPIキーを設定したPCだけです',
        count:p => (p.imgtext || '').length, status:imgStatus,
        btns:[imgAuto, imgCopy]},
+      {name:'認証チェック', node:fbCert, unit:'件',
+       how:'日本に入れるのに認証が要るか（電気用品安全法・電波法・食品衛生法・'
+         + '消費生活用製品安全法・薬機法）を🟢🟡🔴で出します。1688のページは'
+         + '見に行かないので、商品が決まる前でも押せます。'
+         + '薬機法は書き方で決まることがあるため、効能をうたう予定かどうかで判定が変わります',
+       count:p => (p.cert ? 1 : 0), status:certStatus,
+       btns:[certName, certPower, certWireless].concat(
+         certFlags.map(f => f.lab)).concat([certBtn]),
+       beforeView:drawCert},
       {name:'サジェスト', node:fbSug, unit:'件',
        how:'Amazonの検索窓に出る入力候補（実際に検索されている言い回し）。元の語を入れて⚡で取得すると人気順（1位から）で入ります。'
          + '商品ごとではなく、このリサーチ全体で1つです。一元管理の画面から開けばそのまま使えます（取り込みサーバーは要りません）',

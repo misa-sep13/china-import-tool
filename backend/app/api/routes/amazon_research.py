@@ -1068,6 +1068,8 @@ class PageIn(BaseModel):
     reviews: Optional[str] = None
     keywords: Optional[str] = None
     imgtext: Optional[str] = None
+    # 認証チェックの結果（タオタロウの判定API）。JSON文字列
+    cert: Optional[str] = None
     analysis: Optional[str] = None
 
 
@@ -1076,7 +1078,7 @@ class PagesBulkIn(BaseModel):
     pages: dict
 
 
-_PAGE_FIELDS = ("spec", "reviews", "keywords", "imgtext", "analysis")
+_PAGE_FIELDS = ("spec", "reviews", "keywords", "imgtext", "cert", "analysis")
 
 
 def _page_out(p: AmazonResearchPage, full: bool = True) -> dict:

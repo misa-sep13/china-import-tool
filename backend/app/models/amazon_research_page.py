@@ -24,6 +24,8 @@ class AmazonResearchPage(Base):
     reviews  = Column(Text)      # レビュー本文
     keywords = Column(Text)      # 競合が使っているキーワード
     imgtext  = Column(Text)      # 商品画像に書かれている文字
+    # 認証チェックの結果（タオタロウの判定API）。JSON文字列で持つ
+    cert = Column(Text)
     analysis = Column(Text)      # 分析の結果（ChatGPTなどの回答を貼る）
 
     analysis_at = Column(DateTime(timezone=True), nullable=True)
