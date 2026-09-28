@@ -5398,10 +5398,10 @@ if(FIREBASE_CONFIG.databaseURL){
       });
       return sl;
     };
-    const certPower = certSel([['', '電源：未選択'], ['none', '電源なし'],
+    const certPower = certSel([['', '電源：選んでください'], ['none', '電源なし'],
       ['usb', 'USB'], ['battery', '電池・バッテリー'], ['ac', 'コンセント']],
       'コンセントを使うものは電気用品安全法（PSE）に当たります');
-    const certWireless = certSel([['', '無線：未選択'], ['none', '無線なし'],
+    const certWireless = certSel([['', '無線：選んでください'], ['none', '無線なし'],
       ['bt', 'Bluetooth'], ['wifi', 'Wi-Fi'], ['other', 'その他の無線']],
       'Bluetooth・Wi-Fiは電波法（技適）に当たります');
     const certFlag = (key, label, title) => {
@@ -5473,10 +5473,27 @@ if(FIREBASE_CONFIG.databaseURL){
       const pg = getPage(id) || {};
       const name = (certName.value || pg.title || research.name || '').trim();
       if(!name){ certStatus.textContent = '商品名を入れてください'; certName.focus(); return; }
-      const body = {product_name: name};
-      if(certPower.value) body.power = certPower.value;
-      if(certWireless.value) body.wireless = certWireless.value;
-      certFlags.forEach(f => { if(f.cb.checked) body[f.key] = true; });
+      // 電源・無線・食品に触れる・子ども向けの4つは必ず送る。仕様書に
+      // 「分からない項目がある場合は、判定結果を使わずにご相談ください」と
+      // あるので、選んでいないまま判定させない
+      if(!certPower.value || !certWireless.value){
+        certStatus.textContent = '電源と無線を選んでください（判定が変わります）';
+        (certPower.value ? certWireless : certPower).focus();
+        return;
+      }
+      const body = {
+        product_name: name,
+        power: certPower.value,
+        wireless: certWireless.value,
+      };
+      certFlags.forEach(f => {
+        // 食品に触れる・子ども向けは、外していても false を送る（必須のため）
+        if(f.key === 'food_contact' || f.key === 'for_children'){
+          body[f.key] = f.cb.checked;
+        }else if(f.cb.checked){
+          body[f.key] = true;
+        }
+      });
       certBtn.disabled = true;
       certStatus.textContent = '判定中...';
       try{

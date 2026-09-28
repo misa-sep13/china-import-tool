@@ -416,9 +416,9 @@ def order_submit(req: SubmitRequest, db: Session = Depends(get_db)):
         }
         if it.remark:
             g["remark"] = it.remark
-        # FBAはまだAPIで指定できない（タオタロウ確認済み・2026-09）。
-        # 送っても効かないが、対応したときに拾ってもらえるよう項目は残す。
-        # 実際のFBA指定は、画面が備考に入れるお願い文で伝えている
+        # FBA納品の指定。仕様書（2026-09-28版）に正式に載った項目で、
+        # 文字列の "1" を送る。それまでは備考に「そちらでFBAに変更を」と
+        # 書いてお願いしていた
         if it.fba and it.asin:
             g["fba"] = "1"
             g["asin"] = it.asin
@@ -574,9 +574,24 @@ class FreightIn(BaseModel):
     lang: Optional[str] = "ja"
 
 
+# 判定で必ず送る項目（仕様書 2026-09-28 版）。False も意味を持つので落とさない
+_SCREENING_REQUIRED = ("power", "wireless", "food_contact", "for_children")
+
+
 def _clean(data) -> dict:
-    """未入力の項目は送らない。既定値があるものは向こうに任せる。"""
-    return {k: v for k, v in data.model_dump().items() if v not in (None, "")}
+    """未入力の項目は送らない。既定値があるものは向こうに任せる。
+
+    ただし判定の必須4項目は、False でもそのまま送る。落とすと
+    「指定なし」と同じになり、判定が変わってしまう。
+    """
+    out = {}
+    for k, v in data.model_dump().items():
+        if k in _SCREENING_REQUIRED:
+            if v is not None:
+                out[k] = v
+        elif v not in (None, ""):
+            out[k] = v
+    return out
 
 
 @router.post("/tools/quote")
