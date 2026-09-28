@@ -14,6 +14,7 @@ import RakutenStockPage from './pages/RakutenStockPage'
 import RakutenSettingsPage from './pages/RakutenSettingsPage'
 import RakutenInvoicePage from './pages/RakutenInvoicePage'
 import RakutenShippingPage from './pages/RakutenShippingPage'
+import MercariConvertPage from './pages/MercariConvertPage'
 import ImportPermitPage from './pages/ImportPermitPage'
 import WholesalePage from './pages/WholesalePage'
 import RakutenSalesPage from './pages/RakutenSalesPage'
@@ -246,6 +247,9 @@ function App() {
         <NavLink to="/welfare/inventory" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📦 就労支援在庫
         </NavLink>
+        <NavLink to="/mercari-convert" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          🛍️ メルカリShops変換
+        </NavLink>
 
         {authEnabled && (
           <div style={{ marginTop: 'auto', paddingTop: 16, borderTop: '1px solid #2d3748' }}>
@@ -294,6 +298,7 @@ function App() {
           <Route path="/work-status" element={<WorkStatusPage />} />
           <Route path="/rakuten/research" element={<RakutenResearchPage />} />
           <Route path="/welfare/inventory" element={<WelfareInventoryPage />} />
+          <Route path="/mercari-convert" element={<MercariConvertPage />} />
           <Route path="/welfare/work-public" element={<WelfareWorkPublicPage />} />
         </Routes>
       </main>

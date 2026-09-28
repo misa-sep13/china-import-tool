@@ -6,6 +6,7 @@ from app.api.routes import order_logic_routes
 from app.api.routes import keep_claims
 from app.api.routes import image_requests
 from app.api.routes import work_status
+from app.api.routes import mercari
 from app.api.routes import inventory_snapshots
 from app.api.routes import material_costs
 from app.api.routes import cost_histories
@@ -1481,6 +1482,7 @@ app.include_router(order_logic_routes.router, prefix="/api")
 app.include_router(keep_claims.router, prefix="/api")
 app.include_router(image_requests.router, prefix="/api")
 app.include_router(work_status.router, prefix="/api")
+app.include_router(mercari.router, prefix="/api")
 app.include_router(import_permit_routes.router, prefix="/api")
 app.include_router(chatwork_routes.router, prefix="/api")
 app.include_router(research_routes.router, prefix="/api")
