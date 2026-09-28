@@ -201,8 +201,9 @@ input:focus, select:focus, textarea:focus { border-color: #e94560; }
   background: #fff;
   border-radius: 12px;
   padding: 28px 36px;
-  /* 選ぶときに勢いで枠の外を押してしまう、という声があったので広げた */
-  width: 780px;
+  /* 選ぶときに勢いで枠の外を押してしまう、という声があったので広げた。
+     枠の外を押せば閉じる動きはそのまま */
+  width: 820px;
   max-width: 95vw;
   max-height: 90vh;
   overflow-y: auto;

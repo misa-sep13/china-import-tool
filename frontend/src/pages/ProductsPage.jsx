@@ -396,10 +396,8 @@ export default function ProductsPage() {
         </div>
       )}
 
-      {/* 枠の外を押しても閉じない。プルダウンを選ぶ勢いで外に当たると、
-          書きかけの内容ごと消えていた。閉じるのは ✕ かキャンセルで */}
       {modal && (
-        <div className="modal-overlay">
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && handleModalClose()}>
           <div className="modal">
             <div className="modal-header">
               <h2>{editing ? '商品を編集' : '商品を追加'}</h2>
