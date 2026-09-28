@@ -41,6 +41,8 @@ export default function TaotaroToolsPage() {
     height_cm: '', weight_g: '', qty: '', cost_cny: '', duty_rate_pct: '',
     power: '', wireless: '', food_contact: false, for_children: false,
     lookalike: false, health_claim: false,
+    // 仕入れの基準。粗利25%以下は仕入れない
+    target_gp: '25',
   })
   const [quote, setQuote] = useState(null)
   const [screening, setScreening] = useState(null)
@@ -156,6 +158,11 @@ export default function TaotaroToolsPage() {
               onChange={e => set('qty', e.target.value)} />
           </div>
           <div>
+            <div style={lab}>目標粗利率(%)</div>
+            <input type="number" value={f.target_gp}
+              onChange={e => set('target_gp', e.target.value)} />
+          </div>
+          <div>
             <div style={lab}>関税率(%・任意)</div>
             <input type="number" step="0.1" value={f.duty_rate_pct}
               placeholder="省略すると0%で計算されます"
@@ -196,7 +203,9 @@ export default function TaotaroToolsPage() {
         </button>
       </div>
 
-      {quote && <Result title="💰 工場に払える上限" data={quote}
+      {quote && <Allowance data={quote} target={Number(f.target_gp) || 25}
+        cost={f.cost_cny === '' ? null : Number(f.cost_cny)} />}
+      {quote && <Result title="💰 工場に払える上限（返ってきたまま）" data={quote}
         pick={['allowance_cny', 'chargeable_weight', 'units_per_carton',
           'fba_size', 'freight_jpy', 'reason', 'next_actions']} />}
       {screening && <Result title="⚖️ 日本に入れるのに認証が要るか" data={screening}
@@ -255,6 +264,83 @@ function Result({ title, data, pick }) {
             {JSON.stringify(d, null, 1)}
           </pre>
         </details>
+      )}
+    </div>
+  )
+}
+
+
+/**
+ * 目標の粗利率で、工場にいくらまで払えるかを出す。
+ *
+ * APIが返すのは粗利20%と10%の2つだけで、25%は返ってこない。
+ * ただし「上限 ＝ 売価×(1−粗利率) − 仕入値以外の費用」なので、粗利率に
+ * 対してまっすぐ並ぶ。返ってきた2点から、その線を引いて25%の値を出す。
+ *
+ * 2点が見つからないときは、勝手に数字を作らずその旨を出す。
+ * 合っているかどうかは、実際の応答を見て確かめる。
+ */
+function Allowance({ data, target, cost }) {
+  const d = data?.data ?? data
+  const a = d?.allowance_cny
+  // 粗利率つきの数値を拾う。項目名は実物を見ていないので、
+  // 「20」「10」を含むキーを探す形にしてある
+  const points = []
+  if (a && typeof a === 'object') {
+    for (const [k, v] of Object.entries(a)) {
+      const m = String(k).match(/(\d+)/)
+      if (m && typeof v === 'number') points.push([Number(m[1]) / 100, v])
+    }
+  }
+  points.sort((x, y) => x[0] - y[0])
+
+  let value = null
+  if (points.length >= 2) {
+    const [m1, v1] = points[0]
+    const [m2, v2] = points[points.length - 1]
+    if (m2 !== m1) {
+      const slope = (v2 - v1) / (m2 - m1)
+      value = v1 + (target / 100 - m1) * slope
+    }
+  } else if (points.length === 1 && points[0][0] === target / 100) {
+    value = points[0][1]
+  }
+
+  const ng = value != null && cost != null && cost > value
+  return (
+    <div style={{
+      border: `1px solid ${ng ? '#fca5a5' : value != null ? '#bbf7d0' : C.line}`,
+      background: ng ? '#fef2f2' : value != null ? '#f0fdf4' : '#fff',
+      borderRadius: 8, padding: 12, marginBottom: 12,
+    }}>
+      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>
+        粗利{target}%で仕入れるなら
+      </div>
+      {value == null ? (
+        <div style={{ fontSize: 12, color: C.sub }}>
+          返ってきた値から {target}% ぶんを出せませんでした。
+          下の「返ってきたまま」をご覧ください。
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 20, fontWeight: 700,
+            color: value > 0 ? C.text : C.bad }}>
+            {value > 0 ? `${value.toFixed(2)} 元まで` : '採算が取れません'}
+          </div>
+          {cost != null && (
+            <div style={{ fontSize: 13, marginTop: 4,
+              color: ng ? C.bad : C.good, fontWeight: 700 }}>
+              {ng
+                ? `想定仕入値 ${cost} 元では粗利${target}%に届きません。仕入れない判断です`
+                : `想定仕入値 ${cost} 元なら基準を満たします`}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 6 }}>
+            APIが返すのは粗利
+            {points.map(p => `${Math.round(p[0] * 100)}%`).join('・')}
+            の2つです。{target}% はそこから算出しています。
+          </div>
+        </>
       )}
     </div>
   )
