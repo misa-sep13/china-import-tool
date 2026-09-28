@@ -290,15 +290,28 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
                     style={{ fontSize: 12, padding: '3px 6px', width: '100%',
                       border: `1px solid ${C.line}`, borderRadius: 4 }} />
                 </td>
+                {/* 3通りで見分ける。答え待ちは赤、やり取りが残っているものは青、
+                    何も無いものは薄く。0件と1件が同じ見た目だと見落とす */}
                 <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                  <button onClick={() => setOpen(o => ({ ...o, [r.id]: !o[r.id] }))}
-                    style={{ fontSize: 12, padding: '3px 10px',
-                      border: `1px solid ${r.open_count ? C.bad : C.line}`,
-                      background: r.open_count ? '#fef2f2' : '#fff',
-                      color: r.open_count ? C.bad : C.sub,
-                      borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}>
-                    {r.open_count ? `未回答 ${r.open_count}` : `やり取り ${r.notes.length}`}
-                  </button>
+                  {(() => {
+                    const has = r.notes.length > 0
+                    const c = r.open_count
+                      ? { bd: C.bad, bg: '#fef2f2', fg: C.bad }
+                      : has
+                        ? { bd: '#bfdbfe', bg: '#eff6ff', fg: C.key }
+                        : { bd: C.line, bg: '#fff', fg: '#94a3b8' }
+                    return (
+                      <button onClick={() => setOpen(o => ({ ...o, [r.id]: !o[r.id] }))}
+                        style={{ fontSize: 12, padding: '3px 10px',
+                          border: `1px solid ${c.bd}`, background: c.bg,
+                          color: c.fg, borderRadius: 4, cursor: 'pointer',
+                          fontWeight: has || r.open_count ? 700 : 400 }}>
+                        {r.open_count
+                          ? `未回答 ${r.open_count}`
+                          : `やり取り ${r.notes.length}`}
+                      </button>
+                    )
+                  })()}
                 </td>
                 {!share && (
                   <td style={td}>
