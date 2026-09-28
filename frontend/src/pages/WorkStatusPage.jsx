@@ -39,9 +39,11 @@ const th = { padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap',
 
 export default function WorkStatusPage({ share = '', me = 'owner' }) {
   const [rows, setRows] = useState([])
-  const [stages, setStages] = useState([])
   const [balls, setBalls] = useState([])
   const [includeDone, setIncludeDone] = useState(false)
+  // 完了したものだけを見る。終わった分をまとめて振り返るときに使う
+  const [onlyDone, setOnlyDone] = useState(false)
+  const [steps, setSteps] = useState([])
   const [q, setQ] = useState('')
   const [onlyMine, setOnlyMine] = useState(false)
   const [err, setErr] = useState('')
@@ -61,15 +63,17 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
   const load = useCallback(async () => {
     setErr('')
     try {
-      const r = await api.get('/work-status',
-        cfg({ params: { include_done: includeDone ? 1 : 0 } }))
+      const r = await api.get('/work-status', cfg({ params: {
+        include_done: includeDone ? 1 : 0,
+        only_done: onlyDone ? 1 : 0,
+      } }))
       setRows(r.data.items || [])
-      setStages(r.data.stages || [])
+      setSteps(r.data.steps || [])
       setBalls(r.data.balls || [])
     } catch (e) {
       setErr(e?.response?.data?.detail || '読み込めませんでした')
     }
-  }, [cfg, includeDone])
+  }, [cfg, includeDone, onlyDone])
 
   useEffect(() => { load() }, [load])
 
@@ -156,9 +160,15 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
         </label>
         <label style={{ fontSize: 12, color: C.sub, display: 'flex',
           alignItems: 'center', gap: 4 }}>
-          <input type="checkbox" checked={includeDone}
+          <input type="checkbox" checked={includeDone} disabled={onlyDone}
             onChange={e => setIncludeDone(e.target.checked)} />
           完了も出す
+        </label>
+        <label style={{ fontSize: 12, color: C.sub, display: 'flex',
+          alignItems: 'center', gap: 4 }}>
+          <input type="checkbox" checked={onlyDone}
+            onChange={e => setOnlyDone(e.target.checked)} />
+          完了だけ出す
         </label>
         {openQ > 0 && (
           <span style={{ fontSize: 12, color: C.bad, fontWeight: 600 }}>
@@ -207,7 +217,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
             <th style={th}>SKU</th>
             <th style={th}>商品名</th>
             <th style={th}>いま誰の番</th>
-            <th style={th}>工程</th>
+            <th style={th}>工程（3つで完了）</th>
             <th style={th}>メモ</th>
             <th style={th}>質問</th>
             {!share && <th style={th}></th>}
@@ -235,14 +245,30 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
                     ))}
                   </select>
                 </td>
+                {/* 3つそろったら完了。プルダウンだと「発注は済んだが
+                    画像はまだ」という途中を表せなかった */}
                 <td style={td}>
-                  <select value={r.stage}
-                    onChange={e => patch(r.id, { stage: e.target.value })}
-                    style={{ fontSize: 12, padding: '3px 6px' }}>
-                    {stages.map(s => (
-                      <option key={s.key} value={s.key}>{s.label}</option>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap',
+                    alignItems: 'center' }}>
+                    {steps.map(st => (
+                      <label key={st.key} style={{ fontSize: 12,
+                        display: 'flex', alignItems: 'center', gap: 3,
+                        cursor: 'pointer',
+                        color: r[st.key] ? C.text : C.sub }}>
+                        <input type="checkbox" checked={!!r[st.key]}
+                          onChange={e => patch(r.id,
+                            { [st.key]: e.target.checked })}
+                          style={{ width: 'auto', margin: 0 }} />
+                        {st.label}
+                      </label>
                     ))}
-                  </select>
+                    {r.done && (
+                      <span style={{ fontSize: 11, fontWeight: 700,
+                        color: '#166534', background: '#f0fdf4',
+                        border: '1px solid #bbf7d0', borderRadius: 4,
+                        padding: '1px 6px' }}>完了</span>
+                    )}
+                  </div>
                 </td>
                 <td style={td}>
                   <input defaultValue={r.memo}

@@ -24,7 +24,16 @@ from app.models.work_status import WorkStatus, WorkNote
 
 router = APIRouter(prefix="/work-status", tags=["work-status"])
 
-# 工程。リサーチシートの並びに合わせてある
+# 工程。3つ終わったら完了。プルダウンで1つ選ぶ形だと、
+# 「発注は済んだが画像はまだ」という途中の状態を表せなかった
+STEPS = [
+    {"key": "step_order",   "label": "発注"},
+    {"key": "step_image",   "label": "画像依頼"},
+    {"key": "step_listing", "label": "商品登録"},
+]
+STEP_KEYS = [s["key"] for s in STEPS]
+
+# stage は3つのチェックから決まる。完了を一覧から外す絞り込みに使う
 STAGES = ["adopted", "ordered", "imaged", "listed", "selling", "done"]
 STAGE_LABEL = {
     "adopted": "採用",
@@ -34,6 +43,28 @@ STAGE_LABEL = {
     "selling": "販売中",
     "done": "完了",
 }
+
+
+def _sync_stage(row) -> None:
+    """3つのチェックから stage と完了時刻を決める。
+
+    全部そろったら完了。外したら完了を取り消す（やり直しがあるため）。
+    """
+    done = all(bool(getattr(row, k)) for k in STEP_KEYS)
+    if done:
+        row.stage = "done"
+        if not row.done_at:
+            row.done_at = datetime.now(timezone.utc)
+        return
+    row.done_at = None
+    if row.step_listing:
+        row.stage = "listed"
+    elif row.step_image:
+        row.stage = "imaged"
+    elif row.step_order:
+        row.stage = "ordered"
+    else:
+        row.stage = "adopted"
 
 # 誰の番か。これが一覧の主役なので、迷わないよう3つだけにしてある。
 # 名前ではなく役割で持つ。外注さんが交代しても
@@ -65,6 +96,10 @@ def _out(r: WorkStatus) -> dict:
         "memo": r.memo or "",
         "stage": r.stage or "adopted",
         "stage_label": STAGE_LABEL.get(r.stage or "adopted", r.stage or ""),
+        "step_order": bool(r.step_order),
+        "step_image": bool(r.step_image),
+        "step_listing": bool(r.step_listing),
+        "done": (r.stage or "") == "done",
         "ball": r.ball or "staff",
         "ball_label": BALL_LABEL.get(r.ball or "staff", ""),
         "notes": [_note_out(n) for n in notes],
@@ -87,16 +122,23 @@ def _is_share(request: Request) -> bool:
 
 
 @router.get("")
-def list_rows(include_done: int = 0, db: Session = Depends(get_db)):
-    """一覧。既定では完了を外す（いま動いているものだけ見たいので）。"""
+def list_rows(include_done: int = 0, only_done: int = 0,
+              db: Session = Depends(get_db)):
+    """一覧。既定では完了を外す（いま動いているものだけ見たいので）。
+
+    only_done を付けると、完了したものだけを出す。
+    """
     q = db.query(WorkStatus).filter(WorkStatus.is_deleted == False)
-    if not include_done:
+    if only_done:
+        q = q.filter(WorkStatus.stage == "done")
+    elif not include_done:
         q = q.filter(WorkStatus.stage != "done")
     rows = q.order_by(
         sa_func.coalesce(WorkStatus.sort_order, WorkStatus.id).asc(),
         WorkStatus.id.asc()).all()
     return {"items": [_out(r) for r in rows],
             "stages": [{"key": k, "label": STAGE_LABEL[k]} for k in STAGES],
+            "steps": STEPS,
             "balls": [{"key": k, "label": BALL_LABEL[k]} for k in BALLS]}
 
 
@@ -156,6 +198,9 @@ class WorkPatch(BaseModel):
     memo: Optional[str] = None
     stage: Optional[str] = None
     ball: Optional[str] = None
+    step_order: Optional[bool] = None
+    step_image: Optional[bool] = None
+    step_listing: Optional[bool] = None
 
 
 @router.patch("/{row_id:int}")
@@ -171,13 +216,16 @@ def update_row(row_id: int, data: WorkPatch, request: Request,
         raise HTTPException(404, "見つかりません")
 
     guest = _is_share(request)
-    allowed = {"stage", "ball", "memo"} if guest else None
+    allowed = ({"stage", "ball", "memo"} | set(STEP_KEYS)) if guest else None
 
+    touched_steps = False
     for field, value in data.model_dump(exclude_unset=True).items():
         if value is None:
             continue
         if allowed is not None and field not in allowed:
             continue
+        if field in STEP_KEYS:
+            touched_steps = True
         if field == "stage":
             if value not in STAGES:
                 raise HTTPException(400, "その工程は選べません")
@@ -185,6 +233,9 @@ def update_row(row_id: int, data: WorkPatch, request: Request,
         if field == "ball" and value not in BALLS:
             raise HTTPException(400, "その担当は選べません")
         setattr(row, field, value)
+    # チェックを触ったときは、そこから工程を決め直す
+    if touched_steps:
+        _sync_stage(row)
     db.commit()
     db.refresh(row)
     return _out(row)

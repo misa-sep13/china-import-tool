@@ -29,7 +29,12 @@ class WorkStatus(Base):
     name = Column(String)
     memo = Column(Text)                       # 一言メモ（申し送り）
 
-    # いまの工程。リサーチシートの並びに合わせてある
+    # 工程。3つ終わったら完了。プルダウンで1つ選ぶ形だと、
+    # 発注は済んだが画像はまだ、といった途中の状態を表せなかった
+    step_order   = Column(Boolean, default=False)   # 発注
+    step_image   = Column(Boolean, default=False)   # 画像依頼
+    step_listing = Column(Boolean, default=False)   # 商品登録
+    # 上の3つから決まる。完了を一覧から外す絞り込みに使う
     stage = Column(String, default="adopted", index=True)
     # 誰の番か。owner（ゆな）/ staff（外注さん）/ none（待ちなし）。
     # 名前ではなく役割で持つ。外注さんが交代しても

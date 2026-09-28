@@ -192,6 +192,10 @@ def _migrate():
         ("products","purchase_components",   "ALTER TABLE products ADD COLUMN purchase_components TEXT"),
         # 画像依頼：仕入元（1688）のページ。デザイナーが素材を見るのに要る
         ("image_requests","main_url",        "ALTER TABLE image_requests ADD COLUMN main_url TEXT"),
+        # 状況確認シートの工程。プルダウン1つから、3つのチェックに変えた
+        ("work_statuses","step_order",   "ALTER TABLE work_statuses ADD COLUMN step_order BOOLEAN DEFAULT FALSE"),
+        ("work_statuses","step_image",   "ALTER TABLE work_statuses ADD COLUMN step_image BOOLEAN DEFAULT FALSE"),
+        ("work_statuses","step_listing", "ALTER TABLE work_statuses ADD COLUMN step_listing BOOLEAN DEFAULT FALSE"),
         ("image_requests","sort_order",        "ALTER TABLE image_requests ADD COLUMN sort_order INTEGER"),
         ("products","is_component",          "ALTER TABLE products ADD COLUMN is_component BOOLEAN DEFAULT FALSE"),
         # 発送用の梱包資材フラグ（宅配袋等）。商品原価には計上せず資材費として集計する
@@ -381,6 +385,19 @@ def _migrate():
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE welfare_work_instructions SET is_reflected = TRUE"))
                     logger.info("migrate: backfilled welfare_work_instructions.is_reflected")
+                # これまでの工程（プルダウン）から、3つのチェックを埋める。
+                # 空のまま出すと、発注済みの商品が未着手に見えてしまう
+                if table == "work_statuses" and col.startswith("step_"):
+                    done_stages = {
+                        "step_order":   "('ordered','imaged','listed','selling','done')",
+                        "step_image":   "('imaged','listed','selling','done')",
+                        "step_listing": "('listed','selling','done')",
+                    }[col]
+                    with engine.begin() as conn:
+                        conn.execute(text(
+                            f"UPDATE work_statuses SET {col} = TRUE "
+                            f"WHERE stage IN {done_stages}"))
+                    logger.info(f"migrate: backfilled work_statuses.{col}")
                 if table == "shipment_order_items" and col == "is_reflected":
                     with engine.begin() as conn:
                         conn.execute(text(
