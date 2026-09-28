@@ -345,6 +345,26 @@ ${notReady.join(`
                     </tr>
                   ))}
                 </tbody>
+                {/* 1年ぶんの合計。月ごとを足し上げた数と合う */}
+                <tfoot>
+                  <tr style={{ background: '#f8fafc' }}>
+                    <td style={{ padding: '6px 10px', fontSize: 13, fontWeight: 700,
+                      borderTop: '2px solid #cbd5e1' }}>合計</td>
+                    <td style={{ padding: '6px 10px', fontSize: 13, fontWeight: 700,
+                      textAlign: 'right', borderTop: '2px solid #cbd5e1' }}>
+                      {refunds.count}
+                    </td>
+                    <td style={{ padding: '6px 10px', fontSize: 13, fontWeight: 700,
+                      textAlign: 'right', borderTop: '2px solid #cbd5e1' }}>
+                      {refunds.total_cny.toLocaleString()}
+                    </td>
+                    <td style={{ padding: '6px 10px', fontSize: 14, fontWeight: 700,
+                      textAlign: 'right', color: '#166534',
+                      borderTop: '2px solid #cbd5e1' }}>
+                      ¥{(refunds.total_jpy || 0).toLocaleString()}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             )}
             {refunds.rows.length > 0 && (
