@@ -224,6 +224,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
         background: '#fff', border: `1px solid ${C.line}` }}>
         <thead>
           <tr>
+            <th style={th}>登録日</th>
             <th style={th}>店</th>
             <th style={th}>SKU</th>
             <th style={th}>商品名</th>
@@ -240,6 +241,10 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
             const isOpen = !!open[r.id]
             return [
               <tr key={r.id}>
+                {/* いつ載せた行かが分かるように。古いまま止まっているものを見つける手がかり */}
+                <td style={{ ...td, color: C.sub, whiteSpace: 'nowrap' }}>
+                  {(r.created_at || '').slice(0, 10).replace(/-/g, '/')}
+                </td>
                 <td style={{ ...td, color: C.sub, whiteSpace: 'nowrap' }}>
                   {CHANNEL_LABEL[r.channel] || r.channel}
                 </td>
@@ -325,7 +330,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
               </tr>,
               isOpen && (
                 <tr key={`${r.id}-notes`}>
-                  <td colSpan={share ? 7 : 8}
+                  <td colSpan={share ? 8 : 9}
                     style={{ ...td, background: '#f8fafc' }}>
                     {r.notes.map(n => (
                       <div key={n.id} style={{ marginBottom: 8, paddingBottom: 8,
@@ -386,7 +391,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
             ]
           })}
           {!shown.length && (
-            <tr><td colSpan={share ? 7 : 8}
+            <tr><td colSpan={share ? 8 : 9}
               style={{ ...td, color: C.sub, textAlign: 'center', padding: 24 }}>
               {rows.length ? '絞り込みに合うものがありません' : 'まだ1件もありません'}
             </td></tr>
