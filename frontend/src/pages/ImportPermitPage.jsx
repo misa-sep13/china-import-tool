@@ -308,13 +308,17 @@ ${notReady.join(`
           <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 13, marginBottom: 8 }}>
               メール {refunds.scanned}通を見て、
-              <b> {refunds.count}件 / 合計 {refunds.total_cny.toLocaleString()}元</b>
+              <b> {refunds.count}件 / 合計 {refunds.total_cny.toLocaleString()}元
+                （≒ {refunds.total_jpy?.toLocaleString()}円）</b>
+              <span style={{ color: '#64748b', marginLeft: 6 }}>
+                レート {refunds.rate}円/元
+              </span>
               {refunds.count === 0 && '（「値引きした○元」と書かれたメールが見つかりませんでした）'}
             </div>
             {refunds.months.length > 0 && (
               <table style={{ borderCollapse: 'collapse', minWidth: 320 }}>
                 <thead>
-                  <tr>{['月', '件数', '返金額（元）'].map(h => (
+                  <tr>{['月', '件数', '返金額（元）', '円'].map(h => (
                     <th key={h} style={{ padding: '4px 10px', fontSize: 11,
                       color: '#64748b', background: '#f8fafc',
                       textAlign: h === '月' ? 'left' : 'right' }}>{h}</th>
@@ -333,6 +337,11 @@ ${notReady.join(`
                         textAlign: 'right', borderTop: '1px solid #e5e7eb' }}>
                         {m.total_cny.toLocaleString()}
                       </td>
+                      <td style={{ padding: '4px 10px', fontSize: 13, fontWeight: 700,
+                        textAlign: 'right', color: '#166534',
+                        borderTop: '1px solid #e5e7eb' }}>
+                        ¥{(m.total_jpy || 0).toLocaleString()}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -347,7 +356,7 @@ ${notReady.join(`
                   overflow: 'auto' }}>
                   {refunds.rows.map((r, i) => (
                     <div key={i} style={{ padding: '2px 0', color: '#475569' }}>
-                      {r.date}　{r.amount_cny}元　{r.tracking}
+                      {r.date}　{r.amount_cny}元（¥{(r.amount_jpy || 0).toLocaleString()}）　{r.tracking}
                     </div>
                   ))}
                 </div>

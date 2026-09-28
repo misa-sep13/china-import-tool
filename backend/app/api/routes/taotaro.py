@@ -598,16 +598,31 @@ def tools_freight(data: FreightIn):
 
 
 @router.get("/refunds")
-def refunds(folder: str = "配送依頼", days: int = 365):
+def refunds(folder: str = "配送依頼", days: int = 365,
+            db: Session = Depends(get_db)):
     """配送依頼メールの「値引きした○元を返金」を、月ごとにまとめる。
+
+    円は設定の為替レート（円/元）で換算して添える。仕入の原価計算で
+    使っているものと同じ値なので、他の画面の金額と考え方がそろう。
 
     メールは読むだけで、既読にも移動にもしない。
     """
+    from app.models.settings import OrderSettings
     from app.services import taotaro_refunds, permit_mail
     try:
-        return taotaro_refunds.collect(folder=folder, days=days)
+        data = taotaro_refunds.collect(folder=folder, days=days)
     except permit_mail.PermitMailError as e:
         raise HTTPException(400, str(e))
+
+    row = db.query(OrderSettings).first()
+    rate = (getattr(row, "exchange_rate", None) or 21.0) if row else 21.0
+    for m in data["months"]:
+        m["total_jpy"] = round(m["total_cny"] * rate)
+    for r in data["rows"]:
+        r["amount_jpy"] = round(r["amount_cny"] * rate)
+    data["rate"] = rate
+    data["total_jpy"] = round(data["total_cny"] * rate)
+    return data
 
 
 @router.get("/probe")
