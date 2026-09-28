@@ -597,6 +597,19 @@ def tools_freight(data: FreightIn):
     return _call(taotaro.tools_freight, _clean(data))
 
 
+@router.get("/refunds")
+def refunds(folder: str = "配送依頼", days: int = 365):
+    """配送依頼メールの「値引きした○元を返金」を、月ごとにまとめる。
+
+    メールは読むだけで、既読にも移動にもしない。
+    """
+    from app.services import taotaro_refunds, permit_mail
+    try:
+        return taotaro_refunds.collect(folder=folder, days=days)
+    except permit_mail.PermitMailError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/probe")
 def probe(path: str):
     """【一時】タオタロウAPIの口が存在するかを確かめる。読み取りだけ。

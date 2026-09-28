@@ -57,6 +57,10 @@ export default function ImportPermitPage() {
   const [result, setResult] = useState(null)
   const [candidates, setCandidates] = useState(null)
   const [checking, setChecking] = useState(false)
+  // タオタロウの配送依頼メールに書かれている「値引きした○元を返金」の集計
+  const [refunds, setRefunds] = useState(null)
+  const [refundBusy, setRefundBusy] = useState(false)
+  const [refundErr, setRefundErr] = useState('')
 
   const params = {}
   if (year) params.year = Number(year)
@@ -269,6 +273,89 @@ ${notReady.join(`
             )}
         </div>
       )}
+
+      {/* タオタロウの配送依頼メールに書かれている値引き（返金）を月ごとに数える。
+          メールは読むだけで、既読にも移動にもしない */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10,
+          flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 14 }}>💴 タオタロウの値引き（返金）</b>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            配送依頼メールの「値引きした○元を返金させていただきます」を月ごとに合計します
+          </span>
+          <button className="btn btn-secondary" disabled={refundBusy}
+            style={{ marginLeft: 'auto', fontSize: 12 }}
+            onClick={async () => {
+              setRefundBusy(true); setRefundErr(''); setRefunds(null)
+              try {
+                const r = await api.get('/taotaro/refunds', { params: { days: 365 } })
+                setRefunds(r.data)
+              } catch (e) {
+                setRefundErr(e.response?.data?.detail || e.message)
+              } finally { setRefundBusy(false) }
+            }}>
+            {refundBusy ? '集計中…（数十秒かかります）' : '📬 1年ぶんを集計する'}
+          </button>
+        </div>
+
+        {refundErr && (
+          <div style={{ marginTop: 10, fontSize: 13, color: '#991b1b',
+            background: '#fef2f2', border: '1px solid #fecaca',
+            borderRadius: 6, padding: 10 }}>{refundErr}</div>
+        )}
+
+        {refunds && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 13, marginBottom: 8 }}>
+              メール {refunds.scanned}通を見て、
+              <b> {refunds.count}件 / 合計 {refunds.total_cny.toLocaleString()}元</b>
+              {refunds.count === 0 && '（「値引きした○元」と書かれたメールが見つかりませんでした）'}
+            </div>
+            {refunds.months.length > 0 && (
+              <table style={{ borderCollapse: 'collapse', minWidth: 320 }}>
+                <thead>
+                  <tr>{['月', '件数', '返金額（元）'].map(h => (
+                    <th key={h} style={{ padding: '4px 10px', fontSize: 11,
+                      color: '#64748b', background: '#f8fafc',
+                      textAlign: h === '月' ? 'left' : 'right' }}>{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody>
+                  {refunds.months.map(m => (
+                    <tr key={m.month}>
+                      <td style={{ padding: '4px 10px', fontSize: 13,
+                        borderTop: '1px solid #e5e7eb' }}>{m.month}</td>
+                      <td style={{ padding: '4px 10px', fontSize: 13,
+                        textAlign: 'right', borderTop: '1px solid #e5e7eb' }}>
+                        {m.count}
+                      </td>
+                      <td style={{ padding: '4px 10px', fontSize: 13, fontWeight: 700,
+                        textAlign: 'right', borderTop: '1px solid #e5e7eb' }}>
+                        {m.total_cny.toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {refunds.rows.length > 0 && (
+              <details style={{ marginTop: 8 }}>
+                <summary style={{ fontSize: 12, color: '#2563eb', cursor: 'pointer' }}>
+                  1件ずつ見る（{refunds.rows.length}件）
+                </summary>
+                <div style={{ fontSize: 12, marginTop: 6, maxHeight: 320,
+                  overflow: 'auto' }}>
+                  {refunds.rows.map((r, i) => (
+                    <div key={i} style={{ padding: '2px 0', color: '#475569' }}>
+                      {r.date}　{r.amount_cny}元　{r.tracking}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="card">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
