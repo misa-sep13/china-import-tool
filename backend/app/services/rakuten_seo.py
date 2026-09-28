@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import logging
 
@@ -6,6 +7,12 @@ logger = logging.getLogger("rakuten_seo")
 SEARCH_API_URL = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701"
 MISORA_SHOP_CODE = "misora-mart"
 HITS_PER_PAGE = 30
+# 楽天ウェブサービスは1秒に1回ほどの呼び出しを想定している。
+# 間を空けずに続けて投げると 429（呼びすぎ）が返り、1ページ目から
+# 何も取れないまま「圏外」として記録されていた
+WAIT_SEC = 1.1
+RETRY_WAIT_SEC = 5.0
+MAX_RETRY = 3
 
 
 async def check_ranking(keyword: str, shop_code: str = MISORA_SHOP_CODE,
@@ -31,16 +38,33 @@ async def check_ranking(keyword: str, shop_code: str = MISORA_SHOP_CODE,
                 "hits": HITS_PER_PAGE,
                 "page": page,
             }
-            try:
-                resp = await client.get(SEARCH_API_URL, params=params)
+            # 呼びすぎ（429）は少し待てば通る。ここで諦めると
+            # 順位があるのに「圏外」として残ってしまう
+            data = None
+            for attempt in range(MAX_RETRY):
+                if page > 1 or attempt > 0:
+                    await asyncio.sleep(WAIT_SEC if attempt == 0 else RETRY_WAIT_SEC)
+                try:
+                    resp = await client.get(SEARCH_API_URL, params=params)
+                except Exception as e:
+                    logger.warning(f"楽天API検索リクエスト失敗: keyword={keyword} page={page} error={e}")
+                    debug_error = f"request error: {e}"
+                    continue
+                if resp.status_code == 429:
+                    logger.info(f"楽天API 429（呼びすぎ）: keyword={keyword} page={page} {attempt + 1}回目")
+                    debug_error = "429: 呼びすぎです（間を空けて取り直します）"
+                    continue
                 if not resp.is_success:
                     logger.warning(f"楽天API検索エラー: {resp.status_code} keyword={keyword} page={page} body={resp.text[:300]}")
                     debug_error = f"HTTP {resp.status_code}: {resp.text[:300]}"
                     break
-                data = resp.json()
-            except Exception as e:
-                logger.warning(f"楽天API検索リクエスト失敗: keyword={keyword} page={page} error={e}")
-                debug_error = f"request error: {e}"
+                try:
+                    data = resp.json()
+                    debug_error = None
+                except Exception as e:
+                    debug_error = f"応答を読めませんでした: {e}"
+                break
+            if data is None:
                 break
 
             if page == 1:

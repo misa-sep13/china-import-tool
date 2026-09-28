@@ -127,12 +127,34 @@ export default function SeoPage() {
         </div>
       </div>
 
-      {checkResult && !checkResult.error && (
-        <div style={{ ...card, background: '#f0fdf4', border: '1px solid #86efac', marginBottom: 16 }}>
-          <b>チェック完了</b>（{checkResult.checked_at?.split('T')[0]}）
-          — {checkResult.results?.length}件チェック済み
-        </div>
-      )}
+      {/* キーワードごとの失敗も出す。出さないと「順位が取れない」のか
+          「取りに行けなかった」のかが分からない */}
+      {checkResult && !checkResult.error && (() => {
+        const all = checkResult.results || []
+        const failed = all.filter(r => r.error)
+        const ok = all.length - failed.length
+        return (
+          <div style={{ ...card, marginBottom: 16,
+            background: failed.length ? '#fffbeb' : '#f0fdf4',
+            border: `1px solid ${failed.length ? '#fcd34d' : '#86efac'}` }}>
+            <b>チェック完了</b>（{checkResult.checked_at?.split('T')[0]}）
+            — {ok}件を取得
+            {failed.length > 0 && (
+              <>
+                <span style={{ color: '#b45309', fontWeight: 700 }}>
+                  　／ {failed.length}件は取れませんでした
+                </span>
+                <div style={{ fontSize: 12, marginTop: 6, color: '#92400e' }}>
+                  {failed.slice(0, 5).map((r, i) => (
+                    <div key={i}>{r.keyword}：{r.error}</div>
+                  ))}
+                  {failed.length > 5 && <div>ほか {failed.length - 5}件</div>}
+                </div>
+              </>
+            )}
+          </div>
+        )
+      })()}
       {checkResult?.error && (
         <div style={{ ...card, background: '#fef2f2', border: '1px solid #fca5a5', marginBottom: 16 }}>
           エラー: {checkResult.error}

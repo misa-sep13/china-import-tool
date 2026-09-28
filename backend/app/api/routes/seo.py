@@ -116,6 +116,13 @@ async def _run_check_job(job_id: str, keyword_ids: Optional[list[int]]):
                 results.append({"keyword_id": kw.id, "keyword": kw.keyword, "error": str(e)})
                 continue
 
+            # 取りに行けなかったものを「圏外」として残さない。
+            # 残すと、順位が落ちたのか取れなかったのかが後から分からなくなる
+            if data.get("debug_error") and not data["my_ranks"]:
+                results.append({"keyword_id": kw.id, "keyword": kw.keyword,
+                                "error": data["debug_error"]})
+                continue
+
             if data["my_ranks"]:
                 for r in data["my_ranks"]:
                     db.add(SeoRanking(
