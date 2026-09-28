@@ -692,18 +692,48 @@ def inspect_options(raw) -> dict:
     return out
 
 
+# 1回に投げる注文の数。仕様書（2026-09-24版）より。
+# タオタロウは確定時に1商品ごとに1688へ金額を確認しに行くため、件数が増えると
+# 往復の合計がゲートウェイの待ち時間（約20秒）を超えて504になる。
+# 504のときは注文が作られたかどうかが応答から分からないので、
+# そのまま再送すると二重に発注される。分けて投げる。
+ORDER_CHUNK = 20
+
+
 def create_orders(goods_list: list) -> dict:
     """注文を作成する。goods_list は1件以上。
 
     仕様書に data の中身の記載が無いため、返ってきた形から注文IDを
     拾えるだけ拾う。拾えなくても「作成された」ことは code=200 で分かるので、
     IDが取れない場合は out_id で照会し直せるようにしている。
+
+    20件ずつに分けて投げる。途中で失敗したら、そこで止めて何件目までが
+    通ったかを伝える。黙って続けると、作られたのか分からないまま次を
+    投げることになる。
     """
     if not goods_list:
         raise TaotaroError("発注する商品がありません")
-    data = _request("/api/v1/orders", body={"goods_list": goods_list},
-                    method="POST")
-    return {"oids": _pick_oids(data), "raw": data}
+
+    oids: list = []
+    raws: list = []
+    for i in range(0, len(goods_list), ORDER_CHUNK):
+        chunk = goods_list[i:i + ORDER_CHUNK]
+        try:
+            data = _request("/api/v1/orders", body={"goods_list": chunk},
+                            method="POST")
+        except TaotaroError as e:
+            if i == 0:
+                raise
+            raise TaotaroError(
+                f"{i}件目までは発注できましたが、{i + 1}件目以降で止まりました"
+                f"（{e.message}）。二重に発注しないよう、ここで止めています。"
+                "タオタロウの注文一覧で、どこまで作られたかを確かめてから"
+                "残りを発注してください。", code=e.code)
+        raws.append(data)
+        for oid in _pick_oids(data):
+            if oid not in oids:
+                oids.append(oid)
+    return {"oids": oids, "raw": raws[0] if len(raws) == 1 else raws}
 
 
 def _pick_oids(data) -> list:
