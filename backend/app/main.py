@@ -1312,6 +1312,58 @@ async def _seed_processed_orders():
         db.close()
 
 
+def _capture_month_end_inventory():
+    """月末の在庫を、その月の期末在庫として自動で確定する。
+
+    在庫数はマスタに「いまの値」しか無いので、月をまたぐと遡れない。
+    これまでは画面のボタンを押してもらっていたが、押し忘れると
+    その月の棚卸高が残らない。月末の23:50〜23:59に自動で取る。
+
+    同じ月の確定は入れ替わるので、何度走っても二重にならない。
+    月初に手で押し直すこともできる（そちらが新しい値で上書きされる）。
+    """
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    from app.api.routes.inventory_snapshots import (
+        _collect_rakuten, _collect_amazon, _save)
+    from app.core.database import SessionLocal
+
+    now = _dt.now(_tz(_td(hours=9)))
+    # 月末の日かどうか。翌日が1日なら月末
+    if (now + _td(days=1)).day != 1:
+        return
+    if not (now.hour == 23 and now.minute >= 50):
+        return
+
+    period = now.strftime("%Y-%m")
+    global _last_captured_period
+    if _last_captured_period == period:
+        return
+
+    db = SessionLocal()
+    try:
+        for platform, collect in (("rakuten", _collect_rakuten),
+                                  ("amazon", _collect_amazon)):
+            try:
+                rows = collect(db)
+                if not rows:
+                    logger.warning(f"[scheduler] 期末在庫の自動確定: {platform} は在庫のある商品がありません")
+                    continue
+                out = _save(db, period, platform, rows)
+                logger.info(
+                    f"[scheduler] 期末在庫を自動確定: {period} {platform} "
+                    f"{out['items']}件 {out['total_amount']}円")
+            except Exception as e:
+                logger.warning(f"[scheduler] 期末在庫の自動確定に失敗: {platform} {e}")
+        _last_captured_period = period
+    finally:
+        db.close()
+
+
+# 同じ月に何度も走らせないための印。再起動すると消えるが、確定は
+# 入れ替えなので二重にはならない
+_last_captured_period = None
+
+
 async def _scheduler_loop():
     """1分ごとに受注差分の在庫同期＋RMS在庫取得、30分ごとにキャンセル再チェックを実行。
 
@@ -1326,6 +1378,11 @@ async def _scheduler_loop():
         tick += 1
         await _sync_rakuten_stock()
         await _pull_rms_stock()
+        # 月末の在庫を自動で確定する。押し忘れるとその月の棚卸高が残らない
+        try:
+            _capture_month_end_inventory()
+        except Exception as e:
+            logger.warning(f"[scheduler] 期末在庫の自動確定でエラー: {e}")
         if tick % 30 == 0:
             await _check_delayed_cancellations()
 

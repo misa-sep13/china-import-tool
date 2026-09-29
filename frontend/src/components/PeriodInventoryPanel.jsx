@@ -56,7 +56,13 @@ export default function PeriodInventoryPanel({ platform = 'rakuten', title = '�
     <div className="card" style={{ marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
         <h3 style={{ margin: 0 }}>{title}</h3>
-        <span style={{ fontSize: 12, color: '#64748b' }}>実在庫 × 原価。セット販売ページは二重計上を避けて除外</span>
+        <span style={{ fontSize: 12, color: '#64748b' }}>
+          実在庫 × 原価。セット販売ページは二重計上を避けて除外
+        </span>
+        {/* 押し忘れるとその月の棚卸高が残らないので、月末に自動で取る */}
+        <span style={{ fontSize: 12, color: '#16a34a', fontWeight: 600 }}>
+          毎月末 23:50 に自動で確定します
+        </span>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           <input type="month" value={period} onChange={e => setPeriod(e.target.value)} style={{ width: 150 }} />
           <button
@@ -92,7 +98,8 @@ export default function PeriodInventoryPanel({ platform = 'rakuten', title = '�
 
       {rows.length === 0 ? (
         <div style={{ fontSize: 13, color: '#64748b' }}>
-          まだ確定した月がありません。対象月を選んで「この月で確定」を押すと、その時点の在庫で保存されます。
+          まだ確定した月がありません。毎月末の23:50に自動で保存されます。
+          いますぐ残したいときは、対象月を選んで「この月で確定」を押してください。
         </div>
       ) : (
         <div style={{ overflowX: 'auto' }}>
