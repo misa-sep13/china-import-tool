@@ -8,6 +8,7 @@ from app.api.routes import image_requests
 from app.api.routes import work_status
 from app.api.routes import mercari
 from app.api.routes import rakuten_shipping_daily
+from app.api.routes import amazon_sales
 from app.api.routes import inventory_snapshots
 from app.api.routes import material_costs
 from app.api.routes import cost_histories
@@ -1562,6 +1563,7 @@ app.include_router(image_requests.router, prefix="/api")
 app.include_router(work_status.router, prefix="/api")
 app.include_router(mercari.router, prefix="/api")
 app.include_router(rakuten_shipping_daily.router, prefix="/api")
+app.include_router(amazon_sales.router, prefix="/api")
 app.include_router(import_permit_routes.router, prefix="/api")
 app.include_router(chatwork_routes.router, prefix="/api")
 app.include_router(research_routes.router, prefix="/api")

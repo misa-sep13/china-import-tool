@@ -15,6 +15,7 @@ import RakutenSettingsPage from './pages/RakutenSettingsPage'
 import RakutenInvoicePage from './pages/RakutenInvoicePage'
 import RakutenShippingPage from './pages/RakutenShippingPage'
 import RakutenShippingDailyPage from './pages/RakutenShippingDailyPage'
+import AmazonSalesPage from './pages/AmazonSalesPage'
 import MercariConvertPage from './pages/MercariConvertPage'
 import ImportPermitPage from './pages/ImportPermitPage'
 import WholesalePage from './pages/WholesalePage'
@@ -164,6 +165,9 @@ function App() {
         <NavLink to="/stock" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📊 全在庫一覧
         </NavLink>
+        <NavLink to="/amazon-sales" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          📈 売上管理
+        </NavLink>
         <NavLink to="/analytics" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📈 商品分析
         </NavLink>
@@ -274,6 +278,7 @@ function App() {
         <Routes>
           <Route path="/" element={<OrderPage />} />
           <Route path="/stock" element={<StockPage />} />
+          <Route path="/amazon-sales" element={<AmazonSalesPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/ads" element={<AdsPage />} />
           <Route path="/products" element={<ProductsPage />} />
