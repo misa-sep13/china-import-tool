@@ -14,6 +14,7 @@ import RakutenStockPage from './pages/RakutenStockPage'
 import RakutenSettingsPage from './pages/RakutenSettingsPage'
 import RakutenInvoicePage from './pages/RakutenInvoicePage'
 import RakutenShippingPage from './pages/RakutenShippingPage'
+import RakutenShippingDailyPage from './pages/RakutenShippingDailyPage'
 import MercariConvertPage from './pages/MercariConvertPage'
 import ImportPermitPage from './pages/ImportPermitPage'
 import WholesalePage from './pages/WholesalePage'
@@ -203,6 +204,9 @@ function App() {
         <NavLink to="/rakuten/stock" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📊 在庫・損益
         </NavLink>
+        <NavLink to="/rakuten/shipping-daily" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          📦 発送と売上（日ごと）
+        </NavLink>
         <NavLink to="/rakuten/sales" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📈 売上管理
         </NavLink>
@@ -282,6 +286,7 @@ function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/rakuten/orders" element={<RakutenOrderPage />} />
           <Route path="/rakuten/stock" element={<RakutenStockPage />} />
+          <Route path="/rakuten/shipping-daily" element={<RakutenShippingDailyPage />} />
           <Route path="/rakuten/sales" element={<RakutenSalesPage />} />
           <Route path="/rakuten/daily-sales" element={<RakutenDailySalesPage />} />
           <Route path="/rakuten/products" element={<RakutenProductsPage />} />

@@ -1000,3 +1000,114 @@ async def get_shipping_result(service_secret: str, license_key: str,
     except Exception:
         data = {"raw": str(res.text)[:300]}
     return {"status": res.status_code, "data": data}
+
+
+# ---------- 1日ぶんの発送件数と売上金額 ----------
+#
+# 「その日に何件出して、いくらだったか」を日ごとに数える。
+# 発送日は注文の中の ShippingModel にしか入っていないので、注文日で拾って
+# きてから発送日で並べ直す。注文日と発送日は数日ずれるため、注文日の範囲は
+# 前後に少し広げて取る。
+#
+# 1注文に送付先が複数あることがある（同梱を分けた場合）。注文の件数と
+# 送付先の件数を分けて数える。金額は注文に1回だけ足す。
+
+# 注文日をどれだけ前に広げるか。船便でも国内発送なので、これだけあれば足りる
+ORDER_DATE_MARGIN_DAYS = 45
+
+
+def _order_amounts(o: dict) -> tuple:
+    """請求金額と商品代。項目が無いときは0にする。"""
+    def num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+    total = num(o.get("totalPrice"))
+    goods = num(o.get("goodsPrice"))
+    return total, goods
+
+
+async def fetch_shipping_daily(service_secret: str, license_key: str,
+                               start, end, on_progress=None) -> dict:
+    """発送日ごとに、件数と金額を数える。
+
+    start / end は発送日の範囲（date）。注文日はそこから前後に広げて拾う。
+    重いので、呼び出し側で月ごとに区切って使う。
+    """
+    headers = _auth_header(service_secret, license_key)
+    o_from = start - timedelta(days=ORDER_DATE_MARGIN_DAYS)
+    o_to = end + timedelta(days=1)
+
+    order_numbers: list[str] = []
+    page = 1
+    while page <= 30:
+        body = {
+            "dateType": 1,                       # 注文日
+            "startDatetime": o_from.strftime("%Y-%m-%dT00:00:00+0900"),
+            "endDatetime": o_to.strftime("%Y-%m-%dT23:59:59+0900"),
+            "PaginationRequestModel": {"requestRecordsAmount": 1000,
+                                       "requestPage": page},
+        }
+        res = await _post_rms("/2.0/order/searchOrder", body, headers)
+        if not res.is_success:
+            break
+        data = res.json()
+        nums = []
+        for item in (data.get("orderNumberList") or []):
+            num = item if isinstance(item, str) else (item.get("orderNumber") or "")
+            if num:
+                nums.append(str(num))
+        order_numbers.extend(nums)
+        pag = data.get("PaginationResponseModel") or {}
+        if page >= (pag.get("totalPages") or 1) or not nums:
+            break
+        page += 1
+        await asyncio.sleep(_API_INTERVAL_SEC)
+
+    days: dict = {}
+    done = 0
+    for i in range(0, len(order_numbers), GET_ORDER_BATCH):
+        batch = order_numbers[i:i + GET_ORDER_BATCH]
+        res = await _post_rms("/2.0/order/getOrder",
+                              {"orderNumberList": batch, "version": 10}, headers)
+        if res.is_success:
+            for o in (res.json().get("OrderModelList") or []):
+                # キャンセル確定（900）は売上にしない
+                if o.get("orderProgress") == 900:
+                    continue
+                total, goods = _order_amounts(o)
+                # その注文の発送日を集める。複数の送付先がばらばらの日に
+                # 出ることがあるので、注文はいちばん早い日に数える
+                ship_days = []
+                for pkg in (o.get("PackageModelList") or []):
+                    for sh in (pkg.get("ShippingModelList") or []):
+                        d = str(sh.get("shippingDate") or "")[:10]
+                        if d:
+                            ship_days.append(d)
+                if not ship_days:
+                    continue
+                first = min(ship_days)
+                for d in ship_days:
+                    if start.isoformat() <= d <= end.isoformat():
+                        row = days.setdefault(d, {"order_count": 0,
+                                                  "package_count": 0,
+                                                  "total_price": 0.0,
+                                                  "goods_price": 0.0})
+                        row["package_count"] += 1
+                if not (start.isoformat() <= first <= end.isoformat()):
+                    continue
+                row = days.setdefault(first, {"order_count": 0,
+                                              "package_count": 0,
+                                              "total_price": 0.0,
+                                              "goods_price": 0.0})
+                row["order_count"] += 1
+                row["total_price"] += total
+                row["goods_price"] += goods
+        done += len(batch)
+        if on_progress:
+            on_progress(done, len(order_numbers))
+        if i + GET_ORDER_BATCH < len(order_numbers):
+            await asyncio.sleep(_API_INTERVAL_SEC)
+
+    return {"days": days, "orders_seen": len(order_numbers)}
