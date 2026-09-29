@@ -1111,3 +1111,138 @@ async def fetch_shipping_daily(service_secret: str, license_key: str,
             await asyncio.sleep(_API_INTERVAL_SEC)
 
     return {"days": days, "orders_seen": len(order_numbers)}
+
+
+# ---------- 売上管理の受注データをAPIから作る ----------
+#
+# これまではRMSから受注CSVを落として上げてもらっていた。受注APIから同じ
+# 内容を作れるので、その手間をなくす。
+#
+# 取り込み側（rakuten_sales_import）はCSVの列名で読むので、こちらも
+# 同じ列名の辞書を作って渡す。あとの計算には一切手を入れない。
+#
+# 項目名が仕様と違っていても気づけるよう、どの列を何から作れたかを
+# 一緒に返す。ポイント倍率が取れないと利益が多めに出てしまうため。
+
+# 1つの値に対して、あり得る項目名を順に試す。最初に見つかったものを使う
+_ORDER_FIELD_CANDIDATES = {
+    "ポイント倍率": ("pointRate", "pointMagnification", "pointTimes"),
+    "利用端末": ("deviceType", "terminal", "deviceId"),
+    "店舗発行クーポン利用額": ("couponShopPrice", "couponShopTotalPrice",
+                               "shopCouponTotalPrice"),
+    "クーポン利用総額": ("couponAllTotalPrice", "couponTotalPrice"),
+}
+
+
+def _pick(d: dict, names) -> tuple:
+    for n in names:
+        if isinstance(d, dict) and d.get(n) is not None:
+            return d[n], n
+    return None, None
+
+
+async def fetch_order_rows(service_secret: str, license_key: str,
+                           year: int, month: int) -> dict:
+    """その月の注文を、受注CSVと同じ列の形で返す。
+
+    CSVは注文日で落としているので、こちらも注文日で拾う。
+    """
+    headers = _auth_header(service_secret, license_key)
+    start = datetime(year, month, 1, tzinfo=timezone(timedelta(hours=9)))
+    nxt = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    end = nxt - timedelta(seconds=1)
+
+    order_numbers: list[str] = []
+    page = 1
+    while page <= 30:
+        body = {
+            "dateType": 1,                       # 注文日
+            "startDatetime": start.strftime("%Y-%m-%dT00:00:00+0900"),
+            "endDatetime": end.strftime("%Y-%m-%dT%H:%M:%S+0900"),
+            "PaginationRequestModel": {"requestRecordsAmount": 1000,
+                                       "requestPage": page},
+        }
+        res = await _post_rms("/2.0/order/searchOrder", body, headers)
+        if not res.is_success:
+            raise RuntimeError(f"注文の検索に失敗しました（{res.status_code}）")
+        data = res.json()
+        nums = []
+        for item in (data.get("orderNumberList") or []):
+            n = item if isinstance(item, str) else (item.get("orderNumber") or "")
+            if n:
+                nums.append(str(n))
+        order_numbers.extend(nums)
+        pag = data.get("PaginationResponseModel") or {}
+        if page >= (pag.get("totalPages") or 1) or not nums:
+            break
+        page += 1
+        await asyncio.sleep(_API_INTERVAL_SEC)
+
+    rows: list[dict] = []
+    found: dict = {k: None for k in _ORDER_FIELD_CANDIDATES}
+    for i in range(0, len(order_numbers), GET_ORDER_BATCH):
+        batch = order_numbers[i:i + GET_ORDER_BATCH]
+        res = await _post_rms("/2.0/order/getOrder",
+                              {"orderNumberList": batch, "version": 10}, headers)
+        if res.is_success:
+            for o in (res.json().get("OrderModelList") or []):
+                rows.extend(_order_to_csv_rows(o, found))
+        if i + GET_ORDER_BATCH < len(order_numbers):
+            await asyncio.sleep(_API_INTERVAL_SEC)
+
+    return {"rows": rows, "orders": len(order_numbers), "fields": found}
+
+
+def _order_to_csv_rows(o: dict, found: dict) -> list:
+    """注文1件を、受注CSVの明細行（商品ごと1行）に直す。"""
+    out = []
+    status = o.get("orderProgress")
+    total_price = o.get("totalPrice")
+    goods_price = o.get("goodsPrice")
+
+    coupon_all, k = _pick(o, _ORDER_FIELD_CANDIDATES["クーポン利用総額"])
+    if k:
+        found["クーポン利用総額"] = k
+    coupon_shop, k = _pick(o, _ORDER_FIELD_CANDIDATES["店舗発行クーポン利用額"])
+    if k:
+        found["店舗発行クーポン利用額"] = k
+    point_rate, k = _pick(o, _ORDER_FIELD_CANDIDATES["ポイント倍率"])
+    if k:
+        found["ポイント倍率"] = k
+    else:
+        # ポイントの情報がまとめられている場合はその中も見る
+        pm = o.get("PointModel") or {}
+        point_rate, k = _pick(pm, _ORDER_FIELD_CANDIDATES["ポイント倍率"])
+        if k:
+            found["ポイント倍率"] = "PointModel." + k
+    device, k = _pick(o, _ORDER_FIELD_CANDIDATES["利用端末"])
+    if k:
+        found["利用端末"] = k
+
+    for pkg in (o.get("PackageModelList") or []):
+        pkg_goods = pkg.get("goodsPrice")
+        for item in (pkg.get("ItemModelList") or []):
+            skus = item.get("SkuModelList") or []
+            variant = ""
+            merchant = ""
+            if skus:
+                variant = skus[0].get("variantId") or ""
+                merchant = skus[0].get("merchantDefinedSkuId") or ""
+            out.append({
+                "注文番号": o.get("orderNumber"),
+                "ステータス": status,
+                "商品管理番号": item.get("manageNumber") or item.get("itemNumber") or "",
+                "SKU管理番号": variant,
+                "システム連携用SKU番号": merchant,
+                "商品名": item.get("itemName") or "",
+                "個数": item.get("units"),
+                "単価": item.get("price"),
+                "送付先商品合計金額": pkg_goods,
+                "商品合計金額": goods_price,
+                "合計金額": total_price,
+                "クーポン利用総額": coupon_all,
+                "店舗発行クーポン利用額": coupon_shop,
+                "ポイント倍率": point_rate,
+                "利用端末": device,
+            })
+    return out

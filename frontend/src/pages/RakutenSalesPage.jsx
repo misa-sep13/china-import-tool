@@ -43,13 +43,22 @@ export default function RakutenSalesPage() {
     enabled: !!activePeriod,
   })
 
+  // 受注データはRMSから落とさず、受注APIから作れる。既定でそちらを使う
+  const [useApi, setUseApi] = useState(true)
+  const [apiCheck, setApiCheck] = useState(null)
+  const [checking, setChecking] = useState(false)
+
   const importMutation = useMutation({
     mutationFn: async () => {
       const fd = new FormData()
       fd.append('period', period)
-      const orderFiles = files.order_files || []
-      if (orderFiles.length === 0) throw new Error('受注データを選択してください')
-      for (const f of orderFiles) fd.append('order_file', f)
+      if (useApi) {
+        fd.append('use_api', '1')
+      } else {
+        const orderFiles = files.order_files || []
+        if (orderFiles.length === 0) throw new Error('受注データを選択してください')
+        for (const f of orderFiles) fd.append('order_file', f)
+      }
       if (files.rpp_file) fd.append('rpp_file', files.rpp_file)
       if (files.coupon_ad_file) fd.append('coupon_ad_file', files.coupon_ad_file)
       if (files.affiliate_file) fd.append('affiliate_file', files.affiliate_file)
@@ -105,7 +114,17 @@ export default function RakutenSalesPage() {
             <label>対象月</label>
             <input type="month" value={period} onChange={e => setPeriod(e.target.value)} />
           </div>
-          <FileInput label="受注データ" required multiple onChange={onFile('order_files', true)} />
+          {useApi ? (
+            <div className="form-group">
+              <label>受注データ</label>
+              <div style={{ fontSize: 12, color: '#16a34a', fontWeight: 600,
+                padding: '8px 0' }}>
+                受注APIから取ります（ファイル不要）
+              </div>
+            </div>
+          ) : (
+            <FileInput label="受注データ" required multiple onChange={onFile('order_files', true)} />
+          )}
           <FileInput label="RPP" onChange={onFile('rpp_file')} />
           <FileInput label="クーアド" onChange={onFile('coupon_ad_file')} />
           <FileInput label="アフィ" onChange={onFile('affiliate_file')} />
@@ -118,6 +137,53 @@ export default function RakutenSalesPage() {
             {importMutation.isPending ? '取込中...' : '⬆️ 取込'}
           </button>
         </div>
+        {/* 受注データだけはAPIで取れる。広告3つは楽天にAPIが無いので
+            これまでどおりファイルを選ぶ */}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center',
+          marginTop: 10, flexWrap: 'wrap' }}>
+          <label style={{ fontSize: 12, color: '#475569', display: 'flex',
+            alignItems: 'center', gap: 4 }}>
+            <input type="checkbox" checked={useApi} style={{ width: 'auto' }}
+              onChange={e => { setUseApi(e.target.checked); setApiCheck(null) }} />
+            受注データを受注APIから取る（RMSから落とさなくて済みます）
+          </label>
+          {useApi && (
+            <button className="btn btn-secondary btn-sm" disabled={checking}
+              style={{ fontSize: 12 }}
+              onClick={async () => {
+                setChecking(true); setApiCheck(null)
+                try {
+                  const r = await api.get('/rakuten/sales/order-rows-preview',
+                    { params: { period } })
+                  setApiCheck(r.data)
+                } catch (e) {
+                  setApiCheck({ error: e.response?.data?.detail || e.message })
+                } finally { setChecking(false) }
+              }}>
+              {checking ? '確認中…' : '取込前に確かめる'}
+            </button>
+          )}
+        </div>
+        {apiCheck && (
+          <div style={{ marginTop: 8, fontSize: 12, padding: '8px 10px',
+            borderRadius: 6,
+            background: apiCheck.error || (apiCheck.missing || []).length
+              ? '#fffbeb' : '#f0fdf4',
+            border: `1px solid ${apiCheck.error || (apiCheck.missing || []).length
+              ? '#fcd34d' : '#bbf7d0'}`,
+            color: apiCheck.error || (apiCheck.missing || []).length
+              ? '#92400e' : '#166534' }}>
+            {apiCheck.error ? apiCheck.error : (
+              <>
+                {apiCheck.orders}注文 / {apiCheck.rows}明細を作れました。
+                {(apiCheck.missing || []).length > 0 ? (
+                  <b>　APIで取れなかった列：{apiCheck.missing.join('、')}
+                    （この列を使う計算がずれます）</b>
+                ) : '　必要な列はすべて取れています。'}
+              </>
+            )}
+          </div>
+        )}
         {importMutation.error && (
           <div className="error-msg" style={{ marginTop: 10 }}>
             {importMutation.error.response?.data?.detail || importMutation.error.message}

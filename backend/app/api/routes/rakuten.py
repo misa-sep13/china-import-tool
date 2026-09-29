@@ -526,10 +526,33 @@ def get_sales_summary(period: str, level: str = "parent", db: Session = Depends(
     }
 
 
+@router.get("/sales/order-rows-preview")
+async def sales_order_rows_preview(period: str, db: Session = Depends(get_db)):
+    """受注データをAPIから作れるか、先に確かめる。取り込みはしない。
+
+    どの列を何の項目から作れたかを返す。ポイント倍率が取れないと利益が
+    多めに出てしまうので、黙って進めない。
+    """
+    from app.services import rakuten_rms
+    period = _validate_sales_period(period)
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません")
+    y, m = int(period[:4]), int(period[5:7])
+    out = await rakuten_rms.fetch_order_rows(
+        settings.rms_service_secret, settings.rms_license_key, y, m)
+    missing = [k for k, v in out["fields"].items() if not v]
+    return {"period": period, "orders": out["orders"],
+            "rows": len(out["rows"]), "fields": out["fields"],
+            "missing": missing,
+            "sample": out["rows"][:3]}
+
+
 @router.post("/sales/import")
 async def import_sales_month(
     period: str = Form(...),
-    order_file: list[UploadFile] = File(...),
+    order_file: list[UploadFile] = File(None),
+    use_api: Optional[str] = Form(None),
     rpp_file: Optional[UploadFile] = File(None),
     coupon_ad_file: Optional[UploadFile] = File(None),
     affiliate_file: Optional[UploadFile] = File(None),
@@ -538,14 +561,30 @@ async def import_sales_month(
     period = _validate_sales_period(period)
     order_rows = []
     order_names = []
-    for f in order_file:
-        rows, name = await _read_sales_upload(
-            f,
-            [["注文番号", "ステータス", "商品管理番号", "単価", "個数"]],
-        )
-        order_rows.extend(rows)
-        if name:
-            order_names.append(name)
+    api_fields = None
+    if use_api in ("1", "true", "on"):
+        # 受注データはRMSから落とさず、受注APIから作る。列の形はCSVと同じ
+        from app.services import rakuten_rms
+        st = _get_or_create_settings(db)
+        if not st.rms_service_secret or not st.rms_license_key:
+            raise HTTPException(400, "RMS APIキーが設定されていません")
+        out = await rakuten_rms.fetch_order_rows(
+            st.rms_service_secret, st.rms_license_key,
+            int(period[:4]), int(period[5:7]))
+        order_rows = out["rows"]
+        api_fields = out["fields"]
+        order_names.append(f"受注API（{out['orders']}注文）")
+    else:
+        if not order_file:
+            raise HTTPException(400, "受注データを選んでください")
+        for f in order_file:
+            rows, name = await _read_sales_upload(
+                f,
+                [["注文番号", "ステータス", "商品管理番号", "単価", "個数"]],
+            )
+            order_rows.extend(rows)
+            if name:
+                order_names.append(name)
     order_name = " + ".join(order_names) if order_names else None
     rpp_rows, rpp_name = await _read_sales_upload(
         rpp_file,
@@ -598,6 +637,10 @@ async def import_sales_month(
         info.total_profit = built["totals"]["profit"]
         info.status = "completed"
         info.message = f"受注スキップ {built['skipped_orders']}件"
+        if api_fields:
+            miss = [k for k, v in api_fields.items() if not v]
+            if miss:
+                info.message += f" / APIで取れなかった列: {'、'.join(miss)}"
 
         db.query(RakutenSalesSummary).filter(RakutenSalesSummary.period == period).delete(synchronize_session=False)
         for data in built["parent_rows"] + built["sku_rows"]:
