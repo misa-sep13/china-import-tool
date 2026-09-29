@@ -156,6 +156,11 @@ function App() {
         >
           🇨🇳 中国輸入管理
         </div>
+        {/* 楽天の見出しと同じ形。上が何の並びか分かるように */}
+        <div style={{ margin: '8px 0 8px', fontSize: 11, color: '#475569',
+          fontWeight: 700, letterSpacing: 1, paddingLeft: 16 }}>
+          Amazon
+        </div>
         <NavLink to="/" end className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📦 発注管理
         </NavLink>
@@ -249,9 +254,8 @@ function App() {
             ⚙️ 楽天設定
           </NavLink>
         )}
-        <div style={{ borderTop: '1px solid #2d3748', margin: '16px 0 8px', paddingTop: 8, fontSize: 11, color: '#475569', fontWeight: 700, letterSpacing: 1, paddingLeft: 16 }}>
-          就労支援
-        </div>
+        <div style={{ borderTop: '1px solid #2d3748', margin: '16px 0 8px',
+          paddingTop: 8 }} />
         <NavLink to="/welfare/inventory" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📦 就労支援在庫
         </NavLink>
