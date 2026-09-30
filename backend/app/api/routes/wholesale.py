@@ -1082,6 +1082,9 @@ def build_message(db, o, items):
     書いて送っていた形に合わせている。
 
     発注済が0の商品は数量だけ書く。
+
+    「計」は発注済1と発注済2の両方を足す。1便目が届く前に3便目を出すと
+    発注済2にも数が入っているので、片方だけだと相手に伝える数が足りない。
     """
     prods = _linked_products(db, items)
     lines = ["発注お願いします！", ""]
@@ -1089,7 +1092,7 @@ def build_message(db, o, items):
         if not x.qty:
             continue
         p = prods.get(x.item_id)
-        already = (p.inbound or 0) if p else 0
+        already = ((p.inbound or 0) + (p.standard_stock or 0)) if p else 0
         if already > 0:
             lines.append(f"・{x.name}追加{x.qty}（計{already + x.qty}）")
         else:
