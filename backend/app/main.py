@@ -9,6 +9,7 @@ from app.api.routes import work_status
 from app.api.routes import mercari
 from app.api.routes import rakuten_shipping_daily
 from app.api.routes import amazon_sales
+from app.api.routes import rakuten_ads
 from app.api.routes import inventory_snapshots
 from app.api.routes import material_costs
 from app.api.routes import cost_histories
@@ -64,6 +65,7 @@ from app.models import amazon_product_type_memo as amazon_product_type_memo_mode
 from app.models import import_permit as import_permit_models
 from app.models import work_status as work_status_models
 from app.models import rakuten_shipping_daily as rakuten_shipping_daily_models
+from app.models import rakuten_ad as rakuten_ad_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -1564,6 +1566,7 @@ app.include_router(work_status.router, prefix="/api")
 app.include_router(mercari.router, prefix="/api")
 app.include_router(rakuten_shipping_daily.router, prefix="/api")
 app.include_router(amazon_sales.router, prefix="/api")
+app.include_router(rakuten_ads.router, prefix="/api")
 app.include_router(import_permit_routes.router, prefix="/api")
 app.include_router(chatwork_routes.router, prefix="/api")
 app.include_router(research_routes.router, prefix="/api")
