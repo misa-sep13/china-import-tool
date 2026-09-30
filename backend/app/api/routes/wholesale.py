@@ -1191,3 +1191,96 @@ def import_from_rakuten(data: ImportFromRakutenIn, db: Session = Depends(get_db)
     return {"added": added, "skipped_sets": skipped_set,
             "total": db.query(WholesaleItem)
                      .filter(WholesaleItem.supplier_id == data.supplier_id).count()}
+
+
+# ---------- 発注データと商品マスタのズレを直す ----------
+#
+# 入荷を「在庫・損益」の入荷ボタンで処理すると、商品マスタの発注済は減るが
+# 卸の発注データの受領数が更新されない。そのぶん発注データだけが残り、
+# 入荷待ち一覧の「残り」が実際より多く出る。
+#
+# 正しいのは商品マスタの発注済（発注数の計算も在庫日数もこれを見る）。
+# 発注データ側を、古い発注から順に受領済みにして合わせる。
+# 商品マスタには触らない（触ると本当に残っている分まで消えてしまう）。
+
+class ReconcileIn(BaseModel):
+    supplier_id: Optional[int] = None
+    dry_run: bool = True
+
+
+@router.post("/reconcile")
+def reconcile(data: ReconcileIn, db: Session = Depends(get_db)):
+    """卸の発注データを、商品マスタの発注済に合わせる。
+
+    dry_run=True なら何も変えずに、何がどう変わるかだけ返す。
+    """
+    q = (db.query(WholesaleOrderItem, WholesaleOrder)
+         .join(WholesaleOrder, WholesaleOrderItem.order_id == WholesaleOrder.id)
+         .filter(WholesaleOrder.received_at.is_(None))
+         .filter(WholesaleOrder.status == "sent"))
+    if data.supplier_id:
+        q = q.filter(WholesaleOrder.supplier_id == data.supplier_id)
+    rows = q.order_by(WholesaleOrder.order_date.asc(),
+                      WholesaleOrder.id.asc(),
+                      WholesaleOrderItem.id.asc()).all()
+
+    # 商品ごとにまとめる。紐づいていない明細は比べようがないので触らない
+    by_item: dict = {}
+    for x, o in rows:
+        remaining = max(0, (x.qty or 0) - (x.received_qty or 0))
+        if remaining <= 0 or not x.item_id:
+            continue
+        by_item.setdefault(x.item_id, []).append((x, o, remaining))
+
+    witems = {w.id: w for w in db.query(WholesaleItem)
+              .filter(WholesaleItem.id.in_(by_item.keys())).all()} if by_item else {}
+    pids = {w.rakuten_product_id for w in witems.values() if w.rakuten_product_id}
+    prods = {p_.id: p_ for p_ in db.query(RakutenProduct)
+             .filter(RakutenProduct.id.in_(pids)).all()} if pids else {}
+
+    plan = []
+    for item_id, group in by_item.items():
+        w = witems.get(item_id)
+        p = prods.get(w.rakuten_product_id) if w and w.rakuten_product_id else None
+        if not p:
+            continue                      # 楽天マスタに紐づいていない商品は対象外
+        order_remaining = sum(g[2] for g in group)
+        master = (p.inbound or 0) + (p.standard_stock or 0)
+        excess = order_remaining - master
+        if excess <= 0:
+            continue
+        marks = []
+        left = excess
+        for x, o, remaining in group:     # 古い発注から順に消し込む
+            if left <= 0:
+                break
+            take = min(left, remaining)
+            left -= take
+            marks.append({"row_id": x.id, "order_id": o.id,
+                          "order_date": o.order_date, "qty": take})
+            if not data.dry_run:
+                x.received_qty = (x.received_qty or 0) + take
+        plan.append({
+            "item_id": item_id, "sku": p.sku, "name": p.name or w.name,
+            "order_remaining": order_remaining, "master": master,
+            "fixed": excess - max(0, left), "marks": marks,
+        })
+
+    if not data.dry_run:
+        from sqlalchemy import func as sqlfunc
+        # 全部届いた発注は「入荷済」にする。残っている発注と混ざらないように
+        oids = {m["order_id"] for pl in plan for m in pl["marks"]}
+        for oid_ in oids:
+            o = db.query(WholesaleOrder).filter(WholesaleOrder.id == oid_).first()
+            if not o or o.received_at:
+                continue
+            left_ = (db.query(sqlfunc.sum(WholesaleOrderItem.qty
+                                          - WholesaleOrderItem.received_qty))
+                     .filter(WholesaleOrderItem.order_id == oid_).scalar() or 0)
+            if left_ <= 0:
+                o.received_at = datetime.now(timezone.utc)
+                o.received_mode = "reconcile"
+        db.commit()
+
+    return {"dry_run": data.dry_run, "items": plan,
+            "total_fixed": sum(p_["fixed"] for p_ in plan)}

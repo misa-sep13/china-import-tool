@@ -655,6 +655,34 @@ function PendingReceive({ supplierId, onDone }) {
   // 届いた荷物は発注ごとに分かれていない（マレフィオーレは特にばらけて届く）。
   // 発注ごとに行を分けると、同じ商品が何行も並んでどれに入れるか決められない。
   // 商品ごとにまとめて数だけ入れてもらい、割り当てはこちらで行う。
+  // 卸の発注データと商品マスタの発注済がズレているとき、発注データ側を
+  // マスタに合わせる。先に何がどう変わるかを出して、確認してから実行する
+  const [fixPlan, setFixPlan] = useState(null)
+
+  const checkReconcile = async () => {
+    setBusy(true); setMsg('')
+    try {
+      const r = await api.post('/wholesale/reconcile',
+        { supplier_id: supplierId || null, dry_run: true })
+      setFixPlan(r.data)
+    } catch (e) {
+      setMsg(e.response?.data?.detail || 'ズレを調べられませんでした')
+    } finally { setBusy(false) }
+  }
+
+  const runReconcile = async () => {
+    setBusy(true)
+    try {
+      const r = await api.post('/wholesale/reconcile',
+        { supplier_id: supplierId || null, dry_run: false })
+      setFixPlan(null)
+      setMsg(`発注データを合わせました（${r.data.total_fixed}個ぶん）`)
+      await load()
+    } catch (e) {
+      setMsg(e.response?.data?.detail || '直せませんでした')
+    } finally { setBusy(false) }
+  }
+
   const groups = (() => {
     const map = new Map()
     for (const r of rows) {
@@ -746,10 +774,67 @@ function PendingReceive({ supplierId, onDone }) {
         </button>
         <button className="btn btn-secondary" onClick={() => setQty({})} disabled={busy}>入力をクリア</button>
         <span style={{ fontSize: 13, color: '#64748b' }}>未入荷 {groups.length} 商品</span>
+        {/* 在庫・損益の入荷ボタンで受け取ると、発注済は減るのに卸の発注データが
+            残ってしまう。そのズレを直す。商品マスタには触らない */}
+        <button className="btn btn-secondary" style={{ marginLeft: 'auto' }}
+          disabled={busy} onClick={checkReconcile}>
+          🔧 発注残のズレを直す
+        </button>
       </div>
 
       {err && <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 10 }}>{err}</div>}
       {msg && <div style={{ color: '#16a34a', fontSize: 13, marginBottom: 10 }}>{msg}</div>}
+
+      {/* ズレの中身を出してから実行する。数を黙って書き換えない */}
+      {fixPlan && (
+        <div style={{ marginBottom: 12, padding: 12, borderRadius: 8,
+          background: fixPlan.items.length ? '#fffbeb' : '#f0fdf4',
+          border: `1px solid ${fixPlan.items.length ? '#fcd34d' : '#bbf7d0'}` }}>
+          {fixPlan.items.length === 0 ? (
+            <div style={{ fontSize: 13, color: '#166534' }}>
+              ズレはありません。発注残は商品マスタと一致しています。
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 13, marginBottom: 8 }}>
+                <b>{fixPlan.items.length}商品</b>で、卸の発注データが商品マスタの
+                発注済より多く残っています。発注データ側を合わせます
+                （<b>商品マスタと在庫は変わりません</b>）。
+              </div>
+              <table style={{ fontSize: 12, borderCollapse: 'collapse',
+                marginBottom: 10 }}>
+                <thead><tr>
+                  {['商品', '発注データ', 'マスタ（正）', '消す数'].map((h, i) => (
+                    <th key={h} style={{ padding: '3px 10px', color: '#64748b',
+                      textAlign: i ? 'right' : 'left' }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {fixPlan.items.map(i => (
+                    <tr key={i.item_id}>
+                      <td style={{ padding: '3px 10px' }}>{i.name}</td>
+                      <td style={{ padding: '3px 10px', textAlign: 'right' }}>
+                        {i.order_remaining}
+                      </td>
+                      <td style={{ padding: '3px 10px', textAlign: 'right',
+                        fontWeight: 700 }}>{i.master}</td>
+                      <td style={{ padding: '3px 10px', textAlign: 'right',
+                        color: '#b45309', fontWeight: 700 }}>−{i.fixed}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-primary" onClick={runReconcile}
+                  disabled={busy}>この内容で直す</button>
+                <button className="btn btn-secondary" onClick={() => setFixPlan(null)}>
+                  やめる
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {!groups.length && !busy && (
         <div style={{ padding: 20, background: '#f8fafc', borderRadius: 8, color: '#64748b', fontSize: 13 }}>

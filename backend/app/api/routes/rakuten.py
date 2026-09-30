@@ -990,6 +990,40 @@ async def bulk_update_stock(body: dict, request: Request, background_tasks: Back
     return {"ok": True, "updated": len(updated_skus), "rms_pushed": len(rms_items)}
 
 
+def _consume_wholesale_orders(db: Session, product, qty: int) -> int:
+    """卸の発注データからも、届いたぶんを消し込む。古い発注から順に。
+
+    在庫・損益の入荷ボタンは商品マスタの発注済しか見ていなかったため、
+    卸発注の受領数が更新されず、入荷待ち一覧に残り続けていた。
+    """
+    from app.models.wholesale import (WholesaleItem, WholesaleOrder,
+                                      WholesaleOrderItem)
+    if qty <= 0:
+        return 0
+    wids = [w.id for w in db.query(WholesaleItem)
+            .filter(WholesaleItem.rakuten_product_id == product.id).all()]
+    if not wids:
+        return 0
+    rows = (db.query(WholesaleOrderItem, WholesaleOrder)
+            .join(WholesaleOrder, WholesaleOrderItem.order_id == WholesaleOrder.id)
+            .filter(WholesaleOrderItem.item_id.in_(wids))
+            .filter(WholesaleOrder.received_at.is_(None))
+            .filter(WholesaleOrder.status == "sent")
+            .order_by(WholesaleOrder.order_date.asc(),
+                      WholesaleOrderItem.id.asc()).all())
+    left = qty
+    for x, o in rows:
+        if left <= 0:
+            break
+        remaining = max(0, (x.qty or 0) - (x.received_qty or 0))
+        take = min(left, remaining)
+        if take <= 0:
+            continue
+        x.received_qty = (x.received_qty or 0) + take
+        left -= take
+    return qty - left
+
+
 @router.post("/products/{product_id}/receive-manufacturer")
 async def receive_manufacturer_stock(product_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """メーカー品の入荷処理。
@@ -1024,6 +1058,11 @@ async def receive_manufacturer_stock(product_id: int, background_tasks: Backgrou
     p.standard_stock = 0
     sku_stock[p.sku] = p.stock
     updated_skus = {p.sku}
+
+    # 卸発注から出したものを、こちらの入荷ボタンで受け取ることがある。
+    # 発注済だけ減らして卸の発注データを放っておくと、入荷待ち一覧に
+    # 残りっぱなしになり、発注残が実際より多く見える
+    _consume_wholesale_orders(db, p, received_qty)
 
     _recalc_dependent_set_stock(all_products, sku_stock, updated_skus)
     event_id = str(uuid.uuid4())
