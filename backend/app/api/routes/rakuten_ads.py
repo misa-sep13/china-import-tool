@@ -12,7 +12,9 @@
 CSVの列名は実物を見ていないので、あり得る名前を順に試し、どの列を
 何に使ったかを一緒に返す。取り違えたまま数字が出るほうが危ない。
 """
+import io
 import re
+import zipfile
 from datetime import date, datetime
 from typing import Optional
 
@@ -52,10 +54,12 @@ def _find(headers: list, key: str) -> Optional[str]:
             return cand
     # 「クリック数(合計)」のように括弧違いがあるので、ゆるくも探す
     base = _COLS[key][0]
-    plain = re.sub(r"[（）()\s]", "", base)
-    for h in headers:
-        if re.sub(r"[（）()\s]", "", str(h)) == plain:
-            return h
+    strip = lambda t: re.sub(r"[（）()％%\s]", "", str(t))
+    for cand in _COLS[key]:
+        plain = strip(cand)
+        for h in headers:
+            if strip(h) == plain:
+                return h
     return None
 
 
@@ -93,8 +97,23 @@ async def import_ads(file: UploadFile = File(...),
                      db: Session = Depends(get_db)):
     """CSVを1つ受け取る。中身を見て、日別か商品別かを決めて入れる。"""
     raw = await file.read()
+    name = file.filename or "report.csv"
+    # 「全商品レポートダウンロード」はZIPで落ちてくる。中のCSVを取り出す
+    if raw[:2] == b"PK":
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                inner = [n for n in z.namelist()
+                         if n.lower().endswith((".csv", ".tsv"))]
+                if not inner:
+                    raise HTTPException(400, "ZIPの中にCSVがありませんでした")
+                name = inner[0]
+                raw = z.read(inner[0])
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(400, f"ZIPを開けませんでした: {e}")
     try:
-        rows = read_upload_table(file.filename or "report.csv", raw)
+        rows = read_upload_table(name, raw)
     except Exception as e:
         raise HTTPException(400, f"ファイルを読めませんでした: {e}")
     if not rows:
