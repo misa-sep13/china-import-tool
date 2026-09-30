@@ -826,10 +826,16 @@ def _log_reflection(db, o, p, qty, before_stock, before_inbound, mode):
 
 @router.get("/pending-items")
 def list_pending_items(supplier_id: Optional[int] = None, db: Session = Depends(get_db)):
-    """まだ届いていない明細を、発注をまたいで返す。"""
+    """まだ届いていない明細を、発注をまたいで返す。
+
+    送った発注だけを数える。作りかけ（下書き）の発注まで数えると、
+    頼んでいない分が発注残に出てしまう。実際、同じ日の下書きが混ざって
+    発注残が倍に見えていた。
+    """
     q = (db.query(WholesaleOrderItem, WholesaleOrder)
          .join(WholesaleOrder, WholesaleOrderItem.order_id == WholesaleOrder.id)
-         .filter(WholesaleOrder.received_at.is_(None)))
+         .filter(WholesaleOrder.received_at.is_(None))
+         .filter(WholesaleOrder.status == "sent"))
     if supplier_id:
         q = q.filter(WholesaleOrder.supplier_id == supplier_id)
     rows = q.order_by(WholesaleOrder.order_date.asc(), WholesaleOrder.id.asc(),
