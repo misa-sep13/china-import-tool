@@ -30,12 +30,16 @@ def status():
 
 
 @router.get("/rooms")
-def rooms():
-    """送り先の候補。画面の選択欄に出す。"""
+def rooms(all: bool = False):
+    """送り先の候補。画面の選択欄に出す。
+
+    既定では実際に使う部屋だけ（services/chatwork.py の _ROOM_ALLOW）。
+    全部見たいときは ?all=1 を付ける。
+    """
     if not chatwork.is_configured():
         raise HTTPException(status_code=502,
                             detail="Chatworkのトークンが未設定です（CHATWORK_API_TOKEN）")
-    return {"items": _call(chatwork.list_rooms),
+    return {"items": _call(chatwork.list_rooms, all),
             "default_room_id": chatwork.default_room()}
 
 

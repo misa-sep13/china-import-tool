@@ -13,6 +13,7 @@
   ・送ったメッセージは取り消せる（相手が読む前なら）が、
     通知は飛ぶ。押す前に画面で確認させる
 """
+import os
 from typing import Optional
 
 import httpx
@@ -69,8 +70,27 @@ def _check(r: httpx.Response) -> dict:
         return {}
 
 
-def list_rooms() -> list:
-    """入っているルームの一覧。送り先を画面で選んでもらうため。"""
+# 実際に送るのはこの2つだけ。入っている部屋を全部並べると、
+# 選ぶのが面倒なうえ送り先を間違える。名前の一部で見る（部屋名が
+# 多少変わっても拾えるように）。増やしたいときはここに足すか、
+# 環境変数 CHATWORK_ROOMS に部屋名かroom_idをカンマ区切りで入れる。
+_ROOM_ALLOW = ("画像制作依頼", "北田しずく", "HAMU-ha")
+
+
+def _allow_list() -> tuple:
+    raw = os.environ.get("CHATWORK_ROOMS", "")
+    items = tuple(x.strip() for x in raw.split(",") if x.strip())
+    return items or _ROOM_ALLOW
+
+
+def _wanted(room: dict, allow: tuple) -> bool:
+    name = str(room.get("name") or "")
+    rid = str(room.get("room_id") or "")
+    return any(a == rid or a in name for a in allow)
+
+
+def list_rooms(all_rooms: bool = False) -> list:
+    """送り先の一覧。既定では実際に使う部屋だけ返す。"""
     try:
         r = httpx.get(f"{settings.CHATWORK_API_BASE}/rooms",
                       headers=_headers(), timeout=TIMEOUT)
@@ -79,6 +99,7 @@ def list_rooms() -> list:
     except Exception as e:
         raise ChatworkError(f"Chatworkに繋がりませんでした（{type(e).__name__}）")
     rooms = _check(r) or []
+    allow = _allow_list()
     out = []
     for x in rooms:
         # 自分のマイチャットや既読専用の部屋まで並べると選びにくい。
@@ -92,7 +113,12 @@ def list_rooms() -> list:
             "can_post": (x.get("role") in ("admin", "member")),
         })
     out.sort(key=lambda x: str(x.get("name") or ""))
-    return out
+    if all_rooms:
+        return out
+    # 絞った結果が空なら、部屋名が変わったということ。黙って0件にすると
+    # 送れなくなるので、そのときは全部返す
+    picked = [x for x in out if _wanted(x, allow)]
+    return picked or out
 
 
 def send_file(room_id: str, filename: str, content: bytes,
