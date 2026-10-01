@@ -73,10 +73,9 @@
       // 「全商品レポートダウンロード」を押したときの呼び出し。
       // 次からはこれを出せば、ボタンに頼らず作らせられる
       await chrome.storage.local.set({ generate_call: d.call });
-      setStatus("レポートの作り方を覚えました");
-      // 手で押したときは、そのまま履歴へ移って取り込む
-      const cfg = await chrome.storage.local.get(["token", "auto"]);
-      if (cfg.token && cfg.auto !== false) afterAsk(true);
+      // ここで勝手に画面を移らない。作っている最中に移ると、
+      // 作りかけのまま止まってしまう
+      setStatus("レポートの作り方を覚えました。出来たら履歴から取り込めます");
       return;
     }
     if (d.kind === "dump") {

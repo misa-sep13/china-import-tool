@@ -66,11 +66,15 @@
   const apiJson = [];   // /rpp/api/ の応答。履歴の中身がここに入っている
   const apiCalls = [];  // /rpp/api/ へ出したもの。レポートの作り方がここに出る
 
-  // レポートを作らせている呼び出しかどうか
-  const looksGenerate = (method, url) =>
-    String(method).toUpperCase() === "POST" &&
-    /\/rpp\/api\//.test(String(url)) &&
-    /report|item|download|csv/i.test(String(url));
+  // レポートを作らせている呼び出しかどうか。
+  // 検索や画面の初期化まで拾うと、別物を覚えてしまう
+  const looksGenerate = (method, url) => {
+    const u = String(url);
+    if (String(method).toUpperCase() !== "POST") return false;
+    if (!/\/rpp\/api\//.test(u)) return false;
+    if (/search|staticData|appData|findAll|campaign/i.test(u)) return false;
+    return /download|allitem|itemreport|keywordreport|csv|export/i.test(u);
+  };
 
   const keepCall = (method, url, body, contentType) => {
     if (!/\/rpp\/api\//.test(String(url))) return;
