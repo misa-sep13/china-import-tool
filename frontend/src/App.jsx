@@ -214,8 +214,11 @@ function App() {
         <NavLink to="/rakuten/stock" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📊 在庫・損益
         </NavLink>
-        <NavLink to="/rakuten/shipping-daily" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-          📦 発送と売上（日ごと）
+        <NavLink to="/rakuten/ads" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          📣 広告管理
+        </NavLink>
+        <NavLink to="/rakuten/products" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          🏷️ 商品マスタ
         </NavLink>
         <NavLink to="/rakuten/sales" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📈 売上管理
@@ -223,11 +226,8 @@ function App() {
         <NavLink to="/rakuten/daily-sales" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📊 日別販売数
         </NavLink>
-        <NavLink to="/rakuten/products" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-          🏷️ 商品マスタ
-        </NavLink>
-        <NavLink to="/rakuten/shipping" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-          🚚 発送処理
+        <NavLink to="/rakuten/shipping-daily" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          📦 発送と売上（日ごと）
         </NavLink>
         <NavLink to="/rakuten/invoices" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📄 仕入管理
@@ -238,9 +238,6 @@ function App() {
         <NavLink to="/rakuten/inventory-reflections" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📥 在庫反映履歴
         </NavLink>
-        <NavLink to="/rakuten/ads" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-          📣 広告管理
-        </NavLink>
         <NavLink to="/rakuten/review" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🎁 レビューキャンペーン
         </NavLink>
@@ -250,8 +247,8 @@ function App() {
         <NavLink to="/rakuten/seo" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📊 SEO順位
         </NavLink>
-        <NavLink to="/rakuten/research" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-          🔎 商品リサーチ
+        <NavLink to="/rakuten/shipping" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          🚚 発送処理
         </NavLink>
         {!isContractor && (
           <NavLink to="/rakuten/settings" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
