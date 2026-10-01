@@ -61,6 +61,13 @@
   // 同じものを二度送らないための目印
   const seen = new Set();
 
+  // 画面が出している通信。どこを叩けばレポートが作れるのかを知るために残す
+  const traffic = [];
+  const logReq = (method, url, status, ctype) => {
+    traffic.push(`${method} ${String(url).slice(0, 160)} → ${status || "?"} ${ctype || ""}`);
+    if (traffic.length > 60) traffic.shift();
+  };
+
   const offer = (buf, name, url, req) => {
     const key = `${name}:${buf.byteLength}`;
     if (seen.has(key)) return;
@@ -108,6 +115,8 @@
         const url = (args[0] && args[0].url) || String(args[0] || "");
         const ctype = res.headers.get("content-type") || "";
         const cdisp = res.headers.get("content-disposition") || "";
+        const method = (args[1] && args[1].method) || "GET";
+        logReq(method, url, res.status, ctype);
         if (looksAttachment(ctype, cdisp)) {
           res.clone().arrayBuffer().then((buf) => {
             if (looksTable(buf)) offer(buf, nameFrom(cdisp, url), url, null);
@@ -135,6 +144,9 @@
       try {
         const ctype = this.getResponseHeader("content-type") || "";
         const cdisp = this.getResponseHeader("content-disposition") || "";
+        if (this.__rmsReq) {
+          logReq(this.__rmsReq.method, this.__rmsReq.url, this.status, ctype);
+        }
         // XHRの文字列は文字化けしていることがあるので、そのまま使わず取り直す
         if (looksAttachment(ctype, cdisp) && this.__rmsReq) replay(this.__rmsReq, true);
       } catch (e) {}
@@ -205,8 +217,17 @@
 
   const findButton = (label) =>
     Array.from(document.querySelectorAll(
-      'input[type="submit"],input[type="button"],button'))
+      'input[type="submit"],input[type="button"],button,a[role="button"]'))
       .find((b) => squash(b.value || b.textContent).includes(label));
+
+  // 「ダウンロード」と書かれた押せるもの（SPAなのでaとは限らない）
+  const downloadControls = () =>
+    Array.from(document.querySelectorAll(
+      'a,button,input[type="button"],[role="button"]'))
+      .filter((el) => {
+        const t = squash(el.value || el.textContent);
+        return t === "ダウンロード" && !el.disabled;
+      });
 
   // フォームの中身をそのまま書き出す。overrides に入れた名前だけ差し替える
   const serialize = (form, overrides, button) => {
@@ -246,54 +267,36 @@
     Array.from(form.querySelectorAll("input"))
       .filter((i) => /^\d{4}-\d{2}-\d{2}$/.test(i.value || ""));
 
+  // この画面はフォームではなく、ボタンを押すと画面の中で申し込む作り。
+  // 条件を外から組み立てるとかえって壊れるので、画面のボタンをそのまま押す。
+  // 押したあとは、出来上がりを履歴で待つ。
   async function autoRun(kinds, range) {
-    const prodBtn = findButton("全商品レポートダウンロード");
-    const dlBtn = findButton("この条件でダウンロード");
-    const form = (dlBtn && dlBtn.form) || (prodBtn && prodBtn.form);
-    if (!form) {
+    const btn = findButton("全商品レポートダウンロード");
+    if (!btn) {
       send({ kind: "auto-done", got: 0,
-             why: "ダウンロードのボタンが見つかりませんでした" });
+             why: "全商品レポートダウンロードのボタンが見つかりませんでした" });
       return;
     }
-    const dates = dateFields(form);
-    const unitAll = findRadio(form, "すべての広告");
-    const perDay = findRadio(form, "日ごとに表示");
-    const perAll = findRadio(form, "全期間で表示");
+    // 画面が出来上がるまでボタンは押せない状態になっている
+    for (let i = 0; i < 20 && btn.disabled; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    if (btn.disabled) {
+      send({ kind: "auto-done", got: 0,
+             why: "ボタンが押せる状態になりませんでした（先に「この条件で検索」が要るかもしれません）" });
+      return;
+    }
 
-    const withDates = (from, to) => {
-      const o = {};
-      if (dates[0] && dates[0].name) o[dates[0].name] = from;
-      if (dates[1] && dates[1].name) o[dates[1].name] = to;
-      return o;
-    };
-
-    // レポートはその場では落ちてこない。申し込むと裏で作られて
-    // 「ダウンロード履歴」に出るので、申し込む前後の履歴を見比べる
     send({ kind: "progress", text: "いまの履歴を見ています…" });
     const before = await historyLinks();
 
-    let asked = 0;
-    if (kinds.includes("daily") && dlBtn && unitAll && perDay) {
-      const o = withDates(range.daily_from, range.to);
-      o[unitAll.name] = unitAll.value;
-      o[perDay.name] = perDay.value;
-      await ask(reqFrom(form, o, dlBtn));
-      asked++;
-    }
-    if (kinds.includes("product") && prodBtn) {
-      const o = withDates(range.product_from, range.to);
-      if (perAll) o[perAll.name] = perAll.value;
-      await ask(reqFrom(form, o, prodBtn));
-      asked++;
-    }
-    if (!asked) {
-      send({ kind: "auto-done", got: 0,
-             why: "ダウンロードの条件を組み立てられませんでした" });
+    try { btn.click(); } catch (e) {
+      send({ kind: "auto-done", got: 0, why: `ボタンを押せませんでした: ${e}` });
       return;
     }
 
     send({ kind: "progress", text: "レポートが出来上がるのを待っています…" });
-    const got = await waitAndGrab(before, asked);
+    const got = await waitAndGrab(before, 1);
     send({ kind: "auto-done", got,
            why: got ? "" : "レポートが出来上がりませんでした" });
   }
@@ -317,7 +320,7 @@
   const historyUrl = () => {
     const a = Array.from(document.querySelectorAll("a[href]"))
       .find((x) => squash(x.textContent).includes("ダウンロード履歴"));
-    return a ? a.href : new URL("/rpp/download-history", location.origin).href;
+    return a ? a.href : new URL("/rpp/download", location.origin).href;
   };
 
   // 履歴の表に並んでいる「ダウンロード」のリンクを集める
@@ -376,13 +379,38 @@
 
   // 履歴の画面を開いたときは、並んでいるものをそのまま取り込む
   async function grabHistory(limit) {
-    const urls = linksIn(document, location.href).slice(0, limit || 6);
+    const max = limit || 6;
     let got = 0;
+
+    // リンクになっているなら、それを取りに行くのが一番きれい
+    const urls = linksIn(document, location.href).slice(0, max);
     for (const u of urls) {
       if (await replay({ url: u, method: "GET" }, true)) got++;
     }
+    if (got) {
+      send({ kind: "auto-done", got });
+      return;
+    }
+
+    // リンクではなく画面の中で組み立てる作りなら、その押し方に乗る。
+    // 画面が出す通信をこちらでも見ているので、CSVが流れてくれば拾える
+    const controls = downloadControls().slice(0, max);
+    if (!controls.length) {
+      send({ kind: "auto-done", got: 0,
+             why: "履歴に「ダウンロード」が見つかりませんでした" });
+      return;
+    }
+    send({ kind: "progress",
+           text: `履歴の${controls.length}件を取り込んでいます…` });
+    const was = seen.size;
+    for (const el of controls) {
+      try { el.click(); } catch (e) {}
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+    got = seen.size - was;
     send({ kind: "auto-done", got,
-           why: got ? "" : "履歴から取れるものがありませんでした" });
+           why: got ? "" : "押してもCSVが流れてきませんでした" });
   }
 
   const guard = (fn) => fn().catch((e) => {
@@ -413,6 +441,7 @@
               `${e.name}=${e.type === "radio" || e.type === "checkbox"
                 ? `${e.value}${e.checked ? "(選択中)" : ""}` : e.value}`
               .slice(0, 60)) } : null,
+          traffic,
           links: Array.from(document.querySelectorAll("a"))
             .filter((a) => squash(a.textContent).includes("ダウンロード"))
             .slice(0, 6).map((a) => (a.outerHTML || "").slice(0, 200)),

@@ -224,7 +224,7 @@
     // ダウンロード履歴の画面なら、並んでいるものをそのまま取り込む。
     // レポートは申し込んでから出来上がるまで少しかかるので、
     // 「更新」を押したときにも拾えるこちらが本命になる
-    if (/download-?history|downloadHistory|履歴/i.test(location.href)) {
+    if (/\/rpp\/download(\/|$|\?)/.test(location.href)) {
       setStatus("履歴にあるレポートを取り込んでいます…");
       window.postMessage({ __rmsAdsHistory: true, limit: 6 }, "*");
       return;
