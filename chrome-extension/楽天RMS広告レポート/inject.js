@@ -66,6 +66,18 @@
   const apiJson = [];   // /rpp/api/ の応答。履歴の中身がここに入っている
   const apiCalls = [];  // /rpp/api/ へ出したもの。レポートの作り方がここに出る
 
+  // 画面が検索に使っている呼び出し一式。これと同じ形で出せば通る
+  // （ヘッダが足りないと403で弾かれる）
+  let template = null;
+
+  const keepTemplate = (method, url, body, headers, status) => {
+    if (String(method).toUpperCase() !== "POST") return;
+    if (!/\/rpp\/api\/reports\/search/.test(String(url))) return;
+    if (status && (status < 200 || status >= 300)) return;
+    template = { url: String(url), body: String(body || ""),
+                 headers: headers || {} };
+  };
+
   const keepCall = (method, url, body, contentType) => {
     if (!/\/rpp\/api\//.test(String(url))) return;
     const call = { method: String(method || "GET").toUpperCase(),
