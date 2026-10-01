@@ -251,7 +251,8 @@
     const dlBtn = findButton("この条件でダウンロード");
     const form = (dlBtn && dlBtn.form) || (prodBtn && prodBtn.form);
     if (!form) {
-      note("ダウンロードのボタンが見つかりませんでした");
+      send({ kind: "auto-done", got: 0,
+             why: "ダウンロードのボタンが見つかりませんでした" });
       return;
     }
     const dates = dateFields(form);
@@ -268,6 +269,7 @@
 
     // レポートはその場では落ちてこない。申し込むと裏で作られて
     // 「ダウンロード履歴」に出るので、申し込む前後の履歴を見比べる
+    send({ kind: "progress", text: "いまの履歴を見ています…" });
     const before = await historyLinks();
 
     let asked = 0;
@@ -338,9 +340,16 @@
   async function historyLinks() {
     try {
       const url = historyUrl();
-      const res = await fetch(url, { credentials: "include" });
-      const doc = new DOMParser().parseFromString(await res.text(), "text/html");
-      return linksIn(doc, url);
+      const res = await Promise.race([
+        fetch(url, { credentials: "include" }),
+        new Promise((_, rej) =>
+          setTimeout(() => rej(new Error("履歴が20秒で返りませんでした")), 20000)),
+      ]);
+      const html = await res.text();
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const found = linksIn(doc, url);
+      note(`履歴 ${url} を読みました（リンク ${found.length}件 / ${html.length}文字）`);
+      return found;
     } catch (e) {
       note(`履歴を読めませんでした: ${e}`);
       return [];
@@ -376,14 +385,18 @@
            why: got ? "" : "履歴から取れるものがありませんでした" });
   }
 
+  const guard = (fn) => fn().catch((e) => {
+    send({ kind: "auto-done", got: 0, why: `途中で止まりました: ${e}` });
+  });
+
   window.addEventListener("message", (ev) => {
     const d = ev.data;
     if (d && d.__rmsAdsAuto && Array.isArray(d.kinds)) {
       // 画面が出来上がってから。遅れて組み立てられる画面があるので少し待つ
-      setTimeout(() => autoRun(d.kinds, d.range || {}), 1200);
+      setTimeout(() => guard(() => autoRun(d.kinds, d.range || {})), 1200);
     }
     if (d && d.__rmsAdsHistory) {
-      setTimeout(() => grabHistory(d.limit), 1200);
+      setTimeout(() => guard(() => grabHistory(d.limit)), 1200);
     }
     if (d && d.__rmsAdsDump) {
       // 画面の作りをそのまま渡すための手がかり

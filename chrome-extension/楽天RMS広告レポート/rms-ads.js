@@ -20,6 +20,7 @@
   let lastRequest = null;   // 「もう一度」で使う、直前のダウンロード条件
   const notes = [];         // 取れなかったときの手がかり
   let running = [];         // いま取りに行っている種類
+  let dumpWaiter = null;    // 画面側が応えたかどうかの確認用
 
   const setStatus = (text) => { status = text; render(); };
 
@@ -62,6 +63,7 @@
     if (d.kind === "note") { notes.push(d.text); render(); return; }
     if (d.kind === "progress") { setStatus(d.text); return; }
     if (d.kind === "dump") {
+      if (dumpWaiter) { dumpWaiter(); dumpWaiter = null; }
       const text = [d.text, "--- 気づいたこと ---"]
         .concat(notes.slice(-20)).join(String.fromCharCode(10));
       navigator.clipboard.writeText(text).then(
@@ -134,7 +136,19 @@
   function copyDiagnostics() {
     // 画面側の作り（ボタン・フォーム・履歴のリンク）も一緒に渡す。
     // ここが分からないと自動取り込みを直せない
+    let answered = false;
+    dumpWaiter = () => { answered = true; };
     window.postMessage({ __rmsAdsDump: true }, "*");
+    setTimeout(() => {
+      if (answered) return;
+      // 画面側のスクリプトが動いていない。その事実ごと渡す
+      const text = ["画面側のスクリプトが応えません（inject.jsが動いていない）",
+        location.href, `いまの表示: ${status}`]
+        .concat(notes.slice(-20)).join(String.fromCharCode(10));
+      navigator.clipboard.writeText(text).then(
+        () => setStatus("状況をコピーしました（画面側が応えていません）"),
+        () => alert(text));
+    }, 1500);
   }
 
   async function toggleAuto() {
