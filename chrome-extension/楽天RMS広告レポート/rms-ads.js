@@ -25,7 +25,12 @@
   const setStatus = (text) => { status = text; render(); };
 
   async function upload(file) {
-    const cfg = await chrome.storage.local.get(["backend", "token"]);
+    const cfg = await chrome.storage.local.get(["backend", "token", "sent"]);
+    const sent = cfg.sent || [];
+    if (sent.includes(file.name)) {
+      setStatus(`${file.name} は取り込み済みです`);
+      return;
+    }
     if (!cfg.token) {
       pending = file;
       setStatus("トークンが未設定です。「設定」から入れてください");
@@ -46,6 +51,7 @@
         const missing = (d.missing || []).length
           ? `／見つからない列：${d.missing.join("、")}` : "";
         pending = null;
+        await chrome.storage.local.set({ sent: sent.concat([file.name]).slice(-50) });
         setStatus(`取り込みました：${kind} ${d.saved}行${missing}`);
       } else {
         pending = file;
@@ -62,6 +68,7 @@
     if (!d || !d.__rmsAds) return;
     if (d.kind === "note") { notes.push(d.text); render(); return; }
     if (d.kind === "progress") { setStatus(d.text); return; }
+    if (d.kind === "asked") { afterAsk(d.ok, d.why); return; }
     if (d.kind === "dump") {
       if (dumpWaiter) { dumpWaiter(); dumpWaiter = null; }
       const text = [d.text, "--- 気づいたこと ---"]
@@ -207,59 +214,71 @@
 
   // ---- 画面を開いたら自分で取りに行く ----
   //
-  // パフォーマンスレポートの画面でだけ動く。開くたびに取りに行くと
-  // 楽天に余計な手間をかけるので、種類ごとに6時間あけている。
+  // 流れはこう：
+  //   レポート画面 → 検索してダウンロードを押す → ダウンロード履歴へ移る
+  //   → 出来上がるのを待って取り込む
+  // 履歴の画面を開いただけのときは、並んでいるものをそのまま取り込む。
   const GAP_MS = 6 * 60 * 60 * 1000;
+  const HISTORY = "/rpp/download";
 
-  const ymd = (d) => `${d.getFullYear()}-` +
-    `${String(d.getMonth() + 1).padStart(2, "0")}-` +
-    `${String(d.getDate()).padStart(2, "0")}`;
+  const onHistory = () => /\/rpp\/download(\/|$|\?)/.test(location.href);
+  const onReports = () => /\/rpp\/reports/.test(location.href);
 
   async function maybeAuto(force) {
     const cfg = await chrome.storage.local.get(
-      ["token", "auto", "auto_last", "auto_cooldown"]);
-    if (!cfg.token) { if (force) setStatus("先に「設定」でトークンを入れてください"); return; }
-    if (!force && cfg.auto === false) return;
-
-    // ダウンロード履歴の画面なら、並んでいるものをそのまま取り込む。
-    // レポートは申し込んでから出来上がるまで少しかかるので、
-    // 「更新」を押したときにも拾えるこちらが本命になる
-    if (/\/rpp\/download(\/|$|\?)/.test(location.href)) {
-      setStatus("履歴にあるレポートを取り込んでいます…");
-      window.postMessage({ __rmsAdsHistory: true, limit: 6 }, "*");
+      ["token", "auto", "auto_last", "auto_cooldown", "pending"]);
+    if (!cfg.token) {
+      if (force) setStatus("先に「設定」でトークンを入れてください");
       return;
     }
-    if (!/\/rpp\/reports/.test(location.pathname)) return;
+    if (!force && cfg.auto === false) return;
+
+    if (onHistory()) {
+      // 申し込んだ直後に移ってきたのなら、そのぶんが出来上がるのを待つ
+      const p = cfg.pending;
+      const fresh = p && Date.now() - p.at < 10 * 60 * 1000;
+      await chrome.storage.local.remove("pending");
+      setStatus(fresh ? "出来上がるのを待っています…"
+                      : "履歴にあるレポートを取り込んでいます…");
+      running = ["product"];
+      window.postMessage({ __rmsAdsHistory: true, limit: fresh ? 2 : 6,
+                           since: fresh ? p.at - 60000 : 0 }, "*");
+      return;
+    }
+    if (!onReports()) return;
 
     const last = cfg.auto_last || {};
     const now = Date.now();
     // 失敗した直後に何度も申し込まないための間隔
     if (!force && now < (cfg.auto_cooldown || 0)) return;
-    const kinds = force ? ["daily", "product"]
-      : ["daily", "product"].filter((k) => now - (last[k] || 0) >= GAP_MS);
-    if (!kinds.length) {
-      if (force) setStatus("取りに行っています…");
+    if (!force && now - (last.product || 0) < GAP_MS) return;
+
+    running = ["product"];
+    await chrome.storage.local.set({ auto_cooldown: now + 15 * 60 * 1000 });
+    setStatus("レポートを申し込んでいます…");
+    window.postMessage({ __rmsAdsAsk: true }, "*");
+  }
+
+  // 申し込めたら、ダウンロード履歴へ移る（画面ごと開き直す）
+  async function afterAsk(ok, why) {
+    if (!ok) {
+      setStatus(`申し込めませんでした（${why || "理由不明"}）`);
       return;
     }
-
-    // 集計は昨日までしか出ない。毎日の消化は3か月以内、
-    // 商品ごとは月単位なので今月の頭から
-    const to = new Date(); to.setDate(to.getDate() - 1);
-    const dailyFrom = new Date(to); dailyFrom.setDate(dailyFrom.getDate() - 88);
-    const productFrom = new Date(to.getFullYear(), to.getMonth(), 1);
-
-    // 「やった」と記録するのは取り込めたときだけ。失敗したのに
-    // 記録してしまうと、次に開いても何も起きなくなる
-    running = kinds;
-    await chrome.storage.local.set({ auto_cooldown: now + 15 * 60 * 1000 });
-
-    setStatus("レポートを申し込んでいます（出来上がるまで1〜2分）…");
-    window.postMessage({
-      __rmsAdsAuto: true, kinds,
-      range: { to: ymd(to), daily_from: ymd(dailyFrom),
-               product_from: ymd(productFrom) },
-    }, "*");
+    await chrome.storage.local.set({ pending: { at: Date.now() } });
+    setStatus("ダウンロード履歴へ移ります…");
+    location.href = new URL(HISTORY, location.origin).href;
   }
+
+  // この画面は中で切り替わる作りなので、開き直さずに行き来することがある。
+  // URLを見張って、移った先でも動くようにする
+  let seenUrl = location.href;
+  setInterval(() => {
+    if (location.href === seenUrl) return;
+    seenUrl = location.href;
+    status = "";
+    maybeAuto(false);
+  }, 2000);
 
   function start() {
     render();

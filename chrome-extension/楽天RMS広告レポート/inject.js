@@ -190,227 +190,115 @@
     return origSubmit.apply(this, arguments);
   };
 
-  // ---- パフォーマンスレポートの画面を開いたら、自分で取りに行く ----
-  //
-  // 画面のボタンを押したときとまったく同じ内容のリクエストを組み立てて出す。
-  // 画面の表示（選んである条件）は書き換えない。送る中身だけ差し替える。
-
   const squash = (t) => String(t || "").replace(/\s+/g, "");
-
-  // そのラジオボタンに付いている文字。labelで囲ってある場合と、
-  // 隣に文字が置いてあるだけの場合の両方を見る
-  const labelOf = (input) => {
-    if (input.id) {
-      const l = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
-      if (l) return squash(l.textContent);
-    }
-    const wrap = input.closest("label");
-    if (wrap) return squash(wrap.textContent);
-    const next = input.nextSibling;
-    if (next && next.textContent) return squash(next.textContent);
-    return squash(input.parentElement && input.parentElement.textContent);
-  };
-
-  const findRadio = (form, label) =>
-    Array.from(form.querySelectorAll('input[type="radio"]'))
-      .find((r) => labelOf(r).includes(label));
 
   const findButton = (label) =>
     Array.from(document.querySelectorAll(
       'input[type="submit"],input[type="button"],button,a[role="button"]'))
       .find((b) => squash(b.value || b.textContent).includes(label));
 
-  // 「ダウンロード」と書かれた押せるもの（SPAなのでaとは限らない）
-  const downloadControls = () =>
-    Array.from(document.querySelectorAll(
-      'a,button,input[type="button"],[role="button"]'))
-      .filter((el) => {
-        const t = squash(el.value || el.textContent);
-        return t === "ダウンロード" && !el.disabled;
-      });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // フォームの中身をそのまま書き出す。overrides に入れた名前だけ差し替える
-  const serialize = (form, overrides, button) => {
-    const q = new URLSearchParams();
-    for (const el of Array.from(form.elements)) {
-      if (!el.name || el.disabled) continue;
-      if (["submit", "button", "image", "file"].includes(el.type)) continue;
-      if ((el.type === "checkbox" || el.type === "radio") && !el.checked) continue;
-      if (Object.prototype.hasOwnProperty.call(overrides, el.name)) continue;
-      if (el.multiple && el.selectedOptions) {
-        for (const o of el.selectedOptions) q.append(el.name, o.value);
-      } else {
-        q.append(el.name, el.value);
-      }
-    }
-    for (const [k, v] of Object.entries(overrides)) {
-      if (v != null && k) q.append(k, v);
-    }
-    if (button && button.name) q.append(button.name, button.value || "");
-    return q.toString();
-  };
-
-  const reqFrom = (form, overrides, button) => {
-    const method = (form.method || "POST").toUpperCase();
-    const body = serialize(form, overrides, button);
-    let url = form.action || location.href;
-    if (method === "GET") {
-      url += (url.includes("?") ? "&" : "?") + body;
-      return { url, method };
-    }
-    return { url, method, body,
-             contentType: "application/x-www-form-urlencoded" };
-  };
-
-  // 集計期間の日付欄。YYYY-MM-DD が入っているものを前から2つ
-  const dateFields = (form) =>
-    Array.from(form.querySelectorAll("input"))
-      .filter((i) => /^\d{4}-\d{2}-\d{2}$/.test(i.value || ""));
-
-  // この画面はフォームではなく、ボタンを押すと画面の中で申し込む作り。
-  // 条件を外から組み立てるとかえって壊れるので、画面のボタンをそのまま押す。
-  // 押したあとは、出来上がりを履歴で待つ。
-  async function autoRun(kinds, range) {
-    const btn = findButton("全商品レポートダウンロード");
-    if (!btn) {
-      send({ kind: "auto-done", got: 0,
+  // ---- レポート画面（/rpp/reports） ----
+  //
+  // この画面はフォームではなく、押すと画面の中で申し込む作り。条件を外から
+  // 組み立てても通らないので、人と同じ順で押す。
+  // 「全商品レポートダウンロード」は検索するまで押せないので、先に検索する。
+  async function askReport() {
+    const dl = findButton("全商品レポートダウンロード");
+    if (!dl) {
+      send({ kind: "asked", ok: false,
              why: "全商品レポートダウンロードのボタンが見つかりませんでした" });
       return;
     }
-    // 画面が出来上がるまでボタンは押せない状態になっている
-    for (let i = 0; i < 20 && btn.disabled; i++) {
-      await new Promise((r) => setTimeout(r, 1000));
+    if (dl.disabled) {
+      const search = findButton("この条件で検索");
+      if (search) {
+        send({ kind: "progress", text: "この条件で検索しています…" });
+        try { search.click(); } catch (e) {}
+      }
+      for (let i = 0; i < 40 && dl.disabled; i++) await sleep(1000);
     }
-    if (btn.disabled) {
-      send({ kind: "auto-done", got: 0,
-             why: "ボタンが押せる状態になりませんでした（先に「この条件で検索」が要るかもしれません）" });
+    if (dl.disabled) {
+      send({ kind: "asked", ok: false,
+             why: "検索しても、ダウンロードのボタンが押せるようになりませんでした" });
       return;
     }
-
-    send({ kind: "progress", text: "いまの履歴を見ています…" });
-    const before = await historyLinks();
-
-    try { btn.click(); } catch (e) {
-      send({ kind: "auto-done", got: 0, why: `ボタンを押せませんでした: ${e}` });
-      return;
-    }
-
-    send({ kind: "progress", text: "レポートが出来上がるのを待っています…" });
-    const got = await waitAndGrab(before, 1);
-    send({ kind: "auto-done", got,
-           why: got ? "" : "レポートが出来上がりませんでした" });
-  }
-
-  // 申し込むだけ。応答はHTML（画面）なので中身は見ない
-  async function ask(req) {
     try {
-      const init = { method: req.method || "GET", credentials: "include" };
-      if (init.method !== "GET" && req.body != null) {
-        init.body = req.body;
-        if (req.contentType) init.headers = { "Content-Type": req.contentType };
-      }
-      await fetch(req.url, init);
+      dl.click();
+      send({ kind: "asked", ok: true });
     } catch (e) {
-      note(`申し込みに失敗しました: ${e}`);
+      send({ kind: "asked", ok: false, why: `押せませんでした: ${e}` });
     }
   }
 
-  // ---- ダウンロード履歴 ----
+  // ---- ダウンロード履歴（/rpp/download） ----
+  //
+  // ここも画面の中で組み立てる作りなので、裏でHTMLを読んでも中身が無い。
+  // 実際に開いたこの画面から取る。
 
-  const historyUrl = () => {
-    const a = Array.from(document.querySelectorAll("a[href]"))
-      .find((x) => squash(x.textContent).includes("ダウンロード履歴"));
-    return a ? a.href : new URL("/rpp/download", location.origin).href;
-  };
-
-  // 履歴の表に並んでいる「ダウンロード」のリンクを集める
-  const linksIn = (root, base) => {
+  // 表の行から「ダウンロード」の押せるところを拾う。
+  // since を渡すと、その時刻より後に出来た「完了」の行だけにする
+  function rows(since) {
     const out = [];
-    root.querySelectorAll("a").forEach((a) => {
-      const t = squash(a.textContent);
-      if (!t.includes("ダウンロード") || t.includes("履歴")) return;
-      const href = a.getAttribute("href") || "";
-      if (!href || /^(#|javascript:)/i.test(href)) {
-        // 画面の中で組み立てる作りのときは拾えない。手がかりを残す
-        note(`履歴のリンクがhrefではありません: ${a.outerHTML.slice(0, 200)}`);
-        return;
+    document.querySelectorAll("tr").forEach((tr) => {
+      const text = tr.textContent || "";
+      const ctl = Array.from(tr.querySelectorAll('a,button,[role="button"]'))
+        .find((el) => squash(el.value || el.textContent) === "ダウンロード"
+                      && !el.disabled);
+      if (!ctl) return;
+      if (since) {
+        if (!text.includes("完了")) return;
+        const m = text.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+        if (!m) return;
+        const at = new Date(+m[1], +m[2] - 1, +m[3],
+                            +m[4], +m[5], +m[6]).getTime();
+        if (at < since) return;
       }
-      out.push(new URL(href, base).href);
+      out.push(ctl);
     });
     return out;
-  };
-
-  async function historyLinks() {
-    try {
-      const url = historyUrl();
-      const res = await Promise.race([
-        fetch(url, { credentials: "include" }),
-        new Promise((_, rej) =>
-          setTimeout(() => rej(new Error("履歴が20秒で返りませんでした")), 20000)),
-      ]);
-      const html = await res.text();
-      const doc = new DOMParser().parseFromString(html, "text/html");
-      const found = linksIn(doc, url);
-      note(`履歴 ${url} を読みました（リンク ${found.length}件 / ${html.length}文字）`);
-      return found;
-    } catch (e) {
-      note(`履歴を読めませんでした: ${e}`);
-      return [];
-    }
   }
 
-  // 新しく出来たぶんが出るまで少し待ってから取りに行く
-  async function waitAndGrab(before, want) {
-    const known = new Set(before);
-    for (let i = 0; i < 10; i++) {
-      await new Promise((r) => setTimeout(r, 12000));
-      const now = await historyLinks();
-      const fresh = now.filter((u) => !known.has(u));
-      if (fresh.length >= want || (fresh.length && i >= 4)) {
-        let got = 0;
-        for (const u of fresh.slice(0, want)) {
-          if (await replay({ url: u, method: "GET" }, true)) got++;
-        }
-        return got;
-      }
-    }
-    return 0;
-  }
-
-  // 履歴の画面を開いたときは、並んでいるものをそのまま取り込む
-  async function grabHistory(limit) {
-    const max = limit || 6;
-    let got = 0;
-
-    // リンクになっているなら、それを取りに行くのが一番きれい
-    const urls = linksIn(document, location.href).slice(0, max);
-    for (const u of urls) {
-      if (await replay({ url: u, method: "GET" }, true)) got++;
-    }
-    if (got) {
-      send({ kind: "auto-done", got });
-      return;
-    }
-
-    // リンクではなく画面の中で組み立てる作りなら、その押し方に乗る。
-    // 画面が出す通信をこちらでも見ているので、CSVが流れてくれば拾える
-    const controls = downloadControls().slice(0, max);
-    if (!controls.length) {
-      send({ kind: "auto-done", got: 0,
-             why: "履歴に「ダウンロード」が見つかりませんでした" });
-      return;
-    }
-    send({ kind: "progress",
-           text: `履歴の${controls.length}件を取り込んでいます…` });
+  // リンクなら取りに行く。そうでなければ画面のボタンを押して、
+  // 流れてきたCSVを拾う
+  async function take(controls) {
     const was = seen.size;
     for (const el of controls) {
-      try { el.click(); } catch (e) {}
-      await new Promise((r) => setTimeout(r, 2500));
+      const href = el.getAttribute && el.getAttribute("href");
+      if (href && !/^(#|javascript:)/i.test(href)) {
+        await replay({ url: new URL(href, location.href).href, method: "GET" },
+                     true);
+      } else {
+        try { el.click(); } catch (e) {}
+        await sleep(2500);
+      }
     }
-    await new Promise((r) => setTimeout(r, 3000));
-    got = seen.size - was;
-    send({ kind: "auto-done", got,
-           why: got ? "" : "押してもCSVが流れてきませんでした" });
+    await sleep(2500);
+    return seen.size - was;
+  }
+
+  async function grabHistory(limit, since) {
+    const max = limit || 6;
+    // 申し込んだ直後なら、出来上がるまで待つ
+    const deadline = since ? Date.now() + 4 * 60 * 1000 : 0;
+    for (;;) {
+      const found = rows(since).slice(0, max);
+      if (found.length) {
+        const got = await take(found);
+        if (got) { send({ kind: "auto-done", got }); return; }
+      }
+      if (Date.now() > deadline) {
+        send({ kind: "auto-done", got: 0,
+               why: since ? "レポートが出来上がりませんでした"
+                          : "履歴に取れるものがありませんでした" });
+        return;
+      }
+      send({ kind: "progress", text: "出来上がるのを待っています…" });
+      const refresh = findButton("更新");
+      if (refresh) { try { refresh.click(); } catch (e) {} }
+      await sleep(12000);
+    }
   }
 
   const guard = (fn) => fn().catch((e) => {
@@ -419,12 +307,12 @@
 
   window.addEventListener("message", (ev) => {
     const d = ev.data;
-    if (d && d.__rmsAdsAuto && Array.isArray(d.kinds)) {
+    if (d && d.__rmsAdsAsk) {
       // 画面が出来上がってから。遅れて組み立てられる画面があるので少し待つ
-      setTimeout(() => guard(() => autoRun(d.kinds, d.range || {})), 1200);
+      setTimeout(() => guard(askReport), 1200);
     }
     if (d && d.__rmsAdsHistory) {
-      setTimeout(() => guard(() => grabHistory(d.limit)), 1200);
+      setTimeout(() => guard(() => grabHistory(d.limit, d.since)), 1500);
     }
     if (d && d.__rmsAdsDump) {
       // 画面の作りをそのまま渡すための手がかり
