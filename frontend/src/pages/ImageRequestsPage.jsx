@@ -262,18 +262,19 @@ export default function ImageRequestsPage({ share = '' }) {
                     {r.doc_name && (
                       <div style={{ fontSize: 10, color: C.sub }}>{r.doc_name}</div>
                     )}
-                    <div style={{ display: 'flex', gap: 8 }}>
+                    {/* 名前が長いと折り返して読みにくいので短く出す */}
+                    <div style={{ display: 'flex', gap: 8, whiteSpace: 'nowrap' }}>
                       {r.main_url && (
                         <a href={r.main_url} target="_blank" rel="noreferrer"
                           style={{ fontSize: 11 }}
                           title="仕入元のページ。画像素材と実物の作りはここで見られます">
-                          1688の商品ページ
+                          1688URL
                         </a>
                       )}
                       {r.ref_url && (
                         <a href={r.ref_url} target="_blank" rel="noreferrer"
                           style={{ fontSize: 11 }}
-                          title="競合のAmazon商品ページ">競合のAmazon</a>
+                          title="競合のAmazon商品ページ">競合URL</a>
                       )}
                     </div>
                   </td>
@@ -384,6 +385,8 @@ function Photos({ r, share, cfg, reload, setErr, onOpen }) {
       list.forEach(f => fd.append('files', f))
       await api.post(`/image-requests/${r.id}/photos`, fd, cfg())
       await reload()
+      // 続けて2枚目を貼れるように、待ち受けたまま戻す
+      if (ready) setTimeout(() => pasteBtn.current?.focus(), 0)
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }
@@ -401,20 +404,27 @@ function Photos({ r, share, cfg, reload, setErr, onOpen }) {
   }
 
   // 右クリック→コピーした画像を、枠を選んでから Ctrl+V で入れる。
-  // 1688やAmazonの画像を落とさずに持ってこられる
-  const paste = (e) => {
-    const items = [...(e.clipboardData?.items || [])]
-      .filter(i => i.type.startsWith('image/'))
-    if (!items.length) return
-    e.preventDefault()
-    send(items.map(i => i.getAsFile()).filter(Boolean))
-  }
+  // 1688やAmazonの画像を落とさずに持ってこられる。
+  //
+  // 貼り付けは入力欄にしか飛ばないことがあり、ボタンに焦点があっても
+  // 届かない。待っている間だけ画面全体で受ける
+  useEffect(() => {
+    if (!ready || share) return
+    const onPaste = (e) => {
+      const items = [...(e.clipboardData?.items || [])]
+        .filter(i => i.type.startsWith('image/'))
+      if (!items.length) return
+      e.preventDefault()
+      send(items.map(i => i.getAsFile()).filter(Boolean))
+    }
+    document.addEventListener('paste', onPaste)
+    return () => document.removeEventListener('paste', onPaste)
+  }, [ready, share, r.id])
 
   const photos = r.photos || []
 
   return (
     <div
-      onPaste={share ? undefined : paste}
       // 枠の余白を押したときも貼り付け待ちにする。
       // 「＋」や画像そのものを押したときは、そちらの動きを邪魔しない
       onMouseDown={share ? undefined : e => {
@@ -462,7 +472,6 @@ function Photos({ r, share, cfg, reload, setErr, onOpen }) {
           {/* 貼り付け。押してから Ctrl+V。ファイル選択と取り合いにならないよう分けてある */}
           <button type="button" disabled={busy} ref={pasteBtn}
             title="押してから Ctrl+V でコピーした画像を貼り付け"
-            onPaste={paste}
             onFocus={() => setReady(true)}
             onBlur={() => setReady(false)}
             style={{ width: 46, height: 46, borderRadius: 4, cursor: 'pointer',
