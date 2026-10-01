@@ -284,6 +284,27 @@
     try { el.dispatchEvent(new MouseEvent("click", opt)); } catch (e) {}
   }
 
+  // 画面はReactで出来ている。見た目のボタンを押すだけでは反応しないことが
+  // あるので、ボタンが持っている処理そのものを呼べるなら呼ぶ
+  function reactClick(el) {
+    for (const key in el) {
+      if (!key.startsWith("__reactProps$")) continue;
+      const props = el[key];
+      if (!props || typeof props.onClick !== "function") continue;
+      try {
+        props.onClick({
+          preventDefault() {}, stopPropagation() {},
+          persist() {}, type: "click",
+          target: el, currentTarget: el, nativeEvent: {},
+        });
+        return true;
+      } catch (e) {
+        note(`ボタンの処理で止まりました: ${e}`);
+      }
+    }
+    return false;
+  }
+
   // 検索や画面の初期化ではない、新しい呼び出しが出たか
   const generatedSince = (n) =>
     apiCalls.slice(n).some((c) =>
@@ -350,36 +371,35 @@
     return all;
   }
 
-  // 絞り込みの「実績額 TOP10」のままだと10件しか返らない。
-  // 画面が持っている選択肢から、いちばん大きいものを探す
-  async function biggestRank() {
-    try {
-      const res = await fetch(new URL("/rpp/api/reports/staticData",
-                                      location.origin).href,
-                              { credentials: "include",
-                                headers: template.headers || {} });
-      if (!res.ok) return null;
-      const json = await res.json();
-      let best = null;
-      const walk = (v) => {
-        if (Array.isArray(v)) { v.forEach(walk); return; }
-        if (!v || typeof v !== "object") return;
-        const label = String(v.label || v.name || v.text || v.displayName || "");
-        const m = label.match(/TOP\s*(\d+)/i);
-        const val = v.value !== undefined ? v.value
-          : (v.id !== undefined ? v.id : v.code);
-        if (m && val !== undefined && val !== null) {
-          const n = Number(m[1]);
-          if (!best || n > best.n) best = { n, value: val };
-        }
-        Object.values(v).forEach(walk);
-      };
-      walk(json);
-      if (best) note(`絞り込みは TOP${best.n} を使います`);
-      return best;
-    } catch (e) {
-      return null;
+  // 全商品レポート（CSV）を作らせる。
+  // 画面の絞り込みは「実績額TOP10」までしか選べないので、
+  // 全商品の数字はこのCSVでしか取れない
+  async function askAllItemReport() {
+    const dl = findButton("全商品レポートダウンロード");
+    if (!dl) return { ok: false, why: "ボタンが見つかりませんでした" };
+
+    // 検索したあとでないと押せない作りになっている
+    if (dl.disabled) {
+      const search = findButton("この条件で検索");
+      if (search) { press(search); reactClick(search); }
+      for (let i = 0; i < 25 && dl.disabled; i++) await sleep(1000);
     }
+    if (dl.disabled) {
+      try { dl.disabled = false; dl.removeAttribute("disabled"); } catch (e) {}
+      await sleep(500);
+    }
+
+    const before = apiCalls.length;
+    press(dl);
+    for (let i = 0; i < 8 && !generatedSince(before); i++) await sleep(1000);
+    if (!generatedSince(before)) reactClick(dl);
+    for (let i = 0; i < 12 && !generatedSince(before); i++) await sleep(1000);
+
+    if (generatedSince(before)) return { ok: true };
+    const after = apiCalls.slice(before)
+      .map((c) => `${c.method} ${c.url.replace(location.origin, "")}`).join(" / ");
+    return { ok: false,
+             why: `押しても申し込みが出ませんでした（押したあと：${after || "なし"}）` };
   }
 
   async function fetchReports(range) {
@@ -390,29 +410,6 @@
     }
 
     let got = 0;
-
-    // 商品ごと。集計単位の番号は画面によって違うので、
-    // 商品名が返ってくるものを使う
-    send({ kind: "progress", text: "商品ごとの実績をもらっています…" });
-    const rank = await biggestRank();
-    for (const selectionType of [3, 2, 4]) {
-      try {
-        const patch = {
-          selectionType, periodType: 0,
-          startDate: range.product_from, endDate: range.to,
-        };
-        if (rank) patch.rankType = rank.value;
-        const rows = await searchAll(patch);
-        if (rows.length && rows.some((r) => r.itemName)) {
-          send({ kind: "rows", payload: {
-            kind: "product", period: range.product_from.slice(0, 7), rows } });
-          got++;
-          break;
-        }
-      } catch (e) {
-        note(`商品ごと(${selectionType})が取れませんでした: ${e.message || e}`);
-      }
-    }
 
     // 毎日の消化。日ごとは「すべての広告」単位でしか出せない
     send({ kind: "progress", text: "毎日の消化をもらっています…" });
@@ -437,8 +434,11 @@
       }
     }
 
-    send({ kind: "auto-done", got,
-           why: got ? "" : "実績をもらえませんでした" });
+    // 商品ごとは、画面の絞り込みがTOP10までなので裏では全部取れない。
+    // 全商品レポート（CSV）を作らせて、出来たら履歴から取り込む
+    send({ kind: "progress", text: "全商品レポートを申し込んでいます…" });
+    const asked = await askAllItemReport();
+    send({ kind: "asked", ok: asked.ok, why: asked.why, daily: got });
   }
 
   // ---- ダウンロード履歴（/rpp/download） ----
