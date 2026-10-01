@@ -262,9 +262,25 @@
   // この画面はフォームではなく、押すと画面の中で申し込む作り。条件を外から
   // 組み立てても通らないので、人と同じ順で押す。
   // 「全商品レポートダウンロード」は検索するまで押せないので、先に検索する。
+  // 画面の作りによっては click() だけでは反応しないので、
+  // 人が押したときと同じ順で出す
+  function press(el) {
+    const opt = { bubbles: true, cancelable: true, view: window };
+    try { el.dispatchEvent(new PointerEvent("pointerdown", opt)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent("mousedown", opt)); } catch (e) {}
+    try { el.dispatchEvent(new PointerEvent("pointerup", opt)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent("mouseup", opt)); } catch (e) {}
+    try { el.click(); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent("click", opt)); } catch (e) {}
+  }
+
+  // 検索や画面の初期化ではない、新しい呼び出しが出たか
+  const generatedSince = (n) =>
+    apiCalls.slice(n).some((c) =>
+      !/search|staticData|appData|findAll|campaign/i.test(c.url));
+
   async function askReport(known) {
-    // 一度でも押してあれば、その呼び出しをそのまま出す。
-    // 画面のボタンは検索の具合で押せないことがあるので、こちらが確実
+    // 一度でも出し方が分かっていれば、それをそのまま出す
     if (known && known.url) {
       try {
         const init = { method: known.method || "POST", credentials: "include" };
@@ -284,25 +300,42 @@
              why: "全商品レポートダウンロードのボタンが見つかりませんでした" });
       return;
     }
+
+    // ダウンロードは検索したあとでないと押せない作りになっている
     if (dl.disabled) {
       const search = findButton("この条件で検索");
       if (search) {
         send({ kind: "progress", text: "この条件で検索しています…" });
-        try { search.click(); } catch (e) {}
+        press(search);
       }
-      for (let i = 0; i < 40 && dl.disabled; i++) await sleep(1000);
+      for (let i = 0; i < 25 && dl.disabled; i++) await sleep(1000);
     }
+
+    // それでも押せないままなら、こちらで押せるようにして押す。
+    // 押したあとの中身は画面側が組み立てるので、人が押すのと変わらない
     if (dl.disabled) {
-      send({ kind: "asked", ok: false,
-             why: "検索しても、ダウンロードのボタンが押せるようになりませんでした" });
-      return;
+      send({ kind: "progress", text: "ボタンを押せるようにしています…" });
+      try {
+        dl.disabled = false;
+        dl.removeAttribute("disabled");
+      } catch (e) {}
+      await sleep(500);
     }
-    try {
-      dl.click();
-      send({ kind: "asked", ok: true });
-    } catch (e) {
-      send({ kind: "asked", ok: false, why: `押せませんでした: ${e}` });
+
+    const before = apiCalls.length;
+    send({ kind: "progress", text: "レポートを申し込んでいます…" });
+    press(dl);
+
+    // 本当に申し込みが出たか見届ける。出ていないのに履歴へ移ると、
+    // いつまでも出来上がらないものを待つことになる
+    for (let i = 0; i < 15; i++) {
+      await sleep(1000);
+      if (generatedSince(before)) { send({ kind: "asked", ok: true }); return; }
     }
+    const after = apiCalls.slice(before).map((c) =>
+      `${c.method} ${c.url.replace(location.origin, "")}`).join(" / ");
+    send({ kind: "asked", ok: false,
+           why: `押しても申し込みが出ませんでした（押したあとの通信：${after || "なし"}）` });
   }
 
   // ---- ダウンロード履歴（/rpp/download） ----
