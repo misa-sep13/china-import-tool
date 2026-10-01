@@ -63,6 +63,12 @@
 
   // 画面が出している通信。どこを叩けばレポートが作れるのかを知るために残す
   const traffic = [];
+  const apiJson = [];   // /rpp/api/ の応答。履歴の中身がここに入っている
+  const keepJson = (url, text) => {
+    if (!/\/rpp\/api\//.test(String(url))) return;
+    apiJson.push({ url: String(url).slice(0, 160), body: String(text).slice(0, 6000) });
+    if (apiJson.length > 6) apiJson.shift();
+  };
   const logReq = (method, url, status, ctype) => {
     traffic.push(`${method} ${String(url).slice(0, 160)} → ${status || "?"} ${ctype || ""}`);
     if (traffic.length > 60) traffic.shift();
@@ -117,6 +123,9 @@
         const cdisp = res.headers.get("content-disposition") || "";
         const method = (args[1] && args[1].method) || "GET";
         logReq(method, url, res.status, ctype);
+        if (ctype.includes("json")) {
+          res.clone().text().then((t) => keepJson(url, t)).catch(() => {});
+        }
         if (looksAttachment(ctype, cdisp)) {
           res.clone().arrayBuffer().then((buf) => {
             if (looksTable(buf)) offer(buf, nameFrom(cdisp, url), url, null);
@@ -146,6 +155,10 @@
         const cdisp = this.getResponseHeader("content-disposition") || "";
         if (this.__rmsReq) {
           logReq(this.__rmsReq.method, this.__rmsReq.url, this.status, ctype);
+          if (ctype.includes("json") &&
+              (this.responseType === "" || this.responseType === "text")) {
+            keepJson(this.__rmsReq.url, this.responseText);
+          }
         }
         // XHRの文字列は文字化けしていることがあるので、そのまま使わず取り直す
         if (looksAttachment(ctype, cdisp) && this.__rmsReq) replay(this.__rmsReq, true);
@@ -278,11 +291,39 @@
     return seen.size - was;
   }
 
+  // 控えたJSONの中から、ファイルらしいURLを拾う
+  function urlsFromJson() {
+    const out = [];
+    const walk = (v) => {
+      if (typeof v === "string") {
+        if (/^https?:\/\//.test(v) &&
+            /\.(zip|csv|tsv|xlsx?)(\?|$)/i.test(v)) out.push(v);
+        else if (/^\/[^\s"]*\.(zip|csv|tsv|xlsx?)(\?|$)/i.test(v)) {
+          out.push(new URL(v, location.origin).href);
+        }
+      } else if (v && typeof v === "object") {
+        Object.values(v).forEach(walk);
+      }
+    };
+    apiJson.forEach((a) => {
+      try { walk(JSON.parse(a.body)); } catch (e) {}
+    });
+    return Array.from(new Set(out));
+  }
+
   async function grabHistory(limit, since) {
     const max = limit || 6;
     // 申し込んだ直後なら、出来上がるまで待つ
     const deadline = since ? Date.now() + 4 * 60 * 1000 : 0;
     for (;;) {
+      const direct = urlsFromJson().slice(0, max);
+      if (direct.length) {
+        let got = 0;
+        for (const u of direct) {
+          if (await replay({ url: u, method: "GET" }, true)) got++;
+        }
+        if (got) { send({ kind: "auto-done", got }); return; }
+      }
       const found = rows(since).slice(0, max);
       if (found.length) {
         const got = await take(found);
@@ -330,6 +371,7 @@
                 ? `${e.value}${e.checked ? "(選択中)" : ""}` : e.value}`
               .slice(0, 60)) } : null,
           traffic,
+          apiJson,
           links: Array.from(document.querySelectorAll("a"))
             .filter((a) => squash(a.textContent).includes("ダウンロード"))
             .slice(0, 6).map((a) => (a.outerHTML || "").slice(0, 200)),
