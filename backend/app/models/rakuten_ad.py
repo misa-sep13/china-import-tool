@@ -71,9 +71,10 @@ class RakutenAdItemDaily(Base):
     商品単位で起きるので、見張るにはこの粒度が要る。
     """
     __tablename__ = "rakuten_ad_item_daily"
+    # day は index=True で自動的に ix_rakuten_ad_item_daily_day が作られる。
+    # ここで同じ名前のIndexを足すと名前がぶつかって起動できなくなる
     __table_args__ = (
         UniqueConstraint("day", "manage_number", name="uq_rakuten_ad_item_daily"),
-        Index("ix_rakuten_ad_item_daily_day", "day"),
     )
 
     id = Column(Integer, primary_key=True)
