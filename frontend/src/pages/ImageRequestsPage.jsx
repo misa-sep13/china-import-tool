@@ -274,7 +274,7 @@ export default function ImageRequestsPage({ share = '' }) {
                       {r.ref_url && (
                         <a href={r.ref_url} target="_blank" rel="noreferrer"
                           style={{ fontSize: 11 }}
-                          title="競合のAmazon商品ページ">競合URL</a>
+                          title="競合のAmazon商品ページ">セラー</a>
                       )}
                     </div>
                   </td>
