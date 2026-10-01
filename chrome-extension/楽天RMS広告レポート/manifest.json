@@ -2,16 +2,12 @@
   "manifest_version": 3,
   "name": "楽天RMS広告レポート取り込み",
   "version": "1.0",
-  "description": "RMSの広告（RPP）パフォーマンスレポートを落としたときに、同じCSVを輸入管理ツールへ自動で送る",
+  "description": "楽天RMSの広告（RPP）の実績を、画面を触らずに輸入管理ツールへ取り込む",
   "permissions": [
     "storage"
   ],
   "host_permissions": [
     "https://ad.rms.rakuten.co.jp/*",
-        "https://rms.rakuten.co.jp/*",
-    "https://adm.rakuten.co.jp/*",
-    "https://rpp.rakuten.co.jp/*",
-    "https://ad-rpp.rakuten.co.jp/*",
     "https://china-import-tool.onrender.com/*"
   ],
   "background": {
@@ -20,27 +16,12 @@
   "content_scripts": [
     {
       "matches": [
-        "https://ad.rms.rakuten.co.jp/*",
-        "https://rms.rakuten.co.jp/*",
-        "https://adm.rakuten.co.jp/*",
-        "https://rpp.rakuten.co.jp/*",
-        "https://ad-rpp.rakuten.co.jp/*"
+        "https://ad.rms.rakuten.co.jp/*"
       ],
-      "js": ["rms-ads.js"],
-      "run_at": "document_start",
-      "all_frames": true
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["inject.js"],
-      "matches": [
-        "https://ad.rms.rakuten.co.jp/*",
-        "https://rms.rakuten.co.jp/*",
-        "https://adm.rakuten.co.jp/*",
-        "https://rpp.rakuten.co.jp/*",
-        "https://ad-rpp.rakuten.co.jp/*"
-      ]
+      "js": [
+        "rms-ads.js"
+      ],
+      "run_at": "document_idle"
     }
   ]
 }

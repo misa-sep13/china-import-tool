@@ -1,131 +1,196 @@
-// RMSの広告（RPP）パフォーマンスレポートを落としたときに、同じCSVを
-// 輸入管理ツールへ送る。落としたファイルを自分で開いて入れ直す手間を
-// 無くすためのもの。
+// 楽天RMSの広告（RPP）の実績を、輸入管理ツールへ取り込む。
 //
-// 取るのは「ダウンロード」を押したときだけ。押していないのに裏で
-// レポートを作りに行くようなことはしない。
+// 画面を触らずに、画面が使っているのと同じAPIをそのまま呼ぶ。
+//   ・毎日の消化 … POST /rpp/api/reports/search（集計単位=すべての広告、日ごと）
+//   ・商品ごと   … POST /rpp/api/reports/downloadAsync で全商品レポートを作らせ、
+//                  GET /rpp/api/download/list で出来上がりを待ち、
+//                  GET /rpp/api/download/report でZIPを受け取る
+//
+// 商品ごとを検索APIで直に取れないのは、絞り込みが「実績額TOP10」までしか
+// 選べないため。全商品の数字は全商品レポート（CSV）にしか入っていない。
+//
+// 画面の選択（集計単位・集計期間）は一切書き換えない。送る中身を変えるだけ。
 (function () {
   const DEFAULT_BACKEND = "https://china-import-tool.onrender.com";
-  const isTop = window.top === window;
-
-  // ページ側のfetch/XHR・フォーム送信を見るスクリプトを差し込む
-  const s = document.createElement("script");
-  s.src = chrome.runtime.getURL("inject.js");
-  (document.head || document.documentElement).appendChild(s);
-  s.onload = () => s.remove();
+  const ORIGIN = location.origin;
+  const REPORT_TYPE_ALL_ITEM = 13;   // 全商品レポート
+  const STATUS_DONE = 2;             // 完了
+  const GAP_MS = 6 * 60 * 60 * 1000; // 同じ種類は6時間に1回まで
 
   let panel = null;
-  let status = "";          // 画面に出す一言
-  let pending = null;       // まだ送っていないファイル
-  let lastRequest = null;   // 「もう一度」で使う、直前のダウンロード条件
-  const notes = [];         // 取れなかったときの手がかり
-  let running = [];         // いま取りに行っている種類
-  let dumpWaiter = null;    // 画面側が応えたかどうかの確認用
+  let status = "";
+  let busy = false;
+  const notes = [];
 
-  const setStatus = (text) => { status = text; render(); };
+  const setStatus = (t) => { status = t; render(); };
+  const note = (t) => { notes.push(String(t).slice(0, 300)); };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // 画面からもらった実績をそのままツールへ
-  async function sendRows(payload) {
+  const ymd = (d) => `${d.getFullYear()}-` +
+    `${String(d.getMonth() + 1).padStart(2, "0")}-` +
+    `${String(d.getDate()).padStart(2, "0")}`;
+
+  // ---- 楽天のAPIを呼ぶ ----
+
+  // 画面はこの合言葉をヘッダに付けている。付けないと403で弾かれる
+  const xsrf = () => {
+    const m = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : "";
+  };
+
+  const headers = () => ({
+    "Content-Type": "application/json",
+    Accept: "application/json, text/plain, */*",
+    "X-XSRF-TOKEN": xsrf(),
+  });
+
+  // 画面が送っているのと同じ形。表示／出力項目は全部入りにしてある
+  const condition = (patch) => Object.assign({
+    page: 1, selectionType: 1, periodType: 0,
+    startDate: "", endDate: "",
+    reportFilter: 1, campaignType: "1", rankType: 1,
+    allUsers: true, newUsers: true, existingUsers: true,
+    noOfClicks: true, adsalesBefore: true, cpc: true,
+    h12: true, h720: true,
+    gms: true, roas: true, cv: true, cvr: true, cpa: true,
+  }, patch);
+
+  async function post(path, body) {
+    const res = await fetch(ORIGIN + path, {
+      method: "POST", credentials: "include",
+      headers: headers(), body: JSON.stringify(body),
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || (json && json.errors && json.errors.length)) {
+      const msg = json && json.errors && json.errors[0]
+        ? String(json.errors[0].message || "").split(String.fromCharCode(10))[0]
+        : `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    return json;
+  }
+
+  async function get(path) {
+    const res = await fetch(ORIGIN + path,
+      { credentials: "include", headers: headers() });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res;
+  }
+
+  // ---- 毎日の消化 ----
+
+  async function fetchDaily(from, to) {
+    const json = await post("/rpp/api/reports/search",
+      condition({ selectionType: 1, periodType: 2,
+                  startDate: from, endDate: to }));
+    return ((json || {}).data || {}).rppReports || [];
+  }
+
+  // ---- 商品ごと（全商品レポート） ----
+
+  async function historyList() {
+    const res = await get("/rpp/api/download/list");
+    const data = (await res.json()).data || {};
+    return [].concat(data.userHistoryList || [], data.batchHistoryList || []);
+  }
+
+  const isAllItem = (r) => Number(r.reportType) === REPORT_TYPE_ALL_ITEM;
+
+  async function makeAllItemReport(from, to) {
+    const before = new Set((await historyList()).map((r) => r.id));
+    await post("/rpp/api/reports/downloadAsync",
+      condition({ selectionType: 3, periodType: 0,
+                  startDate: from, endDate: to }));
+
+    // 作られるまで待つ。たいてい十数秒で出来る
+    for (let i = 0; i < 40; i++) {
+      await sleep(5000);
+      const list = await historyList();
+      const fresh = list.find((r) => !before.has(r.id) && isAllItem(r)
+                                     && Number(r.status) === STATUS_DONE);
+      if (fresh) return fresh;
+      setStatus(`全商品レポートが出来るのを待っています…（${(i + 1) * 5}秒）`);
+    }
+    throw new Error("全商品レポートが出来上がりませんでした");
+  }
+
+  async function downloadReport(item) {
+    const res = await get(
+      `/rpp/api/download/report?downloadId=${item.id}` +
+      `&reportType=${item.reportType}`);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    let s = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return { name: `rpp_item_report_${item.id}.zip`, b64: btoa(s) };
+  }
+
+  // ---- ツールへ送る ----
+
+  async function toTool(type, payload) {
     const cfg = await chrome.storage.local.get(["backend", "token"]);
-    if (!cfg.token) { setStatus("トークンが未設定です"); return; }
-    const label = payload.kind === "product" ? "商品ごと" : "毎日の消化";
-    setStatus(`${label} ${payload.rows.length}件を送っています…`);
-    try {
-      const res = await chrome.runtime.sendMessage({
-        type: "rows",
-        backend: cfg.backend || DEFAULT_BACKEND,
-        token: cfg.token,
-        payload,
-      });
-      if (res && res.ok) {
-        const d = res.data || {};
-        setStatus(`取り込みました：${label} ${d.saved}行`);
-        const cur = (await chrome.storage.local.get(["auto_last"])).auto_last || {};
-        cur[payload.kind] = Date.now();
-        await chrome.storage.local.set({ auto_last: cur, auto_cooldown: 0 });
-      } else {
-        setStatus(`送信できませんでした：${(res && res.error) || "理由不明"}`);
-      }
-    } catch (e) {
-      setStatus(`送信できませんでした：${e}`);
-    }
+    if (!cfg.token) throw new Error("トークンが未設定です");
+    const res = await chrome.runtime.sendMessage(Object.assign({
+      type, backend: cfg.backend || DEFAULT_BACKEND, token: cfg.token,
+    }, payload));
+    if (!res || !res.ok) throw new Error((res && res.error) || "理由不明");
+    return res.data || {};
   }
 
-  async function upload(file) {
-    const cfg = await chrome.storage.local.get(["backend", "token", "sent"]);
-    const sent = cfg.sent || [];
-    if (sent.includes(file.name)) {
-      setStatus(`${file.name} は取り込み済みです`);
-      return;
-    }
+  // ---- ひととおり ----
+
+  async function run(force) {
+    if (busy) return;
+    const cfg = await chrome.storage.local.get(["token", "auto", "auto_last"]);
     if (!cfg.token) {
-      pending = file;
-      setStatus("トークンが未設定です。「設定」から入れてください");
+      if (force) setStatus("先に「設定」でトークンを入れてください");
       return;
     }
-    setStatus(`${file.name} を送っています…`);
+    if (!force && cfg.auto === false) return;
+
+    const last = cfg.auto_last || {};
+    const now = Date.now();
+    const want = ["daily", "product"].filter(
+      (k) => force || now - (last[k] || 0) >= GAP_MS);
+    if (!want.length) return;
+
+    // 集計は昨日まで。毎日の消化は3か月以内、商品ごとは今月ぶん
+    const to = new Date(); to.setDate(to.getDate() - 1);
+    const dailyFrom = new Date(to); dailyFrom.setDate(dailyFrom.getDate() - 87);
+    const monthFrom = new Date(to.getFullYear(), to.getMonth(), 1);
+    const done = Object.assign({}, last);
+
+    busy = true;
+    render();
     try {
-      const res = await chrome.runtime.sendMessage({
-        type: "upload",
-        backend: cfg.backend || DEFAULT_BACKEND,
-        token: cfg.token,
-        name: file.name,
-        b64: file.b64,
-      });
-      if (res && res.ok) {
-        const d = res.data || {};
-        const kind = d.kind === "product" ? "商品ごと" : "毎日の消化";
-        const missing = (d.missing || []).length
-          ? `／見つからない列：${d.missing.join("、")}` : "";
-        pending = null;
-        await chrome.storage.local.set({ sent: sent.concat([file.name]).slice(-50) });
-        setStatus(`取り込みました：${kind} ${d.saved}行${missing}`);
-      } else {
-        pending = file;
-        setStatus(`送信できませんでした：${(res && res.error) || "理由不明"}`);
+      if (want.includes("daily")) {
+        setStatus("毎日の消化をもらっています…");
+        const rows = await fetchDaily(ymd(dailyFrom), ymd(to));
+        const r = await toTool("rows", { payload: { kind: "daily", rows } });
+        done.daily = Date.now();
+        setStatus(`取り込みました：毎日の消化 ${r.saved}行`);
       }
+      if (want.includes("product")) {
+        setStatus("全商品レポートを申し込んでいます…");
+        const item = await makeAllItemReport(ymd(monthFrom), ymd(to));
+        setStatus("全商品レポートを受け取っています…");
+        const file = await downloadReport(item);
+        const r = await toTool("upload", file);
+        done.product = Date.now();
+        setStatus(`取り込みました：商品ごと ${r.saved}行`);
+      }
+      await chrome.storage.local.set({ auto_last: done });
     } catch (e) {
-      pending = file;
-      setStatus(`送信できませんでした：${e}`);
+      note(e.message || e);
+      setStatus(`取り込めませんでした：${e.message || e}`);
+    } finally {
+      busy = false;
+      render();
     }
   }
 
-  window.addEventListener("message", async (ev) => {
-    const d = ev.data;
-    if (!d || !d.__rmsAds) return;
-    if (d.kind === "note") { notes.push(d.text); render(); return; }
-    if (d.kind === "progress") { setStatus(d.text); return; }
-    if (d.kind === "rows" && d.payload) { sendRows(d.payload); return; }
-    if (d.kind !== "file") return;
-
-    if (d.request) {
-      lastRequest = d.request;
-      // FormDataは持ち回せないので、文字列で組めたものだけ覚えておく
-      if (typeof lastRequest.body !== "string" && lastRequest.body != null) {
-        lastRequest = null;
-      } else {
-        chrome.storage.local.set({ last_request: lastRequest });
-      }
-    }
-
-    const cfg = await chrome.storage.local.get(["auto"]);
-    const file = { name: d.name, b64: d.b64, size: d.size };
-    if (cfg.auto === false) {
-      pending = file;
-      setStatus(`${d.name} を受け取りました。「ツールに送る」を押してください`);
-    } else {
-      upload(file);
-    }
-  });
-
-  // 別のフレームで送ったときも、上のパネルに結果を出す
-  chrome.storage.onChanged.addListener((changes) => {
-    if (changes.last_result && isTop) {
-      const r = changes.last_result.newValue || {};
-      if (r.text) setStatus(r.text);
-    }
-    if (changes.last_request) lastRequest = changes.last_request.newValue || null;
-  });
+  // ---- 画面の隅に出す小さな操作盤 ----
 
   async function configure() {
     const cfg = await chrome.storage.local.get(["backend", "token"]);
@@ -134,42 +199,24 @@
     const token = prompt("サービストークン（AUTH_SERVICE_TOKEN）", cfg.token || "");
     if (token === null) return;
     await chrome.storage.local.set({
-      backend: backend.trim().replace(/\/+$/, ""),
-      token: token.trim(),
-    });
+      backend: backend.trim().replace(/\/+$/, ""), token: token.trim() });
     setStatus("保存しました");
-    if (pending) upload(pending);
-  }
-
-  function again() {
-    if (!lastRequest) return;
-    setStatus("前と同じ条件で取り直しています…");
-    window.postMessage({ __rmsAdsReplay: true, request: lastRequest }, "*");
-  }
-
-  function copyDiagnostics() {
-    // 画面側の作り（ボタン・フォーム・履歴のリンク）も一緒に渡す。
-    // ここが分からないと自動取り込みを直せない
-    let answered = false;
-    dumpWaiter = () => { answered = true; };
-    window.postMessage({ __rmsAdsDump: true }, "*");
-    setTimeout(() => {
-      if (answered) return;
-      // 画面側のスクリプトが動いていない。その事実ごと渡す
-      const text = ["画面側のスクリプトが応えません（inject.jsが動いていない）",
-        location.href, `いまの表示: ${status}`]
-        .concat(notes.slice(-20)).join(String.fromCharCode(10));
-      navigator.clipboard.writeText(text).then(
-        () => setStatus("状況をコピーしました（画面側が応えていません）"),
-        () => alert(text));
-    }, 1500);
   }
 
   async function toggleAuto() {
     const cfg = await chrome.storage.local.get(["auto"]);
     const next = cfg.auto === false;
     await chrome.storage.local.set({ auto: next });
-    setStatus(next ? "この画面を開いたら自動で取り込みます" : "自動取り込みを止めました");
+    setStatus(next ? "広告の画面を開いたら自動で取り込みます"
+                   : "自動取り込みを止めました");
+  }
+
+  function copyNotes() {
+    const text = [location.href, `いまの表示: ${status}`,
+      `合言葉: ${xsrf() ? "あり" : "なし"}`]
+      .concat(notes.slice(-20)).join(String.fromCharCode(10));
+    navigator.clipboard.writeText(text).then(
+      () => setStatus("状況をコピーしました"), () => alert(text));
   }
 
   function mk(label, bg, fn) {
@@ -182,7 +229,7 @@
   }
 
   async function render() {
-    if (!isTop || !document.body) return;
+    if (!document.body) return;
     const cfg = await chrome.storage.local.get(["token", "auto"]);
     if (!panel) {
       panel = document.createElement("div");
@@ -202,95 +249,25 @@
 
     const msg = document.createElement("div");
     msg.style.cssText = "color:#475569;margin-bottom:6px;font-size:12px";
-    msg.textContent = status ||
-      (cfg.token ? "パフォーマンスレポートの画面を開くと自動で取り込みます"
-                 : "まず「設定」でトークンを入れてください");
+    msg.textContent = status || (cfg.token
+      ? "広告の画面を開くと、実績をツールへ取り込みます"
+      : "まず「設定」でトークンを入れてください");
     panel.appendChild(msg);
 
     const row = document.createElement("div");
     row.style.cssText = "display:flex;gap:6px;flex-wrap:wrap";
-    if (pending) row.appendChild(mk("ツールに送る", "#2563eb", () => upload(pending)));
-    if (lastRequest) row.appendChild(mk("前と同じ条件でもう一度", "#0f766e", again));
-    row.appendChild(mk("今すぐ取り込む", "#2563eb", () => maybeAuto(true)));
+    row.appendChild(mk(busy ? "取り込み中…" : "今すぐ取り込む",
+      busy ? "#94a3b8" : "#2563eb", () => run(true)));
     row.appendChild(mk(cfg.auto === false ? "自動：切" : "自動：入",
       cfg.auto === false ? "#94a3b8" : "#16a34a", toggleAuto));
     row.appendChild(mk("設定", "#64748b", configure));
-    row.appendChild(mk("状況をコピー", "#b45309", copyDiagnostics));
+    row.appendChild(mk("状況をコピー", "#b45309", copyNotes));
     panel.appendChild(row);
   }
 
-  // ---- 画面を開いたら自分で取りに行く ----
-  //
-  // 流れはこう：
-  //   レポート画面 → 検索してダウンロードを押す → ダウンロード履歴へ移る
-  //   → 出来上がるのを待って取り込む
-  // 履歴の画面を開いただけのときは、並んでいるものをそのまま取り込む。
-  const GAP_MS = 6 * 60 * 60 * 1000;
-  const HISTORY = "/rpp/download";
-
-  const ymd = (d) => `${d.getFullYear()}-` +
-    `${String(d.getMonth() + 1).padStart(2, "0")}-` +
-    `${String(d.getDate()).padStart(2, "0")}`;
-
-  const onHistory = () => /\/rpp\/download(\/|$|\?)/.test(location.href);
-  const onReports = () => /\/rpp\/reports/.test(location.href);
-
-  async function maybeAuto(force) {
-    const cfg = await chrome.storage.local.get(
-      ["token", "auto", "auto_last", "auto_cooldown", "pending"]);
-    if (!cfg.token) {
-      if (force) setStatus("先に「設定」でトークンを入れてください");
-      return;
-    }
-    if (!force && cfg.auto === false) return;
-
-    if (onHistory()) {
-      // 申し込んだ直後に移ってきたのなら、そのぶんが出来上がるのを待つ
-      const p = cfg.pending;
-      const fresh = p && Date.now() - p.at < 10 * 60 * 1000;
-      await chrome.storage.local.remove("pending");
-      setStatus(fresh ? "出来上がるのを待っています…"
-                      : "履歴にあるレポートを取り込んでいます…");
-      running = ["product"];
-      window.postMessage({ __rmsAdsHistory: true, limit: fresh ? 2 : 6,
-                           since: fresh ? p.at - 60000 : 0 }, "*");
-      return;
-    }
-    if (!onReports()) return;
-
-    const last = cfg.auto_last || {};
-    const now = Date.now();
-    // 失敗した直後に何度も申し込まないための間隔
-    if (!force && now < (cfg.auto_cooldown || 0)) return;
-    if (!force && now - (last.product || 0) < GAP_MS
-        && now - (last.daily || 0) < GAP_MS) return;
-
-    running = ["product", "daily"];
-    await chrome.storage.local.set({ auto_cooldown: now + 15 * 60 * 1000 });
-    setStatus("実績をもらっています…");
-
-    // 集計は昨日まで。毎日の消化は3か月以内、商品ごとは月単位
-    const to = new Date(); to.setDate(to.getDate() - 1);
-    const dailyFrom = new Date(to); dailyFrom.setDate(dailyFrom.getDate() - 88);
-    const productFrom = new Date(to.getFullYear(), to.getMonth(), 1);
-    window.postMessage({ __rmsAdsFetch: true, range: {
-      to: ymd(to), daily_from: ymd(dailyFrom), product_from: ymd(productFrom),
-    } }, "*");
-  }
-
-  // この画面は中で切り替わる作りなので、開き直さずに行き来することがある。
-  // URLを見張って、移った先でも動くようにする
-  let seenUrl = location.href;
-  setInterval(() => {
-    if (location.href === seenUrl) return;
-    seenUrl = location.href;
-    status = "";
-    maybeAuto(false);
-  }, 2000);
-
   function start() {
     render();
-    maybeAuto();
+    run(false);
   }
 
   if (document.readyState === "loading") {
