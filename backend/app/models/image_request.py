@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime
+from sqlalchemy import (Column, Integer, String, Text, Boolean, DateTime,
+                        LargeBinary)
 from sqlalchemy.sql import func
 from app.core.database import Base
 
@@ -51,3 +52,25 @@ class ImageRequest(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(),
                         onupdate=func.now())
+
+
+class ImageRequestPhoto(Base):
+    """画像依頼に添える参考画像。
+
+    「この色で」「この向きで」を言葉で説明するより、現物の写真を1枚
+    見せたほうが早い。外注さんは共有URLでこの一覧を見るので、
+    そこから見えるところに置く。
+
+    保存するときに小さくしている（表示用は長辺1400px・一覧の縮小は
+    長辺240px）。元のままだと通信量がすぐ膨らむため。
+    """
+    __tablename__ = "image_request_photos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    request_id = Column(Integer, index=True, nullable=False)
+    name = Column(String)                      # 元のファイル名
+    content_type = Column(String, default="image/jpeg")
+    data = Column(LargeBinary)                 # 表示用
+    thumb = Column(LargeBinary)                # 一覧に並べる縮小
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

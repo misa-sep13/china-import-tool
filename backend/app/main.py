@@ -1506,6 +1506,13 @@ async def auth_middleware(request: _StarletteRequest, call_next):
         if _share_ok(request, "x-image-share"):
             return await call_next(request)
 
+    # 画像依頼の参考画像。<img src> で読むのでヘッダーを付けられない。
+    # 中身は競合や1688の商品写真で、もともと外注さんに共有URLで
+    # 渡しているものなので、画像そのものは通す（一覧や中身のAPIは
+    # 今までどおり合言葉か、ログインが要る）
+    if request.method == "GET" and path.startswith("/api/image-requests/photo/"):
+        return await call_next(request)
+
     # 就労支援の公開ページに出す商品写真。一覧そのものが公開なので、
     # 写真だけを隠しても意味がない。ブラウザに任せて取り直させないためのもの
     if (request.method == "GET" and path.startswith("/api/welfare/")

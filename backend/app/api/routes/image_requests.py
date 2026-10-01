@@ -83,7 +83,22 @@ def list_requests(include_done: int = 0, db: Session = Depends(get_db)):
     done = (db.query(ImageRequest)
             .filter(ImageRequest.is_deleted == False,
                     ImageRequest.status == "done").count())
-    return {"items": [_out(r) for r in rows], "done_count": done,
+    # 参考画像のidだけ添える。中身は <img> が別で読みに来る
+    from app.models.image_request import ImageRequestPhoto as _Photo
+    photos = {}
+    ids = [r.id for r in rows]
+    if ids:
+        for pid, rid in (db.query(_Photo.id, _Photo.request_id)
+                         .filter(_Photo.request_id.in_(ids))
+                         .order_by(_Photo.sort_order, _Photo.id).all()):
+            photos.setdefault(rid, []).append(pid)
+
+    items = []
+    for r in rows:
+        d = _out(r)
+        d["photos"] = photos.get(r.id, [])
+        items.append(d)
+    return {"items": items, "done_count": done,
             "statuses": [{"value": v, "label": STATUS_LABEL[v]} for v in STATUSES]}
 
 
@@ -228,5 +243,124 @@ def delete_request(req_id: int, request: Request, db: Session = Depends(get_db))
     if not row:
         raise HTTPException(404, "見つかりません")
     row.is_deleted = True
+    db.commit()
+    return {"ok": True}
+
+
+# ============================================================
+# 参考画像
+# ============================================================
+# 「この色で」を言葉で説明するより、現物を1枚見せたほうが早い。
+# 外注さんは共有URLでこの一覧を見るので、そこから見えるところに置く。
+#
+# 画像は <img src="..."> で読まれる。ヘッダーを付けられないので、
+# 合言葉はURLの ?share= に付ける（main.py の middleware がそれを見る）。
+
+import io as _io
+
+from fastapi import File, Response, UploadFile
+from PIL import Image
+
+from app.models.image_request import ImageRequestPhoto
+
+_VIEW_MAX = 1400   # 開いて見るときの長辺
+_THUMB_MAX = 240   # 一覧に並べるときの長辺
+_MAX_UPLOAD = 20 * 1024 * 1024
+
+
+def _shrink(raw: bytes, longest: int) -> bytes:
+    """長辺を揃えてJPEGにする。元のままだと通信量がすぐ膨らむ。"""
+    im = Image.open(_io.BytesIO(raw))
+    if im.mode not in ("RGB", "L"):
+        im = im.convert("RGB")
+    w, h = im.size
+    if max(w, h) > longest:
+        if w >= h:
+            im = im.resize((longest, max(1, round(h * longest / w))))
+        else:
+            im = im.resize((max(1, round(w * longest / h)), longest))
+    buf = _io.BytesIO()
+    im.save(buf, format="JPEG", quality=85, optimize=True)
+    return buf.getvalue()
+
+
+def _photo_out(p: ImageRequestPhoto) -> dict:
+    return {"id": p.id, "name": p.name or "",
+            "created_at": p.created_at.isoformat() if p.created_at else None}
+
+
+@router.get("/{req_id:int}/photos")
+def list_photos(req_id: int, db: Session = Depends(get_db)):
+    """その依頼に付いている参考画像の一覧（中身は入れない）。"""
+    rows = (db.query(ImageRequestPhoto)
+            .filter(ImageRequestPhoto.request_id == req_id)
+            .order_by(ImageRequestPhoto.sort_order, ImageRequestPhoto.id).all())
+    return {"items": [_photo_out(p) for p in rows]}
+
+
+@router.post("/{req_id:int}/photos")
+async def add_photos(req_id: int, request: Request,
+                     files: list[UploadFile] = File(...),
+                     db: Session = Depends(get_db)):
+    """参考画像を足す。外注さんの画面からは足せない。"""
+    if _is_share(request):
+        raise HTTPException(403, "この画面からは画像を足せません")
+    req = db.query(ImageRequest).filter(ImageRequest.id == req_id).first()
+    if not req:
+        raise HTTPException(404, "依頼が見つかりません")
+
+    last = (db.query(sa_func.max(ImageRequestPhoto.sort_order))
+            .filter(ImageRequestPhoto.request_id == req_id).scalar() or 0)
+    saved = []
+    for f in files:
+        raw = await f.read()
+        if not raw:
+            continue
+        if len(raw) > _MAX_UPLOAD:
+            raise HTTPException(400, f"{f.filename} が大きすぎます（20MBまで）")
+        try:
+            view = _shrink(raw, _VIEW_MAX)
+            thumb = _shrink(raw, _THUMB_MAX)
+        except Exception:
+            raise HTTPException(400, f"{f.filename} は画像として読めませんでした")
+        last += 1
+        p = ImageRequestPhoto(request_id=req_id, name=(f.filename or "")[:200],
+                              content_type="image/jpeg", data=view,
+                              thumb=thumb, sort_order=last)
+        db.add(p)
+        db.flush()
+        saved.append(_photo_out(p))
+    db.commit()
+    return {"items": saved}
+
+
+@router.get("/photo/{photo_id:int}")
+def get_photo(photo_id: int, thumb: int = 0, db: Session = Depends(get_db)):
+    """画像そのもの。<img src> から読まれる。
+
+    中身は入れ替わらないので、ブラウザに長く持たせて読み直しを減らす。
+    """
+    p = (db.query(ImageRequestPhoto)
+         .filter(ImageRequestPhoto.id == photo_id).first())
+    if not p:
+        raise HTTPException(404, "画像が見つかりません")
+    body = (p.thumb if thumb else p.data) or p.data
+    if not body:
+        raise HTTPException(404, "画像が空です")
+    return Response(content=body, media_type=p.content_type or "image/jpeg",
+                    headers={"Cache-Control": "public, max-age=604800"})
+
+
+@router.delete("/photo/{photo_id:int}")
+def delete_photo(photo_id: int, request: Request,
+                 db: Session = Depends(get_db)):
+    """参考画像を消す。外注さんの画面からは消せない。"""
+    if _is_share(request):
+        raise HTTPException(403, "この画面からは画像を消せません")
+    p = (db.query(ImageRequestPhoto)
+         .filter(ImageRequestPhoto.id == photo_id).first())
+    if not p:
+        raise HTTPException(404, "画像が見つかりません")
+    db.delete(p)
     db.commit()
     return {"ok": True}

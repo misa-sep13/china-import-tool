@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import api from '../api/client'
+import api, { mediaUrl } from '../api/client'
 import { matchesQuery } from '../searchUtil'
 
 /**
@@ -39,6 +39,7 @@ export default function ImageRequestsPage({ share = '' }) {
   const [q, setQ] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [big, setBig] = useState(null)   // 拡大して見ている画像
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ sku: '', name: '', detail: '', ref_url: '',
     main_url: '', assignee: '', due_date: '', source: 'rakuten' })
@@ -191,7 +192,7 @@ export default function ImageRequestsPage({ share = '' }) {
           <thead>
             <tr>
               {[...(share ? [] : ['並び']), '依頼日', '', 'SKU', '商品名',
-                '商品補足', '進み具合', '連絡', ''].map((h, i) => (
+                '参考画像', '商品補足', '進み具合', '連絡', ''].map((h, i) => (
                   <th key={i} style={th}>{h}</th>
                 ))}
             </tr>
@@ -199,7 +200,7 @@ export default function ImageRequestsPage({ share = '' }) {
           <tbody>
             {shown.length === 0 && (
               <tr><td style={{ ...td, color: C.sub, padding: 20 }}
-                colSpan={share ? 8 : 9}>
+                colSpan={share ? 9 : 10}>
                 {q ? `「${q}」に当てはまる依頼はありません。`
                   : '作業中の依頼はありません。'}
               </td></tr>
@@ -260,6 +261,10 @@ export default function ImageRequestsPage({ share = '' }) {
                     </div>
                   </td>
                   {/* デザイナーに伝えたいこと。シートの「商品補足」がそのまま入る */}
+                  <td style={{ ...td, width: 150 }}>
+                    <Photos r={r} share={share} cfg={cfg} reload={load}
+                      setErr={setErr} onOpen={setBig} />
+                  </td>
                   <td style={{ ...td, width: '34%' }}>
                     {share ? (
                       <span style={{ whiteSpace: 'pre-wrap' }}>{r.detail || '—'}</span>
@@ -306,13 +311,116 @@ export default function ImageRequestsPage({ share = '' }) {
         </table>
       </div>
 
+      {/* 拡大表示。どこを押しても閉じる */}
+      {big && (
+        <div onClick={() => setBig(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, cursor: 'zoom-out',
+            background: 'rgba(15,23,42,.82)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <img src={big} alt="参考画像"
+            style={{ maxWidth: '96%', maxHeight: '96%', borderRadius: 6,
+              boxShadow: '0 8px 40px rgba(0,0,0,.5)' }} />
+        </div>
+      )}
+
       <div style={{ fontSize: 11, color: C.sub, marginTop: 8, lineHeight: 1.8 }}>
         新しく足したものが下に並びます。▲▼ で順番を入れ替えられます。
         進み具合を「完了」にすると、この一覧から消えます（「完了したものも出す」で戻せます）。
+        <br />
+        参考画像はクリックで拡大できます。
         {!share && <><br />
+          参考画像は「＋」から選ぶか、枠へドラッグ＆ドロップで入ります（まとめて可）。
+          外注さんの画面にも出るので、色や向きを見せるのに使えます。<br />
           リサーチシートで「💬 Chatworkで送る」を押すと、ここに自動で1件増えます。
         </>}
       </div>
+    </div>
+  )
+}
+
+/**
+ * 参考画像。
+ *
+ * 「この色で」を言葉で説明するより、現物を1枚見せたほうが早い。
+ * 外注さんの画面（share）では見るだけ。
+ *
+ * 画像そのものはURLで読ませてブラウザに任せている（一覧のJSONに
+ * 混ぜると、開くたびに数MBを送ることになる）。
+ */
+function Photos({ r, share, cfg, reload, setErr, onOpen }) {
+  const [busy, setBusy] = useState(false)
+  const [over, setOver] = useState(false)
+
+  const src = (id, thumb) => mediaUrl(
+    `/api/image-requests/photo/${id}${thumb ? '?thumb=1' : ''}`)
+
+  const send = async (files) => {
+    const list = [...(files || [])].filter(f => f.type.startsWith('image/'))
+    if (!list.length) return
+    setBusy(true); setErr('')
+    try {
+      const fd = new FormData()
+      list.forEach(f => fd.append('files', f))
+      await api.post(`/image-requests/${r.id}/photos`, fd, cfg())
+      await reload()
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  const remove = async (id) => {
+    if (!confirm('この参考画像を消しますか？')) return
+    setBusy(true)
+    try {
+      await api.delete(`/image-requests/photo/${id}`, cfg())
+      await reload()
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  const photos = r.photos || []
+
+  return (
+    <div
+      onDragOver={share ? undefined : e => { e.preventDefault(); setOver(true) }}
+      onDragLeave={share ? undefined : () => setOver(false)}
+      onDrop={share ? undefined : e => {
+        e.preventDefault(); setOver(false); send(e.dataTransfer.files)
+      }}
+      style={{ display: 'flex', flexWrap: 'wrap', gap: 4, minHeight: 28,
+        padding: 2, borderRadius: 4,
+        outline: over ? `2px dashed ${C.key}` : 'none',
+        background: over ? '#eff6ff' : 'transparent' }}>
+      {photos.map(id => (
+        <div key={id} style={{ position: 'relative' }}>
+          <img src={src(id, true)} alt="参考画像"
+            onClick={() => onOpen(src(id, false))}
+            style={{ width: 46, height: 46, objectFit: 'cover', borderRadius: 4,
+              border: `1px solid ${C.line}`, cursor: 'zoom-in',
+              display: 'block' }} />
+          {!share && (
+            <button onClick={() => remove(id)} title="消す" disabled={busy}
+              style={{ position: 'absolute', top: -5, right: -5, width: 16,
+                height: 16, lineHeight: '14px', padding: 0, fontSize: 11,
+                borderRadius: 8, border: `1px solid ${C.line}`,
+                background: '#fff', color: C.bad, cursor: 'pointer' }}>×</button>
+          )}
+        </div>
+      ))}
+      {!share && (
+        <label title="画像を選ぶ（ここへドラッグしても入ります）"
+          style={{ width: 46, height: 46, borderRadius: 4, cursor: 'pointer',
+            border: `1px dashed ${C.line}`, color: C.sub, fontSize: 18,
+            display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {busy ? '…' : '＋'}
+          <input type="file" accept="image/*" multiple hidden disabled={busy}
+            onChange={e => { send(e.target.files); e.target.value = '' }} />
+        </label>
+      )}
+      {share && photos.length === 0 && (
+        <span style={{ fontSize: 11, color: C.sub }}>—</span>
+      )}
     </div>
   )
 }
