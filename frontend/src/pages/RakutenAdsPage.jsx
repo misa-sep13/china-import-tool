@@ -74,9 +74,7 @@ export default function RakutenAdsPage() {
     <div style={{ padding: 2, minWidth: 0 }}>
       <h2 style={{ fontSize: 18, marginBottom: 4 }}>📣 楽天 広告管理（RPP）</h2>
       <div style={{ fontSize: 12, color: C.sub, marginBottom: 12 }}>
-        Chrome拡張「楽天RMS広告レポート取り込み」を入れておけば、
-        RMSの広告画面を開くだけでここに入ります（操作は不要）。<br />
-        下のCSV取り込みは、拡張を使わないときの手入れ用です。
+        RMSの広告画面を開くと、Chrome拡張が実績をここに入れます（操作は不要）。
       </div>
 
       {err && (
@@ -85,10 +83,13 @@ export default function RakutenAdsPage() {
           fontSize: 13 }}>{err}</div>
       )}
 
-      <div className="card" style={{ marginBottom: 12 }}>
+      {/* 普段は拡張が入れるので、CSVの手入れは畳んでおく */}
+      <details className="card" style={{ marginBottom: 12 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 12, color: C.sub }}>
+          CSVを手で取り込む（拡張を使わないとき）
+        </summary>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center',
-          flexWrap: 'wrap' }}>
-          <b style={{ fontSize: 13 }}>CSVを取り込む</b>
+          flexWrap: 'wrap', marginTop: 10 }}>
           <input type="file" accept=".csv,.xlsx,text/csv" disabled={busy}
             onChange={e => { upload(e.target.files?.[0]); e.target.value = '' }}
             style={{ fontSize: 12 }} />
@@ -122,7 +123,7 @@ export default function RakutenAdsPage() {
             </details>
           </div>
         )}
-      </div>
+      </details>
 
       <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
         {[['watch', `👀 見張り${(watch?.alerts || []).length
