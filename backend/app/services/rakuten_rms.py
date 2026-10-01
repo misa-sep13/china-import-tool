@@ -1039,30 +1039,42 @@ async def fetch_shipping_daily(service_secret: str, license_key: str,
     o_from = start - timedelta(days=ORDER_DATE_MARGIN_DAYS)
     o_to = end + timedelta(days=1)
 
+    # searchOrder は1回につき63日まで。発送日の前後に広げたぶんを足すと
+    # ひと月でも超えるので、60日ずつに区切って聞く
     order_numbers: list[str] = []
-    page = 1
-    while page <= 30:
-        body = {
-            "dateType": 1,                       # 注文日
-            "startDatetime": o_from.strftime("%Y-%m-%dT00:00:00+0900"),
-            "endDatetime": o_to.strftime("%Y-%m-%dT23:59:59+0900"),
-            "PaginationRequestModel": {"requestRecordsAmount": 1000,
-                                       "requestPage": page},
-        }
-        res = await _post_rms("/2.0/order/searchOrder", body, headers)
-        if not res.is_success:
-            break
-        data = res.json()
-        nums = []
-        for item in (data.get("orderNumberList") or []):
-            num = item if isinstance(item, str) else (item.get("orderNumber") or "")
-            if num:
-                nums.append(str(num))
-        order_numbers.extend(nums)
-        pag = data.get("PaginationResponseModel") or {}
-        if page >= (pag.get("totalPages") or 1) or not nums:
-            break
-        page += 1
+    seen: set[str] = set()
+    win_start = o_from
+    while win_start <= o_to:
+        win_end = min(o_to, win_start + timedelta(days=59))
+        page = 1
+        while page <= 30:
+            body = {
+                "dateType": 1,                       # 注文日
+                "startDatetime": win_start.strftime("%Y-%m-%dT00:00:00+0900"),
+                "endDatetime": win_end.strftime("%Y-%m-%dT23:59:59+0900"),
+                "PaginationRequestModel": {"requestRecordsAmount": 1000,
+                                           "requestPage": page},
+            }
+            res = await _post_rms("/2.0/order/searchOrder", body, headers)
+            if not res.is_success:
+                # 黙って終わると「0件」に見えて、何が起きたのか分からない
+                raise Exception(
+                    f"searchOrder HTTP {res.status_code}: {res.text[:300]}")
+            data = res.json()
+            nums = []
+            for item in (data.get("orderNumberList") or []):
+                num = item if isinstance(item, str) else (item.get("orderNumber") or "")
+                num = str(num or "")
+                if num and num not in seen:
+                    seen.add(num)
+                    nums.append(num)
+            order_numbers.extend(nums)
+            pag = data.get("PaginationResponseModel") or {}
+            if page >= (pag.get("totalPages") or 1):
+                break
+            page += 1
+            await asyncio.sleep(_API_INTERVAL_SEC)
+        win_start = win_end + timedelta(days=1)
         await asyncio.sleep(_API_INTERVAL_SEC)
 
     days: dict = {}
