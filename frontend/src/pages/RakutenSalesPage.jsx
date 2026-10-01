@@ -216,6 +216,26 @@ export default function RakutenSalesPage() {
         <Metric label="広告比率" value={fmtPct(Number(totals.sales || 0) > 0 ? totalAd / Number(totals.sales) * 100 : null)} tone={totalAd / Number(totals.sales || 1) * 100 >= 30 ? '#dc2626' : '#7c3aed'} />
       </div>
 
+      {/* 原価が入っていない商品は、その売上がまるごと利益として出てしまう。
+          一覧に紛れて気づけないので、件数と影響額をここで知らせる */}
+      {(() => {
+        const noCost = rows.filter(r => !Number(r.product_cost || 0) && Number(r.sales || 0) > 0)
+        if (!noCost.length) return null
+        const sales = noCost.reduce((s, r) => s + Number(r.sales || 0), 0)
+        const pct = Number(totals.sales || 0) > 0 ? sales / Number(totals.sales) * 100 : 0
+        return (
+          <div className="card" style={{
+            padding: '10px 14px', marginBottom: 16, fontSize: 13,
+            background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e',
+          }}>
+            ⚠ 原価が未設定の商品が <b>{noCost.length}件</b>あります
+            （売上 {fmtYen(sales)}・全体の{pct.toFixed(1)}%）。
+            この分は原価0として計算されるため、<b>利益と原価率が実際より良く出ます</b>。
+            商品マスタで原価を入れてください。
+          </div>
+        )
+      })()}
+
       <div className="card" style={{ padding: '12px 16px', marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <div style={{ display: 'inline-flex', gap: 6 }}>
           <button className={`btn ${level === 'parent' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setLevel('parent')}>親商品</button>
