@@ -66,16 +66,6 @@
   const apiJson = [];   // /rpp/api/ の応答。履歴の中身がここに入っている
   const apiCalls = [];  // /rpp/api/ へ出したもの。レポートの作り方がここに出る
 
-  // レポートを作らせている呼び出しかどうか。
-  // 検索や画面の初期化まで拾うと、別物を覚えてしまう
-  const looksGenerate = (method, url) => {
-    const u = String(url);
-    if (String(method).toUpperCase() !== "POST") return false;
-    if (!/\/rpp\/api\//.test(u)) return false;
-    if (/search|staticData|appData|findAll|campaign/i.test(u)) return false;
-    return /download|allitem|itemreport|keywordreport|csv|export/i.test(u);
-  };
-
   const keepCall = (method, url, body, contentType) => {
     if (!/\/rpp\/api\//.test(String(url))) return;
     const call = { method: String(method || "GET").toUpperCase(),
@@ -84,9 +74,6 @@
                    contentType: contentType || null };
     apiCalls.push(call);
     if (apiCalls.length > 10) apiCalls.shift();
-    // 「全商品レポートダウンロード」を押したときの呼び出しを覚えておく。
-    // 次からは画面のボタンに頼らず、これと同じものを出せばよい
-    if (looksGenerate(call.method, call.url)) send({ kind: "learn", call });
   };
   const keepJson = (url, text) => {
     if (!/\/rpp\/api\//.test(String(url))) return;
@@ -154,6 +141,11 @@
           sentType = h.get("content-type");
         } catch (e) {}
         keepCall(method, url, init.body, sentType);
+        try {
+          const h = {};
+          new Headers(init.headers || {}).forEach((v, k) => { h[k] = v; });
+          keepTemplate(method, url, init.body, h, res.status);
+        } catch (e) {}
         if (ctype.includes("json")) {
           res.clone().text().then((t) => keepJson(url, t)).catch(() => {});
         }
@@ -177,8 +169,12 @@
   const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
   XMLHttpRequest.prototype.setRequestHeader = function (k, v) {
     try {
-      if (this.__rmsReq && String(k).toLowerCase() === "content-type") {
-        this.__rmsReq.contentType = v;
+      if (this.__rmsReq) {
+        this.__rmsReq.headers = this.__rmsReq.headers || {};
+        this.__rmsReq.headers[String(k)] = String(v);
+        if (String(k).toLowerCase() === "content-type") {
+          this.__rmsReq.contentType = v;
+        }
       }
     } catch (e) {}
     return origSetHeader.apply(this, arguments);
@@ -200,6 +196,8 @@
         const cdisp = this.getResponseHeader("content-disposition") || "";
         if (this.__rmsReq) {
           logReq(this.__rmsReq.method, this.__rmsReq.url, this.status, ctype);
+          keepTemplate(this.__rmsReq.method, this.__rmsReq.url,
+                       this.__rmsReq.body, this.__rmsReq.headers, this.status);
           if (ctype.includes("json") &&
               (this.responseType === "" || this.responseType === "text")) {
             keepJson(this.__rmsReq.url, this.responseText);
@@ -279,63 +277,105 @@
     apiCalls.slice(n).some((c) =>
       !/search|staticData|appData|findAll|campaign/i.test(c.url));
 
-  async function askReport(known) {
-    // 一度でも出し方が分かっていれば、それをそのまま出す
-    if (known && known.url) {
-      try {
-        const init = { method: known.method || "POST", credentials: "include" };
-        if (known.body != null) init.body = known.body;
-        if (known.contentType) init.headers = { "Content-Type": known.contentType };
-        const res = await fetch(known.url, init);
-        if (res.ok) { send({ kind: "asked", ok: true }); return; }
-        note(`覚えていた申し込みが通りませんでした（${res.status}）`);
-      } catch (e) {
-        note(`覚えていた申し込みに失敗しました: ${e}`);
-      }
-    }
+  // ---- 画面と同じAPIで実績をもらう ----
+  //
+  // CSVを作らせて落とす必要はない。画面は /rpp/api/reports/search から
+  // 同じ数字をJSONで受け取っているので、こちらも同じ形で聞けばよい。
+  // 画面の選択（集計単位や期間）は触らない。聞くときの中身を変えるだけ。
 
-    const dl = findButton("全商品レポートダウンロード");
-    if (!dl) {
-      send({ kind: "asked", ok: false,
-             why: "全商品レポートダウンロードのボタンが見つかりませんでした" });
+  // 画面が一度も検索していないと、聞き方が分からない。
+  // そのときだけ「この条件で検索」を押して教えてもらう
+  async function ensureTemplate() {
+    if (template) return true;
+    const search = findButton("この条件で検索");
+    if (!search) return false;
+    send({ kind: "progress", text: "聞き方を確かめています…" });
+    press(search);
+    for (let i = 0; i < 25 && !template; i++) await sleep(1000);
+    return !!template;
+  }
+
+  async function searchOnce(patch) {
+    let base = {};
+    try { base = JSON.parse(template.body) || {}; } catch (e) {}
+    const body = Object.assign({}, base, patch);
+    const res = await fetch(template.url, {
+      method: "POST",
+      credentials: "include",
+      headers: Object.assign({ "Content-Type": "application/json" },
+                             template.headers || {}),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`${res.status}`);
+    const json = await res.json();
+    if (json && json.errors && json.errors.length) {
+      throw new Error(String(json.errors[0].message || "").slice(0, 60));
+    }
+    return ((json || {}).data || {}).rppReports || [];
+  }
+
+  // 1ページずつ最後まで
+  async function searchAll(patch) {
+    const all = [];
+    for (let page = 1; page <= 40; page++) {
+      const rows = await searchOnce(Object.assign({}, patch, { page }));
+      if (!rows.length) break;
+      all.push(...rows);
+      if (rows.length < 20) break;
+      await sleep(600);
+    }
+    return all;
+  }
+
+  async function fetchReports(range) {
+    if (!(await ensureTemplate())) {
+      send({ kind: "auto-done", got: 0,
+             why: "画面の聞き方が分かりませんでした" });
       return;
     }
 
-    // ダウンロードは検索したあとでないと押せない作りになっている
-    if (dl.disabled) {
-      const search = findButton("この条件で検索");
-      if (search) {
-        send({ kind: "progress", text: "この条件で検索しています…" });
-        press(search);
-      }
-      for (let i = 0; i < 25 && dl.disabled; i++) await sleep(1000);
-    }
+    let got = 0;
 
-    // それでも押せないままなら、こちらで押せるようにして押す。
-    // 押したあとの中身は画面側が組み立てるので、人が押すのと変わらない
-    if (dl.disabled) {
-      send({ kind: "progress", text: "ボタンを押せるようにしています…" });
+    // 商品ごと。集計単位の番号は画面によって違うので、
+    // 商品名が返ってくるものを使う
+    send({ kind: "progress", text: "商品ごとの実績をもらっています…" });
+    for (const selectionType of [3, 2, 4]) {
       try {
-        dl.disabled = false;
-        dl.removeAttribute("disabled");
-      } catch (e) {}
-      await sleep(500);
+        const rows = await searchAll({
+          selectionType, periodType: 0,
+          startDate: range.product_from, endDate: range.to,
+        });
+        if (rows.length && rows.some((r) => r.itemName)) {
+          send({ kind: "rows", payload: {
+            kind: "product", period: range.product_from.slice(0, 7), rows } });
+          got++;
+          break;
+        }
+      } catch (e) {
+        note(`商品ごと(${selectionType})が取れませんでした: ${e.message || e}`);
+      }
     }
 
-    const before = apiCalls.length;
-    send({ kind: "progress", text: "レポートを申し込んでいます…" });
-    press(dl);
-
-    // 本当に申し込みが出たか見届ける。出ていないのに履歴へ移ると、
-    // いつまでも出来上がらないものを待つことになる
-    for (let i = 0; i < 15; i++) {
-      await sleep(1000);
-      if (generatedSince(before)) { send({ kind: "asked", ok: true }); return; }
+    // 毎日の消化。日ごとは「すべての広告」単位でしか出せない
+    send({ kind: "progress", text: "毎日の消化をもらっています…" });
+    for (const periodType of [2, 1]) {
+      try {
+        const rows = await searchAll({
+          selectionType: 1, periodType,
+          startDate: range.daily_from, endDate: range.to,
+        });
+        if (rows.length && rows.some((r) => r.effectDate)) {
+          send({ kind: "rows", payload: { kind: "daily", rows } });
+          got++;
+          break;
+        }
+      } catch (e) {
+        note(`毎日の消化(${periodType})が取れませんでした: ${e.message || e}`);
+      }
     }
-    const after = apiCalls.slice(before).map((c) =>
-      `${c.method} ${c.url.replace(location.origin, "")}`).join(" / ");
-    send({ kind: "asked", ok: false,
-           why: `押しても申し込みが出ませんでした（押したあとの通信：${after || "なし"}）` });
+
+    send({ kind: "auto-done", got,
+           why: got ? "" : "実績をもらえませんでした" });
   }
 
   // ---- ダウンロード履歴（/rpp/download） ----
@@ -441,9 +481,9 @@
 
   window.addEventListener("message", (ev) => {
     const d = ev.data;
-    if (d && d.__rmsAdsAsk) {
+    if (d && d.__rmsAdsFetch) {
       // 画面が出来上がってから。遅れて組み立てられる画面があるので少し待つ
-      setTimeout(() => guard(() => askReport(d.known)), 1200);
+      setTimeout(() => guard(() => fetchReports(d.range || {})), 1500);
     }
     if (d && d.__rmsAdsHistory) {
       setTimeout(() => guard(() => grabHistory(d.limit, d.since)), 1500);

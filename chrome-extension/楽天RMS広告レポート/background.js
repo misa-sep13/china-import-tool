@@ -1,6 +1,30 @@
 // CSVを輸入管理ツールへ送る係。
 // RMSの画面から直接送ると別ドメイン扱いで弾かれるので、ここから送る。
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  // 画面からもらった実績をそのまま送る（CSVを作らせる必要がない道）
+  if (msg && msg.type === "rows") {
+    (async () => {
+      try {
+        const res = await fetch(`${msg.backend}/api/rakuten/ads/import-json`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json",
+                     Authorization: `Bearer ${msg.token}` },
+          body: JSON.stringify(msg.payload),
+        });
+        const text = await res.text();
+        let data = null;
+        try { data = JSON.parse(text); } catch (e) {}
+        if (!res.ok) {
+          reply({ ok: false, error: (data && data.detail) || text.slice(0, 200) });
+          return;
+        }
+        reply({ ok: true, data });
+      } catch (e) {
+        reply({ ok: false, error: String(e) });
+      }
+    })();
+    return true;
+  }
   if (!msg || msg.type !== "upload") return;
   (async () => {
     try {

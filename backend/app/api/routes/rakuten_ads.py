@@ -272,3 +272,94 @@ def list_products(period: Optional[str] = None, db: Session = Depends(get_db)):
                 "sales": sum(i["sales"] for i in items),
                 "orders": sum(i["orders"] for i in items),
             }}
+
+# ============================================================
+# 画面が使っているAPIの中身をそのまま受け取る
+# ============================================================
+# RMSの広告画面（SPA）は /rpp/api/reports/search で実績をJSONで受け取って
+# いる。CSVを作らせて落とす必要はなく、同じJSONをそのまま入れれば足りる。
+# 拡張機能がそれを送ってくる。
+
+def _manage_number(row: dict) -> str:
+    """商品管理番号。itemUrlがそのまま番号のことも、URLのこともある。"""
+    for key in ("itemUrl", "itemPageUrl"):
+        v = str(row.get(key) or "").strip()
+        if not v:
+            continue
+        m = re.search(r"item\.rakuten\.co\.jp/[^/]+/([^/?#]+)", v)
+        if m:
+            return m.group(1)
+        if "/" not in v:
+            return v
+    return ""
+
+
+@router.post("/import-json")
+def import_json(payload: dict, db: Session = Depends(get_db)):
+    """拡張機能が拾ったJSONを入れる。kindは product か daily。"""
+    kind = str(payload.get("kind") or "product")
+    rows = payload.get("rows") or []
+    period = str(payload.get("period") or "").strip()
+    if kind == "product" and not re.fullmatch(r"\d{4}-\d{2}", period):
+        raise HTTPException(400, "対象月が決められませんでした")
+
+    saved, skipped = 0, 0
+    for r in rows:
+        if not isinstance(r, dict):
+            skipped += 1
+            continue
+        total = r.get("totalUsersReport") or {}
+        t12 = total.get("type12H") or {}
+
+        clicks = int(_num(total.get("clicksValid")))
+        cost = _num(total.get("adSalesBeforeDiscount"))
+        cpc = _num(total.get("cpc"))
+        sales = _num(t12.get("gms"))
+        orders = int(_num(t12.get("cv")))
+        cvr = _num(t12.get("cvr"))
+        roas = _num(t12.get("roas"))
+
+        if kind == "product":
+            mn = _manage_number(r)
+            if not mn:
+                skipped += 1
+                continue
+            row = (db.query(RakutenAdProduct)
+                   .filter(RakutenAdProduct.period == period,
+                           RakutenAdProduct.manage_number == mn).first())
+            if not row:
+                row = RakutenAdProduct(period=period, manage_number=mn)
+                db.add(row)
+            row.item_name = str(r.get("itemName") or "")[:500]
+            row.clicks = clicks
+            row.ctr = _num(r.get("ctr"))
+            row.cost = cost
+            row.cpc = cpc
+            row.sales = sales
+            row.orders = orders
+            row.cvr = cvr
+            row.roas = roas
+            row.bid = _num(r.get("itemCpc") or r.get("clickPrice"))
+            saved += 1
+        else:
+            day = _parse_day(r.get("effectDate"))
+            if not day:
+                skipped += 1
+                continue
+            camp = str(r.get("campaignName") or "").strip()
+            row = (db.query(RakutenAdDaily)
+                   .filter(RakutenAdDaily.day == day,
+                           RakutenAdDaily.campaign == camp).first())
+            if not row:
+                row = RakutenAdDaily(day=day, campaign=camp)
+                db.add(row)
+            row.clicks = clicks
+            row.cost = cost
+            row.cpc = cpc
+            row.sales = sales
+            row.orders = orders
+            row.roas = roas
+            saved += 1
+    db.commit()
+    return {"kind": kind, "saved": saved, "skipped": skipped,
+            "used_columns": {}, "missing": []}

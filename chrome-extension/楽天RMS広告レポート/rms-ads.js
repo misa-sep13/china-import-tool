@@ -24,6 +24,33 @@
 
   const setStatus = (text) => { status = text; render(); };
 
+  // 画面からもらった実績をそのままツールへ
+  async function sendRows(payload) {
+    const cfg = await chrome.storage.local.get(["backend", "token"]);
+    if (!cfg.token) { setStatus("トークンが未設定です"); return; }
+    const label = payload.kind === "product" ? "商品ごと" : "毎日の消化";
+    setStatus(`${label} ${payload.rows.length}件を送っています…`);
+    try {
+      const res = await chrome.runtime.sendMessage({
+        type: "rows",
+        backend: cfg.backend || DEFAULT_BACKEND,
+        token: cfg.token,
+        payload,
+      });
+      if (res && res.ok) {
+        const d = res.data || {};
+        setStatus(`取り込みました：${label} ${d.saved}行`);
+        const cur = (await chrome.storage.local.get(["auto_last"])).auto_last || {};
+        cur[payload.kind] = Date.now();
+        await chrome.storage.local.set({ auto_last: cur, auto_cooldown: 0 });
+      } else {
+        setStatus(`送信できませんでした：${(res && res.error) || "理由不明"}`);
+      }
+    } catch (e) {
+      setStatus(`送信できませんでした：${e}`);
+    }
+  }
+
   async function upload(file) {
     const cfg = await chrome.storage.local.get(["backend", "token", "sent"]);
     const sent = cfg.sent || [];
@@ -68,36 +95,7 @@
     if (!d || !d.__rmsAds) return;
     if (d.kind === "note") { notes.push(d.text); render(); return; }
     if (d.kind === "progress") { setStatus(d.text); return; }
-    if (d.kind === "asked") { afterAsk(d.ok, d.why); return; }
-    if (d.kind === "learn" && d.call) {
-      // 「全商品レポートダウンロード」を押したときの呼び出し。
-      // 次からはこれを出せば、ボタンに頼らず作らせられる
-      await chrome.storage.local.set({ generate_call: d.call });
-      // ここで勝手に画面を移らない。作っている最中に移ると、
-      // 作りかけのまま止まってしまう
-      setStatus("レポートの作り方を覚えました。出来たら履歴から取り込めます");
-      return;
-    }
-    if (d.kind === "dump") {
-      if (dumpWaiter) { dumpWaiter(); dumpWaiter = null; }
-      const text = [d.text, "--- 気づいたこと ---"]
-        .concat(notes.slice(-20)).join(String.fromCharCode(10));
-      navigator.clipboard.writeText(text).then(
-        () => setStatus("画面の作りをコピーしました。貼って渡してください"),
-        () => alert(text.slice(0, 2000)));
-      return;
-    }
-    if (d.kind === "auto-done") {
-      if (d.got) {
-        const cur = (await chrome.storage.local.get(["auto_last"])).auto_last || {};
-        running.forEach((k) => { cur[k] = Date.now(); });
-        await chrome.storage.local.set({ auto_last: cur, auto_cooldown: 0 });
-      } else {
-        setStatus(`自動では取れませんでした（${d.why || "理由不明"}）`);
-      }
-      running = [];
-      return;
-    }
+    if (d.kind === "rows" && d.payload) { sendRows(d.payload); return; }
     if (d.kind !== "file") return;
 
     if (d.request) {
@@ -230,6 +228,10 @@
   const GAP_MS = 6 * 60 * 60 * 1000;
   const HISTORY = "/rpp/download";
 
+  const ymd = (d) => `${d.getFullYear()}-` +
+    `${String(d.getMonth() + 1).padStart(2, "0")}-` +
+    `${String(d.getDate()).padStart(2, "0")}`;
+
   const onHistory = () => /\/rpp\/download(\/|$|\?)/.test(location.href);
   const onReports = () => /\/rpp\/reports/.test(location.href);
 
@@ -260,24 +262,20 @@
     const now = Date.now();
     // 失敗した直後に何度も申し込まないための間隔
     if (!force && now < (cfg.auto_cooldown || 0)) return;
-    if (!force && now - (last.product || 0) < GAP_MS) return;
+    if (!force && now - (last.product || 0) < GAP_MS
+        && now - (last.daily || 0) < GAP_MS) return;
 
-    running = ["product"];
+    running = ["product", "daily"];
     await chrome.storage.local.set({ auto_cooldown: now + 15 * 60 * 1000 });
-    setStatus("レポートを申し込んでいます…");
-    const known = (await chrome.storage.local.get(["generate_call"])).generate_call;
-    window.postMessage({ __rmsAdsAsk: true, known: known || null }, "*");
-  }
+    setStatus("実績をもらっています…");
 
-  // 申し込めたら、ダウンロード履歴へ移る（画面ごと開き直す）
-  async function afterAsk(ok, why) {
-    if (!ok) {
-      setStatus(`申し込めませんでした（${why || "理由不明"}）`);
-      return;
-    }
-    await chrome.storage.local.set({ pending: { at: Date.now() } });
-    setStatus("ダウンロード履歴へ移ります…");
-    location.href = new URL(HISTORY, location.origin).href;
+    // 集計は昨日まで。毎日の消化は3か月以内、商品ごとは月単位
+    const to = new Date(); to.setDate(to.getDate() - 1);
+    const dailyFrom = new Date(to); dailyFrom.setDate(dailyFrom.getDate() - 88);
+    const productFrom = new Date(to.getFullYear(), to.getMonth(), 1);
+    window.postMessage({ __rmsAdsFetch: true, range: {
+      to: ymd(to), daily_from: ymd(dailyFrom), product_from: ymd(productFrom),
+    } }, "*");
   }
 
   // この画面は中で切り替わる作りなので、開き直さずに行き来することがある。
