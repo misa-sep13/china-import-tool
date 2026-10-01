@@ -71,8 +71,9 @@ export default function RakutenAdsPage() {
     <div style={{ padding: 2, minWidth: 0 }}>
       <h2 style={{ fontSize: 18, marginBottom: 4 }}>📣 楽天 広告管理（RPP）</h2>
       <div style={{ fontSize: 12, color: C.sub, marginBottom: 12 }}>
-        RMSのパフォーマンスレポートから落としたCSVを入れると、
-        毎日の消化額と、商品ごとのクリック・転換率が並びます。
+        Chrome拡張「楽天RMS広告レポート取り込み」を入れておけば、
+        RMSの広告画面を開くだけでここに入ります（操作は不要）。<br />
+        下のCSV取り込みは、拡張を使わないときの手入れ用です。
       </div>
 
       {err && (
@@ -93,11 +94,9 @@ export default function RakutenAdsPage() {
         <div style={{ fontSize: 11, color: C.sub, marginTop: 8, lineHeight: 1.9 }}>
           <b>毎日の消化額</b>：集計単位「すべての広告」＋集計期間「日ごとに表示」
           →「この条件でダウンロード」（期間は3か月以内）<br />
-          <b>商品ごと</b>：「全商品レポートダウンロード」（商品別は月ごとでしか出せません）<br />
+          <b>商品ごと</b>：「全商品レポートダウンロード」（ZIPのままで入ります）<br />
           どちらのCSVかは中身を見て判断します。同じ日・同じ商品は入れ替わるので、
-          何度入れても二重になりません。<br />
-          <b>Chrome拡張「楽天RMS広告レポート取り込み」</b>を入れておくと、
-          RMSでダウンロードを押すだけでここに入ります（ファイルを選ぶ必要なし）。
+          何度入れても二重になりません。
         </div>
         {result && (
           <div style={{ marginTop: 8, fontSize: 12, padding: '8px 10px',
