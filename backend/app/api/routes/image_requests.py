@@ -93,29 +93,12 @@ def list_requests(include_done: int = 0, db: Session = Depends(get_db)):
                          .order_by(_Photo.sort_order, _Photo.id).all()):
             photos.setdefault(rid, []).append(pid)
 
-    # ライバルの画像があるか。行ごとに聞くと件数ぶん問い合わせることに
-    # なるので、ASINと研究IDをまとめて1回ずつ聞く
-    from app.models.amazon_research import AmazonResearchItem as _Item
-    asins = {a for a in (_first_asin(r.ref_url) for r in rows) if a}
-    rids = {int(r.research_id) for r in rows
-            if str(r.research_id or "").strip().isdigit()}
-    has_asin, has_rid = set(), set()
-    if asins:
-        has_asin = {a for (a,) in db.query(_Item.asin).filter(
-            _Item.asin.in_(asins),
-            _Item.image_url != None).distinct().all()}  # noqa: E711
-    if rids:
-        has_rid = {i for (i,) in db.query(_Item.research_id).filter(
-            _Item.research_id.in_(rids),
-            _Item.image_url != None).distinct().all()}  # noqa: E711
-
     items = []
     for r in rows:
         d = _out(r)
         d["photos"] = photos.get(r.id, [])
-        rid = str(r.research_id or "").strip()
-        d["has_cover"] = (_first_asin(r.ref_url) in has_asin
-                          or (rid.isdigit() and int(rid) in has_rid))
+        # ライバルの画像があるか。URLは画面側が組み立てる
+        d["has_cover"] = bool(_cover_image(db, r))
         items.append(d)
     return {"items": items, "done_count": done,
             "statuses": [{"value": v, "label": STATUS_LABEL[v]} for v in STATUSES]}
@@ -391,16 +374,18 @@ def delete_photo(photo_id: int, request: Request,
 # 一覧に文字だけ並んでいても何の商品か分からない。リサーチシートに
 # 貼ってあるライバルの画像をそのまま小さく出す。
 #
-# 画像はリサーチの行（amazon_research_items.image_url）にある。
+# 画像はリサーチシートの中にある。シートはJSONの塊で1行に入っていて
+# （amazon_research_sheet）、行ごとの image に貼り付けた画像が入る。
 # data URL のことも、Amazonの画像URLのこともある。
 
 import base64 as _base64
 import binascii as _binascii
+import json as _json
 import re as _re
 
 from starlette.responses import RedirectResponse
 
-from app.models.amazon_research import AmazonResearchItem
+from app.models.amazon_research import AmazonResearchSheet
 
 
 def _first_asin(ref_url: str) -> str:
@@ -408,26 +393,52 @@ def _first_asin(ref_url: str) -> str:
     return m.group(1) if m else ""
 
 
-def _cover_item(db: Session, r: ImageRequest):
-    """その依頼の「顔」になる画像を持つリサーチ行を探す。"""
-    asin = _first_asin(r.ref_url)
-    if asin:
-        it = (db.query(AmazonResearchItem)
-              .filter(AmazonResearchItem.asin == asin,
-                      AmazonResearchItem.image_url != None)  # noqa: E711
-              .first())
-        if it and (it.image_url or "").strip():
-            return it
+# リサーチシートはJSONの塊で1行に入っている（amazon_research_sheet）。
+# 毎回ほどくと重いので、保存された時刻が変わるまで覚えておく
+_SHEET = {"key": None, "by_asin": {}, "by_research": {}}
+
+
+def _sheet_index(db: Session) -> dict:
+    """シートの中身から「ASIN→画像」「リサーチID→画像」を作る。"""
+    row = (db.query(AmazonResearchSheet)
+           .filter(AmazonResearchSheet.workspace == "default").first())
+    if not row or not row.data:
+        return {"by_asin": {}, "by_research": {}}
+    key = (row.updated_at.isoformat() if row.updated_at else "",
+           row.size_bytes or 0)
+    if _SHEET["key"] == key:
+        return _SHEET
+    try:
+        data = _json.loads(row.data)
+    except (ValueError, TypeError):
+        return {"by_asin": {}, "by_research": {}}
+
+    by_asin, by_research = {}, {}
+    for res in (data or {}).get("researches", []) or []:
+        rid = str((res or {}).get("id") or "")
+        for r in (res or {}).get("rows", []) or []:
+            img = str((r or {}).get("image") or "").strip()
+            if not img:
+                continue
+            asin = str((r or {}).get("asin") or "").strip().upper()
+            if asin and asin not in by_asin:
+                by_asin[asin] = img
+            if rid and rid not in by_research:
+                by_research[rid] = img
+    _SHEET.update({"key": key, "by_asin": by_asin, "by_research": by_research})
+    return _SHEET
+
+
+def _cover_image(db: Session, r: ImageRequest) -> str:
+    """その依頼の「顔」になる画像。無ければ空。"""
+    idx = _sheet_index(db)
+    asin = _first_asin(r.ref_url).upper()
+    if asin and asin in idx["by_asin"]:
+        return idx["by_asin"][asin]
     rid = str(r.research_id or "").strip()
-    if rid.isdigit():
-        it = (db.query(AmazonResearchItem)
-              .filter(AmazonResearchItem.research_id == int(rid),
-                      AmazonResearchItem.image_url != None)  # noqa: E711
-              .order_by(AmazonResearchItem.sort_order,
-                        AmazonResearchItem.id).first())
-        if it and (it.image_url or "").strip():
-            return it
-    return None
+    if rid and rid in idx["by_research"]:
+        return idx["by_research"][rid]
+    return ""
 
 
 @router.get("/{req_id:int}/cover")
@@ -441,11 +452,9 @@ def get_cover(req_id: int, db: Session = Depends(get_db)):
     r = db.query(ImageRequest).filter(ImageRequest.id == req_id).first()
     if not r:
         raise HTTPException(404, "依頼が見つかりません")
-    it = _cover_item(db, r)
-    if not it:
+    url = _cover_image(db, r)
+    if not url:
         raise HTTPException(404, "画像がありません")
-
-    url = (it.image_url or "").strip()
     if url.startswith("data:"):
         head, _, body = url.partition(",")
         try:
