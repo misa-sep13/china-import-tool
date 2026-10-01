@@ -191,7 +191,7 @@ export default function ImageRequestsPage({ share = '' }) {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
-              {[...(share ? [] : ['並び']), '依頼日', '', 'SKU', '商品名',
+              {[...(share ? [] : ['並び']), '依頼日', '', '写真', 'SKU', '商品名',
                 '参考画像', '商品補足', '進み具合', '連絡', ''].map((h, i) => (
                   <th key={i} style={th}>{h}</th>
                 ))}
@@ -200,7 +200,7 @@ export default function ImageRequestsPage({ share = '' }) {
           <tbody>
             {shown.length === 0 && (
               <tr><td style={{ ...td, color: C.sub, padding: 20 }}
-                colSpan={share ? 9 : 10}>
+                colSpan={share ? 10 : 11}>
                 {q ? `「${q}」に当てはまる依頼はありません。`
                   : '作業中の依頼はありません。'}
               </td></tr>
@@ -236,6 +236,23 @@ export default function ImageRequestsPage({ share = '' }) {
                   </td>
                   <td style={{ ...td, whiteSpace: 'nowrap', color: C.sub }}>
                     {SOURCE_LABEL[r.source] || r.source}
+                  </td>
+                  {/* 何の商品か。リサーチシートに貼ってあるライバルの画像 */}
+                  <td style={{ ...td, padding: '4px 6px' }}>
+                    {r.has_cover ? (
+                      <img src={mediaUrl(`/api/image-requests/${r.id}/cover`)}
+                        alt="" loading="lazy"
+                        onClick={() => setBig(
+                          mediaUrl(`/api/image-requests/${r.id}/cover`))}
+                        style={{ width: 46, height: 46, objectFit: 'cover',
+                          borderRadius: 4, border: `1px solid ${C.line}`,
+                          cursor: 'zoom-in', display: 'block' }} />
+                    ) : (
+                      <div style={{ width: 46, height: 46, borderRadius: 4,
+                        border: `1px dashed ${C.line}`, color: '#cbd5e1',
+                        fontSize: 10, display: 'flex', alignItems: 'center',
+                        justifyContent: 'center' }}>なし</div>
+                    )}
                   </td>
                   <td style={{ ...td, fontFamily: 'monospace', fontWeight: 600 }}>
                     {r.sku}
@@ -327,7 +344,8 @@ export default function ImageRequestsPage({ share = '' }) {
         新しく足したものが下に並びます。▲▼ で順番を入れ替えられます。
         進み具合を「完了」にすると、この一覧から消えます（「完了したものも出す」で戻せます）。
         <br />
-        参考画像はクリックで拡大できます。
+        「写真」はリサーチシートに貼ってあるライバルの画像です。
+        参考画像ともどもクリックで拡大できます。
         {!share && <><br />
           参考画像は「＋」から選ぶか、枠へドラッグ＆ドロップで入ります（まとめて可）。
           外注さんの画面にも出るので、色や向きを見せるのに使えます。<br />

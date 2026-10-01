@@ -93,10 +93,29 @@ def list_requests(include_done: int = 0, db: Session = Depends(get_db)):
                          .order_by(_Photo.sort_order, _Photo.id).all()):
             photos.setdefault(rid, []).append(pid)
 
+    # ライバルの画像があるか。行ごとに聞くと件数ぶん問い合わせることに
+    # なるので、ASINと研究IDをまとめて1回ずつ聞く
+    from app.models.amazon_research import AmazonResearchItem as _Item
+    asins = {a for a in (_first_asin(r.ref_url) for r in rows) if a}
+    rids = {int(r.research_id) for r in rows
+            if str(r.research_id or "").strip().isdigit()}
+    has_asin, has_rid = set(), set()
+    if asins:
+        has_asin = {a for (a,) in db.query(_Item.asin).filter(
+            _Item.asin.in_(asins),
+            _Item.image_url != None).distinct().all()}  # noqa: E711
+    if rids:
+        has_rid = {i for (i,) in db.query(_Item.research_id).filter(
+            _Item.research_id.in_(rids),
+            _Item.image_url != None).distinct().all()}  # noqa: E711
+
     items = []
     for r in rows:
         d = _out(r)
         d["photos"] = photos.get(r.id, [])
+        rid = str(r.research_id or "").strip()
+        d["has_cover"] = (_first_asin(r.ref_url) in has_asin
+                          or (rid.isdigit() and int(rid) in has_rid))
         items.append(d)
     return {"items": items, "done_count": done,
             "statuses": [{"value": v, "label": STATUS_LABEL[v]} for v in STATUSES]}
@@ -364,3 +383,78 @@ def delete_photo(photo_id: int, request: Request,
     db.delete(p)
     db.commit()
     return {"ok": True}
+
+
+# ============================================================
+# 商品の見た目（ライバルの画像）
+# ============================================================
+# 一覧に文字だけ並んでいても何の商品か分からない。リサーチシートに
+# 貼ってあるライバルの画像をそのまま小さく出す。
+#
+# 画像はリサーチの行（amazon_research_items.image_url）にある。
+# data URL のことも、Amazonの画像URLのこともある。
+
+import base64 as _base64
+import binascii as _binascii
+import re as _re
+
+from starlette.responses import RedirectResponse
+
+from app.models.amazon_research import AmazonResearchItem
+
+
+def _first_asin(ref_url: str) -> str:
+    m = _re.search(r"/dp/([A-Z0-9]{10})", str(ref_url or ""))
+    return m.group(1) if m else ""
+
+
+def _cover_item(db: Session, r: ImageRequest):
+    """その依頼の「顔」になる画像を持つリサーチ行を探す。"""
+    asin = _first_asin(r.ref_url)
+    if asin:
+        it = (db.query(AmazonResearchItem)
+              .filter(AmazonResearchItem.asin == asin,
+                      AmazonResearchItem.image_url != None)  # noqa: E711
+              .first())
+        if it and (it.image_url or "").strip():
+            return it
+    rid = str(r.research_id or "").strip()
+    if rid.isdigit():
+        it = (db.query(AmazonResearchItem)
+              .filter(AmazonResearchItem.research_id == int(rid),
+                      AmazonResearchItem.image_url != None)  # noqa: E711
+              .order_by(AmazonResearchItem.sort_order,
+                        AmazonResearchItem.id).first())
+        if it and (it.image_url or "").strip():
+            return it
+    return None
+
+
+@router.get("/{req_id:int}/cover")
+def get_cover(req_id: int, db: Session = Depends(get_db)):
+    """ライバルの画像を返す。<img src> から読まれる。
+
+    画像の持ち方が2通りある。
+      ・data URL（シートに貼り付けたもの。120px程度）→ そのまま返す
+      ・Amazonの画像URL → そちらへ送る（うちの通信量を使わない）
+    """
+    r = db.query(ImageRequest).filter(ImageRequest.id == req_id).first()
+    if not r:
+        raise HTTPException(404, "依頼が見つかりません")
+    it = _cover_item(db, r)
+    if not it:
+        raise HTTPException(404, "画像がありません")
+
+    url = (it.image_url or "").strip()
+    if url.startswith("data:"):
+        head, _, body = url.partition(",")
+        try:
+            raw = _base64.b64decode(body)
+        except (ValueError, _binascii.Error):
+            raise HTTPException(404, "画像を読めませんでした")
+        ctype = head[5:].split(";")[0] or "image/jpeg"
+        return Response(content=raw, media_type=ctype,
+                        headers={"Cache-Control": "public, max-age=86400"})
+    if url.startswith("http"):
+        return RedirectResponse(url, status_code=302)
+    raise HTTPException(404, "画像がありません")
