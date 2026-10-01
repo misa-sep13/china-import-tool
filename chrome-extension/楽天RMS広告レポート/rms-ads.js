@@ -59,6 +59,10 @@
     const d = ev.data;
     if (!d || !d.__rmsAds) return;
     if (d.kind === "note") { notes.push(d.text); render(); return; }
+    if (d.kind === "auto-done") {
+      if (!d.got) setStatus("自動では取れませんでした。ダウンロードを押してください");
+      return;
+    }
     if (d.kind !== "file") return;
 
     if (d.request) {
@@ -122,7 +126,7 @@
     const cfg = await chrome.storage.local.get(["auto"]);
     const next = cfg.auto === false;
     await chrome.storage.local.set({ auto: next });
-    setStatus(next ? "自動で送ります" : "確認してから送ります");
+    setStatus(next ? "この画面を開いたら自動で取り込みます" : "自動取り込みを止めました");
   }
 
   function mk(label, bg, fn) {
@@ -156,7 +160,7 @@
     const msg = document.createElement("div");
     msg.style.cssText = "color:#475569;margin-bottom:6px;font-size:12px";
     msg.textContent = status ||
-      (cfg.token ? "「この条件でダウンロード」を押すと、同じCSVをツールへ送ります"
+      (cfg.token ? "パフォーマンスレポートの画面を開くと自動で取り込みます"
                  : "まず「設定」でトークンを入れてください");
     panel.appendChild(msg);
 
@@ -164,16 +168,59 @@
     row.style.cssText = "display:flex;gap:6px;flex-wrap:wrap";
     if (pending) row.appendChild(mk("ツールに送る", "#2563eb", () => upload(pending)));
     if (lastRequest) row.appendChild(mk("前と同じ条件でもう一度", "#0f766e", again));
-    row.appendChild(mk(cfg.auto === false ? "自動送信：切" : "自動送信：入",
+    row.appendChild(mk(cfg.auto === false ? "自動：切" : "自動：入",
       cfg.auto === false ? "#94a3b8" : "#16a34a", toggleAuto));
     row.appendChild(mk("設定", "#64748b", configure));
     row.appendChild(mk("状況をコピー", "#b45309", copyDiagnostics));
     panel.appendChild(row);
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", render);
-  } else {
+  // ---- 画面を開いたら自分で取りに行く ----
+  //
+  // パフォーマンスレポートの画面でだけ動く。開くたびに取りに行くと
+  // 楽天に余計な手間をかけるので、種類ごとに6時間あけている。
+  const GAP_MS = 6 * 60 * 60 * 1000;
+
+  const ymd = (d) => `${d.getFullYear()}-` +
+    `${String(d.getMonth() + 1).padStart(2, "0")}-` +
+    `${String(d.getDate()).padStart(2, "0")}`;
+
+  async function maybeAuto() {
+    if (!/\/rpp\/reports/.test(location.pathname)) return;
+    const cfg = await chrome.storage.local.get(["token", "auto", "auto_last"]);
+    if (!cfg.token || cfg.auto === false) return;
+
+    const last = cfg.auto_last || {};
+    const now = Date.now();
+    const kinds = ["daily", "product"].filter((k) => !(now - (last[k] || 0) < GAP_MS));
+    if (!kinds.length) return;
+
+    // 集計は昨日までしか出ない。毎日の消化は3か月以内、
+    // 商品ごとは月単位なので今月の頭から
+    const to = new Date(); to.setDate(to.getDate() - 1);
+    const dailyFrom = new Date(to); dailyFrom.setDate(dailyFrom.getDate() - 88);
+    const productFrom = new Date(to.getFullYear(), to.getMonth(), 1);
+
+    const next = Object.assign({}, last);
+    kinds.forEach((k) => { next[k] = now; });
+    await chrome.storage.local.set({ auto_last: next });
+
+    setStatus("この画面のレポートを取りに行っています…");
+    window.postMessage({
+      __rmsAdsAuto: true, kinds,
+      range: { to: ymd(to), daily_from: ymd(dailyFrom),
+               product_from: ymd(productFrom) },
+    }, "*");
+  }
+
+  function start() {
     render();
+    maybeAuto();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start);
+  } else {
+    start();
   }
 })();

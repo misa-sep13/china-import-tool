@@ -178,6 +178,119 @@
     return origSubmit.apply(this, arguments);
   };
 
+  // ---- パフォーマンスレポートの画面を開いたら、自分で取りに行く ----
+  //
+  // 画面のボタンを押したときとまったく同じ内容のリクエストを組み立てて出す。
+  // 画面の表示（選んである条件）は書き換えない。送る中身だけ差し替える。
+
+  const squash = (t) => String(t || "").replace(/\s+/g, "");
+
+  // そのラジオボタンに付いている文字。labelで囲ってある場合と、
+  // 隣に文字が置いてあるだけの場合の両方を見る
+  const labelOf = (input) => {
+    if (input.id) {
+      const l = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+      if (l) return squash(l.textContent);
+    }
+    const wrap = input.closest("label");
+    if (wrap) return squash(wrap.textContent);
+    const next = input.nextSibling;
+    if (next && next.textContent) return squash(next.textContent);
+    return squash(input.parentElement && input.parentElement.textContent);
+  };
+
+  const findRadio = (form, label) =>
+    Array.from(form.querySelectorAll('input[type="radio"]'))
+      .find((r) => labelOf(r).includes(label));
+
+  const findButton = (label) =>
+    Array.from(document.querySelectorAll(
+      'input[type="submit"],input[type="button"],button'))
+      .find((b) => squash(b.value || b.textContent).includes(label));
+
+  // フォームの中身をそのまま書き出す。overrides に入れた名前だけ差し替える
+  const serialize = (form, overrides, button) => {
+    const q = new URLSearchParams();
+    for (const el of Array.from(form.elements)) {
+      if (!el.name || el.disabled) continue;
+      if (["submit", "button", "image", "file"].includes(el.type)) continue;
+      if ((el.type === "checkbox" || el.type === "radio") && !el.checked) continue;
+      if (Object.prototype.hasOwnProperty.call(overrides, el.name)) continue;
+      if (el.multiple && el.selectedOptions) {
+        for (const o of el.selectedOptions) q.append(el.name, o.value);
+      } else {
+        q.append(el.name, el.value);
+      }
+    }
+    for (const [k, v] of Object.entries(overrides)) {
+      if (v != null && k) q.append(k, v);
+    }
+    if (button && button.name) q.append(button.name, button.value || "");
+    return q.toString();
+  };
+
+  const reqFrom = (form, overrides, button) => {
+    const method = (form.method || "POST").toUpperCase();
+    const body = serialize(form, overrides, button);
+    let url = form.action || location.href;
+    if (method === "GET") {
+      url += (url.includes("?") ? "&" : "?") + body;
+      return { url, method };
+    }
+    return { url, method, body,
+             contentType: "application/x-www-form-urlencoded" };
+  };
+
+  // 集計期間の日付欄。YYYY-MM-DD が入っているものを前から2つ
+  const dateFields = (form) =>
+    Array.from(form.querySelectorAll("input"))
+      .filter((i) => /^\d{4}-\d{2}-\d{2}$/.test(i.value || ""));
+
+  async function autoRun(kinds, range) {
+    const prodBtn = findButton("全商品レポートダウンロード");
+    const dlBtn = findButton("この条件でダウンロード");
+    const form = (dlBtn && dlBtn.form) || (prodBtn && prodBtn.form);
+    if (!form) {
+      note("ダウンロードのボタンが見つかりませんでした");
+      return;
+    }
+    const dates = dateFields(form);
+    const unitAll = findRadio(form, "すべての広告");
+    const perDay = findRadio(form, "日ごとに表示");
+    const perAll = findRadio(form, "全期間で表示");
+
+    const withDates = (from, to) => {
+      const o = {};
+      if (dates[0] && dates[0].name) o[dates[0].name] = from;
+      if (dates[1] && dates[1].name) o[dates[1].name] = to;
+      return o;
+    };
+
+    let got = 0;
+    if (kinds.includes("daily") && dlBtn && unitAll && perDay) {
+      const o = withDates(range.daily_from, range.to);
+      o[unitAll.name] = unitAll.value;
+      o[perDay.name] = perDay.value;
+      if (await replay(reqFrom(form, o, dlBtn), true)) got++;
+      else note("毎日の消化が取れませんでした");
+    }
+    if (kinds.includes("product") && prodBtn) {
+      const o = withDates(range.product_from, range.to);
+      if (perAll) o[perAll.name] = perAll.value;
+      if (await replay(reqFrom(form, o, prodBtn), true)) got++;
+      else note("商品ごとが取れませんでした");
+    }
+    send({ kind: "auto-done", got });
+  }
+
+  window.addEventListener("message", (ev) => {
+    const d = ev.data;
+    if (d && d.__rmsAdsAuto && Array.isArray(d.kinds)) {
+      // 画面が出来上がってから。遅れて組み立てられる画面があるので少し待つ
+      setTimeout(() => autoRun(d.kinds, d.range || {}), 1200);
+    }
+  });
+
   // ---- ダウンロードのリンク ----
   document.addEventListener("click", (ev) => {
     try {
