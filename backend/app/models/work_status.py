@@ -34,6 +34,9 @@ class WorkStatus(Base):
     step_order   = Column(Boolean, default=False)   # 発注
     step_image   = Column(Boolean, default=False)   # 画像依頼
     step_listing = Column(Boolean, default=False)   # 商品登録
+    # 発注後の問い合わせ・確認対応。あったときだけ付ける印で、
+    # これが無くても完了にはなる（問い合わせが要らない商品のほうが多い）
+    step_followup = Column(Boolean, default=False)
     # 上の3つから決まる。完了を一覧から外す絞り込みに使う
     stage = Column(String, default="adopted", index=True)
     # 誰の番か。owner（ゆな）/ staff（外注さん）/ none（待ちなし）。

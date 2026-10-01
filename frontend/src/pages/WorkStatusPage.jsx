@@ -44,6 +44,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
   // 完了したものだけを見る。終わった分をまとめて振り返るときに使う
   const [onlyDone, setOnlyDone] = useState(false)
   const [steps, setSteps] = useState([])
+  const [extraSteps, setExtraSteps] = useState([])
   const [q, setQ] = useState('')
   const [onlyMine, setOnlyMine] = useState(false)
   const [err, setErr] = useState('')
@@ -51,7 +52,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
   const [draft, setDraft] = useState({})     // 書きかけの質問
   const [ans, setAns] = useState({})         // 書きかけの答え
   const [adding, setAdding] = useState(false)
-  const [form, setForm] = useState({ sku: '', name: '', channel: 'amazon' })
+  const [form, setForm] = useState({ sku: '', name: '', memo: '', channel: 'amazon' })
 
   // 共有URLで開いているときは合言葉を毎回付ける。
   // ログインしていないので、これが唯一の通行証になる
@@ -69,6 +70,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
       } }))
       setRows(r.data.items || [])
       setSteps(r.data.steps || [])
+      setExtraSteps(r.data.extra_steps || [])
       setBalls(r.data.balls || [])
     } catch (e) {
       setErr(e?.response?.data?.detail || '読み込めませんでした')
@@ -127,7 +129,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
     if (!form.sku.trim() && !form.name.trim()) return
     try {
       await api.post('/work-status', form, cfg())
-      setForm({ sku: '', name: '', channel: 'amazon' })
+      setForm({ sku: '', name: '', memo: '', channel: 'amazon' })
       setAdding(false)
       load()
     } catch (e) {
@@ -186,7 +188,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
             答え待ちの質問 {openQ}件
           </span>
         )}
-        {!share && (
+        {(
           <button onClick={() => setAdding(v => !v)}
             style={{ marginLeft: 'auto', padding: '6px 12px', fontSize: 12,
               border: `1px solid ${C.key}`, background: '#fff', color: C.key,
@@ -198,7 +200,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
 
       {err && <div style={{ color: C.bad, fontSize: 12, marginBottom: 8 }}>{err}</div>}
 
-      {adding && !share && (
+      {adding && (
         <div style={{ display: 'flex', gap: 6, marginBottom: 10,
           padding: 10, background: '#f8fafc', borderRadius: 6 }}>
           <select value={form.channel}
@@ -212,6 +214,9 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
             style={{ fontSize: 12, padding: '5px 8px', width: 120 }} />
           <input value={form.name} placeholder="商品名"
             onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+            style={{ fontSize: 12, padding: '5px 8px', flex: 1 }} />
+          <input value={form.memo || ''} placeholder="メモ（在庫切れ・リンク変更など）"
+            onChange={e => setForm(f => ({ ...f, memo: e.target.value }))}
             style={{ fontSize: 12, padding: '5px 8px', flex: 1 }} />
           <button onClick={add}
             style={{ fontSize: 12, padding: '5px 14px', border: 'none',
@@ -229,7 +234,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
             <th style={th}>SKU</th>
             <th style={th}>商品名</th>
             <th style={th}>いま誰の番</th>
-            <th style={th}>工程（3つで完了）</th>
+            <th style={th}>工程（左の3つで完了）</th>
             <th style={th}>メモ</th>
             <th style={th}>質問</th>
             {!share && <th style={th}></th>}
@@ -271,6 +276,21 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
                         display: 'flex', alignItems: 'center', gap: 3,
                         cursor: 'pointer',
                         color: r[st.key] ? C.text : C.sub }}>
+                        <input type="checkbox" checked={!!r[st.key]}
+                          onChange={e => patch(r.id,
+                            { [st.key]: e.target.checked })}
+                          style={{ width: 'auto', margin: 0 }} />
+                        {st.label}
+                      </label>
+                    ))}
+                    {/* 完了の条件には入れない。問い合わせの要らない商品が
+                        いつまでも完了にならなくなるため */}
+                    {extraSteps.map(st => (
+                      <label key={st.key} title="発注後にタオタロウへ問い合わせたり、確認してもらったとき"
+                        style={{ fontSize: 12, display: 'flex',
+                          alignItems: 'center', gap: 3, cursor: 'pointer',
+                          paddingLeft: 8, borderLeft: `1px solid ${C.line}`,
+                          color: r[st.key] ? C.text : C.sub }}>
                         <input type="checkbox" checked={!!r[st.key]}
                           onChange={e => patch(r.id,
                             { [st.key]: e.target.checked })}

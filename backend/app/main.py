@@ -286,6 +286,10 @@ def _migrate():
         ("welfare_packing_orders","source_batch",
          "ALTER TABLE welfare_packing_orders ADD COLUMN source_batch VARCHAR"),
 
+        # 状況確認シートの「発注後の問い合わせ・確認対応」
+        ("work_statuses","step_followup",
+         "ALTER TABLE work_statuses ADD COLUMN step_followup BOOLEAN DEFAULT FALSE"),
+
         # 卸発注の入荷。create_all は既にある表に列を足さないので、ここで足す
         ("wholesale_orders","received_at",
          "ALTER TABLE wholesale_orders ADD COLUMN received_at TIMESTAMP"),

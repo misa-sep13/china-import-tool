@@ -33,6 +33,15 @@ STEPS = [
 ]
 STEP_KEYS = [s["key"] for s in STEPS]
 
+# 完了の条件には入れない印。発注後にタオタロウへ問い合わせたり、
+# ゆなさんに確認してもらった、という記録のためのもの。
+# これを完了の条件に入れると、問い合わせの要らない商品が
+# いつまでも完了にならなくなる
+EXTRA_STEPS = [
+    {"key": "step_followup", "label": "問い合わせ・確認"},
+]
+EXTRA_STEP_KEYS = [s["key"] for s in EXTRA_STEPS]
+
 # stage は3つのチェックから決まる。完了を一覧から外す絞り込みに使う
 STAGES = ["adopted", "ordered", "imaged", "listed", "selling", "done"]
 STAGE_LABEL = {
@@ -99,6 +108,7 @@ def _out(r: WorkStatus) -> dict:
         "step_order": bool(r.step_order),
         "step_image": bool(r.step_image),
         "step_listing": bool(r.step_listing),
+        "step_followup": bool(r.step_followup),
         "done": (r.stage or "") == "done",
         "ball": r.ball or "staff",
         "ball_label": BALL_LABEL.get(r.ball or "staff", ""),
@@ -138,7 +148,7 @@ def list_rows(include_done: int = 0, only_done: int = 0,
         WorkStatus.id.asc()).all()
     return {"items": [_out(r) for r in rows],
             "stages": [{"key": k, "label": STAGE_LABEL[k]} for k in STAGES],
-            "steps": STEPS,
+            "steps": STEPS, "extra_steps": EXTRA_STEPS,
             "balls": [{"key": k, "label": BALL_LABEL[k]} for k in BALLS]}
 
 
@@ -154,9 +164,26 @@ class WorkIn(BaseModel):
 
 @router.post("")
 def create_row(data: WorkIn, request: Request, db: Session = Depends(get_db)):
-    """1件足す。外注さんからは足せない（こちらで管理する）。"""
+    """1件足す。
+
+    外注さんからも足せる。過去に発注した商品の在庫切れやリンク変更など、
+    リサーチシートを通らない相談ごとがあるため。ただし足せるのは
+    SKU・商品名・メモだけで、工程や完了の状態は触らせない。
+    足した時点で「ゆな確認待ち」にする（聞きたくて足すものなので）。
+    """
     if _is_share(request):
-        raise HTTPException(403, "この画面からは追加できません")
+        d = data.model_dump(exclude_unset=True)
+        row = WorkStatus(
+            channel=d.get("channel") or "amazon",
+            sku=(d.get("sku") or "").strip(),
+            name=(d.get("name") or "").strip(),
+            memo=(d.get("memo") or "").strip(),
+            ball="owner",
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return _out(row)
     row = WorkStatus(**data.model_dump(exclude_unset=True))
     db.add(row)
     db.commit()
@@ -201,6 +228,7 @@ class WorkPatch(BaseModel):
     step_order: Optional[bool] = None
     step_image: Optional[bool] = None
     step_listing: Optional[bool] = None
+    step_followup: Optional[bool] = None
 
 
 @router.patch("/{row_id:int}")
@@ -216,13 +244,17 @@ def update_row(row_id: int, data: WorkPatch, request: Request,
         raise HTTPException(404, "見つかりません")
 
     guest = _is_share(request)
-    allowed = ({"stage", "ball", "memo"} | set(STEP_KEYS)) if guest else None
+    allowed = ({"stage", "ball", "memo"} | set(STEP_KEYS)
+               | set(EXTRA_STEP_KEYS)) if guest else None
 
     touched_steps = False
     for field, value in data.model_dump(exclude_unset=True).items():
         if value is None:
             continue
         if allowed is not None and field not in allowed:
+            continue
+        if field in EXTRA_STEP_KEYS:
+            setattr(row, field, bool(value))
             continue
         if field in STEP_KEYS:
             touched_steps = True
