@@ -59,8 +59,17 @@
     const d = ev.data;
     if (!d || !d.__rmsAds) return;
     if (d.kind === "note") { notes.push(d.text); render(); return; }
+    if (d.kind === "progress") { setStatus(d.text); return; }
+    if (d.kind === "dump") {
+      const text = [d.text, "--- 気づいたこと ---"]
+        .concat(notes.slice(-20)).join(String.fromCharCode(10));
+      navigator.clipboard.writeText(text).then(
+        () => setStatus("画面の作りをコピーしました。貼って渡してください"),
+        () => alert(text.slice(0, 2000)));
+      return;
+    }
     if (d.kind === "auto-done") {
-      if (!d.got) setStatus("自動では取れませんでした。ダウンロードを押してください");
+      if (!d.got) setStatus(`自動では取れませんでした（${d.why || "理由不明"}）`);
       return;
     }
     if (d.kind !== "file") return;
@@ -115,11 +124,9 @@
   }
 
   function copyDiagnostics() {
-    const text = JSON.stringify(
-      { url: location.href, notes: notes.slice(-20), lastRequest }, null, 2);
-    navigator.clipboard.writeText(text).then(
-      () => alert("状況をコピーしました。開発側に渡してください。"),
-      () => alert(text.slice(0, 1500)));
+    // 画面側の作り（ボタン・フォーム・履歴のリンク）も一緒に渡す。
+    // ここが分からないと自動取り込みを直せない
+    window.postMessage({ __rmsAdsDump: true }, "*");
   }
 
   async function toggleAuto() {
@@ -186,9 +193,18 @@
     `${String(d.getDate()).padStart(2, "0")}`;
 
   async function maybeAuto() {
-    if (!/\/rpp\/reports/.test(location.pathname)) return;
     const cfg = await chrome.storage.local.get(["token", "auto", "auto_last"]);
     if (!cfg.token || cfg.auto === false) return;
+
+    // ダウンロード履歴の画面なら、並んでいるものをそのまま取り込む。
+    // レポートは申し込んでから出来上がるまで少しかかるので、
+    // 「更新」を押したときにも拾えるこちらが本命になる
+    if (/download-?history|downloadHistory|履歴/i.test(location.href)) {
+      setStatus("履歴にあるレポートを取り込んでいます…");
+      window.postMessage({ __rmsAdsHistory: true, limit: 6 }, "*");
+      return;
+    }
+    if (!/\/rpp\/reports/.test(location.pathname)) return;
 
     const last = cfg.auto_last || {};
     const now = Date.now();
@@ -205,7 +221,7 @@
     kinds.forEach((k) => { next[k] = now; });
     await chrome.storage.local.set({ auto_last: next });
 
-    setStatus("この画面のレポートを取りに行っています…");
+    setStatus("レポートを申し込んでいます（出来上がるまで1〜2分）…");
     window.postMessage({
       __rmsAdsAuto: true, kinds,
       range: { to: ymd(to), daily_from: ymd(dailyFrom),

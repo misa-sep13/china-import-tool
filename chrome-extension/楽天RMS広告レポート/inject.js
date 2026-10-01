@@ -266,21 +266,114 @@
       return o;
     };
 
-    let got = 0;
+    // レポートはその場では落ちてこない。申し込むと裏で作られて
+    // 「ダウンロード履歴」に出るので、申し込む前後の履歴を見比べる
+    const before = await historyLinks();
+
+    let asked = 0;
     if (kinds.includes("daily") && dlBtn && unitAll && perDay) {
       const o = withDates(range.daily_from, range.to);
       o[unitAll.name] = unitAll.value;
       o[perDay.name] = perDay.value;
-      if (await replay(reqFrom(form, o, dlBtn), true)) got++;
-      else note("毎日の消化が取れませんでした");
+      await ask(reqFrom(form, o, dlBtn));
+      asked++;
     }
     if (kinds.includes("product") && prodBtn) {
       const o = withDates(range.product_from, range.to);
       if (perAll) o[perAll.name] = perAll.value;
-      if (await replay(reqFrom(form, o, prodBtn), true)) got++;
-      else note("商品ごとが取れませんでした");
+      await ask(reqFrom(form, o, prodBtn));
+      asked++;
     }
-    send({ kind: "auto-done", got });
+    if (!asked) {
+      send({ kind: "auto-done", got: 0,
+             why: "ダウンロードの条件を組み立てられませんでした" });
+      return;
+    }
+
+    send({ kind: "progress", text: "レポートが出来上がるのを待っています…" });
+    const got = await waitAndGrab(before, asked);
+    send({ kind: "auto-done", got,
+           why: got ? "" : "レポートが出来上がりませんでした" });
+  }
+
+  // 申し込むだけ。応答はHTML（画面）なので中身は見ない
+  async function ask(req) {
+    try {
+      const init = { method: req.method || "GET", credentials: "include" };
+      if (init.method !== "GET" && req.body != null) {
+        init.body = req.body;
+        if (req.contentType) init.headers = { "Content-Type": req.contentType };
+      }
+      await fetch(req.url, init);
+    } catch (e) {
+      note(`申し込みに失敗しました: ${e}`);
+    }
+  }
+
+  // ---- ダウンロード履歴 ----
+
+  const historyUrl = () => {
+    const a = Array.from(document.querySelectorAll("a[href]"))
+      .find((x) => squash(x.textContent).includes("ダウンロード履歴"));
+    return a ? a.href : new URL("/rpp/download-history", location.origin).href;
+  };
+
+  // 履歴の表に並んでいる「ダウンロード」のリンクを集める
+  const linksIn = (root, base) => {
+    const out = [];
+    root.querySelectorAll("a").forEach((a) => {
+      const t = squash(a.textContent);
+      if (!t.includes("ダウンロード") || t.includes("履歴")) return;
+      const href = a.getAttribute("href") || "";
+      if (!href || /^(#|javascript:)/i.test(href)) {
+        // 画面の中で組み立てる作りのときは拾えない。手がかりを残す
+        note(`履歴のリンクがhrefではありません: ${a.outerHTML.slice(0, 200)}`);
+        return;
+      }
+      out.push(new URL(href, base).href);
+    });
+    return out;
+  };
+
+  async function historyLinks() {
+    try {
+      const url = historyUrl();
+      const res = await fetch(url, { credentials: "include" });
+      const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+      return linksIn(doc, url);
+    } catch (e) {
+      note(`履歴を読めませんでした: ${e}`);
+      return [];
+    }
+  }
+
+  // 新しく出来たぶんが出るまで少し待ってから取りに行く
+  async function waitAndGrab(before, want) {
+    const known = new Set(before);
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 12000));
+      const now = await historyLinks();
+      const fresh = now.filter((u) => !known.has(u));
+      if (fresh.length >= want || (fresh.length && i >= 4)) {
+        let got = 0;
+        for (const u of fresh.slice(0, want)) {
+          if (await replay({ url: u, method: "GET" }, true)) got++;
+        }
+        return got;
+      }
+    }
+    return 0;
+  }
+
+  // 履歴の画面を開いたときは、並んでいるものをそのまま取り込む
+  async function grabHistory(limit) {
+    const urls = linksIn(document, location.href).slice(0, limit || 6);
+    let got = 0;
+    for (const u of urls) {
+      if (await replay({ url: u, method: "GET" }, true)) got++;
+    }
+    send({ kind: "auto-done", got,
+           why: got ? "" : "履歴から取れるものがありませんでした" });
   }
 
   window.addEventListener("message", (ev) => {
@@ -288,6 +381,30 @@
     if (d && d.__rmsAdsAuto && Array.isArray(d.kinds)) {
       // 画面が出来上がってから。遅れて組み立てられる画面があるので少し待つ
       setTimeout(() => autoRun(d.kinds, d.range || {}), 1200);
+    }
+    if (d && d.__rmsAdsHistory) {
+      setTimeout(() => grabHistory(d.limit), 1200);
+    }
+    if (d && d.__rmsAdsDump) {
+      // 画面の作りをそのまま渡すための手がかり
+      const btn = findButton("全商品レポートダウンロード")
+        || findButton("この条件でダウンロード");
+      const form = btn && btn.form;
+      send({
+        kind: "dump",
+        text: JSON.stringify({
+          url: location.href,
+          button: btn ? (btn.outerHTML || "").slice(0, 300) : null,
+          form: form ? { action: form.action, method: form.method,
+            fields: Array.from(form.elements).filter((e) => e.name).map((e) =>
+              `${e.name}=${e.type === "radio" || e.type === "checkbox"
+                ? `${e.value}${e.checked ? "(選択中)" : ""}` : e.value}`
+              .slice(0, 60)) } : null,
+          links: Array.from(document.querySelectorAll("a"))
+            .filter((a) => squash(a.textContent).includes("ダウンロード"))
+            .slice(0, 6).map((a) => (a.outerHTML || "").slice(0, 200)),
+        }, null, 2),
+      });
     }
   });
 
