@@ -397,7 +397,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
                       <input value={draft[r.id] || ''}
                         onChange={e => setDraft(d => ({ ...d, [r.id]: e.target.value }))}
                         onKeyDown={e => { if (e.key === 'Enter') ask(r.id) }}
-                        placeholder="質問・連絡を書く（送ると相手の番になります）"
+                        placeholder="質問・連絡を書く（送ると相手の番になり、チャットワークにも知らせが飛びます）"
                         style={{ fontSize: 12, padding: '5px 8px', flex: 1,
                           border: `1px solid ${C.line}`, borderRadius: 4 }} />
                       <button onClick={() => ask(r.id)}

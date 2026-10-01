@@ -164,3 +164,66 @@ def send_message(room_id: str, body: str) -> dict:
 
 def default_room() -> Optional[str]:
     return settings.CHATWORK_DEFAULT_ROOM_ID or None
+
+
+# ============================================================
+# 状況確認シートの知らせ
+# ============================================================
+# シートに書き込んでも、相手が見に来るまで気づかれない。
+# 書き込んだときだけチャットワークへ1行流して、見に行く合図にする。
+# 送り先は「北田しずく(HAMU-ha)」。二人の部屋なので、どちらが
+# 書いてももう一方に通知が飛ぶ。
+
+_WORK_ROOM_HINTS = ("北田しずく", "HAMU-ha")
+_work_room_cache: Optional[str] = None
+
+
+def work_room() -> Optional[str]:
+    """知らせを送る部屋。環境変数 CHATWORK_WORK_ROOM があればそれを使う。"""
+    global _work_room_cache
+    rid = os.environ.get("CHATWORK_WORK_ROOM", "").strip()
+    if rid:
+        return rid
+    if _work_room_cache:
+        return _work_room_cache
+    try:
+        for r in list_rooms(all_rooms=True):
+            name = str(r.get("name") or "")
+            if any(h in name for h in _WORK_ROOM_HINTS):
+                _work_room_cache = str(r.get("room_id"))
+                return _work_room_cache
+    except Exception:
+        return default_room()
+    return default_room()
+
+
+def work_sheet_url() -> str:
+    """外注さんが開くシートのURL。"""
+    url = os.environ.get("WORK_SHARE_URL", "").strip()
+    if url:
+        return url
+    base = os.environ.get(
+        "PUBLIC_SITE_URL",
+        "https://misa-sep13.github.io/china-import-tool").rstrip("/")
+    token = os.environ.get("KEEP_SHARE_TOKEN", "").strip()
+    return f"{base}/work-public" + (f"?share={token}" if token else "")
+
+
+def notify_work(title: str, lines: list) -> None:
+    """状況確認シートの動きを知らせる。
+
+    送れなくても画面の操作は止めない（知らせはおまけで、
+    書き込みそのものは保存できているため）。
+    """
+    if not is_configured():
+        return
+    try:
+        room = work_room()
+        if not room:
+            return
+        body = "\n".join([f"[info][title]{title}[/title]"]
+                         + [str(x) for x in lines if str(x).strip()]
+                         + [work_sheet_url(), "[/info]"])
+        send_message(room, body)
+    except Exception:
+        pass

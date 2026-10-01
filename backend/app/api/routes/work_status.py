@@ -14,13 +14,15 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import (APIRouter, BackgroundTasks, Depends, HTTPException,
+                     Request)
 from sqlalchemy import func as sa_func
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.work_status import WorkStatus, WorkNote
+from app.services import chatwork
 
 router = APIRouter(prefix="/work-status", tags=["work-status"])
 
@@ -81,6 +83,13 @@ def _sync_stage(row) -> None:
 BALLS = ["owner", "staff", "none"]
 BALL_LABEL = {"owner": "ゆな確認待ち", "staff": "外注さん対応中",
               "none": "待ちなし"}
+WHO_LABEL = {"owner": "ゆなさん", "staff": "外注さん"}
+
+
+def _row_line(row) -> str:
+    """知らせの中で商品を指す1行。"""
+    shop = "楽天" if (row.channel or "") == "rakuten" else "Amazon"
+    return f"{shop}　{row.sku or ''}　{row.name or ''}".strip()
 
 
 def _note_out(n: WorkNote) -> dict:
@@ -163,7 +172,9 @@ class WorkIn(BaseModel):
 
 
 @router.post("")
-def create_row(data: WorkIn, request: Request, db: Session = Depends(get_db)):
+def create_row(data: WorkIn, request: Request,
+               background_tasks: BackgroundTasks = None,
+               db: Session = Depends(get_db)):
     """1件足す。
 
     外注さんからも足せる。過去に発注した商品の在庫切れやリンク変更など、
@@ -183,6 +194,10 @@ def create_row(data: WorkIn, request: Request, db: Session = Depends(get_db)):
         db.add(row)
         db.commit()
         db.refresh(row)
+        if background_tasks is not None:
+            background_tasks.add_task(
+                chatwork.notify_work, "状況確認シート：外注さんが商品を足しました",
+                [_row_line(row), (row.memo or "")[:300]])
         return _out(row)
     row = WorkStatus(**data.model_dump(exclude_unset=True))
     db.add(row)
@@ -317,7 +332,9 @@ class NoteIn(BaseModel):
 
 
 @router.post("/{row_id:int}/notes")
-def add_note(row_id: int, data: NoteIn, db: Session = Depends(get_db)):
+def add_note(row_id: int, data: NoteIn,
+             background_tasks: BackgroundTasks = None,
+             db: Session = Depends(get_db)):
     """質問・連絡を足す。外注さんからも足せる（聞くのが仕事なので）。
 
     足すと相手の番になる。外注さんが聞いたなら、ゆなの確認待ち。
@@ -336,6 +353,12 @@ def add_note(row_id: int, data: NoteIn, db: Session = Depends(get_db)):
     row.ball = "owner" if who == "staff" else "staff"
     db.commit()
     db.refresh(row)
+    # 書いても相手が見に来るまで気づかれない。チャットワークへ合図を送る
+    if background_tasks is not None:
+        background_tasks.add_task(
+            chatwork.notify_work,
+            f"状況確認シート：{WHO_LABEL.get(who, who)}から質問・連絡",
+            [_row_line(row), body[:300]])
     return _out(row)
 
 
@@ -345,6 +368,7 @@ class AnswerIn(BaseModel):
 
 @router.patch("/{row_id:int}/notes/{note_id:int}")
 def answer_note(row_id: int, note_id: int, data: AnswerIn,
+                background_tasks: BackgroundTasks = None,
                 db: Session = Depends(get_db)):
     """質問に答える。答えた時点で相手の番に戻す。"""
     n = (db.query(WorkNote)
@@ -359,4 +383,11 @@ def answer_note(row_id: int, note_id: int, data: AnswerIn,
         row.ball = "staff" if (n.who or "") == "staff" else "owner"
     db.commit()
     db.refresh(row)
+    if row and n.answer and background_tasks is not None:
+        asked = WHO_LABEL.get(n.who or "staff", "")
+        background_tasks.add_task(
+            chatwork.notify_work,
+            f"状況確認シート：{asked}の質問に答えが入りました",
+            [_row_line(row), f"質問：{(n.body or '')[:150]}",
+             f"答え：{n.answer[:300]}"])
     return _out(row)
