@@ -553,8 +553,10 @@ async def import_sales_month(
     period: str = Form(...),
     order_file: list[UploadFile] = File(None),
     use_api: Optional[str] = Form(None),
-    rpp_file: Optional[UploadFile] = File(None),
-    coupon_ad_file: Optional[UploadFile] = File(None),
+    # RPPは通常枠・拡張枠(RPP-EXP)でファイルが分かれるので複数受け取る。
+    # 1つしか入らないと、入れなかったぶんの広告費が丸ごと抜けて利益が多く出る
+    rpp_file: list[UploadFile] = File(None),
+    coupon_ad_file: list[UploadFile] = File(None),
     affiliate_file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
 ):
@@ -586,11 +588,22 @@ async def import_sales_month(
             if name:
                 order_names.append(name)
     order_name = " + ".join(order_names) if order_names else None
-    rpp_rows, rpp_name = await _read_sales_upload(
+    async def _read_many(files, patterns):
+        """同じ種類のファイルを何枚でも受け取り、まとめて1つの明細にする。
+        RPPは通常枠と拡張枠(RPP-EXP)、広告もCPA等で枚数が増えるため。"""
+        rows, names = [], []
+        for f in (files or []):
+            r, n = await _read_sales_upload(f, patterns)
+            rows.extend(r)
+            if n:
+                names.append(n)
+        return rows, (" + ".join(names) if names else None)
+
+    rpp_rows, rpp_name = await _read_many(
         rpp_file,
         [["商品管理番号", "実績額(合計)"], ["商品管理番号", "実績額"], ["商品ページURL", "実績額(合計)"]],
     )
-    coupon_ad_rows, coupon_ad_name = await _read_sales_upload(
+    coupon_ad_rows, coupon_ad_name = await _read_many(
         coupon_ad_file,
         [
             ["商品管理番号", "実績額(合計)"],

@@ -59,8 +59,10 @@ export default function RakutenSalesPage() {
         if (orderFiles.length === 0) throw new Error('受注データを選択してください')
         for (const f of orderFiles) fd.append('order_file', f)
       }
-      if (files.rpp_file) fd.append('rpp_file', files.rpp_file)
-      if (files.coupon_ad_file) fd.append('coupon_ad_file', files.coupon_ad_file)
+      // RPPは通常枠と拡張枠(RPP-EXP)、広告もCPA等でファイルが分かれる。
+      // 1枚しか入らないと、入れなかったぶんの広告費が抜けて利益が多く出る
+      for (const f of (files.rpp_files || [])) fd.append('rpp_file', f)
+      for (const f of (files.coupon_ad_files || [])) fd.append('coupon_ad_file', f)
       if (files.affiliate_file) fd.append('affiliate_file', files.affiliate_file)
       const res = await api.post('/rakuten/sales/import', fd)
       return res.data
@@ -125,8 +127,8 @@ export default function RakutenSalesPage() {
           ) : (
             <FileInput label="受注データ" required multiple onChange={onFile('order_files', true)} />
           )}
-          <FileInput label="RPP" onChange={onFile('rpp_file')} />
-          <FileInput label="クーアド" onChange={onFile('coupon_ad_file')} />
+          <FileInput label="RPP（拡張枠もまとめて選べます）" multiple onChange={onFile('rpp_files', true)} />
+          <FileInput label="クーアド・CPA等" multiple onChange={onFile('coupon_ad_files', true)} />
           <FileInput label="アフィ" onChange={onFile('affiliate_file')} />
           <button
             className="btn btn-primary"
