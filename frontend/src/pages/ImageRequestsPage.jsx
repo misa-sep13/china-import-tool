@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import api, { mediaUrl } from '../api/client'
 import { matchesQuery } from '../searchUtil'
 
@@ -347,8 +347,8 @@ export default function ImageRequestsPage({ share = '' }) {
         「写真」はリサーチシートに貼ってあるライバルの画像です。
         参考画像ともどもクリックで拡大できます。
         {!share && <><br />
-          参考画像は「＋」から選ぶ・枠へドラッグ＆ドロップ・
-          <b>枠をクリックしてから Ctrl+V で貼り付け</b>のどれでも入ります（まとめて可）。
+          参考画像は「＋」でファイルを選ぶ・枠へドラッグ＆ドロップ・
+          <b>「📋」を押してから Ctrl+V</b>のどれでも入ります（まとめて可）。
           外注さんの画面にも出るので、色や向きを見せるのに使えます。<br />
           リサーチシートで「💬 Chatworkで送る」を押すと、ここに自動で1件増えます。
         </>}
@@ -370,6 +370,7 @@ function Photos({ r, share, cfg, reload, setErr, onOpen }) {
   const [busy, setBusy] = useState(false)
   const [over, setOver] = useState(false)
   const [ready, setReady] = useState(false)   // 貼り付け待ち（枠を選んだ状態）
+  const pasteBtn = useRef(null)
 
   const src = (id, thumb) => mediaUrl(
     `/api/image-requests/photo/${id}${thumb ? '?thumb=1' : ''}`)
@@ -413,10 +414,15 @@ function Photos({ r, share, cfg, reload, setErr, onOpen }) {
 
   return (
     <div
-      tabIndex={share ? undefined : 0}
       onPaste={share ? undefined : paste}
-      onFocus={share ? undefined : () => setReady(true)}
-      onBlur={share ? undefined : () => setReady(false)}
+      // 枠の余白を押したときも貼り付け待ちにする。
+      // 「＋」や画像そのものを押したときは、そちらの動きを邪魔しない
+      onMouseDown={share ? undefined : e => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault()
+          pasteBtn.current?.focus()
+        }
+      }}
       onDragOver={share ? undefined : e => { e.preventDefault(); setOver(true) }}
       onDragLeave={share ? undefined : () => setOver(false)}
       onDrop={share ? undefined : e => {
@@ -424,8 +430,8 @@ function Photos({ r, share, cfg, reload, setErr, onOpen }) {
       }}
       style={{ display: 'flex', flexWrap: 'wrap', gap: 4, minHeight: 28,
         padding: 2, borderRadius: 4,
-        outline: (over || ready) ? `2px dashed ${C.key}` : 'none',
-        background: (over || ready) ? '#eff6ff' : 'transparent' }}>
+        outline: over ? `2px dashed ${C.key}` : 'none',
+        background: over ? '#eff6ff' : 'transparent' }}>
       {photos.map(id => (
         <div key={id} style={{ position: 'relative' }}>
           <img src={src(id, true)} alt="参考画像"
@@ -443,16 +449,31 @@ function Photos({ r, share, cfg, reload, setErr, onOpen }) {
         </div>
       ))}
       {!share && (
-        <label title="画像を選ぶ（ドラッグ＆ドロップ、枠をクリックして Ctrl+V でも入ります）"
-          style={{ width: 46, height: 46, borderRadius: 4, cursor: 'pointer',
-            border: `1px dashed ${ready ? C.key : C.line}`,
-            color: ready ? C.key : C.sub, fontSize: ready ? 10 : 18,
-            textAlign: 'center', lineHeight: 1.2,
-            display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          {busy ? '…' : ready ? 'Ctrl+V' : '＋'}
-          <input type="file" accept="image/*" multiple hidden disabled={busy}
-            onChange={e => { send(e.target.files); e.target.value = '' }} />
-        </label>
+        <>
+          {/* ファイルを選ぶ */}
+          <label title="画像ファイルを選ぶ（ここへドラッグしても入ります）"
+            style={{ width: 46, height: 46, borderRadius: 4, cursor: 'pointer',
+              border: `1px dashed ${C.line}`, color: C.sub, fontSize: 18,
+              display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {busy ? '…' : '＋'}
+            <input type="file" accept="image/*" multiple hidden disabled={busy}
+              onChange={e => { send(e.target.files); e.target.value = '' }} />
+          </label>
+          {/* 貼り付け。押してから Ctrl+V。ファイル選択と取り合いにならないよう分けてある */}
+          <button type="button" disabled={busy} ref={pasteBtn}
+            title="押してから Ctrl+V でコピーした画像を貼り付け"
+            onPaste={paste}
+            onFocus={() => setReady(true)}
+            onBlur={() => setReady(false)}
+            style={{ width: 46, height: 46, borderRadius: 4, cursor: 'pointer',
+              padding: 0, lineHeight: 1.2, textAlign: 'center',
+              border: `1px dashed ${ready ? C.key : C.line}`,
+              background: ready ? '#eff6ff' : '#fff',
+              color: ready ? C.key : C.sub,
+              fontSize: ready ? 10 : 15, fontWeight: ready ? 700 : 400 }}>
+            {ready ? 'Ctrl+V' : '📋'}
+          </button>
+        </>
       )}
       {share && photos.length === 0 && (
         <span style={{ fontSize: 11, color: C.sub }}>—</span>
