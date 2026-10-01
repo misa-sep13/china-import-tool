@@ -25,6 +25,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     })();
     return true;
   }
+  // ツールに問い合わせるだけ（どの日が足りないか等）
+  if (msg && msg.type === "ask") {
+    (async () => {
+      try {
+        const res = await fetch(`${msg.backend}${msg.path}`, {
+          headers: { Authorization: `Bearer ${msg.token}` },
+        });
+        const data = await res.json().catch(() => null);
+        reply(res.ok ? { ok: true, data } : { ok: false, error: `HTTP ${res.status}` });
+      } catch (e) {
+        reply({ ok: false, error: String(e) });
+      }
+    })();
+    return true;
+  }
   if (!msg || msg.type !== "upload") return;
   (async () => {
     try {

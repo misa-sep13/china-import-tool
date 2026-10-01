@@ -15,14 +15,15 @@ CSVの列名は実物を見ていないので、あり得る名前を順に試�
 import io
 import re
 import zipfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.rakuten_ad import RakutenAdDaily, RakutenAdProduct
+from app.models.rakuten_ad import (RakutenAdDaily, RakutenAdItemDaily,
+                                   RakutenAdProduct)
 from app.services.rakuten_sales_import import read_upload_table, to_float
 
 router = APIRouter(prefix="/rakuten/ads", tags=["rakuten-ads"])
@@ -89,6 +90,15 @@ def _parse_day(v) -> Optional[date]:
         return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
     except ValueError:
         return None
+
+
+def _parse_span(v) -> tuple:
+    """「2026年09月01日～2026年09月30日」から開始と終了を読む。"""
+    s = str(v or "").strip()
+    parts = re.split(r"[~〜]", s)
+    a = _parse_day(parts[0]) if parts else None
+    b = _parse_day(parts[1]) if len(parts) > 1 else a
+    return a, (b or a)
 
 
 @router.post("/import")
@@ -161,6 +171,44 @@ async def import_ads(file: UploadFile = File(...),
                     break
         if not re.fullmatch(r"\d{4}-\d{2}", p or ""):
             raise HTTPException(400, "対象月が決められませんでした。月を指定してください。")
+        # 集計期間が1日だけのレポートは「商品ごと・その日」として入れる。
+        # 月のつもりの表を1日の数字で上書きしないよう、入れ先を分ける
+        one_day = None
+        for d in dicts:
+            a, b = _parse_span(val(d, "day"))
+            if a and b and a == b:
+                one_day = a
+            break
+
+        if one_day:
+            for d in dicts:
+                mn = str(val(d, "manage_number") or "").strip()
+                if not mn:
+                    skipped += 1
+                    continue
+                row = (db.query(RakutenAdItemDaily)
+                       .filter(RakutenAdItemDaily.day == one_day,
+                               RakutenAdItemDaily.manage_number == mn).first())
+                if not row:
+                    row = RakutenAdItemDaily(day=one_day, manage_number=mn)
+                    db.add(row)
+                row.item_name = str(val(d, "item_name") or "")[:500]
+                row.clicks = int(_num(val(d, "clicks")))
+                row.ctr = _num(val(d, "ctr"))
+                row.cost = _num(val(d, "cost"))
+                row.cpc = _num(val(d, "cpc"))
+                row.sales = _num(val(d, "sales"))
+                row.orders = int(_num(val(d, "orders")))
+                row.cvr = _num(val(d, "cvr"))
+                row.roas = _num(val(d, "roas"))
+                row.bid = _num(val(d, "bid"))
+                saved += 1
+            db.commit()
+            return {"kind": "item-daily", "day": one_day.isoformat(),
+                    "saved": saved, "skipped": skipped,
+                    "used_columns": {k: v for k, v in col.items() if v},
+                    "missing": []}
+
         for d in dicts:
             mn = str(val(d, "manage_number") or "").strip()
             if not mn:
@@ -363,3 +411,212 @@ def import_json(payload: dict, db: Session = Depends(get_db)):
     db.commit()
     return {"kind": kind, "saved": saved, "skipped": skipped,
             "used_columns": {}, "missing": []}
+
+
+# ============================================================
+# 見張りと提案
+# ============================================================
+# 楽天RPPは、ある日いきなり特定の商品でクリックが跳ね、気づかないうちに
+# 広告費だけが出ていることがある。商品ごと・日ごとの数字を貯めてあるので、
+# 「いつもの何倍か」で見つける。
+#
+# あわせて、広告費をかけてよい上限（損益分岐）を商品マスタから出し、
+# 上げる・下げる・止めるの目安を添える。数字を変えるのは人がやる。
+
+from statistics import median
+
+from app.models.rakuten_product import RakutenProduct
+from app.models.rakuten_settings import RakutenSettings
+
+_SPIKE_RATIO = 2.0        # いつもの何倍で暴走とみなすか
+_SPIKE_MIN_CLICKS = 30    # これ未満のクリックは誤差として扱う
+_SPIKE_MIN_COST = 2000    # これ未満の増えかたは放っておく
+_WASTE_MIN_COST = 300     # 在庫切れでこれ以上使っていたら知らせる
+_JUDGE_MIN_COST = 2000    # 上げ下げを言うのに足りる広告費
+
+
+def _profit_per_order(p, commission_rate: float) -> Optional[float]:
+    """1個売れたときに残る粗利（円）。マスタが埋まっていないとNone。"""
+    if not p or not p.selling_price or not p.cost_jpy:
+        return None
+    price = float(p.selling_price)
+    fee = price * (commission_rate or 0.09)
+    ship = float(p.shipping_fee or 0)
+    return price - float(p.cost_jpy) - fee - ship
+
+
+def _breakeven_roas(p, commission_rate: float) -> Optional[float]:
+    """広告費がちょうど粗利と釣り合うROAS（%）。これを下回ると赤字。"""
+    profit = _profit_per_order(p, commission_rate)
+    if profit is None or profit <= 0 or not p.selling_price:
+        return None
+    rate = profit / float(p.selling_price)
+    return round(100 / rate, 1)
+
+
+@router.get("/watch")
+def watch(db: Session = Depends(get_db)):
+    """クリックの暴走と、広告費の上げ下げの目安を出す。"""
+    st = db.query(RakutenSettings).first()
+    commission_rate = st.commission_rate if st and st.commission_rate else 0.09
+
+    products = {p.sku: p for p in db.query(RakutenProduct).all() if p.sku}
+
+    # ---- 全体の動き ----
+    days = (db.query(RakutenAdDaily)
+            .order_by(RakutenAdDaily.day.desc()).limit(30).all())
+    overall = None
+    if len(days) >= 4:
+        latest = days[0]
+        past = days[1:15]
+        base_clicks = median([d.clicks or 0 for d in past])
+        base_cost = median([d.cost or 0 for d in past])
+        overall = {
+            "day": latest.day.isoformat(),
+            "clicks": latest.clicks or 0,
+            "cost": round(latest.cost or 0),
+            "usual_clicks": round(base_clicks),
+            "usual_cost": round(base_cost),
+            "roas": round(latest.roas or 0, 1),
+            "spike": bool(base_clicks
+                          and (latest.clicks or 0) >= base_clicks * _SPIKE_RATIO
+                          and (latest.cost or 0) - base_cost >= _SPIKE_MIN_COST),
+        }
+
+    # ---- 商品ごと・日ごと ----
+    item_days = sorted({d[0] for d in db.query(RakutenAdItemDaily.day).distinct()},
+                       reverse=True)
+    alerts = []
+    latest_day = item_days[0] if item_days else None
+    if latest_day:
+        past_days = item_days[1:15]
+        today_rows = (db.query(RakutenAdItemDaily)
+                      .filter(RakutenAdItemDaily.day == latest_day).all())
+        history = {}
+        if past_days:
+            for r in (db.query(RakutenAdItemDaily)
+                      .filter(RakutenAdItemDaily.day.in_(past_days)).all()):
+                history.setdefault(r.manage_number, []).append(r.clicks or 0)
+
+        for r in today_rows:
+            p = products.get(r.manage_number)
+            be = _breakeven_roas(p, commission_rate) if p else None
+            past_clicks = history.get(r.manage_number, [])
+            usual = median(past_clicks) if len(past_clicks) >= 3 else None
+            clicks = r.clicks or 0
+            cost = r.cost or 0
+            name = r.item_name or (p.name if p else "")
+
+            # 1) クリックの暴走
+            if (usual is not None
+                    and clicks >= max(_SPIKE_MIN_CLICKS, usual * _SPIKE_RATIO)
+                    and cost >= _SPIKE_MIN_COST):
+                times = round(clicks / usual, 1) if usual else None
+                alerts.append({
+                    "level": "danger", "kind": "spike",
+                    "manage_number": r.manage_number, "item_name": name,
+                    "headline": (f"クリックがいつもの{times}倍" if times
+                                 else "クリックが急に増えた"),
+                    "detail": (f"{latest_day.isoformat()} に {clicks:,}クリック"
+                               f"（いつもは{round(usual):,}）で {round(cost):,}円。"
+                               f"売上{round(r.sales or 0):,}円・{r.orders or 0}件、"
+                               f"ROAS {round(r.roas or 0, 1)}%"),
+                    "action": "入札を下げるか、いったん止めて中身を確認",
+                    "cost": round(cost), "clicks": clicks,
+                })
+
+            # 2) 在庫が無いのに出ている
+            if p is not None and cost >= _WASTE_MIN_COST and (p.stock or 0) <= 0:
+                alerts.append({
+                    "level": "danger", "kind": "waste",
+                    "manage_number": r.manage_number, "item_name": name,
+                    "headline": "在庫が無いのに広告が出ている",
+                    "detail": (f"{latest_day.isoformat()} に {round(cost):,}円"
+                               f"（実在庫 {p.stock or 0}個）"),
+                    "action": "広告を止める（除外商品に入れる）",
+                    "cost": round(cost), "clicks": clicks,
+                })
+
+            # 3) 赤字のまま回っている
+            if (be is not None and cost >= _JUDGE_MIN_COST
+                    and (r.roas or 0) < be and (r.orders or 0) >= 1):
+                alerts.append({
+                    "level": "warn", "kind": "unprofitable",
+                    "manage_number": r.manage_number, "item_name": name,
+                    "headline": f"ROAS {round(r.roas or 0, 1)}% ＜ 採算ライン {be}%",
+                    "detail": (f"{latest_day.isoformat()} に {round(cost):,}円使って"
+                               f"売上{round(r.sales or 0):,}円。この商品は"
+                               f"ROAS {be}% を割ると赤字"),
+                    "action": "入札を下げる",
+                    "cost": round(cost), "clicks": clicks,
+                })
+
+    order = {"danger": 0, "warn": 1}
+    alerts.sort(key=lambda a: (order.get(a["level"], 9), -a["cost"]))
+
+    # ---- 今月の上げ下げ ----
+    periods = sorted({p[0] for p in db.query(RakutenAdProduct.period).distinct()},
+                     reverse=True)
+    suggestions = []
+    if periods:
+        for r in (db.query(RakutenAdProduct)
+                  .filter(RakutenAdProduct.period == periods[0]).all()):
+            p = products.get(r.manage_number)
+            profit = _profit_per_order(p, commission_rate) if p else None
+            be = _breakeven_roas(p, commission_rate) if p else None
+            if profit is None or be is None:
+                continue
+            cost = r.cost or 0
+            if cost < _JUDGE_MIN_COST:
+                continue
+
+            # 1クリックで見込める粗利。これより高いCPCは払えない
+            max_cpc = profit * ((r.cvr or 0) / 100)
+            suggest = round(max_cpc * 0.7)
+            now_bid = round(r.bid or 0)
+            if (r.orders or 0) == 0:
+                move, why = "止める", f"{round(cost):,}円使って売れていない"
+            elif (r.roas or 0) < be:
+                move, why = "下げる", f"ROAS {round(r.roas or 0, 1)}% ＜ 採算 {be}%"
+            elif (r.roas or 0) >= be * 1.5 and suggest > now_bid:
+                move, why = "上げる", f"ROAS {round(r.roas or 0, 1)}% で余裕がある"
+            else:
+                continue
+            suggestions.append({
+                "manage_number": r.manage_number,
+                "item_name": r.item_name or (p.name if p else ""),
+                "move": move, "why": why,
+                "now_bid": now_bid, "suggest_bid": max(1, suggest),
+                "cost": round(cost), "clicks": r.clicks or 0,
+                "orders": r.orders or 0, "roas": round(r.roas or 0, 1),
+                "breakeven": be, "cvr": round(r.cvr or 0, 2),
+                "profit_per_order": round(profit),
+            })
+        rank = {"止める": 0, "下げる": 1, "上げる": 2}
+        suggestions.sort(key=lambda x: (rank.get(x["move"], 9), -x["cost"]))
+
+    return {
+        "overall": overall,
+        "alerts": alerts,
+        "suggestions": suggestions,
+        "item_days": [d.isoformat() for d in item_days[:20]],
+        "period": periods[0] if periods else None,
+        "commission_rate": commission_rate,
+    }
+
+
+@router.get("/item-days")
+def item_days(days: int = 10, db: Session = Depends(get_db)):
+    """商品ごと・日ごとの数字が、まだ無い日を返す。
+
+    拡張機能がこれを見て、足りない日のレポートだけ作らせる。
+    """
+    have = {d[0].isoformat() for d in db.query(RakutenAdItemDaily.day).distinct()
+            if d[0]}
+    today = date.today()
+    missing = []
+    for i in range(1, max(1, min(days, 60)) + 1):
+        d = (today - timedelta(days=i)).isoformat()
+        if d not in have:
+            missing.append(d)
+    return {"missing": missing, "have": sorted(have, reverse=True)[:30]}

@@ -61,3 +61,34 @@ class RakutenAdProduct(Base):
     bid = Column(Float, default=0)             # 入札単価
     updated_at = Column(DateTime(timezone=True), server_default=func.now(),
                         onupdate=func.now())
+
+
+class RakutenAdItemDaily(Base):
+    """楽天RPPの、商品ごと・1日ぶんの実績。
+
+    商品別は「月ごと／全期間」でしか検索できないが、全商品レポートの
+    集計期間を1日だけにすれば、その日の商品別が出る。クリックの暴走は
+    商品単位で起きるので、見張るにはこの粒度が要る。
+    """
+    __tablename__ = "rakuten_ad_item_daily"
+    __table_args__ = (
+        UniqueConstraint("day", "manage_number", name="uq_rakuten_ad_item_daily"),
+        Index("ix_rakuten_ad_item_daily_day", "day"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    day = Column(Date, nullable=False, index=True)
+    manage_number = Column(String, nullable=False, index=True)
+    item_name = Column(String, default="")
+
+    clicks = Column(Integer, default=0)
+    ctr = Column(Float, default=0)
+    cost = Column(Float, default=0)
+    cpc = Column(Float, default=0)
+    sales = Column(Float, default=0)
+    orders = Column(Integer, default=0)
+    cvr = Column(Float, default=0)
+    roas = Column(Float, default=0)
+    bid = Column(Float, default=0)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(),
+                        onupdate=func.now())

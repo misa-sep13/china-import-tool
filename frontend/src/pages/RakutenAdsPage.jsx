@@ -22,7 +22,7 @@ const td = { padding: '5px 8px', fontSize: 12, borderTop: `1px solid ${C.line}` 
 const num = { ...td, textAlign: 'right', whiteSpace: 'nowrap' }
 
 export default function RakutenAdsPage() {
-  const [tab, setTab] = useState('daily')
+  const [tab, setTab] = useState('watch')
   const [daily, setDaily] = useState(null)
   const [products, setProducts] = useState(null)
   const [period, setPeriod] = useState('')
@@ -30,16 +30,19 @@ export default function RakutenAdsPage() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [result, setResult] = useState(null)
+  const [watch, setWatch] = useState(null)
 
   const load = useCallback(async () => {
     setErr('')
     try {
-      const [d, p] = await Promise.all([
+      const [d, p, w] = await Promise.all([
         api.get('/rakuten/ads/daily'),
         api.get('/rakuten/ads/products', { params: period ? { period } : {} }),
+        api.get('/rakuten/ads/watch'),
       ])
       setDaily(d.data)
       setProducts(p.data)
+      setWatch(w.data)
       if (!period && (p.data.periods || []).length) setPeriod(p.data.periods[0])
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
@@ -122,7 +125,9 @@ export default function RakutenAdsPage() {
       </div>
 
       <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-        {[['daily', '毎日の消化'], ['product', '商品ごと']].map(([v, l]) => (
+        {[['watch', `👀 見張り${(watch?.alerts || []).length
+          ? `（${watch.alerts.length}）` : ''}`],
+          ['daily', '毎日の消化'], ['product', '商品ごと']].map(([v, l]) => (
           <button key={v} className="btn btn-sm" onClick={() => setTab(v)}
             style={{ fontSize: 12,
               background: tab === v ? '#2563eb' : '#f1f5f9',
@@ -132,6 +137,8 @@ export default function RakutenAdsPage() {
           </button>
         ))}
       </div>
+
+      {tab === 'watch' && watch && <WatchPanel w={watch} />}
 
       {tab === 'daily' && daily && (
         <>
@@ -266,5 +273,127 @@ export default function RakutenAdsPage() {
         </>
       )}
     </div>
+  )
+}
+
+/**
+ * 見張り。
+ *
+ * 楽天RPPは、ある日いきなり特定の商品でクリックが跳ねて、気づかないうちに
+ * 広告費だけ出ていることがある。「いつもの何倍か」で見つける。
+ * 採算ラインは商品マスタ（売価・原価・手数料・送料）から出している。
+ */
+function WatchPanel({ w }) {
+  const o = w.overall
+  const moveColor = { '止める': C.bad, '下げる': C.warn, '上げる': C.good }
+
+  return (
+    <>
+      {o && (
+        <div className="card" style={{ marginBottom: 12,
+          background: o.spike ? '#fef2f2' : '#fff',
+          border: `1px solid ${o.spike ? '#fecaca' : C.line}` }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4,
+            color: o.spike ? C.bad : C.text }}>
+            {o.spike ? '⚠️ 全体でクリックが跳ねています' : '✅ 全体の動きはいつもどおり'}
+          </div>
+          <div style={{ fontSize: 12, color: C.sub }}>
+            {o.day}：{o.clicks.toLocaleString()}クリック・{yen(o.cost)}
+            （いつもは {o.usual_clicks.toLocaleString()}クリック・{yen(o.usual_cost)}）
+            ／ ROAS {o.roas}%
+          </div>
+        </div>
+      )}
+
+      <div className="card" style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+          気になるもの（{w.alerts.length}件）
+        </div>
+        {w.alerts.length === 0 && (
+          <div style={{ fontSize: 12, color: C.sub }}>
+            いまのところ、暴走も無駄打ちも見当たりません。
+            {(w.item_days || []).length < 4 && (
+              <b style={{ color: C.warn }}>
+                　※商品ごとの日別がまだ{(w.item_days || []).length}日分しかないので、
+                「いつも」が出せていません。数日ぶん溜まると見張りが効きます。
+              </b>
+            )}
+          </div>
+        )}
+        {w.alerts.map((a, i) => (
+          <div key={i} style={{ padding: '8px 10px', marginBottom: 6,
+            borderRadius: 6,
+            background: a.level === 'danger' ? '#fef2f2' : '#fffbeb',
+            border: `1px solid ${a.level === 'danger' ? '#fecaca' : '#fcd34d'}` }}>
+            <div style={{ fontSize: 13, fontWeight: 700,
+              color: a.level === 'danger' ? '#991b1b' : '#92400e' }}>
+              {a.headline}
+              <span style={{ fontFamily: 'monospace', fontSize: 11,
+                marginLeft: 8, color: C.sub }}>{a.manage_number}</span>
+            </div>
+            <div style={{ fontSize: 12, color: C.text, marginTop: 2 }}>
+              {(a.item_name || '').slice(0, 50)}
+            </div>
+            <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>
+              {a.detail}
+            </div>
+            <div style={{ fontSize: 12, marginTop: 4, fontWeight: 600 }}>
+              → {a.action}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="card" style={{ padding: 0 }}>
+        <div style={{ padding: 10 }}>
+          <b style={{ fontSize: 13 }}>入札の上げ下げ（{w.period}）</b>
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 4, lineHeight: 1.8 }}>
+            採算ラインは、売価から原価・楽天手数料
+            {Math.round((w.commission_rate || 0.09) * 100)}%・送料を引いた粗利から出しています。
+            推奨入札は「1クリックで見込める粗利 × 0.7」。
+            原価か売価が入っていない商品は出てきません。
+          </div>
+        </div>
+        <div style={{ overflow: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr>
+              <th style={{ ...th, textAlign: 'left' }}>どうする</th>
+              <th style={{ ...th, textAlign: 'left' }}>商品管理番号</th>
+              <th style={{ ...th, textAlign: 'left' }}>理由</th>
+              {['広告費', 'クリック', '件数', 'ROAS', '採算', '粗利/件',
+                'いまの入札', '推奨'].map(h => (
+                  <th key={h} style={{ ...th, textAlign: 'right' }}>{h}</th>
+                ))}
+            </tr></thead>
+            <tbody>
+              {w.suggestions.length === 0 && (
+                <tr><td style={{ ...td, color: C.sub, padding: 20 }} colSpan={11}>
+                  今月、上げ下げを言えるほど広告費を使っている商品はありません。
+                </td></tr>
+              )}
+              {w.suggestions.map(s => (
+                <tr key={s.manage_number}>
+                  <td style={{ ...td, fontWeight: 700,
+                    color: moveColor[s.move] || C.text }}>{s.move}</td>
+                  <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}
+                    title={s.item_name}>{s.manage_number}</td>
+                  <td style={{ ...td, fontSize: 11, color: C.sub }}>{s.why}</td>
+                  <td style={{ ...num, fontWeight: 600 }}>{yen(s.cost)}</td>
+                  <td style={num}>{s.clicks.toLocaleString()}</td>
+                  <td style={num}>{s.orders}</td>
+                  <td style={{ ...num, color: s.roas >= s.breakeven ? C.good : C.bad,
+                    fontWeight: 600 }}>{s.roas}%</td>
+                  <td style={{ ...num, color: C.sub }}>{s.breakeven}%</td>
+                  <td style={num}>{yen(s.profit_per_order)}</td>
+                  <td style={num}>¥{s.now_bid}</td>
+                  <td style={{ ...num, fontWeight: 700,
+                    color: moveColor[s.move] || C.text }}>¥{s.suggest_bid}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
   )
 }

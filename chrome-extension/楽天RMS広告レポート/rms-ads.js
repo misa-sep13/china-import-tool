@@ -128,6 +128,17 @@
 
   // ---- ツールへ送る ----
 
+  // ツールに「どの日の商品別がまだ無いか」を聞く
+  async function missingDays() {
+    const cfg = await chrome.storage.local.get(["backend", "token"]);
+    const res = await chrome.runtime.sendMessage({
+      type: "ask", backend: cfg.backend || DEFAULT_BACKEND, token: cfg.token,
+      path: "/api/rakuten/ads/item-days?days=10",
+    });
+    if (!res || !res.ok) return [];
+    return (res.data && res.data.missing) || [];
+  }
+
   async function toTool(type, payload) {
     const cfg = await chrome.storage.local.get(["backend", "token"]);
     if (!cfg.token) throw new Error("トークンが未設定です");
@@ -179,6 +190,17 @@
         const r = await toTool("upload", file);
         done.product = Date.now();
         setStatus(`取り込みました：商品ごと ${r.saved}行`);
+      }
+      // 商品ごと・日ごと。クリックの暴走は商品単位で起きるので、
+      // 1日だけのレポートを作って溜めていく。1回に3日ぶんまで
+      const missing = (await missingDays()).slice(0, 3);
+      for (let i = 0; i < missing.length; i++) {
+        const day = missing[i];
+        setStatus(`${day} の商品別を作っています…（${i + 1}/${missing.length}）`);
+        const item = await makeAllItemReport(day, day);
+        const file = await downloadReport(item);
+        const r = await toTool("upload", file);
+        setStatus(`取り込みました：${day} の商品別 ${r.saved}行`);
       }
       await chrome.storage.local.set({ auto_last: done });
     } catch (e) {
