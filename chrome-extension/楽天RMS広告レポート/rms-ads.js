@@ -19,6 +19,7 @@
   let pending = null;       // まだ送っていないファイル
   let lastRequest = null;   // 「もう一度」で使う、直前のダウンロード条件
   const notes = [];         // 取れなかったときの手がかり
+  let running = [];         // いま取りに行っている種類
 
   const setStatus = (text) => { status = text; render(); };
 
@@ -69,7 +70,14 @@
       return;
     }
     if (d.kind === "auto-done") {
-      if (!d.got) setStatus(`自動では取れませんでした（${d.why || "理由不明"}）`);
+      if (d.got) {
+        const cur = (await chrome.storage.local.get(["auto_last"])).auto_last || {};
+        running.forEach((k) => { cur[k] = Date.now(); });
+        await chrome.storage.local.set({ auto_last: cur, auto_cooldown: 0 });
+      } else {
+        setStatus(`自動では取れませんでした（${d.why || "理由不明"}）`);
+      }
+      running = [];
       return;
     }
     if (d.kind !== "file") return;
@@ -175,6 +183,7 @@
     row.style.cssText = "display:flex;gap:6px;flex-wrap:wrap";
     if (pending) row.appendChild(mk("ツールに送る", "#2563eb", () => upload(pending)));
     if (lastRequest) row.appendChild(mk("前と同じ条件でもう一度", "#0f766e", again));
+    row.appendChild(mk("今すぐ取り込む", "#2563eb", () => maybeAuto(true)));
     row.appendChild(mk(cfg.auto === false ? "自動：切" : "自動：入",
       cfg.auto === false ? "#94a3b8" : "#16a34a", toggleAuto));
     row.appendChild(mk("設定", "#64748b", configure));
@@ -192,9 +201,11 @@
     `${String(d.getMonth() + 1).padStart(2, "0")}-` +
     `${String(d.getDate()).padStart(2, "0")}`;
 
-  async function maybeAuto() {
-    const cfg = await chrome.storage.local.get(["token", "auto", "auto_last"]);
-    if (!cfg.token || cfg.auto === false) return;
+  async function maybeAuto(force) {
+    const cfg = await chrome.storage.local.get(
+      ["token", "auto", "auto_last", "auto_cooldown"]);
+    if (!cfg.token) { if (force) setStatus("先に「設定」でトークンを入れてください"); return; }
+    if (!force && cfg.auto === false) return;
 
     // ダウンロード履歴の画面なら、並んでいるものをそのまま取り込む。
     // レポートは申し込んでから出来上がるまで少しかかるので、
@@ -208,8 +219,14 @@
 
     const last = cfg.auto_last || {};
     const now = Date.now();
-    const kinds = ["daily", "product"].filter((k) => !(now - (last[k] || 0) < GAP_MS));
-    if (!kinds.length) return;
+    // 失敗した直後に何度も申し込まないための間隔
+    if (!force && now < (cfg.auto_cooldown || 0)) return;
+    const kinds = force ? ["daily", "product"]
+      : ["daily", "product"].filter((k) => now - (last[k] || 0) >= GAP_MS);
+    if (!kinds.length) {
+      if (force) setStatus("取りに行っています…");
+      return;
+    }
 
     // 集計は昨日までしか出ない。毎日の消化は3か月以内、
     // 商品ごとは月単位なので今月の頭から
@@ -217,9 +234,10 @@
     const dailyFrom = new Date(to); dailyFrom.setDate(dailyFrom.getDate() - 88);
     const productFrom = new Date(to.getFullYear(), to.getMonth(), 1);
 
-    const next = Object.assign({}, last);
-    kinds.forEach((k) => { next[k] = now; });
-    await chrome.storage.local.set({ auto_last: next });
+    // 「やった」と記録するのは取り込めたときだけ。失敗したのに
+    // 記録してしまうと、次に開いても何も起きなくなる
+    running = kinds;
+    await chrome.storage.local.set({ auto_cooldown: now + 15 * 60 * 1000 });
 
     setStatus("レポートを申し込んでいます（出来上がるまで1〜2分）…");
     window.postMessage({
