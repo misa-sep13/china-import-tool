@@ -347,7 +347,8 @@ export default function ImageRequestsPage({ share = '' }) {
         「写真」はリサーチシートに貼ってあるライバルの画像です。
         参考画像ともどもクリックで拡大できます。
         {!share && <><br />
-          参考画像は「＋」から選ぶか、枠へドラッグ＆ドロップで入ります（まとめて可）。
+          参考画像は「＋」から選ぶ・枠へドラッグ＆ドロップ・
+          <b>枠をクリックしてから Ctrl+V で貼り付け</b>のどれでも入ります（まとめて可）。
           外注さんの画面にも出るので、色や向きを見せるのに使えます。<br />
           リサーチシートで「💬 Chatworkで送る」を押すと、ここに自動で1件増えます。
         </>}
@@ -368,6 +369,7 @@ export default function ImageRequestsPage({ share = '' }) {
 function Photos({ r, share, cfg, reload, setErr, onOpen }) {
   const [busy, setBusy] = useState(false)
   const [over, setOver] = useState(false)
+  const [ready, setReady] = useState(false)   // 貼り付け待ち（枠を選んだ状態）
 
   const src = (id, thumb) => mediaUrl(
     `/api/image-requests/photo/${id}${thumb ? '?thumb=1' : ''}`)
@@ -397,10 +399,24 @@ function Photos({ r, share, cfg, reload, setErr, onOpen }) {
     } finally { setBusy(false) }
   }
 
+  // 右クリック→コピーした画像を、枠を選んでから Ctrl+V で入れる。
+  // 1688やAmazonの画像を落とさずに持ってこられる
+  const paste = (e) => {
+    const items = [...(e.clipboardData?.items || [])]
+      .filter(i => i.type.startsWith('image/'))
+    if (!items.length) return
+    e.preventDefault()
+    send(items.map(i => i.getAsFile()).filter(Boolean))
+  }
+
   const photos = r.photos || []
 
   return (
     <div
+      tabIndex={share ? undefined : 0}
+      onPaste={share ? undefined : paste}
+      onFocus={share ? undefined : () => setReady(true)}
+      onBlur={share ? undefined : () => setReady(false)}
       onDragOver={share ? undefined : e => { e.preventDefault(); setOver(true) }}
       onDragLeave={share ? undefined : () => setOver(false)}
       onDrop={share ? undefined : e => {
@@ -408,8 +424,8 @@ function Photos({ r, share, cfg, reload, setErr, onOpen }) {
       }}
       style={{ display: 'flex', flexWrap: 'wrap', gap: 4, minHeight: 28,
         padding: 2, borderRadius: 4,
-        outline: over ? `2px dashed ${C.key}` : 'none',
-        background: over ? '#eff6ff' : 'transparent' }}>
+        outline: (over || ready) ? `2px dashed ${C.key}` : 'none',
+        background: (over || ready) ? '#eff6ff' : 'transparent' }}>
       {photos.map(id => (
         <div key={id} style={{ position: 'relative' }}>
           <img src={src(id, true)} alt="参考画像"
@@ -427,11 +443,13 @@ function Photos({ r, share, cfg, reload, setErr, onOpen }) {
         </div>
       ))}
       {!share && (
-        <label title="画像を選ぶ（ここへドラッグしても入ります）"
+        <label title="画像を選ぶ（ドラッグ＆ドロップ、枠をクリックして Ctrl+V でも入ります）"
           style={{ width: 46, height: 46, borderRadius: 4, cursor: 'pointer',
-            border: `1px dashed ${C.line}`, color: C.sub, fontSize: 18,
+            border: `1px dashed ${ready ? C.key : C.line}`,
+            color: ready ? C.key : C.sub, fontSize: ready ? 10 : 18,
+            textAlign: 'center', lineHeight: 1.2,
             display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          {busy ? '…' : '＋'}
+          {busy ? '…' : ready ? 'Ctrl+V' : '＋'}
           <input type="file" accept="image/*" multiple hidden disabled={busy}
             onChange={e => { send(e.target.files); e.target.value = '' }} />
         </label>
