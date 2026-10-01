@@ -318,8 +318,15 @@
                              template.headers || {}),
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`${res.status}`);
-    const json = await res.json();
+    const text = await res.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch (e) {}
+    if (!res.ok) {
+      const msg = json && json.errors && json.errors[0]
+        ? String(json.errors[0].message || "").split(String.fromCharCode(10))[0]
+        : text.slice(0, 120);
+      throw new Error(`${res.status} ${msg}`);
+    }
     if (json && json.errors && json.errors.length) {
       throw new Error(String(json.errors[0].message || "").slice(0, 60));
     }
@@ -329,14 +336,50 @@
   // 1ページずつ最後まで
   async function searchAll(patch) {
     const all = [];
+    let last = null;
     for (let page = 1; page <= 40; page++) {
       const rows = await searchOnce(Object.assign({}, patch, { page }));
       if (!rows.length) break;
+      // 同じ中身が返ってきたら、めくり終わっている
+      const mark = JSON.stringify(rows[0]).slice(0, 200);
+      if (page > 1 && mark === last) break;
+      last = mark;
       all.push(...rows);
-      if (rows.length < 20) break;
       await sleep(600);
     }
     return all;
+  }
+
+  // 絞り込みの「実績額 TOP10」のままだと10件しか返らない。
+  // 画面が持っている選択肢から、いちばん大きいものを探す
+  async function biggestRank() {
+    try {
+      const res = await fetch(new URL("/rpp/api/reports/staticData",
+                                      location.origin).href,
+                              { credentials: "include",
+                                headers: template.headers || {} });
+      if (!res.ok) return null;
+      const json = await res.json();
+      let best = null;
+      const walk = (v) => {
+        if (Array.isArray(v)) { v.forEach(walk); return; }
+        if (!v || typeof v !== "object") return;
+        const label = String(v.label || v.name || v.text || v.displayName || "");
+        const m = label.match(/TOP\s*(\d+)/i);
+        const val = v.value !== undefined ? v.value
+          : (v.id !== undefined ? v.id : v.code);
+        if (m && val !== undefined && val !== null) {
+          const n = Number(m[1]);
+          if (!best || n > best.n) best = { n, value: val };
+        }
+        Object.values(v).forEach(walk);
+      };
+      walk(json);
+      if (best) note(`絞り込みは TOP${best.n} を使います`);
+      return best;
+    } catch (e) {
+      return null;
+    }
   }
 
   async function fetchReports(range) {
@@ -351,12 +394,15 @@
     // 商品ごと。集計単位の番号は画面によって違うので、
     // 商品名が返ってくるものを使う
     send({ kind: "progress", text: "商品ごとの実績をもらっています…" });
+    const rank = await biggestRank();
     for (const selectionType of [3, 2, 4]) {
       try {
-        const rows = await searchAll({
+        const patch = {
           selectionType, periodType: 0,
           startDate: range.product_from, endDate: range.to,
-        });
+        };
+        if (rank) patch.rankType = rank.value;
+        const rows = await searchAll(patch);
         if (rows.length && rows.some((r) => r.itemName)) {
           send({ kind: "rows", payload: {
             kind: "product", period: range.product_from.slice(0, 7), rows } });
@@ -370,19 +416,24 @@
 
     // 毎日の消化。日ごとは「すべての広告」単位でしか出せない
     send({ kind: "progress", text: "毎日の消化をもらっています…" });
-    for (const periodType of [2, 1]) {
-      try {
-        const rows = await searchAll({
-          selectionType: 1, periodType,
-          startDate: range.daily_from, endDate: range.to,
-        });
-        if (rows.length && rows.some((r) => r.effectDate)) {
-          send({ kind: "rows", payload: { kind: "daily", rows } });
-          got++;
-          break;
+    const spans = [[range.daily_from, range.to],
+                   [range.product_from, range.to]];
+    let daily = false;
+    for (const periodType of [2, 1, 3]) {
+      for (const [from, to] of spans) {
+        if (daily) break;
+        try {
+          const rows = await searchAll({
+            selectionType: 1, periodType, startDate: from, endDate: to,
+          });
+          if (rows.length && rows.some((r) => r.effectDate)) {
+            send({ kind: "rows", payload: { kind: "daily", rows } });
+            got++;
+            daily = true;
+          }
+        } catch (e) {
+          note(`毎日の消化(期間${periodType} ${from}〜${to}): ${e.message || e}`);
         }
-      } catch (e) {
-        note(`毎日の消化(${periodType})が取れませんでした: ${e.message || e}`);
       }
     }
 
