@@ -64,6 +64,26 @@
   // 画面が出している通信。どこを叩けばレポートが作れるのかを知るために残す
   const traffic = [];
   const apiJson = [];   // /rpp/api/ の応答。履歴の中身がここに入っている
+  const apiCalls = [];  // /rpp/api/ へ出したもの。レポートの作り方がここに出る
+
+  // レポートを作らせている呼び出しかどうか
+  const looksGenerate = (method, url) =>
+    String(method).toUpperCase() === "POST" &&
+    /\/rpp\/api\//.test(String(url)) &&
+    /report|item|download|csv/i.test(String(url));
+
+  const keepCall = (method, url, body, contentType) => {
+    if (!/\/rpp\/api\//.test(String(url))) return;
+    const call = { method: String(method || "GET").toUpperCase(),
+                   url: new URL(String(url), location.href).href,
+                   body: typeof body === "string" ? body.slice(0, 4000) : null,
+                   contentType: contentType || null };
+    apiCalls.push(call);
+    if (apiCalls.length > 10) apiCalls.shift();
+    // 「全商品レポートダウンロード」を押したときの呼び出しを覚えておく。
+    // 次からは画面のボタンに頼らず、これと同じものを出せばよい
+    if (looksGenerate(call.method, call.url)) send({ kind: "learn", call });
+  };
   const keepJson = (url, text) => {
     if (!/\/rpp\/api\//.test(String(url))) return;
     apiJson.push({ url: String(url).slice(0, 160), body: String(text).slice(0, 6000) });
@@ -121,8 +141,15 @@
         const url = (args[0] && args[0].url) || String(args[0] || "");
         const ctype = res.headers.get("content-type") || "";
         const cdisp = res.headers.get("content-disposition") || "";
-        const method = (args[1] && args[1].method) || "GET";
+        const init = args[1] || {};
+        const method = init.method || (args[0] && args[0].method) || "GET";
         logReq(method, url, res.status, ctype);
+        let sentType = null;
+        try {
+          const h = new Headers(init.headers || {});
+          sentType = h.get("content-type");
+        } catch (e) {}
+        keepCall(method, url, init.body, sentType);
         if (ctype.includes("json")) {
           res.clone().text().then((t) => keepJson(url, t)).catch(() => {});
         }
@@ -143,10 +170,24 @@
     this.__rmsReq = { url: String(url), method: String(method || "GET").toUpperCase() };
     return origOpen.call(this, method, url, ...rest);
   };
+  const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+  XMLHttpRequest.prototype.setRequestHeader = function (k, v) {
+    try {
+      if (this.__rmsReq && String(k).toLowerCase() === "content-type") {
+        this.__rmsReq.contentType = v;
+      }
+    } catch (e) {}
+    return origSetHeader.apply(this, arguments);
+  };
+
   XMLHttpRequest.prototype.send = function (...args) {
     try {
       if (this.__rmsReq && typeof args[0] === "string") {
         this.__rmsReq.body = args[0];
+      }
+      if (this.__rmsReq) {
+        keepCall(this.__rmsReq.method, this.__rmsReq.url,
+                 this.__rmsReq.body, this.__rmsReq.contentType);
       }
     } catch (e) {}
     this.addEventListener("load", () => {
@@ -217,7 +258,22 @@
   // この画面はフォームではなく、押すと画面の中で申し込む作り。条件を外から
   // 組み立てても通らないので、人と同じ順で押す。
   // 「全商品レポートダウンロード」は検索するまで押せないので、先に検索する。
-  async function askReport() {
+  async function askReport(known) {
+    // 一度でも押してあれば、その呼び出しをそのまま出す。
+    // 画面のボタンは検索の具合で押せないことがあるので、こちらが確実
+    if (known && known.url) {
+      try {
+        const init = { method: known.method || "POST", credentials: "include" };
+        if (known.body != null) init.body = known.body;
+        if (known.contentType) init.headers = { "Content-Type": known.contentType };
+        const res = await fetch(known.url, init);
+        if (res.ok) { send({ kind: "asked", ok: true }); return; }
+        note(`覚えていた申し込みが通りませんでした（${res.status}）`);
+      } catch (e) {
+        note(`覚えていた申し込みに失敗しました: ${e}`);
+      }
+    }
+
     const dl = findButton("全商品レポートダウンロード");
     if (!dl) {
       send({ kind: "asked", ok: false,
@@ -350,7 +406,7 @@
     const d = ev.data;
     if (d && d.__rmsAdsAsk) {
       // 画面が出来上がってから。遅れて組み立てられる画面があるので少し待つ
-      setTimeout(() => guard(askReport), 1200);
+      setTimeout(() => guard(() => askReport(d.known)), 1200);
     }
     if (d && d.__rmsAdsHistory) {
       setTimeout(() => guard(() => grabHistory(d.limit, d.since)), 1500);
@@ -371,6 +427,7 @@
                 ? `${e.value}${e.checked ? "(選択中)" : ""}` : e.value}`
               .slice(0, 60)) } : null,
           traffic,
+          apiCalls,
           apiJson,
           links: Array.from(document.querySelectorAll("a"))
             .filter((a) => squash(a.textContent).includes("ダウンロード"))

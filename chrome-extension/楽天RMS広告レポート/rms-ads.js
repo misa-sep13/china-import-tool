@@ -69,6 +69,16 @@
     if (d.kind === "note") { notes.push(d.text); render(); return; }
     if (d.kind === "progress") { setStatus(d.text); return; }
     if (d.kind === "asked") { afterAsk(d.ok, d.why); return; }
+    if (d.kind === "learn" && d.call) {
+      // 「全商品レポートダウンロード」を押したときの呼び出し。
+      // 次からはこれを出せば、ボタンに頼らず作らせられる
+      await chrome.storage.local.set({ generate_call: d.call });
+      setStatus("レポートの作り方を覚えました");
+      // 手で押したときは、そのまま履歴へ移って取り込む
+      const cfg = await chrome.storage.local.get(["token", "auto"]);
+      if (cfg.token && cfg.auto !== false) afterAsk(true);
+      return;
+    }
     if (d.kind === "dump") {
       if (dumpWaiter) { dumpWaiter(); dumpWaiter = null; }
       const text = [d.text, "--- 気づいたこと ---"]
@@ -256,7 +266,8 @@
     running = ["product"];
     await chrome.storage.local.set({ auto_cooldown: now + 15 * 60 * 1000 });
     setStatus("レポートを申し込んでいます…");
-    window.postMessage({ __rmsAdsAsk: true }, "*");
+    const known = (await chrome.storage.local.get(["generate_call"])).generate_call;
+    window.postMessage({ __rmsAdsAsk: true, known: known || null }, "*");
   }
 
   // 申し込めたら、ダウンロード履歴へ移る（画面ごと開き直す）
