@@ -2195,7 +2195,7 @@ if(FIREBASE_CONFIG.databaseURL){
       if(ADOPTED_STATUSES.indexOf(r.status) >= 0 && !r.adoptedAt){
         r.adoptedAt = 1 + (s.researches.length - i);
       }
-      if(ADOPTED_STATUSES.indexOf(r.status) < 0) r.adoptedAt = null;
+      if(ADOPTED_STATUSES.indexOf(r.status) < 0){ r.adoptedAt = null; r.rank = null; }
     });
     return s;
   }
@@ -9494,19 +9494,30 @@ if(FIREBASE_CONFIG.databaseURL){
     moveUp.title = 'このリサーチ枠を1つ上へ';
     const moveDn = el('button', 'mini', '↓');
     moveDn.title = 'このリサーチ枠を1つ下へ';
-    const visNow = state.researches.filter(matchesFilter);
+    const visNow = visibleResearches();
     const vIdx = visNow.indexOf(research);
     moveUp.disabled = vIdx <= 0;
     moveDn.disabled = vIdx >= visNow.length - 1;
     function moveBox(d){
-      const vis = state.researches.filter(matchesFilter);
+      const vis = visibleResearches();
       const vi = vis.indexOf(research);
       const target = vis[vi + d];
       if(vi < 0 || !target) return;
+      // 見えている並びの上で入れ替える
+      vis.splice(vi, 1);
+      vis.splice(vi + d, 0, research);
+      // 配列の順もそれに合わせておく（絞り込みを外したときに
+      // 見た目が跳ばないように）
       const from = state.researches.indexOf(research);
       state.researches.splice(from, 1);
       const to = state.researches.indexOf(target) + (d > 0 ? 1 : 0);
       state.researches.splice(to, 0, research);
+      // 採用の枠は adoptedAt で並べ直されるので、配列を動かすだけでは
+      // 描き直しで戻されてしまう。見えている順番を rank に書き出す
+      let n = 0;
+      vis.forEach(r => {
+        if(ADOPTED_STATUSES.indexOf(r.status) >= 0) r.rank = n++;
+      });
       render(); scheduleSave();
       // 入れ替えたあとも同じ枠が見えている位置までスクロールを追従させる
       const moved = container.querySelector('.research[data-rid="' + research.id + '"]');
@@ -9539,7 +9550,10 @@ if(FIREBASE_CONFIG.databaseURL){
       const nowAdopted = ADOPTED_STATUSES.indexOf(research.status) >= 0;
       const wasAdopted = ADOPTED_STATUSES.indexOf(before) >= 0;
       if(nowAdopted && !wasAdopted) research.adoptedAt = Date.now();
-      if(!nowAdopted) research.adoptedAt = null;
+      // 採用を外したら、手で決めた並びも捨てる。
+      // 残しておくと、あとでもう一度採用したときに
+      // 昔の位置へ戻ってしまう
+      if(!nowAdopted){ research.adoptedAt = null; research.rank = null; }
       // 採用になったら状況確認シートに1行作る。
       // ここで作っておかないと、外注さんは
       // 「今何をやる商品なのか」をチャットで聞くしかなくなる。
@@ -10349,21 +10363,32 @@ if(FIREBASE_CONFIG.databaseURL){
     });
   }
 
+  // 画面に出す順番。render も↑↓もこれを見る。
+  //
+  // 以前は render の中だけで並べ替えており、↑↓の有効・無効と
+  // 入れ替え先は state.researches の生の順を見ていた。
+  // そのため、一番下に見えている枠の↑が押せないなどの
+  // がずれが起きていた。見えている順番を唯一の基準にする。
+  //
+  // 採用したものを上に固める（これから仕込む商品なので、
+  // 追加した順に埋もれると探しにくい）。採用の中の並びは、
+  // 手で動かしてあれば rank、無ければ adoptedAt（新しいほど上）。
+  function visibleResearches(){
+    const adoptedRank = r => (ADOPTED_STATUSES.indexOf(r.status) >= 0 ? 0 : 1);
+    const key = r => (r.rank != null ? r.rank : -(r.adoptedAt || 0));
+    return state.researches.filter(matchesFilter).sort((a, b) => {
+      const d = adoptedRank(a) - adoptedRank(b);
+      if(d) return d;
+      if(adoptedRank(a) === 0) return key(a) - key(b);
+      return 0;
+    });
+  }
+
   function render(){
     rowUpdaters = [];
     rowRefreshers = [];
     container.innerHTML = '';
-    const vis = state.researches.filter(matchesFilter);
-    // 採用したものを上に固める。これから仕込む商品なので、
-    // 追加した順に埋もれると探しにくい。
-    // 採用の中は、あとから採用したものほど上に出す
-    const adoptedRank = r => (ADOPTED_STATUSES.indexOf(r.status) >= 0 ? 0 : 1);
-    vis.sort((a, b) => {
-      const d = adoptedRank(a) - adoptedRank(b);
-      if(d) return d;
-      if(adoptedRank(a) === 0) return (b.adoptedAt || 0) - (a.adoptedAt || 0);
-      return 0;
-    });
+    const vis = visibleResearches();
     vis.forEach(r => container.appendChild(buildResearch(r)));
     if(!vis.length){
       container.appendChild(el('div', 'filter-empty',
