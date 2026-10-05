@@ -411,26 +411,6 @@ export default function WelfareInventoryPage() {
 
   const [reflectResult, setReflectResult] = useState(null)
 
-  // 詰め合わせ（4色セットなど）の数え直し。
-  // 同じ便は二重取り込みを防ぐため飛ばされるので、再取込では直らない
-  const recountMutation = useMutation({
-    mutationFn: () => api.post('/welfare/work-instructions/recount-assorted')
-      .then(r => r.data),
-    onSuccess: (d) => {
-      queryClient.invalidateQueries({ queryKey: ['welfare-work'] })
-      if (!d.groups) {
-        window.alert('数え直すものはありませんでした。')
-      } else {
-        window.alert(['詰め合わせを数え直しました。'].concat(
-          (d.items || []).map(x =>
-            `${x.sku}　${x.rows}行・計${x.units}個　${x.before} → ${x.after}`)
-        ).join(String.fromCharCode(10)))
-      }
-    },
-    onError: (e) => window.alert(
-      e?.response?.data?.detail || '数え直せませんでした'),
-  })
-
   const reflectMutation = useMutation({
     mutationFn: (ids) => api.post('/welfare/work-instructions/reflect', ids ? { ids } : {}).then(r => r.data),
     onSuccess: (data) => {
@@ -989,22 +969,6 @@ export default function WelfareInventoryPage() {
                     {zeroRows.length > 0 && <> ／ 残0で在庫化しない {zeroRows.length}行</>}
                     になります。
                   </div>
-                  <button
-                    className="btn"
-                    disabled={recountMutation.isPending}
-                    style={{ marginRight: 8, fontSize: 12 }}
-                    title="4色セットのような詰め合わせを、色ごとの行で割らずに合算して数え直します"
-                    onClick={() => {
-                      if (!window.confirm(
-                        ['詰め合わせ（4色セットなど）の数を数え直します。',
-                         '色ごとの行を合算してから入数で割り直すので、',
-                         '端数の切り捨てが直ります（未反映の行だけが対象）。',
-                         '', 'よろしいですか？'].join(String.fromCharCode(10))
-                      )) return
-                      recountMutation.mutate()
-                    }}>
-                    {recountMutation.isPending ? '数え直し中…' : '🔢 詰め合わせを数え直す'}
-                  </button>
                   <button
                     className="btn btn-primary"
                     disabled={reflectMutation.isPending}
