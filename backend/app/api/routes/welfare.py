@@ -478,10 +478,28 @@ async def preview_excel(file: UploadFile = File(...), db: Session = Depends(get_
     by_url_spec, unique_url, by_url_all, by_sku = _product_indexes(db)
     result = []
     matched = 0
-    for row in rows:
-        product, match_type = _match_product(row, by_url_spec, unique_url, by_url_all, by_sku)
+    # 取り込みと同じ数え方にする（詰め合わせは全行を足してから割る）
+    paired = [(row, _match_product(row, by_url_spec, unique_url,
+                                   by_url_all, by_sku)) for row in rows]
+    assorted_units: dict[int, int] = {}
+    for row, (product, _) in paired:
+        if product and not (product.supplier_spec or "").strip():
+            assorted_units[product.id] = (assorted_units.get(product.id, 0)
+                                          + int(row.get("units") or 0))
+    assorted_units = {pid: n for pid, n in assorted_units.items()
+                      if sum(1 for _, (p, _) in paired if p and p.id == pid) > 1}
+    assorted_done: set[int] = set()
+
+    for row, (product, match_type) in paired:
         unit = _unit_per_set(product)
-        qty = row["units"] // unit
+        if product and product.id in assorted_units:
+            if product.id in assorted_done:
+                qty = 0
+            else:
+                qty = assorted_units[product.id] // unit
+                assorted_done.add(product.id)
+        else:
+            qty = row["units"] // unit
         if product:
             matched += 1
         result.append({
@@ -614,8 +632,24 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
     unmatched_items = []
     imported_items = []
     skipped_items = []
-    for row in rows:
-        product, _match_type = _match_product(row, by_url_spec, unique_url, by_url_all, by_sku)
+
+    # 詰め合わせ（4色セットなど）は、1セットが色ごとの行に分かれて届く。
+    # 行ごとに入数で割ると、そのたびに端数が切り捨てられる
+    # （30個÷4＝7が4行で28組。本当は120個で30組）。
+    # 先に全行を足してから割り、1行目にまとめて計上する。
+    # 色を持たない＝仕様（中国語）が空、が詰め合わせの目印
+    paired = [(row, _match_product(row, by_url_spec, unique_url,
+                                   by_url_all, by_sku)[0]) for row in rows]
+    assorted_units: dict[int, int] = {}
+    for row, product in paired:
+        if product and not (product.supplier_spec or "").strip():
+            assorted_units[product.id] = (assorted_units.get(product.id, 0)
+                                          + int(row.get("units") or 0))
+    assorted_units = {pid: n for pid, n in assorted_units.items()
+                      if sum(1 for _, p in paired if p and p.id == pid) > 1}
+    assorted_done: set[int] = set()
+
+    for row, product in paired:
         if not product:
             unmatched += 1
             unmatched_items.append({
@@ -626,11 +660,25 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 "sheet": row.get("sheet", ""),
             })
         unit = _unit_per_set(product)
-        qty = row["units"] // unit
+        # 詰め合わせは、同じ商品の行をまとめて1行目だけに計上する
+        assorted_extra = False
+        units_for_qty = int(row.get("units") or 0)
+        if product and product.id in assorted_units:
+            if product.id in assorted_done:
+                assorted_extra = True
+            else:
+                units_for_qty = assorted_units[product.id]
+                assorted_done.add(product.id)
+        qty = 0 if assorted_extra else units_for_qty // unit
         remaining_units = row.get("remaining_units")
         remaining_units_value = row["units"] if remaining_units is None else remaining_units
-        remaining_qty = remaining_units_value // unit
-        if product and qty <= 0:
+        if assorted_extra:
+            remaining_qty = 0
+        elif product and product.id in assorted_units:
+            remaining_qty = units_for_qty // unit
+        else:
+            remaining_qty = remaining_units_value // unit
+        if product and qty <= 0 and not assorted_extra:
             continue
         key = _import_key(product, row)
         ship_no = row.get("shipment_no") or ""
@@ -685,7 +733,8 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 ),
                 remaining_units=remaining_units_value,
                 remaining_qty=remaining_qty,
-                note=None,
+                note=("まとめて1行目に計上（詰め合わせ）" if assorted_extra
+                      else None),
                 is_reflected=False,
             )
             db.add(new_work)
