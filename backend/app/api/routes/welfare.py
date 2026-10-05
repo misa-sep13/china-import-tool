@@ -1823,10 +1823,15 @@ def packing_order_candidates(
 
     # 商品SKU → 商品ページのコード
     code_by_sku = {}
+    # セット組みの部材（耳栓のケース・介護シューズの収納袋など）。
+    # セットの片割れなので、これを数えるとセット数が二重になる
+    is_component_sku = set()
     for p in db.query(RakutenProduct).all():
         code = (p.rakuten_item_url or "").strip()
         if code:
             code_by_sku[p.sku] = code
+        if p.is_component:
+            is_component_sku.add(p.sku)
 
     def code_of(sku: str) -> str:
         s = (sku or "").strip()
@@ -1897,12 +1902,17 @@ def packing_order_candidates(
             "remaining_qty": 0,
             "sources": [],
         })
-        e["remaining_qty"] += remaining
+        # 部材はセット数に数えない（金額が倍になってしまう）。
+        # 何が何個届いているかは分かるよう、内訳には残す
+        part = r.sku in is_component_sku
+        if not part:
+            e["remaining_qty"] += remaining
         e["sources"].append({
             "sku": r.sku,
             "name_jp": r.name_jp,
             "remaining_qty": remaining,
             "order_date": r.order_date,
+            "is_component": part,
         })
 
     by_batch: dict[str, dict] = {}
@@ -1910,12 +1920,18 @@ def packing_order_candidates(
         # 作業マスタは商品ページ単位（y47）なので、色違いが1件にまとまる。
         # 「キッチンタオル4枚セット」だけでは何色を作るのか分からないので、
         # 荷受けの商品名（色が入っている）ごとの内訳を添える。
-        by_name: dict[str, int] = {}
+        by_name: dict[str, dict] = {}
         for sc in e["sources"]:
             nm = (sc.get("name_jp") or sc.get("sku") or "").strip()
-            by_name[nm] = by_name.get(nm, 0) + (sc.get("remaining_qty") or 0)
-        e["breakdown"] = [{"name": k, "qty": v} for k, v in by_name.items()]
-        e["breakdown_label"] = "／".join(f"{k} {v}" for k, v in by_name.items())
+            cur = by_name.setdefault(nm, {"qty": 0,
+                                          "is_component": sc.get("is_component")})
+            cur["qty"] += sc.get("remaining_qty") or 0
+        e["breakdown"] = [{"name": k, "qty": v["qty"],
+                           "is_component": v["is_component"]}
+                          for k, v in by_name.items()]
+        e["breakdown_label"] = "／".join(
+            f"{k} {v['qty']}" + ("（部材）" if v["is_component"] else "")
+            for k, v in by_name.items())
         # 荷受けの「残」はすでにセット数へ換算済み（残(単品) ÷ 換算 = 残(セット)）。
         # ここでさらに1セットの入数で割ると二重に割ることになる。
         # 例: ガーゼ 2400枚 → 残200セット。これを12で割って16になっていた
