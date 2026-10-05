@@ -249,6 +249,14 @@
       if (resumed) setStatus(`広告を再開しました（${resumed}件）`);
       const stopped = await runExcludeQueue();
       if (stopped) setStatus(`広告を止めました（${stopped}件）`);
+
+      // 広告を止めている商品の一覧。これが無いと「もう止めている商品」に
+      // 「止めろ」と言い続けることになるので、取り込みの間隔とは別に毎回送る
+      setStatus("除外商品を確かめています…");
+      const ex = await toTool("rows", {
+        payload: { items: await fetchExcluded() },
+        path: "/api/rakuten/ads/excluded" });
+      setStatus(`除外商品 ${ex.saved}件を確かめました`);
     } catch (e) {
       note(e.message || e);
       setStatus(`できませんでした：${e.message || e}`);
@@ -300,14 +308,6 @@
         const r = await toTool("upload", file);
         setStatus(`取り込みました：${day} の商品別 ${r.saved}行`);
       }
-      // 広告を止めている商品。入荷したら知らせてもらうために送る
-      setStatus("除外商品を確かめています…");
-      const excluded = await fetchExcluded();
-      const ex = await toTool("rows", {
-        payload: { kind: "excluded", items: excluded },
-        path: "/api/rakuten/ads/excluded" });
-      setStatus(`取り込みました：除外商品 ${ex.saved}件`);
-
       await chrome.storage.local.set({ auto_last: done });
     } catch (e) {
       note(e.message || e);
