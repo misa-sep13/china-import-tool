@@ -378,6 +378,17 @@ function WatchPanel({ w, onResume, onStop }) {
             </div>
             <div style={{ fontSize: 12, marginTop: 4, fontWeight: 600 }}>
               → {a.action}
+              {a.can_resume && (a.requested ? (
+                <span style={{ marginLeft: 8, fontSize: 11, color: C.sub,
+                  fontWeight: 400 }}>再開を予約済み</span>
+              ) : (
+                <button className="btn btn-sm"
+                  onClick={() => onResume(a.manage_number)}
+                  style={{ marginLeft: 8, fontSize: 10, background: C.key,
+                    color: '#fff', border: `1px solid ${C.key}` }}>
+                  広告を再開する
+                </button>
+              ))}
               {a.can_stop && (a.requested ? (
                 <span style={{ marginLeft: 8, fontSize: 11, color: C.sub,
                   fontWeight: 400 }}>止める予約済み</span>

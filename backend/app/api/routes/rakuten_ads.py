@@ -640,6 +640,8 @@ def watch(db: Session = Depends(get_db)):
                        f"{d['past_period']} は {d['past_cost']:,}円使って"
                        f"{d['past_orders']}件。採算ラインは {d['breakeven']}%"),
             "action": "広告を再開する",
+            "can_resume": True,
+            "requested": d["resume_requested"],
             "cost": 0, "clicks": 0,
         })
 
