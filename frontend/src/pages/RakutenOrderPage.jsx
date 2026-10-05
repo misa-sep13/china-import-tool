@@ -662,7 +662,21 @@ function ShipmentTab() {
                           {matched.map((item, i) => {
                             const prod = allProducts.find(p => p.id === item.product_id)
                             const setSize = prod?.set_size || 1
-                            const addQty = setSize > 1 ? Math.floor(item.qty / setSize) : item.qty
+                            // 4色セットのような詰め合わせは、1セットが色ごとの行に
+                            // 分かれて届く。行ごとに割ると端数が毎回切り捨てられるので
+                            // （30個÷4＝7が4行で28組）、全行を足してから割る。
+                            // 取り込みも同じ数え方をしている
+                            const assorted = !!prod && !(prod.supplier_spec || '').trim()
+                            const sameProduct = assorted
+                              ? matched.filter(m => m.product_id === item.product_id)
+                              : [item]
+                            const isFirst = sameProduct[0] === item
+                            const units = assorted
+                              ? sameProduct.reduce((a, m) => a + (Number(m.qty) || 0), 0)
+                              : (Number(item.qty) || 0)
+                            const addQty = !assorted || isFirst
+                              ? (setSize > 1 ? Math.floor(units / setSize) : units)
+                              : null
                             return (
                             <tr key={i}>
                               <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{item.sku}</td>
@@ -689,7 +703,22 @@ function ShipmentTab() {
                                 )}
                               </td>
                               <td style={{ textAlign: 'right', fontWeight: 700, color: '#166534' }}>
-                                {addQty}{setSize > 1 && <span style={{ fontSize: 11, color: '#64748b', fontWeight: 400 }}>（{setSize}個で1セット）</span>}
+                                {addQty === null ? (
+                                  <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 400 }}>
+                                    上の行にまとめて計上
+                                  </span>
+                                ) : (
+                                  <>
+                                    {addQty}
+                                    {setSize > 1 && (
+                                      <span style={{ fontSize: 11, color: '#64748b', fontWeight: 400 }}>
+                                        （{setSize}個で1セット
+                                        {assorted && sameProduct.length > 1
+                                          && `・${sameProduct.length}行で計${units}個`}）
+                                      </span>
+                                    )}
+                                  </>
+                                )}
                               </td>
                             </tr>
                             )
