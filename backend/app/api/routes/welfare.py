@@ -1956,3 +1956,56 @@ def set_packing_hide_before(data: PackingHideBeforeIn, db: Session = Depends(get
     row.value = value
     db.commit()
     return {"ok": True, "date": value}
+
+
+@router.post("/work-instructions/recount-assorted")
+def recount_assorted(db: Session = Depends(get_db)):
+    """すでに取り込んである荷受けの、詰め合わせの数を数え直す。
+
+    4色セットのような詰め合わせは、1セットが色ごとの行に分かれて届く。
+    行ごとに入数で割ると端数が毎回切り捨てられる（30個÷4＝7が4行で28組）。
+    取り込み側は直したが、同じ便は二重取り込みを防ぐために飛ばされるので、
+    すでに入っている行はそのままになる。ここで数え直す。
+
+    まだ在庫へ反映していない行だけが対象（反映済みを動かすと在庫がずれる）。
+    """
+    rows = (db.query(WelfareWorkInstruction)
+            .filter(WelfareWorkInstruction.is_reflected == False,  # noqa: E712
+                    WelfareWorkInstruction.product_id.isnot(None))
+            .order_by(WelfareWorkInstruction.id.asc()).all())
+    if not rows:
+        return {"changed": 0, "groups": 0, "items": []}
+
+    products = {p.id: p for p in db.query(RakutenProduct).all()}
+
+    # 同じ便・同じ商品でまとめる。便が違うものを混ぜると数が合わなくなる
+    groups: dict[tuple, list] = {}
+    for r in rows:
+        p = products.get(r.product_id)
+        if not p or (p.supplier_spec or "").strip():
+            continue   # 色を持つ＝詰め合わせではない
+        key = (r.product_id, r.shipment_no or "", r.source_file or "")
+        groups.setdefault(key, []).append(r)
+
+    changed, items = 0, []
+    for (pid, _ship, _src), rs in groups.items():
+        if len(rs) < 2:
+            continue
+        p = products.get(pid)
+        unit = _unit_per_set(p)
+        total_units = sum(int(r.units or 0) for r in rs)
+        want_first = total_units // unit if unit > 1 else total_units
+        before = sum(int(r.qty or 0) for r in rs)
+        if before == want_first:
+            continue
+        for i, r in enumerate(rs):
+            r.qty = want_first if i == 0 else 0
+            r.remaining_qty = want_first if i == 0 else 0
+            if i > 0:
+                r.note = "まとめて1行目に計上（詰め合わせ）"
+            changed += 1
+        items.append({"sku": p.sku, "name_jp": p.name,
+                      "rows": len(rs), "units": total_units,
+                      "before": before, "after": want_first})
+    db.commit()
+    return {"changed": changed, "groups": len(items), "items": items}
