@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
+import api from '../api/client'
 
-const API = import.meta.env.VITE_API_URL || ''
+// 以前は fetch を直に使っていたが、ログインのトークンが付かないため
+// 認証を入れた時点で全部401になり、画面が空のままだった。
+// 共通のapi（トークンを自動で付ける）に揃える。
 
 export default function SeoPage() {
   const [dates, setDates] = useState([])
@@ -15,30 +18,30 @@ export default function SeoPage() {
   const [editId, setEditId] = useState(null)
   const [keywords, setKeywords] = useState([])
   const [showManage, setShowManage] = useState(false)
+  // 昔のデータを引き継いでいるので、終売商品のキーワードが残り、
+  // 新商品は登録されていない。その整理用
+  const [tidy, setTidy] = useState(null)
+  const [tidyBusy, setTidyBusy] = useState(false)
 
   const fetchMatrix = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(`${API}/seo/rankings/matrix?days=${days}`)
-      if (!res.ok) {
-        // 握り潰すと「順位が0件」と見分けがつかず、APIが落ちていても
-        // ただの空ページに見えてしまう（実際それで気づけなかった）
-        throw new Error(`取得に失敗しました (HTTP ${res.status})`)
-      }
-      const data = await res.json()
+      // 握り潰すと「順位が0件」と見分けがつかず、APIが落ちていても
+      // ただの空ページに見えてしまう（実際それで気づけなかった）
+      const { data } = await api.get('/seo/rankings/matrix', { params: { days } })
       setDates(data.dates || [])
       setRows(data.rows || [])
     } catch (e) {
-      setError(e.message || '順位データを取得できませんでした')
+      setError(e.response ? `取得に失敗しました (HTTP ${e.response.status})`
+        : (e.message || '順位データを取得できませんでした'))
       setDates([]); setRows([])
     }
     setLoading(false)
   }, [days])
 
   const fetchKeywords = useCallback(async () => {
-    const res = await fetch(`${API}/seo/keywords?active_only=false`)
-    const data = await res.json()
+    const { data } = await api.get('/seo/keywords', { params: { active_only: false } })
     setKeywords(data.keywords || [])
   }, [])
 
@@ -48,12 +51,7 @@ export default function SeoPage() {
     setChecking(true)
     setCheckResult(null)
     try {
-      const res = await fetch(`${API}/seo/check`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      })
-      const data = await res.json()
+      const { data } = await api.post('/seo/check', {})
       setCheckResult(data)
       fetchMatrix()
     } catch (e) {
@@ -65,17 +63,9 @@ export default function SeoPage() {
   const handleSave = async () => {
     if (!form.keyword.trim()) return
     if (editId) {
-      await fetch(`${API}/seo/keywords/${editId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      })
+      await api.put(`/seo/keywords/${editId}`, form)
     } else {
-      await fetch(`${API}/seo/keywords`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      })
+      await api.post('/seo/keywords', form)
     }
     setForm({ keyword: '', product_sku: '', product_name: '', memo: '' })
     setEditId(null)
@@ -86,17 +76,13 @@ export default function SeoPage() {
 
   const handleDelete = async (id) => {
     if (!confirm('このキーワードを削除しますか？')) return
-    await fetch(`${API}/seo/keywords/${id}`, { method: 'DELETE' })
+    await api.delete(`/seo/keywords/${id}`)
     fetchKeywords()
     fetchMatrix()
   }
 
   const handleToggleActive = async (kw) => {
-    await fetch(`${API}/seo/keywords/${kw.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ is_active: !kw.is_active }),
-    })
+    await api.put(`/seo/keywords/${kw.id}`, { is_active: !kw.is_active })
     fetchKeywords()
     fetchMatrix()
   }
@@ -124,6 +110,19 @@ export default function SeoPage() {
             {checking ? 'チェック中...' : '全順位チェック'}
           </button>
           <button onClick={openManage} style={btnSecondary}>キーワード管理</button>
+          <button style={btnSecondary} disabled={tidyBusy}
+            onClick={async () => {
+              setTidyBusy(true)
+              try {
+                const { data } = await api.get('/seo/tidy')
+                setTidy(data)
+              } catch (e) {
+                setError(e.response?.data?.detail || e.message)
+              }
+              setTidyBusy(false)
+            }}>
+            {tidyBusy ? '調べています…' : '🧹 整理する'}
+          </button>
         </div>
       </div>
 
@@ -155,6 +154,62 @@ export default function SeoPage() {
           </div>
         )
       })()}
+      {tidy && (
+        <div style={{ marginBottom: 16, padding: 14, borderRadius: 8,
+          background: '#f8fafc', border: '1px solid #cbd5e1' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <b>キーワードの整理</b>
+            <span style={{ fontSize: 12, color: '#64748b' }}>
+              登録 {tidy.total}件
+            </span>
+            <button style={{ ...btnSecondary, marginLeft: 'auto' }}
+              onClick={() => setTidy(null)}>閉じる</button>
+          </div>
+
+          <TidyBlock
+            title="終売・マスタに無い商品のキーワード"
+            help="商品マスタに見当たらない商品に付いています。昔のデータの残りなので、消して構いません。"
+            rows={tidy.gone}
+            onDelete={async (ids) => {
+              if (!confirm(`${ids.length}件のキーワードを消します。よろしいですか？`)) return
+              await api.post('/seo/keywords/bulk-delete', { ids })
+              const { data } = await api.get('/seo/tidy')
+              setTidy(data); fetchKeywords(); fetchMatrix()
+            }} />
+
+          <TidyBlock
+            title="直近が圏外のキーワード"
+            help="取れてはいるが順位が付いていないものです。言葉を見直すか、消す候補です。"
+            rows={tidy.out_of_range}
+            onDelete={async (ids) => {
+              if (!confirm(`${ids.length}件のキーワードを消します。よろしいですか？`)) return
+              await api.post('/seo/keywords/bulk-delete', { ids })
+              const { data } = await api.get('/seo/tidy')
+              setTidy(data); fetchKeywords(); fetchMatrix()
+            }} />
+
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>
+              キーワードが1つも無い商品（{tidy.missing_total}件）
+            </div>
+            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>
+              売っているのに順位を見ていない商品です。在庫の多い順。
+              「キーワード管理」から足してください。
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {tidy.missing.map(m => (
+                <span key={m.page} title={m.name}
+                  style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4,
+                    background: '#fff', border: '1px solid #e2e8f0' }}>
+                  <b>{m.page}</b> {(m.name || '').slice(0, 16)}
+                  <span style={{ color: '#94a3b8' }}>　在庫{m.stock}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {checkResult?.error && (
         <div style={{ ...card, background: '#fef2f2', border: '1px solid #fca5a5', marginBottom: 16 }}>
           エラー: {checkResult.error}
@@ -356,6 +411,35 @@ const btnSmall = { background: '#f1f5f9', border: '1px solid #cbd5e1', borderRad
 const selectStyle = { border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
 const inputStyle = { border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 10px', fontSize: 14, width: '100%', boxSizing: 'border-box' }
 const labelStyle = { fontSize: 13, color: '#374151', display: 'flex', flexDirection: 'column', gap: 4 }
+function TidyBlock({ title, help, rows, onDelete }) {
+  if (!rows || rows.length === 0) return null
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ fontWeight: 700, fontSize: 13 }}>
+          {title}（{rows.length}件）
+        </div>
+        <button style={{ ...btnSecondary, fontSize: 11, padding: '2px 8px',
+          borderColor: '#fca5a5', color: '#b91c1c' }}
+          onClick={() => onDelete(rows.map(r => r.id))}>
+          まとめて消す
+        </button>
+      </div>
+      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>{help}</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {rows.map(r => (
+          <span key={r.id} title={r.product_name}
+            style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4,
+              background: '#fff', border: '1px solid #e2e8f0' }}>
+            {r.keyword}
+            <span style={{ color: '#94a3b8' }}>　{r.product_sku}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 const tableStyle = { width: '100%', borderCollapse: 'collapse', fontSize: 14 }
 const thStyle = { textAlign: 'left', padding: '8px 10px', borderBottom: '2px solid #e5e7eb', color: '#6b7280', fontWeight: 600, fontSize: 12 }
 const tdStyle = { padding: '6px 10px', borderBottom: '1px solid #f3f4f6' }

@@ -346,3 +346,119 @@ def _rank_dict(r: SeoRanking) -> dict:
         "card_type": r.card_type,
         "checked_at": r.checked_at.isoformat() if r.checked_at else None,
     }
+
+
+# ============================================================
+# 整理
+# ============================================================
+# 昔のデータをそのまま持ってきているので、終売商品のキーワードが残り、
+# 新商品は登録されていない。どれを消してどれを足すかを出す。
+#
+# SEOのキーワードは商品ページ単位（y104）で持っているが、商品マスタは
+# 色違い（y104_gold）に分かれている。寄せて数えないと、ほとんどが
+# 「マスタに無い」に見えてしまう。
+
+import re as _re
+
+from app.models.rakuten_product import RakutenProduct
+
+
+def _page_code(sku: str) -> str:
+    """商品ページ単位のコード。色違い（y104_gold）は y104 に寄せる。"""
+    return _re.split(r"[_]", str(sku or "").strip(), maxsplit=1)[0]
+
+
+@router.get("/tidy")
+def tidy(db: Session = Depends(get_db)):
+    """整理の材料を出す。
+
+      ・終売（マスタに無い）商品のキーワード  → 消す候補
+      ・ずっと圏外のキーワード                → 見直す候補
+      ・キーワードが1つも無い販売中の商品     → 足す候補
+    """
+    products = db.query(RakutenProduct).all()
+    # 商品ページ → その中の商品たち
+    pages: dict = {}
+    for p in products:
+        code = (p.rakuten_item_url or "").strip() or _page_code(p.sku)
+        if code:
+            pages.setdefault(code, []).append(p)
+    # 色違いのSKUそのものでも引けるようにしておく
+    by_sku = {p.sku: p for p in products if p.sku}
+
+    keywords = (db.query(SeoKeyword)
+                .filter(SeoKeyword.is_active == True)  # noqa: E712
+                .order_by(SeoKeyword.id).all())
+
+    # 直近の順位（キーワードごとの最新1件）
+    latest: dict = {}
+    for r in (db.query(SeoRanking)
+              .order_by(SeoRanking.checked_at.asc().nullsfirst()).all()):
+        latest[r.seo_keyword_id] = r
+
+    def sellable(rows) -> bool:
+        return any(p.is_active is not False and not p.is_component
+                   and not p.is_material and not p.is_promo for p in rows)
+
+    gone, out_of_range, kept = [], [], set()
+    for k in keywords:
+        sku = (k.product_sku or "").strip()
+        code = _page_code(sku)
+        rows = pages.get(sku) or pages.get(code) or (
+            [by_sku[sku]] if sku in by_sku else [])
+        last = latest.get(k.id)
+        item = {
+            "id": k.id, "keyword": k.keyword,
+            "product_sku": sku,
+            "product_name": (k.product_name
+                             or (rows[0].name if rows else "")),
+            "rank": (last.rank if last else None),
+            "checked_at": (last.checked_at.isoformat()
+                           if last and last.checked_at else None),
+        }
+        if not rows:
+            gone.append(item)        # マスタに無い＝終売・旧データ
+            continue
+        kept.add(code)
+        if last is not None and not last.rank:
+            out_of_range.append(item)   # 直近が圏外
+
+    # キーワードが1つも無い、売っている商品ページ
+    missing = []
+    for code, rows in pages.items():
+        if code in kept or not sellable(rows):
+            continue
+        main = rows[0]
+        missing.append({
+            "page": code,
+            "sku": main.sku,
+            "name": main.name or "",
+            "stock": sum(int(p.stock or 0) for p in rows),
+        })
+    missing.sort(key=lambda x: -x["stock"])
+
+    return {
+        "total": len(keywords),
+        "gone": gone,
+        "out_of_range": out_of_range,
+        "missing": missing[:100],
+        "missing_total": len(missing),
+    }
+
+
+class BulkDeleteIn(BaseModel):
+    ids: list[int]
+
+
+@router.post("/keywords/bulk-delete")
+def bulk_delete_keywords(data: BulkDeleteIn, db: Session = Depends(get_db)):
+    """選んだキーワードをまとめて消す。順位の記録も一緒に消す。"""
+    ids = [int(i) for i in (data.ids or [])]
+    if not ids:
+        return {"deleted": 0}
+    db.query(SeoRanking).filter(SeoRanking.seo_keyword_id.in_(ids)).delete(
+        synchronize_session=False)
+    n = db.query(SeoKeyword).filter(SeoKeyword.id.in_(ids)).delete(
+        synchronize_session=False)
+    db.commit()
+    return {"deleted": n}

@@ -6,7 +6,11 @@ rem (Comments are ASCII on purpose: .bat is read in the OEM code page.)
 
 setlocal
 set ROOT=%~dp0..
-set PY=C:\Users\misa\AppData\Local\Python\pythoncore-3.14-64\python.exe
+rem Find Python on this PC. A hardcoded path broke when the tool moved
+rem to another machine (different user folder) and the task failed silently.
+set PY=
+for /f "delims=" %%p in ('where python 2^>nul') do if not defined PY set PY=%%p
+if not defined PY for /f "delims=" %%p in ('where py 2^>nul') do if not defined PY set PY=%%p
 set LOGDIR=%ROOT%\logs
 
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
