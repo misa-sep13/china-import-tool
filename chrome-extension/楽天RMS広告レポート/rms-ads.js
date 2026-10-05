@@ -160,6 +160,33 @@
     }
   }
 
+  // ツールで「広告を止める」を押したものを、RMSの除外へ入れる
+  async function runExcludeQueue() {
+    const q = await ask("/api/rakuten/ads/exclude-queue");
+    const items = (q && q.items) || [];
+    if (!items.length) return 0;
+    setStatus(`広告を止めています（${items.length}件）…`);
+    try {
+      const res = await fetch(ORIGIN + "/rpp/api/exclude/add", {
+        method: "POST", credentials: "include",
+        headers: headers(), body: JSON.stringify(items),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || (json && json.errors && json.errors.length)) {
+        throw new Error((json && json.errors && json.errors[0].message)
+                        || `HTTP ${res.status}`);
+      }
+      await toTool("rows", { payload: { done: items },
+                             path: "/api/rakuten/ads/exclude-done" });
+      return Number(((json || {}).data || {}).successCount || items.length);
+    } catch (e) {
+      await toTool("rows", {
+        payload: { failed: items, error: String(e.message || e) },
+        path: "/api/rakuten/ads/exclude-done" });
+      throw e;
+    }
+  }
+
   async function fetchExcluded() {
     const items = [];
     for (let page = 1; page <= 20; page++) {
@@ -230,6 +257,8 @@
       // 「再開する」の予約が溜まっていたら、まずそれを済ませる
       const resumed = await runResumeQueue();
       if (resumed) setStatus(`広告を再開しました（${resumed}件）`);
+      const stopped = await runExcludeQueue();
+      if (stopped) setStatus(`広告を止めました（${stopped}件）`);
 
       if (want.includes("daily")) {
         setStatus("毎日の消化をもらっています…");

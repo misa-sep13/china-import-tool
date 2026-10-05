@@ -22,8 +22,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.rakuten_ad import (RakutenAdDaily, RakutenAdItemDaily,
-                                   RakutenAdProduct)
+from app.models.rakuten_ad import (RakutenAdDaily, RakutenAdExcludeRequest,
+                                   RakutenAdItemDaily, RakutenAdProduct)
 from app.services.rakuten_sales_import import read_upload_table, to_float
 
 router = APIRouter(prefix="/rakuten/ads", tags=["rakuten-ads"])
@@ -580,11 +580,21 @@ def watch(db: Session = Depends(get_db)):
     for ex in db.query(RakutenAdExcluded).order_by(
             RakutenAdExcluded.excluded_at.desc()).all():
         have = stock_of(ex.manage_number)
+        past = (db.query(RakutenAdProduct)
+                .filter(RakutenAdProduct.manage_number == ex.manage_number)
+                .order_by(RakutenAdProduct.period.desc()).first())
         d = {"manage_number": ex.manage_number,
              "item_name": ex.item_name or "",
              "item_url": ex.item_url or "",
              "excluded_at": ex.excluded_at or "",
              "stock": have,
+             # 止める前の成績。かけ直す価値があるかの手がかり
+             "past_period": past.period if past else "",
+             "past_roas": round(past.roas or 0, 1) if past else None,
+             "past_cost": round(past.cost or 0) if past else None,
+             "past_orders": (past.orders or 0) if past else None,
+             "breakeven": _breakeven_roas(pick(ex.manage_number),
+                                          commission_rate),
              "resume_requested": bool(ex.resume_requested),
              "resume_error": ex.resume_error or ""}
         stopped.append(d)
@@ -607,6 +617,8 @@ def watch(db: Session = Depends(get_db)):
     # ---- 今月の上げ下げ ----
     periods = sorted({p[0] for p in db.query(RakutenAdProduct.period).distinct()},
                      reverse=True)
+    exclude_asked = {r.manage_number for r in
+                     db.query(RakutenAdExcludeRequest).all()}
     suggestions = []
     if periods:
         for r in (db.query(RakutenAdProduct)
@@ -624,15 +636,25 @@ def watch(db: Session = Depends(get_db)):
             max_cpc = profit * ((r.cvr or 0) / 100)
             suggest = round(max_cpc * 0.7)
             now_bid = round(r.bid or 0)
+            # 入札は最低の20円しかかけていないので、下げようがない。
+            # それ以上下げられないものは「止める（除外）」の二択になる
+            at_floor = now_bid <= 20 or suggest <= now_bid
             if (r.orders or 0) == 0:
                 move, why = "止める", f"{round(cost):,}円使って売れていない"
             elif (r.roas or 0) < be:
-                move, why = "下げる", f"ROAS {round(r.roas or 0, 1)}% ＜ 採算 {be}%"
+                if at_floor:
+                    move = "止める"
+                    why = (f"ROAS {round(r.roas or 0, 1)}% ＜ 採算 {be}%"
+                           f"（入札はもう下げられない）")
+                else:
+                    move = "下げる"
+                    why = f"ROAS {round(r.roas or 0, 1)}% ＜ 採算 {be}%"
             elif (r.roas or 0) >= be * 1.5 and suggest > now_bid:
                 move, why = "上げる", f"ROAS {round(r.roas or 0, 1)}% で余裕がある"
             else:
                 continue
             suggestions.append({
+                "exclude_requested": r.manage_number in exclude_asked,
                 "manage_number": r.manage_number,
                 "item_name": r.item_name or (p.name if p else ""),
                 "move": move, "why": why,
@@ -772,5 +794,69 @@ def resume_done(payload: dict, db: Session = Depends(get_db)):
         if row:
             row.resume_requested = False
             row.resume_error = error or "外せませんでした"
+    db.commit()
+    return {"done": len(done), "failed": len(failed)}
+
+
+# ============================================================
+# 広告を止める（除外に入れる）
+# ============================================================
+# 入札は最低の20円しかかけていないので、悪いものは下げようがない。
+# 止めるかどうかの二択になる。押した分だけRMSの除外へ入れる。
+
+
+
+@router.post("/exclude-request/{manage_number}")
+def ask_exclude(manage_number: str, payload: dict = None,
+                db: Session = Depends(get_db)):
+    """「広告を止める」を予約する。"""
+    mn = (manage_number or "").strip()
+    if not mn:
+        raise HTTPException(400, "商品管理番号がありません")
+    row = (db.query(RakutenAdExcludeRequest)
+           .filter(RakutenAdExcludeRequest.manage_number == mn).first())
+    if not row:
+        row = RakutenAdExcludeRequest(manage_number=mn)
+        db.add(row)
+    row.item_name = str((payload or {}).get("item_name") or "")[:500]
+    row.reason = str((payload or {}).get("reason") or "")[:200]
+    row.error = ""
+    db.commit()
+    return {"ok": True, "manage_number": mn}
+
+
+@router.delete("/exclude-request/{manage_number}")
+def cancel_exclude(manage_number: str, db: Session = Depends(get_db)):
+    row = (db.query(RakutenAdExcludeRequest)
+           .filter(RakutenAdExcludeRequest.manage_number == manage_number).first())
+    if row:
+        db.delete(row)
+        db.commit()
+    return {"ok": True}
+
+
+@router.get("/exclude-queue")
+def exclude_queue(db: Session = Depends(get_db)):
+    """拡張機能が見る、止め待ちの一覧。"""
+    rows = db.query(RakutenAdExcludeRequest).all()
+    return {"items": [r.manage_number for r in rows]}
+
+
+@router.post("/exclude-done")
+def exclude_done(payload: dict, db: Session = Depends(get_db)):
+    """拡張機能からの報告。止められたものは予約を消す。"""
+    done = [str(x) for x in (payload.get("done") or [])]
+    failed = [str(x) for x in (payload.get("failed") or [])]
+    error = str(payload.get("error") or "")[:200]
+    for mn in done:
+        row = (db.query(RakutenAdExcludeRequest)
+               .filter(RakutenAdExcludeRequest.manage_number == mn).first())
+        if row:
+            db.delete(row)
+    for mn in failed:
+        row = (db.query(RakutenAdExcludeRequest)
+               .filter(RakutenAdExcludeRequest.manage_number == mn).first())
+        if row:
+            row.error = error or "止められませんでした"
     db.commit()
     return {"done": len(done), "failed": len(failed)}

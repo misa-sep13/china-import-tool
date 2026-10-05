@@ -117,3 +117,19 @@ class RakutenAdExcluded(Base):
     resume_error = Column(String, default="")
     synced_at = Column(DateTime(timezone=True), server_default=func.now(),
                        onupdate=func.now())
+
+
+class RakutenAdExcludeRequest(Base):
+    """「広告を止める」の予約。
+
+    RMSを触れるのは拡張機能だけなので、ツールでは印を付けておき、
+    次にRMSの広告画面を開いたときに除外へ入れる。
+    """
+    __tablename__ = "rakuten_ad_exclude_requests"
+
+    id = Column(Integer, primary_key=True)
+    manage_number = Column(String, nullable=False, unique=True, index=True)
+    item_name = Column(String, default="")
+    reason = Column(String, default="")
+    error = Column(String, default="")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

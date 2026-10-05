@@ -51,6 +51,24 @@ export default function RakutenAdsPage() {
 
   useEffect(() => { load() }, [load])
 
+  // 広告を止める予約。入札は最低額なので、悪いものは止めるしかない
+  const stop = async (mn, item_name, reason) => {
+    if (!window.confirm(
+      [`${mn} の広告を止めます（RMSの除外商品に入れます）。`, '',
+       item_name || '', reason || '', '',
+       '次にRMSの広告画面を開いたときに実行されます。よろしいですか？']
+        .join(String.fromCharCode(10)))) return
+    setErr('')
+    try {
+      await api.post(
+        `/rakuten/ads/exclude-request/${encodeURIComponent(mn)}`,
+        { item_name, reason })
+      await load()
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    }
+  }
+
   // 広告の再開を予約する。RMSを触れるのは拡張だけなので、ここでは印を付ける
   const resume = async (mn) => {
     setErr('')
@@ -150,7 +168,7 @@ export default function RakutenAdsPage() {
         ))}
       </div>
 
-      {tab === 'watch' && watch && <WatchPanel w={watch} onResume={resume} />}
+      {tab === 'watch' && watch && <WatchPanel w={watch} onResume={resume} onStop={stop} />}
 
       {tab === 'daily' && daily && (
         <>
@@ -295,7 +313,7 @@ export default function RakutenAdsPage() {
  * 広告費だけ出ていることがある。「いつもの何倍か」で見つける。
  * 採算ラインは商品マスタ（売価・原価・手数料・送料）から出している。
  */
-function WatchPanel({ w, onResume }) {
+function WatchPanel({ w, onResume, onStop }) {
   const o = w.overall
   const moveColor = { '止める': C.bad, '下げる': C.warn, '上げる': C.good }
 
@@ -367,7 +385,9 @@ function WatchPanel({ w, onResume }) {
               ／再開できるもの {w.resume_count}件</span>}）
           </div>
           <div style={{ fontSize: 11, color: C.sub, marginBottom: 8 }}>
-            RMSの「除外商品」をそのまま出しています。在庫が戻ったものは青く、
+            RMSの「除外商品」＝広告を止めている商品です。止める前のROASも出すので、
+            採算ラインを超えていたものは、かけ直す価値があります。
+            在庫が戻ったものは青く、
             下に「広告を再開する」が出ます。押すと予約され、
             <b>次にRMSの広告画面を開いたときに拡張が除外を外します</b>。
           </div>
@@ -387,6 +407,13 @@ function WatchPanel({ w, onResume }) {
                   <span style={{ marginLeft: 4 }}>
                     {x.stock === null ? '（マスタに無し）' : `在庫${x.stock}`}
                   </span>
+                  {x.past_roas !== null && x.past_roas !== undefined && (
+                    <span style={{ marginLeft: 4, color: x.breakeven
+                      && x.past_roas >= x.breakeven ? C.good : C.sub }}>
+                      ／止める前 ROAS {x.past_roas}%
+                      {x.breakeven ? `（採算${x.breakeven}%）` : ''}
+                    </span>
+                  )}
                 </a>
               )
             })}
@@ -442,7 +469,23 @@ function WatchPanel({ w, onResume }) {
               {w.suggestions.map(s => (
                 <tr key={s.manage_number}>
                   <td style={{ ...td, fontWeight: 700,
-                    color: moveColor[s.move] || C.text }}>{s.move}</td>
+                    color: moveColor[s.move] || C.text }}>
+                    {s.move}
+                    {s.move === '止める' && (
+                      s.exclude_requested ? (
+                        <div style={{ fontSize: 10, color: C.sub,
+                          fontWeight: 400 }}>止める予約済み</div>
+                      ) : (
+                        <button className="btn btn-sm"
+                          onClick={() => onStop(s.manage_number, s.item_name, s.why)}
+                          style={{ display: 'block', marginTop: 3, fontSize: 10,
+                            background: C.bad, color: '#fff',
+                            border: `1px solid ${C.bad}` }}>
+                          広告を止める
+                        </button>
+                      )
+                    )}
+                  </td>
                   <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}>
                     {s.manage_number}
                   </td>
