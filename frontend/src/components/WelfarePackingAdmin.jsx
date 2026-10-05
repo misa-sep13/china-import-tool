@@ -461,27 +461,8 @@ export default function WelfarePackingAdmin() {
                       <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>{r.order_date}</td>
                       <td style={{ padding: '8px 10px' }}>
                         <div style={{ fontWeight: 600 }}>{r.name_jp}</div>
-                        {/* 作業名だけでは何色か分からないので、色の内訳を出す。
-                            作ったときの控えなので、数が変わったら直せるようにする */}
-                        <input defaultValue={r.note || ''} placeholder="内訳メモ"
-                          title="クリックして直せます（作ったときの控えなので、数が変わったら直してください）"
-                          onBlur={e => {
-                            const v = e.target.value
-                            if (v !== (r.note || '')) {
-                              update.mutate({ id: r.id, body: { note: v } })
-                            }
-                          }}
-                          style={{ fontSize: 11, color: '#64748b', width: '100%',
-                            border: '1px solid transparent', background: 'transparent',
-                            padding: '1px 3px', borderRadius: 3 }}
-                          onFocus={e => {
-                            e.target.style.border = '1px solid #cbd5e1'
-                            e.target.style.background = '#fff'
-                          }}
-                          onBlurCapture={e => {
-                            e.target.style.border = '1px solid transparent'
-                            e.target.style.background = 'transparent'
-                          }} />
+                        {/* 作業名だけでは何色か分からないので、色の内訳を出す */}
+                        {r.note && <div style={{ fontSize: 11, color: '#64748b' }}>{r.note}</div>}
                         {r.sku && <div style={{ fontSize: 11, color: '#94a3b8' }}>{r.sku}</div>}
                       </td>
                       <td style={{ padding: '8px 10px', textAlign: 'right' }}>{r.set_qty || '-'}</td>
