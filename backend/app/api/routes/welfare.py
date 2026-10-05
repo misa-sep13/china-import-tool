@@ -595,6 +595,22 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
     ):
         last_instruction_by_product[pid] = instruction
 
+    # 新しい色が初めて届いたときは、その商品の過去が無いので指示が空になる。
+    # 空のままだと作業依頼の候補に出てこず、気づかないまま埋もれる
+    # （実際 y91_black の20個がそうなった）。同じ商品ページの別の色に
+    # 付いている指示を引き継ぐ。
+    product_code: dict[int, str] = {}
+    for p_ in db.query(RakutenProduct).all():
+        code = (p_.rakuten_item_url or "").strip() or re.split(
+            r"[_-]", (p_.sku or ""), maxsplit=1)[0]
+        if code:
+            product_code[p_.id] = code
+    last_instruction_by_code: dict[str, str] = {}
+    for pid, instruction in last_instruction_by_product.items():
+        code = product_code.get(pid)
+        if code:
+            last_instruction_by_code[code] = instruction
+
     unmatched_items = []
     imported_items = []
     skipped_items = []
@@ -661,7 +677,11 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 qty=qty,
                 instruction=(
                     row.get("instruction")
-                    or (last_instruction_by_product.get(product.id, "") if product else "")
+                    or (last_instruction_by_product.get(product.id, "")
+                        if product else "")
+                    # 同じ商品ページの別の色に付いている指示を引き継ぐ
+                    or (last_instruction_by_code.get(
+                        product_code.get(product.id, ""), "") if product else "")
                 ),
                 remaining_units=remaining_units_value,
                 remaining_qty=remaining_qty,
@@ -672,6 +692,9 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
             work_imported += 1
             if product and new_work.instruction:
                 last_instruction_by_product[product.id] = new_work.instruction
+                code = product_code.get(product.id)
+                if code:
+                    last_instruction_by_code[code] = new_work.instruction
         if not product:
             continue
         # 取込では就労支援在庫へ加算しない。
@@ -1761,6 +1784,7 @@ def packing_order_candidates(
     }
 
     grouped: dict[int, dict] = {}
+    no_instruction: list = []
     rows = db.query(WelfareWorkInstruction).all()
     for r in rows:
         remaining = r.remaining_qty or 0
@@ -1776,6 +1800,14 @@ def packing_order_candidates(
             continue
         # 「作業」を含む指示だけが対象（保管だけの行は再梱包しない）
         if "作業" not in str(r.instruction or ""):
+            # 指示が空のまま埋もれると、届いているのに作業依頼に出てこない。
+            # 作業マスタに当たる商品なら、拾い漏れとして画面に出す
+            if not str(r.instruction or "").strip() and code_of(r.sku):
+                no_instruction.append({
+                    "batch": label, "sku": r.sku or "",
+                    "name_jp": r.name_jp or "", "qty": remaining,
+                    "id": r.id,
+                })
             continue
         code = code_of(r.sku)
         if not code:
@@ -1840,6 +1872,9 @@ def packing_order_candidates(
         "batches": batches,
         # 便を指定して呼ばれたときは、その便の中身をそのまま使えるようにする
         "candidates": batches[0]["items"] if (batch and batches) else [],
+        # 指示が付いていないせいで候補に出せなかったもの。
+        # 黙って落とすと、届いているのに作業依頼が出ないまま埋もれる
+        "no_instruction": no_instruction,
     }
 
 

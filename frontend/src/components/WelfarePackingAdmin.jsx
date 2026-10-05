@@ -56,6 +56,9 @@ export default function WelfarePackingAdmin() {
   const months = monthsData?.months || []
   const tasks = tasksData?.tasks || []
   const batches = candData?.batches || []            // 便ごとの候補
+  // 指示が付いていないせいで候補に出せなかった荷受け。
+  // 黙って落とすと、届いているのに作業依頼が出ないまま埋もれる
+  const noInstruction = candData?.no_instruction || []
   // 便が未選択なら、いちばん新しい便を見る
   const activeBatch = batches.some(b => b.batch === batch) ? batch : (batches[0]?.batch || '')
   const fromReceiving = batches.find(b => b.batch === activeBatch)?.items || []
@@ -207,8 +210,33 @@ export default function WelfarePackingAdmin() {
                 ))}
               </div>
               <div style={{ fontSize: 12, color: '#0369a1', marginBottom: 10 }}>
-                荷受けで「作業」指示が付いた商品から、作れるセット数を出しています
+                <b>① 荷受け</b>で指示（作業保管など）を付ける　→　
+                <b>② ここ（再梱包）</b>で作業依頼を作る、の順です。
+                荷受けで「作業」指示が付いた商品から、作れるセット数を出しています。
               </div>
+
+              {/* 指示を付け忘れた行。ここで出さないと、届いているのに
+                  作業依頼が作られないまま気づけない */}
+              {noInstruction.length > 0 && (
+                <div style={{ marginBottom: 12, padding: '10px 12px',
+                  background: '#fffbeb', border: '1px solid #fcd34d',
+                  borderRadius: 6, fontSize: 12, color: '#92400e' }}>
+                  <b>⚠ 荷受けで指示が付いていない商品が {noInstruction.length}件あります。</b>
+                  このままでは下の一覧に出てこないので、
+                  <b>先に「荷受け」で指示（作業保管など）を付けてから</b>、
+                  この画面を更新してください。
+                  <div style={{ marginTop: 6, lineHeight: 1.9 }}>
+                    {noInstruction.map(x => (
+                      <span key={x.id} style={{ display: 'inline-block',
+                        marginRight: 10, background: '#fff', borderRadius: 4,
+                        border: '1px solid #fcd34d', padding: '1px 6px' }}>
+                        {x.batch}　{x.sku}　{(x.name_jp || '').slice(0, 20)}　
+                        <b>{x.qty}</b>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {fromReceiving.length === 0 ? (
                 <div style={{ padding: 16, textAlign: 'center', color: '#64748b', fontSize: 13 }}>
