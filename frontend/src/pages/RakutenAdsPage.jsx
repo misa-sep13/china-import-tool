@@ -338,6 +338,10 @@ function WatchPanel({ w, onResume, onStop }) {
       <div className="card" style={{ marginBottom: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
           気になるもの（{w.alerts.length}件）
+          <span style={{ fontWeight: 400, fontSize: 11, color: C.sub,
+            marginLeft: 6 }}>
+            ＝ 直近1日の動き（暴走・在庫切れ・その日の赤字）
+          </span>
         </div>
         {w.alerts.length === 0 && (
           <div style={{ fontSize: 12, color: C.sub }}>
@@ -372,6 +376,17 @@ function WatchPanel({ w, onResume, onStop }) {
             </div>
             <div style={{ fontSize: 12, marginTop: 4, fontWeight: 600 }}>
               → {a.action}
+              {a.can_stop && (a.requested ? (
+                <span style={{ marginLeft: 8, fontSize: 11, color: C.sub,
+                  fontWeight: 400 }}>止める予約済み</span>
+              ) : (
+                <button className="btn btn-sm"
+                  onClick={() => onStop(a.manage_number, a.item_name, a.headline)}
+                  style={{ marginLeft: 8, fontSize: 10, background: C.bad,
+                    color: '#fff', border: `1px solid ${C.bad}` }}>
+                  広告を止める
+                </button>
+              ))}
             </div>
           </div>
         ))}
@@ -441,6 +456,9 @@ function WatchPanel({ w, onResume, onStop }) {
       <div className="card" style={{ padding: 0 }}>
         <div style={{ padding: 10 }}>
           <b style={{ fontSize: 13 }}>入札の上げ下げ（{w.period}）</b>
+          <span style={{ fontSize: 11, color: C.sub, marginLeft: 6 }}>
+            ＝ 今月の積み上げで見た判断。すでに止めている商品は出ません
+          </span>
           <div style={{ fontSize: 11, color: C.sub, marginTop: 4, lineHeight: 1.8 }}>
             採算ラインは、売価から原価・楽天手数料
             {Math.round((w.commission_rate || 0.09) * 100)}%・送料を引いた粗利から出しています。

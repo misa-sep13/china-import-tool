@@ -506,6 +506,11 @@ def watch(db: Session = Depends(get_db)):
                           and (latest.cost or 0) - base_cost >= _SPIKE_MIN_COST),
         }
 
+    exclude_asked = {r.manage_number for r in
+                     db.query(RakutenAdExcludeRequest).all()}
+    # もう止めている商品に「止めろ」と言っても仕方がない
+    excluded_now = {r.manage_number for r in db.query(RakutenAdExcluded).all()}
+
     # ---- 商品ごと・日ごと ----
     item_days = sorted({d[0] for d in db.query(RakutenAdItemDaily.day).distinct()},
                        reverse=True)
@@ -533,7 +538,8 @@ def watch(db: Session = Depends(get_db)):
             # 1) クリックの暴走
             if (usual is not None
                     and clicks >= max(_SPIKE_MIN_CLICKS, usual * _SPIKE_RATIO)
-                    and cost >= _SPIKE_MIN_COST):
+                    and cost >= _SPIKE_MIN_COST
+                    and r.manage_number not in excluded_now):
                 times = round(clicks / usual, 1) if usual else None
                 alerts.append({
                     "level": "danger", "kind": "spike",
@@ -563,7 +569,10 @@ def watch(db: Session = Depends(get_db)):
 
             # 3) 赤字のまま回っている
             if (be is not None and cost >= _JUDGE_MIN_COST
-                    and (r.roas or 0) < be and (r.orders or 0) >= 1):
+                    and (r.roas or 0) < be and (r.orders or 0) >= 1
+                    and r.manage_number not in excluded_now):
+                # 入札が最低（20円）なら下げようがないので、止めるしかない
+                floor = (r.bid or 0) <= 20
                 alerts.append({
                     "level": "warn", "kind": "unprofitable",
                     "manage_number": r.manage_number, "item_name": name,
@@ -571,7 +580,10 @@ def watch(db: Session = Depends(get_db)):
                     "detail": (f"{latest_day.isoformat()} に {round(cost):,}円使って"
                                f"売上{round(r.sales or 0):,}円。この商品は"
                                f"ROAS {be}% を割ると赤字"),
-                    "action": "入札を下げる",
+                    "action": ("広告を止める（入札はもう下げられない）" if floor
+                               else "入札を下げる"),
+                    "can_stop": floor,
+                    "requested": r.manage_number in exclude_asked,
                     "cost": round(cost), "clicks": clicks,
                 })
 
@@ -617,8 +629,6 @@ def watch(db: Session = Depends(get_db)):
     # ---- 今月の上げ下げ ----
     periods = sorted({p[0] for p in db.query(RakutenAdProduct.period).distinct()},
                      reverse=True)
-    exclude_asked = {r.manage_number for r in
-                     db.query(RakutenAdExcludeRequest).all()}
     suggestions = []
     if periods:
         for r in (db.query(RakutenAdProduct)
@@ -631,6 +641,8 @@ def watch(db: Session = Depends(get_db)):
             cost = r.cost or 0
             if cost < _JUDGE_MIN_COST:
                 continue
+            if r.manage_number in excluded_now:
+                continue   # すでに広告を止めている
 
             # 1クリックで見込める粗利。これより高いCPCは払えない
             max_cpc = profit * ((r.cvr or 0) / 100)
