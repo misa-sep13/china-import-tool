@@ -126,6 +126,25 @@
     return { name: `rpp_item_report_${item.id}.zip`, b64: btoa(s) };
   }
 
+  // ---- 除外商品（広告を止めている商品） ----
+  //
+  // 在庫切れで止めたまま、入荷しても止まりっぱなしになりやすい。
+  // 一覧をそのままツールへ送って、在庫が戻ったら知らせてもらう。
+
+  async function fetchExcluded() {
+    const items = [];
+    for (let page = 1; page <= 20; page++) {
+      const res = await get(`/rpp/api/exclude?page=${page}&sortBy=-updatedAt`);
+      const data = (await res.json()).data || {};
+      const got = data.items || [];
+      items.push(...got);
+      const total = Number(data.totalCount || 0);
+      if (!got.length || items.length >= total) break;
+      await sleep(400);
+    }
+    return items;
+  }
+
   // ---- ツールへ送る ----
 
   // ツールに「どの日の商品別がまだ無いか」を聞く
@@ -202,6 +221,14 @@
         const r = await toTool("upload", file);
         setStatus(`取り込みました：${day} の商品別 ${r.saved}行`);
       }
+      // 広告を止めている商品。入荷したら知らせてもらうために送る
+      setStatus("除外商品を確かめています…");
+      const excluded = await fetchExcluded();
+      const ex = await toTool("rows", {
+        payload: { kind: "excluded", items: excluded },
+        path: "/api/rakuten/ads/excluded" });
+      setStatus(`取り込みました：除外商品 ${ex.saved}件`);
+
       await chrome.storage.local.set({ auto_last: done });
     } catch (e) {
       note(e.message || e);

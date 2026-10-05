@@ -575,7 +575,31 @@ def watch(db: Session = Depends(get_db)):
                     "cost": round(cost), "clicks": clicks,
                 })
 
-    order = {"danger": 0, "warn": 1}
+    # ---- 広告を止めたまま、在庫が戻っているもの ----
+    stopped, resume = [], []
+    for ex in db.query(RakutenAdExcluded).order_by(
+            RakutenAdExcluded.excluded_at.desc()).all():
+        have = stock_of(ex.manage_number)
+        d = {"manage_number": ex.manage_number,
+             "item_name": ex.item_name or "",
+             "item_url": ex.item_url or "",
+             "excluded_at": ex.excluded_at or "",
+             "stock": have}
+        stopped.append(d)
+        if have is not None and have > 0:
+            resume.append(d)
+            alerts.append({
+                "level": "info", "kind": "resume",
+                "manage_number": ex.manage_number,
+                "item_name": ex.item_name or "",
+                "headline": f"入荷したので広告を再開できます（在庫{have}個）",
+                "detail": (f"{ex.excluded_at} に除外しました。"
+                           f"いまの実在庫は{have}個です"),
+                "action": "RMSの「除外商品」から外す",
+                "cost": 0, "clicks": 0,
+            })
+
+    order = {"danger": 0, "warn": 1, "info": 2}
     alerts.sort(key=lambda a: (order.get(a["level"], 9), -a["cost"]))
 
     # ---- 今月の上げ下げ ----
@@ -623,6 +647,8 @@ def watch(db: Session = Depends(get_db)):
         "overall": overall,
         "alerts": alerts,
         "suggestions": suggestions,
+        "stopped": stopped,
+        "resume_count": len(resume),
         "item_days": [d.isoformat() for d in item_days[:20]],
         "period": periods[0] if periods else None,
         "commission_rate": commission_rate,
@@ -644,3 +670,47 @@ def item_days(days: int = 10, db: Session = Depends(get_db)):
         if d not in have:
             missing.append(d)
     return {"missing": missing, "have": sorted(have, reverse=True)[:30]}
+
+
+# ============================================================
+# 除外商品（広告を止めている商品）
+# ============================================================
+# 在庫切れで止めたまま、入荷しても止まりっぱなしになりやすい。
+# RMSの除外一覧（GET /rpp/api/exclude）を拡張機能が丸ごと送ってくるので、
+# そのまま控えて、実在庫が戻ったものを見張りで知らせる。
+
+from app.models.rakuten_ad import RakutenAdExcluded
+
+
+@router.post("/excluded")
+def import_excluded(payload: dict, db: Session = Depends(get_db)):
+    """除外商品の一覧を丸ごと入れ替える。"""
+    items = payload.get("items") or []
+    keep = set()
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        mn = str(it.get("itemMngId") or it.get("manage_number") or "").strip()
+        if not mn:
+            continue
+        keep.add(mn)
+        row = (db.query(RakutenAdExcluded)
+               .filter(RakutenAdExcluded.manage_number == mn).first())
+        if not row:
+            row = RakutenAdExcluded(manage_number=mn)
+            db.add(row)
+        row.item_name = str(it.get("itemName") or "")[:500]
+        row.item_url = str(it.get("itemUrl") or "")[:500]
+        row.image_url = str(it.get("itemImageUrl") or "")[:500]
+        row.price = _num(it.get("itemPrice"))
+        row.excluded_at = str(it.get("updatedAt") or "")[:30]
+
+    # RMSで除外を外したものは、こちらからも消す
+    removed = 0
+    if keep:
+        for row in db.query(RakutenAdExcluded).all():
+            if row.manage_number not in keep:
+                db.delete(row)
+                removed += 1
+    db.commit()
+    return {"saved": len(keep), "removed": removed}

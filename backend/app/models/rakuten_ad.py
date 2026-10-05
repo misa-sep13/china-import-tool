@@ -93,3 +93,23 @@ class RakutenAdItemDaily(Base):
     bid = Column(Float, default=0)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(),
                         onupdate=func.now())
+
+
+class RakutenAdExcluded(Base):
+    """RPPの除外商品（広告を止めている商品）。
+
+    在庫が切れたので止めた、という使い方をするが、入荷しても
+    気づかないと止めたままになる。RMSの除外一覧をそのまま控えて、
+    実在庫が戻ったら知らせるために持つ。
+    """
+    __tablename__ = "rakuten_ad_excluded"
+
+    id = Column(Integer, primary_key=True)
+    manage_number = Column(String, nullable=False, unique=True, index=True)
+    item_name = Column(String, default="")
+    item_url = Column(String, default="")
+    image_url = Column(String, default="")
+    price = Column(Float, default=0)
+    excluded_at = Column(String, default="")   # RMSの最終操作日時（文字のまま）
+    synced_at = Column(DateTime(timezone=True), server_default=func.now(),
+                       onupdate=func.now())

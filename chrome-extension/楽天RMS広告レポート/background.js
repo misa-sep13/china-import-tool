@@ -5,7 +5,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg && msg.type === "rows") {
     (async () => {
       try {
-        const res = await fetch(`${msg.backend}/api/rakuten/ads/import-json`, {
+        const path = msg.path || "/api/rakuten/ads/import-json";
+        const res = await fetch(`${msg.backend}${path}`, {
           method: "POST",
           headers: { "Content-Type": "application/json",
                      Authorization: `Bearer ${msg.token}` },

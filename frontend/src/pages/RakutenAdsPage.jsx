@@ -324,10 +324,13 @@ function WatchPanel({ w }) {
         {w.alerts.map((a, i) => (
           <div key={i} style={{ padding: '8px 10px', marginBottom: 6,
             borderRadius: 6,
-            background: a.level === 'danger' ? '#fef2f2' : '#fffbeb',
-            border: `1px solid ${a.level === 'danger' ? '#fecaca' : '#fcd34d'}` }}>
+            background: a.level === 'danger' ? '#fef2f2'
+              : a.level === 'info' ? '#eff6ff' : '#fffbeb',
+            border: `1px solid ${a.level === 'danger' ? '#fecaca'
+              : a.level === 'info' ? '#bfdbfe' : '#fcd34d'}` }}>
             <div style={{ fontSize: 13, fontWeight: 700,
-              color: a.level === 'danger' ? '#991b1b' : '#92400e' }}>
+              color: a.level === 'danger' ? '#991b1b'
+                : a.level === 'info' ? '#1d4ed8' : '#92400e' }}>
               {a.headline}
               <span style={{ fontFamily: 'monospace', fontSize: 11,
                 marginLeft: 8, color: C.sub }}>{a.manage_number}</span>
@@ -344,6 +347,40 @@ function WatchPanel({ w }) {
           </div>
         ))}
       </div>
+
+      {(w.stopped || []).length > 0 && (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>
+            広告を止めている商品（{w.stopped.length}件
+            {w.resume_count > 0 && <span style={{ color: C.key }}>
+              ／再開できるもの {w.resume_count}件</span>}）
+          </div>
+          <div style={{ fontSize: 11, color: C.sub, marginBottom: 8 }}>
+            RMSの「除外商品」をそのまま出しています。在庫が戻ったものは
+            青くなるので、RMSの除外から外してください。
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {w.stopped.map(x => {
+              const back = x.stock !== null && x.stock > 0
+              return (
+                <a key={x.manage_number} href={x.item_url || undefined}
+                  target="_blank" rel="noreferrer" title={x.item_name}
+                  style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4,
+                    textDecoration: 'none',
+                    background: back ? '#eff6ff' : '#f8fafc',
+                    border: `1px solid ${back ? '#bfdbfe' : C.line}`,
+                    color: back ? C.key : C.sub,
+                    fontWeight: back ? 700 : 400 }}>
+                  {x.manage_number}
+                  <span style={{ marginLeft: 4 }}>
+                    {x.stock === null ? '（マスタに無し）' : `在庫${x.stock}`}
+                  </span>
+                </a>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="card" style={{ padding: 0 }}>
         <div style={{ padding: 10 }}>
