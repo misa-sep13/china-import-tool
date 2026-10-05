@@ -462,6 +462,29 @@ def watch(db: Session = Depends(get_db)):
 
     products = {p.sku: p for p in db.query(RakutenProduct).all() if p.sku}
 
+    # 広告の商品管理番号は親（y104）、マスタは色違い（y104_gold / y104_gray）に
+    # 分かれていることがある。色違いを束ねて見ないと、在庫があるのに
+    # 「在庫が無いのに広告が出ている」と言ってしまう
+    family: dict = {}
+    for p in products.values():
+        base = str(p.sku or "").split("_")[0]
+        if base:
+            family.setdefault(base, []).append(p)
+
+    def pick(mn: str):
+        """採算の計算に使う1つ。売価と原価が入っているものを選ぶ。"""
+        for p in family.get(mn, []):
+            if p.selling_price and p.cost_jpy:
+                return p
+        return products.get(mn) or (family.get(mn) or [None])[0]
+
+    def stock_of(mn: str):
+        """色違いを合わせた実在庫。マスタに無ければ None。"""
+        rows = family.get(mn) or ([products[mn]] if mn in products else [])
+        if not rows:
+            return None
+        return sum(int(p.stock or 0) for p in rows)
+
     # ---- 全体の動き ----
     days = (db.query(RakutenAdDaily)
             .order_by(RakutenAdDaily.day.desc()).limit(30).all())
@@ -499,7 +522,7 @@ def watch(db: Session = Depends(get_db)):
                 history.setdefault(r.manage_number, []).append(r.clicks or 0)
 
         for r in today_rows:
-            p = products.get(r.manage_number)
+            p = pick(r.manage_number)
             be = _breakeven_roas(p, commission_rate) if p else None
             past_clicks = history.get(r.manage_number, [])
             usual = median(past_clicks) if len(past_clicks) >= 3 else None
@@ -525,14 +548,15 @@ def watch(db: Session = Depends(get_db)):
                     "cost": round(cost), "clicks": clicks,
                 })
 
-            # 2) 在庫が無いのに出ている
-            if p is not None and cost >= _WASTE_MIN_COST and (p.stock or 0) <= 0:
+            # 2) 在庫が無いのに出ている（色違いを合わせて0のときだけ）
+            have = stock_of(r.manage_number)
+            if have is not None and have <= 0 and cost >= _WASTE_MIN_COST:
                 alerts.append({
                     "level": "danger", "kind": "waste",
                     "manage_number": r.manage_number, "item_name": name,
                     "headline": "在庫が無いのに広告が出ている",
                     "detail": (f"{latest_day.isoformat()} に {round(cost):,}円"
-                               f"（実在庫 {p.stock or 0}個）"),
+                               f"（実在庫 {have}個）"),
                     "action": "広告を止める（除外商品に入れる）",
                     "cost": round(cost), "clicks": clicks,
                 })
@@ -561,7 +585,7 @@ def watch(db: Session = Depends(get_db)):
     if periods:
         for r in (db.query(RakutenAdProduct)
                   .filter(RakutenAdProduct.period == periods[0]).all()):
-            p = products.get(r.manage_number)
+            p = pick(r.manage_number)
             profit = _profit_per_order(p, commission_rate) if p else None
             be = _breakeven_roas(p, commission_rate) if p else None
             if profit is None or be is None:
