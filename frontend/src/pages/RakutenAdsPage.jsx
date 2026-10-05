@@ -426,6 +426,7 @@ function WatchPanel({ w, onResume }) {
             <thead><tr>
               <th style={{ ...th, textAlign: 'left' }}>どうする</th>
               <th style={{ ...th, textAlign: 'left' }}>商品管理番号</th>
+              <th style={{ ...th, textAlign: 'left' }}>商品名</th>
               <th style={{ ...th, textAlign: 'left' }}>理由</th>
               {['広告費', 'クリック', '件数', 'ROAS', '採算', '粗利/件',
                 'いまの入札', '推奨'].map(h => (
@@ -442,8 +443,18 @@ function WatchPanel({ w, onResume }) {
                 <tr key={s.manage_number}>
                   <td style={{ ...td, fontWeight: 700,
                     color: moveColor[s.move] || C.text }}>{s.move}</td>
-                  <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}
-                    title={s.item_name}>{s.manage_number}</td>
+                  <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}>
+                    {s.manage_number}
+                  </td>
+                  <td style={{ ...td, maxWidth: 260, overflow: 'hidden',
+                    textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title={s.item_name}>
+                    {s.item_name || (
+                      <span style={{ color: C.warn, fontSize: 11 }}>
+                        商品マスタにありません
+                      </span>
+                    )}
+                  </td>
                   <td style={{ ...td, fontSize: 11, color: C.sub }}>{s.why}</td>
                   <td style={{ ...num, fontWeight: 600 }}>{yen(s.cost)}</td>
                   <td style={num}>{s.clicks.toLocaleString()}</td>
