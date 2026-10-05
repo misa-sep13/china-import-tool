@@ -23,6 +23,28 @@ export default function SeoPage() {
   const [tidy, setTidy] = useState(null)
   const [tidyBusy, setTidyBusy] = useState(false)
 
+  const reloadTidy = async () => {
+    const { data } = await api.get('/seo/tidy')
+    setTidy(data)
+  }
+
+  const bulkDelete = async (ids) => {
+    if (!confirm(`${ids.length}件のキーワードを消します。よろしいですか？`)) return
+    await api.post('/seo/keywords/bulk-delete', { ids })
+    await reloadTidy(); fetchKeywords(); fetchMatrix()
+  }
+
+  // 自社制作品のように「マスタに無いが商品はある」ものを、毎回出さない
+  const ignoreKeyword = async (id) => {
+    await api.post('/seo/tidy/ignore', { kind: 'keyword', value: String(id) })
+    await reloadTidy()
+  }
+
+  const ignorePage = async (page) => {
+    await api.post('/seo/tidy/ignore', { kind: 'page', value: String(page) })
+    await reloadTidy()
+  }
+
   const fetchMatrix = useCallback(async () => {
     setLoading(true)
     setError('')
@@ -170,23 +192,13 @@ export default function SeoPage() {
             title="終売・マスタに無い商品のキーワード"
             help="商品マスタに見当たらない商品に付いています。昔のデータの残りなので、消して構いません。"
             rows={tidy.gone}
-            onDelete={async (ids) => {
-              if (!confirm(`${ids.length}件のキーワードを消します。よろしいですか？`)) return
-              await api.post('/seo/keywords/bulk-delete', { ids })
-              const { data } = await api.get('/seo/tidy')
-              setTidy(data); fetchKeywords(); fetchMatrix()
-            }} />
+            onDelete={bulkDelete} onIgnore={ignoreKeyword} />
 
           <TidyBlock
             title="直近が圏外のキーワード"
             help="取れてはいるが順位が付いていないものです。言葉を見直すか、消す候補です。"
             rows={tidy.out_of_range}
-            onDelete={async (ids) => {
-              if (!confirm(`${ids.length}件のキーワードを消します。よろしいですか？`)) return
-              await api.post('/seo/keywords/bulk-delete', { ids })
-              const { data } = await api.get('/seo/tidy')
-              setTidy(data); fetchKeywords(); fetchMatrix()
-            }} />
+            onDelete={bulkDelete} onIgnore={ignoreKeyword} />
 
           <div style={{ marginTop: 12 }}>
             <div style={{ fontWeight: 700, fontSize: 13 }}>
@@ -203,6 +215,9 @@ export default function SeoPage() {
                     background: '#fff', border: '1px solid #e2e8f0' }}>
                   <b>{m.page}</b> {(m.name || '').slice(0, 16)}
                   <span style={{ color: '#94a3b8' }}>　在庫{m.stock}</span>
+                  <button onClick={() => ignorePage(m.page)} title="今後この一覧に出さない"
+                    style={{ marginLeft: 4, border: 'none', background: 'none',
+                      color: '#94a3b8', cursor: 'pointer', padding: 0 }}>×</button>
                 </span>
               ))}
             </div>
@@ -411,7 +426,7 @@ const btnSmall = { background: '#f1f5f9', border: '1px solid #cbd5e1', borderRad
 const selectStyle = { border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 10px', fontSize: 13 }
 const inputStyle = { border: '1px solid #d1d5db', borderRadius: 6, padding: '6px 10px', fontSize: 14, width: '100%', boxSizing: 'border-box' }
 const labelStyle = { fontSize: 13, color: '#374151', display: 'flex', flexDirection: 'column', gap: 4 }
-function TidyBlock({ title, help, rows, onDelete }) {
+function TidyBlock({ title, help, rows, onDelete, onIgnore }) {
   if (!rows || rows.length === 0) return null
   return (
     <div style={{ marginTop: 12 }}>
@@ -433,6 +448,9 @@ function TidyBlock({ title, help, rows, onDelete }) {
               background: '#fff', border: '1px solid #e2e8f0' }}>
             {r.keyword}
             <span style={{ color: '#94a3b8' }}>　{r.product_sku}</span>
+            <button onClick={() => onIgnore(r.id)} title="今後この一覧に出さない"
+              style={{ marginLeft: 4, border: 'none', background: 'none',
+                color: '#94a3b8', cursor: 'pointer', padding: 0 }}>×</button>
           </span>
         ))}
       </div>

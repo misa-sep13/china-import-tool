@@ -390,6 +390,12 @@ def tidy(db: Session = Depends(get_db)):
                 .filter(SeoKeyword.is_active == True)  # noqa: E712
                 .order_by(SeoKeyword.id).all())
 
+    # 一度「出さない」と決めたもの
+    from app.models.seo import SeoTidyIgnore as _Ign
+    ignored = db.query(_Ign).all()
+    skip_kw = {str(i.value) for i in ignored if i.kind == "keyword"}
+    skip_page = {str(i.value) for i in ignored if i.kind == "page"}
+
     # 直近の順位（キーワードごとの最新1件）
     latest: dict = {}
     for r in (db.query(SeoRanking)
@@ -416,6 +422,8 @@ def tidy(db: Session = Depends(get_db)):
             "checked_at": (last.checked_at.isoformat()
                            if last and last.checked_at else None),
         }
+        if str(k.id) in skip_kw:
+            continue
         if not rows:
             gone.append(item)        # マスタに無い＝終売・旧データ
             continue
@@ -426,7 +434,7 @@ def tidy(db: Session = Depends(get_db)):
     # キーワードが1つも無い、売っている商品ページ
     missing = []
     for code, rows in pages.items():
-        if code in kept or not sellable(rows):
+        if code in kept or code in skip_page or not sellable(rows):
             continue
         main = rows[0]
         missing.append({
@@ -462,3 +470,37 @@ def bulk_delete_keywords(data: BulkDeleteIn, db: Session = Depends(get_db)):
         synchronize_session=False)
     db.commit()
     return {"deleted": n}
+
+
+from app.models.seo import SeoTidyIgnore
+
+
+class TidyIgnoreIn(BaseModel):
+    kind: str          # keyword / page
+    value: str
+    note: Optional[str] = ""
+
+
+@router.post("/tidy/ignore")
+def add_tidy_ignore(data: TidyIgnoreIn, db: Session = Depends(get_db)):
+    """整理の一覧に出さないようにする。"""
+    kind = (data.kind or "").strip()
+    value = str(data.value or "").strip()
+    if kind not in ("keyword", "page") or not value:
+        raise HTTPException(400, "出さないものを決められませんでした")
+    row = (db.query(SeoTidyIgnore)
+           .filter(SeoTidyIgnore.kind == kind,
+                   SeoTidyIgnore.value == value).first())
+    if not row:
+        db.add(SeoTidyIgnore(kind=kind, value=value, note=data.note or ""))
+        db.commit()
+    return {"ok": True}
+
+
+@router.delete("/tidy/ignore")
+def remove_tidy_ignore(kind: str, value: str, db: Session = Depends(get_db)):
+    (db.query(SeoTidyIgnore)
+     .filter(SeoTidyIgnore.kind == kind, SeoTidyIgnore.value == value)
+     .delete(synchronize_session=False))
+    db.commit()
+    return {"ok": True}
