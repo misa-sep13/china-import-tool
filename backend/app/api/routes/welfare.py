@@ -595,7 +595,7 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
             w.supplier_spec or "",
             int(w.units or 0),
             w.source_sheet or "",
-        ), []).append((w.shipment_no, w.source_file))
+        ), []).append((w.shipment_no, w.source_file, w))
 
     # 同じ商品は前回と同じ指示（保管／戻し等）である場合が多いので、
     # 過去（一番新しいもの）の指示をデフォルト値として引き継ぐ。
@@ -686,10 +686,12 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
             _same_shipment(no, f, ship_no, source_file)
             for no, f in existing_movement_keys.get(key, ())
         )
-        already_work = any(
-            _same_shipment(no, f, ship_no, source_file)
-            for no, f in existing_work_keys.get(key, ())
-        )
+        # 同じ内容の行が既にあるか。あれば、その行そのものを持っておく。
+        # まだ在庫へ反映していない行なら、数え方を直したときに
+        # 取り込み直しで更新できるようにするため
+        same_work = [w for no, f, w in existing_work_keys.get(key, ())
+                     if _same_shipment(no, f, ship_no, source_file)]
+        already_work = bool(same_work)
 
         fallback_name = None
         if not product:
@@ -703,6 +705,21 @@ def _import_rows(rows: list[dict], db: Session, *, source_file: str, clear_exist
                 if prev:
                     fallback_name = prev[0]
 
+        if already_work:
+            # まだ在庫に入れていないなら、計算し直した数で上書きする。
+            # 在庫へ反映済みの行は触らない（在庫がずれるため）。
+            # 人が入れた指示・備考・残の手直しは残す
+            for w in same_work:
+                if w.is_reflected:
+                    continue
+                if (w.qty or 0) != qty:
+                    # 残を手で直していなければ、残も合わせて直す
+                    if (w.remaining_qty or 0) == (w.qty or 0):
+                        w.remaining_qty = qty
+                    w.qty = qty
+                    w.units = int(row.get("units") or 0)
+                    if assorted_extra and not (w.note or "").strip():
+                        w.note = "まとめて1行目に計上（詰め合わせ）"
         if not already_work:
             new_work = WelfareWorkInstruction(
                 product_id=product.id if product else None,
