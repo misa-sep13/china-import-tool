@@ -584,7 +584,9 @@ def watch(db: Session = Depends(get_db)):
              "item_name": ex.item_name or "",
              "item_url": ex.item_url or "",
              "excluded_at": ex.excluded_at or "",
-             "stock": have}
+             "stock": have,
+             "resume_requested": bool(ex.resume_requested),
+             "resume_error": ex.resume_error or ""}
         stopped.append(d)
         if have is not None and have > 0:
             resume.append(d)
@@ -714,3 +716,61 @@ def import_excluded(payload: dict, db: Session = Depends(get_db)):
                 removed += 1
     db.commit()
     return {"saved": len(keep), "removed": removed}
+
+
+@router.post("/excluded/{manage_number}/resume")
+def ask_resume(manage_number: str, db: Session = Depends(get_db)):
+    """「広告を再開する」を予約する。
+
+    RMSを触れるのは拡張機能だけなので、ここでは印を付けるだけ。
+    次にRMSの広告画面を開いたときに、拡張が除外を外す。
+    """
+    row = (db.query(RakutenAdExcluded)
+           .filter(RakutenAdExcluded.manage_number == manage_number).first())
+    if not row:
+        raise HTTPException(404, "除外の一覧にありません")
+    row.resume_requested = True
+    row.resume_error = ""
+    db.commit()
+    return {"ok": True, "manage_number": manage_number}
+
+
+@router.delete("/excluded/{manage_number}/resume")
+def cancel_resume(manage_number: str, db: Session = Depends(get_db)):
+    """予約を取り消す。"""
+    row = (db.query(RakutenAdExcluded)
+           .filter(RakutenAdExcluded.manage_number == manage_number).first())
+    if row:
+        row.resume_requested = False
+        row.resume_error = ""
+        db.commit()
+    return {"ok": True}
+
+
+@router.get("/resume-queue")
+def resume_queue(db: Session = Depends(get_db)):
+    """拡張機能が見る、再開待ちの一覧。"""
+    rows = (db.query(RakutenAdExcluded)
+            .filter(RakutenAdExcluded.resume_requested == True).all())  # noqa: E712
+    return {"items": [r.manage_number for r in rows]}
+
+
+@router.post("/resume-done")
+def resume_done(payload: dict, db: Session = Depends(get_db)):
+    """拡張機能からの報告。外せたものは一覧から消す。"""
+    done = [str(x) for x in (payload.get("done") or [])]
+    error = str(payload.get("error") or "")[:200]
+    failed = [str(x) for x in (payload.get("failed") or [])]
+    for mn in done:
+        row = (db.query(RakutenAdExcluded)
+               .filter(RakutenAdExcluded.manage_number == mn).first())
+        if row:
+            db.delete(row)
+    for mn in failed:
+        row = (db.query(RakutenAdExcluded)
+               .filter(RakutenAdExcluded.manage_number == mn).first())
+        if row:
+            row.resume_requested = False
+            row.resume_error = error or "外せませんでした"
+    db.commit()
+    return {"done": len(done), "failed": len(failed)}

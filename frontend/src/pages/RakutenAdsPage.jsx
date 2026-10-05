@@ -51,6 +51,17 @@ export default function RakutenAdsPage() {
 
   useEffect(() => { load() }, [load])
 
+  // 広告の再開を予約する。RMSを触れるのは拡張だけなので、ここでは印を付ける
+  const resume = async (mn) => {
+    setErr('')
+    try {
+      await api.post(`/rakuten/ads/excluded/${encodeURIComponent(mn)}/resume`)
+      await load()
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    }
+  }
+
   const upload = async (file) => {
     if (!file) return
     setBusy(true); setErr(''); setResult(null)
@@ -139,7 +150,7 @@ export default function RakutenAdsPage() {
         ))}
       </div>
 
-      {tab === 'watch' && watch && <WatchPanel w={watch} />}
+      {tab === 'watch' && watch && <WatchPanel w={watch} onResume={resume} />}
 
       {tab === 'daily' && daily && (
         <>
@@ -284,7 +295,7 @@ export default function RakutenAdsPage() {
  * 広告費だけ出ていることがある。「いつもの何倍か」で見つける。
  * 採算ラインは商品マスタ（売価・原価・手数料・送料）から出している。
  */
-function WatchPanel({ w }) {
+function WatchPanel({ w, onResume }) {
   const o = w.overall
   const moveColor = { '止める': C.bad, '下げる': C.warn, '上げる': C.good }
 
@@ -356,8 +367,9 @@ function WatchPanel({ w }) {
               ／再開できるもの {w.resume_count}件</span>}）
           </div>
           <div style={{ fontSize: 11, color: C.sub, marginBottom: 8 }}>
-            RMSの「除外商品」をそのまま出しています。在庫が戻ったものは
-            青くなるので、RMSの除外から外してください。
+            RMSの「除外商品」をそのまま出しています。在庫が戻ったものは青く、
+            下に「広告を再開する」が出ます。押すと予約され、
+            <b>次にRMSの広告画面を開いたときに拡張が除外を外します</b>。
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {w.stopped.map(x => {
@@ -378,6 +390,23 @@ function WatchPanel({ w }) {
                 </a>
               )
             })}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6,
+            marginTop: 8 }}>
+            {w.stopped.filter(x => x.stock > 0).map(x => (
+              <button key={x.manage_number} className="btn btn-sm"
+                disabled={x.resume_requested}
+                onClick={() => onResume(x.manage_number)}
+                title="RMSの除外から外します（次にRMSの広告画面を開いたときに実行）"
+                style={{ fontSize: 11,
+                  background: x.resume_requested ? '#f1f5f9' : C.key,
+                  color: x.resume_requested ? C.sub : '#fff',
+                  border: `1px solid ${x.resume_requested ? C.line : C.key}` }}>
+                {x.resume_requested
+                  ? `${x.manage_number} 再開を予約済み`
+                  : `▶ ${x.manage_number} の広告を再開する`}
+              </button>
+            ))}
           </div>
         </div>
       )}

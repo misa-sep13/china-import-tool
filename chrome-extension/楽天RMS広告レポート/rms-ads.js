@@ -131,6 +131,35 @@
   // 在庫切れで止めたまま、入荷しても止まりっぱなしになりやすい。
   // 一覧をそのままツールへ送って、在庫が戻ったら知らせてもらう。
 
+  // ツールで「再開する」を押したものを、RMSの除外から外す。
+  // 広告費が動く操作なので、押されたものだけを、押された数だけ外す
+  async function runResumeQueue() {
+    const q = await ask("/api/rakuten/ads/resume-queue");
+    const items = (q && q.items) || [];
+    if (!items.length) return 0;
+    setStatus(`広告を再開しています（${items.length}件）…`);
+    try {
+      const res = await fetch(ORIGIN + "/rpp/api/exclude/remove", {
+        method: "POST", credentials: "include",
+        headers: headers(), body: JSON.stringify(items),
+      });
+      const json = await res.json().catch(() => null);
+      const d = (json && json.data) || {};
+      if (!res.ok || (json && json.errors && json.errors.length)) {
+        throw new Error((json && json.errors && json.errors[0].message)
+                        || `HTTP ${res.status}`);
+      }
+      await toTool("rows", { payload: { done: items },
+                             path: "/api/rakuten/ads/resume-done" });
+      return Number(d.successCount || items.length);
+    } catch (e) {
+      await toTool("rows", {
+        payload: { failed: items, error: String(e.message || e) },
+        path: "/api/rakuten/ads/resume-done" });
+      throw e;
+    }
+  }
+
   async function fetchExcluded() {
     const items = [];
     for (let page = 1; page <= 20; page++) {
@@ -147,15 +176,19 @@
 
   // ---- ツールへ送る ----
 
-  // ツールに「どの日の商品別がまだ無いか」を聞く
-  async function missingDays() {
+  // ツールに聞く（どの日が足りないか、再開待ちは何か）
+  async function ask(path) {
     const cfg = await chrome.storage.local.get(["backend", "token"]);
     const res = await chrome.runtime.sendMessage({
-      type: "ask", backend: cfg.backend || DEFAULT_BACKEND, token: cfg.token,
-      path: "/api/rakuten/ads/item-days?days=10",
+      type: "ask", backend: cfg.backend || DEFAULT_BACKEND,
+      token: cfg.token, path,
     });
-    if (!res || !res.ok) return [];
-    return (res.data && res.data.missing) || [];
+    return res && res.ok ? res.data : null;
+  }
+
+  async function missingDays() {
+    const d = await ask("/api/rakuten/ads/item-days?days=10");
+    return (d && d.missing) || [];
   }
 
   async function toTool(type, payload) {
@@ -194,6 +227,10 @@
     busy = true;
     render();
     try {
+      // 「再開する」の予約が溜まっていたら、まずそれを済ませる
+      const resumed = await runResumeQueue();
+      if (resumed) setStatus(`広告を再開しました（${resumed}件）`);
+
       if (want.includes("daily")) {
         setStatus("毎日の消化をもらっています…");
         const rows = await fetchDaily(ymd(dailyFrom), ymd(to));

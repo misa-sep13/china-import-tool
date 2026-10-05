@@ -1,5 +1,5 @@
-from sqlalchemy import (Column, Integer, String, Float, Date, DateTime,
-                        UniqueConstraint, Index)
+from sqlalchemy import (Boolean, Column, Integer, String, Float, Date,
+                        DateTime, UniqueConstraint, Index)
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -111,5 +111,9 @@ class RakutenAdExcluded(Base):
     image_url = Column(String, default="")
     price = Column(Float, default=0)
     excluded_at = Column(String, default="")   # RMSの最終操作日時（文字のまま）
+    # ツールから「再開する」を押した印。RMSを触れるのは拡張機能だけなので、
+    # ここに置いておき、次にRMSの広告画面を開いたときに実行する
+    resume_requested = Column(Boolean, default=False, index=True)
+    resume_error = Column(String, default="")
     synced_at = Column(DateTime(timezone=True), server_default=func.now(),
                        onupdate=func.now())

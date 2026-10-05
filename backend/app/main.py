@@ -286,6 +286,12 @@ def _migrate():
         ("welfare_packing_orders","source_batch",
          "ALTER TABLE welfare_packing_orders ADD COLUMN source_batch VARCHAR"),
 
+        # 広告の除外一覧。「再開する」の予約をここに置く
+        ("rakuten_ad_excluded","resume_requested",
+         "ALTER TABLE rakuten_ad_excluded ADD COLUMN resume_requested BOOLEAN DEFAULT FALSE"),
+        ("rakuten_ad_excluded","resume_error",
+         "ALTER TABLE rakuten_ad_excluded ADD COLUMN resume_error VARCHAR"),
+
         # 状況確認シートの「発注後の問い合わせ・確認対応」
         ("work_statuses","step_followup",
          "ALTER TABLE work_statuses ADD COLUMN step_followup BOOLEAN DEFAULT FALSE"),
