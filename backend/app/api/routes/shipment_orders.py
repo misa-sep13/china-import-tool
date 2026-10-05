@@ -301,13 +301,19 @@ def match_products(items: List[dict], db: Session = Depends(get_db)):
         # 一致したら色や単価より強く効かせる。
         # 例: 同じURL・色「乳白色」でも「4色セット」(y47)と「オフホワイト4枚」(y47_white)は別物。
         # これを見ないと色だけで単色SKUに吸われ、在庫が誤って振り分けられる。
-        item_memo = _norm_text(item.get("customer_memo", ""))
+        # 発注時に書く値は決まっていない。お客様管理番号に「y47」のように
+        # SKUをそのまま書くこともあれば、備考に「4色セット」と書くこともある。
+        # どちらで書かれていても当たるよう、両方を手がかりにする。
+        item_keys = {_norm_text(item.get("customer_memo", "")),
+                     _norm_text(item.get("customer_note", ""))} - {""}
         product_memo = _norm_text(getattr(product, "customer_memo", "") or "")
-        if item_memo and product_memo:
-            if item_memo == product_memo:
+        product_sku = _norm_text(product.sku or "")
+        if item_keys:
+            if (product_memo and product_memo in item_keys) or (
+                    product_sku and product_sku in item_keys):
                 score += 80
-            else:
-                # 明示的に別の商品を指しているので、この候補ではない
+            elif product_memo:
+                # こちらが別の商品を名指ししているので、この候補ではない
                 score -= 40
 
         color = _norm_text(item.get("color", ""))

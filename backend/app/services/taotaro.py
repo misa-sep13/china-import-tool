@@ -388,6 +388,10 @@ def send_order_shipment(sid: int) -> dict:
             "unit_price_cny": float(o.get("unit_price") or 0),
             "qty": int(o.get("quantity") or 0),
             "customer_memo": str(o.get("out_id") or "").strip(),
+            # 備考。お客様管理番号の代わりに、ここへ「4色セット」のように
+            # 書いて発注していることがあるので、照合の手がかりとして一緒に渡す
+            "customer_note": str(o.get("remark") or o.get("note")
+                                 or o.get("memo") or "").strip(),
         })
     return {
         "shipped_date": _shipped_date(d),
