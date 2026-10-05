@@ -1826,7 +1826,12 @@ def packing_order_candidates(
     # セット組みの部材（耳栓のケース・介護シューズの収納袋など）。
     # セットの片割れなので、これを数えるとセット数が二重になる
     is_component_sku = set()
+    # 詰め合わせ（4色セットなど）。色ごとの行の「残」を足すと
+    # セット数が色数ぶん増えてしまうので、個数から数え直す
+    assorted_sku: dict[str, int] = {}
     for p in db.query(RakutenProduct).all():
+        if not (p.supplier_spec or "").strip() and _unit_per_set(p) > 1:
+            assorted_sku[p.sku] = _unit_per_set(p)
         code = (p.rakuten_item_url or "").strip()
         if code:
             code_by_sku[p.sku] = code
@@ -1906,13 +1911,25 @@ def packing_order_candidates(
         # 何が何個届いているかは分かるよう、内訳には残す
         part = r.sku in is_component_sku
         if not part:
-            e["remaining_qty"] += remaining
+            if r.sku in assorted_sku:
+                # 詰め合わせは、あとで個数から数え直す（ここでは足さない）
+                e.setdefault("assorted_units", {})
+                cur = e["assorted_units"].setdefault(
+                    r.sku, {"units": 0, "rem": 0, "rows": 0})
+                cur["units"] += int(r.remaining_units
+                                    if r.remaining_units is not None
+                                    else (r.units or 0))
+                cur["rem"] += remaining
+                cur["rows"] += 1
+            else:
+                e["remaining_qty"] += remaining
         e["sources"].append({
             "sku": r.sku,
             "name_jp": r.name_jp,
             "remaining_qty": remaining,
             "order_date": r.order_date,
             "is_component": part,
+            "assorted": r.sku in assorted_sku,
         })
 
     by_batch: dict[str, dict] = {}
@@ -1920,12 +1937,30 @@ def packing_order_candidates(
         # 作業マスタは商品ページ単位（y47）なので、色違いが1件にまとまる。
         # 「キッチンタオル4枚セット」だけでは何色を作るのか分からないので、
         # 荷受けの商品名（色が入っている）ごとの内訳を添える。
+        # 詰め合わせは、色ごとの行を足した個数を入数で割ってセット数にする
+        for sku_, v_ in (e.get("assorted_units") or {}).items():
+            unit_ = assorted_sku.get(sku_, 1) or 1
+            # 色ごとに行が分かれているときだけ、個数から数え直す。
+            # 1行しかないなら、手で直した「残」をそのまま信じる
+            e["remaining_qty"] += (v_["units"] // unit_ if v_["rows"] > 1
+                                   else v_["rem"])
+
         by_name: dict[str, dict] = {}
         for sc in e["sources"]:
             nm = (sc.get("name_jp") or sc.get("sku") or "").strip()
             cur = by_name.setdefault(nm, {"qty": 0,
-                                          "is_component": sc.get("is_component")})
+                                          "is_component": sc.get("is_component"),
+                                          "assorted": sc.get("assorted")})
             cur["qty"] += sc.get("remaining_qty") or 0
+        # 詰め合わせの内訳は、足し合わせたセット数に置き換える
+        for sku_, v_ in (e.get("assorted_units") or {}).items():
+            if v_["rows"] <= 1:
+                continue
+            unit_ = assorted_sku.get(sku_, 1) or 1
+            sets_ = v_["units"] // unit_
+            for k, v in by_name.items():
+                if v.get("assorted"):
+                    v["qty"] = sets_
         e["breakdown"] = [{"name": k, "qty": v["qty"],
                            "is_component": v["is_component"]}
                           for k, v in by_name.items()]
