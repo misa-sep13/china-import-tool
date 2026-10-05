@@ -377,7 +377,8 @@ function WatchPanel({ w, onResume, onStop }) {
               {a.detail}
             </div>
             <div style={{ fontSize: 12, marginTop: 4, fontWeight: 600 }}>
-              → {a.action}
+              {/* ボタンを出すときは、同じことを文字でも言わない */}
+              {!(a.can_resume || a.can_stop) && <>→ {a.action}</>}
               {a.can_resume && (a.requested ? (
                 <span style={{ marginLeft: 8, fontSize: 11, color: C.sub,
                   fontWeight: 400 }}>再開を予約済み</span>
