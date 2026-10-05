@@ -239,11 +239,30 @@
     }
     if (!force && cfg.auto === false) return;
 
+    // 押された「止める」「再開する」は、取り込みの間隔と関係なく毎回やる。
+    // 取り込みを6時間に1回に絞っているので、ここを後ろに置くと
+    // 押したのにいつまでも実行されないことになる
+    busy = true;
+    render();
+    try {
+      const resumed = await runResumeQueue();
+      if (resumed) setStatus(`広告を再開しました（${resumed}件）`);
+      const stopped = await runExcludeQueue();
+      if (stopped) setStatus(`広告を止めました（${stopped}件）`);
+    } catch (e) {
+      note(e.message || e);
+      setStatus(`できませんでした：${e.message || e}`);
+      busy = false;
+      render();
+      return;
+    }
+    busy = false;
+
     const last = cfg.auto_last || {};
     const now = Date.now();
     const want = ["daily", "product"].filter(
       (k) => force || now - (last[k] || 0) >= GAP_MS);
-    if (!want.length) return;
+    if (!want.length) { render(); return; }
 
     // 集計は昨日まで。毎日の消化は3か月以内、商品ごとは今月ぶん
     const to = new Date(); to.setDate(to.getDate() - 1);
@@ -254,12 +273,6 @@
     busy = true;
     render();
     try {
-      // 「再開する」の予約が溜まっていたら、まずそれを済ませる
-      const resumed = await runResumeQueue();
-      if (resumed) setStatus(`広告を再開しました（${resumed}件）`);
-      const stopped = await runExcludeQueue();
-      if (stopped) setStatus(`広告を止めました（${stopped}件）`);
-
       if (want.includes("daily")) {
         setStatus("毎日の消化をもらっています…");
         const rows = await fetchDaily(ymd(dailyFrom), ymd(to));
