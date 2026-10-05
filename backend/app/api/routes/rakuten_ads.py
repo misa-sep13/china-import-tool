@@ -588,13 +588,22 @@ def watch(db: Session = Depends(get_db)):
                 })
 
     # ---- 広告を止めたまま、在庫が戻っているもの ----
+    # 止めている商品は200件を超える。1件ずつ過去の実績を聞くと
+    # 画面が出るまで30秒かかっていたので、まとめて1回で引く
     stopped, resume = [], []
-    for ex in db.query(RakutenAdExcluded).order_by(
-            RakutenAdExcluded.excluded_at.desc()).all():
+    excluded_rows = db.query(RakutenAdExcluded).order_by(
+        RakutenAdExcluded.excluded_at.desc()).all()
+    past_by_mn: dict = {}
+    if excluded_rows:
+        for row in (db.query(RakutenAdProduct)
+                    .filter(RakutenAdProduct.manage_number.in_(
+                        [e.manage_number for e in excluded_rows]))
+                    .order_by(RakutenAdProduct.period.asc()).all()):
+            past_by_mn[row.manage_number] = row   # 新しい月で上書きされる
+
+    for ex in excluded_rows:
         have = stock_of(ex.manage_number)
-        past = (db.query(RakutenAdProduct)
-                .filter(RakutenAdProduct.manage_number == ex.manage_number)
-                .order_by(RakutenAdProduct.period.desc()).first())
+        past = past_by_mn.get(ex.manage_number)
         d = {"manage_number": ex.manage_number,
              "item_name": ex.item_name or "",
              "item_url": ex.item_url or "",
@@ -610,18 +619,29 @@ def watch(db: Session = Depends(get_db)):
              "resume_requested": bool(ex.resume_requested),
              "resume_error": ex.resume_error or ""}
         stopped.append(d)
-        if have is not None and have > 0:
+        # 在庫があるだけでは「再開しよう」とは言えない。
+        # 採算を割っていたから止めたものまで蒸し返すことになる。
+        # 止める前に採算を超えていたものだけを候補にする
+        be = d["breakeven"]
+        worth = (be is not None and d["past_roas"] is not None
+                 and d["past_roas"] >= be)
+        if have is not None and have > 0 and worth:
             resume.append(d)
-            alerts.append({
-                "level": "info", "kind": "resume",
-                "manage_number": ex.manage_number,
-                "item_name": ex.item_name or "",
-                "headline": f"入荷したので広告を再開できます（在庫{have}個）",
-                "detail": (f"{ex.excluded_at} に除外しました。"
-                           f"いまの実在庫は{have}個です"),
-                "action": "RMSの「除外商品」から外す",
-                "cost": 0, "clicks": 0,
-            })
+
+    # 再開の候補は、使っていた額が大きい順に上から10件だけ出す
+    for d in sorted(resume, key=lambda x: -(x["past_cost"] or 0))[:10]:
+        alerts.append({
+            "level": "info", "kind": "resume",
+            "manage_number": d["manage_number"],
+            "item_name": d["item_name"],
+            "headline": (f"広告をかけ直す価値があります"
+                         f"（止める前 ROAS {d['past_roas']}%・在庫{d['stock']}個）"),
+            "detail": (f"{d['excluded_at']} に止めました。"
+                       f"{d['past_period']} は {d['past_cost']:,}円使って"
+                       f"{d['past_orders']}件。採算ラインは {d['breakeven']}%"),
+            "action": "広告を再開する",
+            "cost": 0, "clicks": 0,
+        })
 
     order = {"danger": 0, "warn": 1, "info": 2}
     alerts.sort(key=lambda a: (order.get(a["level"], 9), -a["cost"]))

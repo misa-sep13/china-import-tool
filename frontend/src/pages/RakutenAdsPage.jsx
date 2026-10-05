@@ -168,7 +168,9 @@ export default function RakutenAdsPage() {
         ))}
       </div>
 
-      {tab === 'watch' && watch && <WatchPanel w={watch} onResume={resume} onStop={stop} />}
+      {tab === 'watch' && (watch
+        ? <WatchPanel w={watch} onResume={resume} onStop={stop} />
+        : <div className="card" style={{ color: C.sub }}>読み込み中…</div>)}
 
       {tab === 'daily' && daily && (
         <>
@@ -393,12 +395,12 @@ function WatchPanel({ w, onResume, onStop }) {
       </div>
 
       {(w.stopped || []).length > 0 && (
-        <div className="card" style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>
+        <details className="card" style={{ marginBottom: 12 }}>
+          <summary style={{ fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
             広告を止めている商品（{w.stopped.length}件
             {w.resume_count > 0 && <span style={{ color: C.key }}>
-              ／再開できるもの {w.resume_count}件</span>}）
-          </div>
+              ／かけ直す価値があるもの {w.resume_count}件</span>}）
+          </summary>
           <div style={{ fontSize: 11, color: C.sub, marginBottom: 8 }}>
             RMSの「除外商品」＝広告を止めている商品です。止める前のROASも出すので、
             採算ラインを超えていたものは、かけ直す価値があります。
@@ -450,7 +452,7 @@ function WatchPanel({ w, onResume, onStop }) {
               </button>
             ))}
           </div>
-        </div>
+        </details>
       )}
 
       <div className="card" style={{ padding: 0 }}>
