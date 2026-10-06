@@ -253,8 +253,25 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
                 <td style={{ ...td, color: C.sub, whiteSpace: 'nowrap' }}>
                   {CHANNEL_LABEL[r.channel] || r.channel}
                 </td>
-                <td style={{ ...td, fontWeight: 600, whiteSpace: 'nowrap' }}>{r.sku}</td>
-                <td style={td}>{r.name}</td>
+                {/* 新しく足した行はSKUが入らないことがあるので、
+                    あとから埋められるようにしてある（外注さんの画面でも） */}
+                <td style={{ ...td, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                  <input defaultValue={r.sku || ''} placeholder="SKU"
+                    onBlur={e => {
+                      const v = e.target.value.trim()
+                      if (v !== (r.sku || '')) patch(r.id, { sku: v })
+                    }}
+                    style={{ width: 90, fontSize: 12, padding: '2px 4px',
+                      fontWeight: 600 }} />
+                </td>
+                <td style={td}>
+                  <input defaultValue={r.name || ''} placeholder="商品名"
+                    onBlur={e => {
+                      const v = e.target.value.trim()
+                      if (v !== (r.name || '')) patch(r.id, { name: v })
+                    }}
+                    style={{ width: '100%', fontSize: 12, padding: '2px 4px' }} />
+                </td>
                 <td style={td}>
                   <select value={r.ball}
                     onChange={e => patch(r.id, { ball: e.target.value })}

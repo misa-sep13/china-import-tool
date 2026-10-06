@@ -251,15 +251,17 @@ def update_row(row_id: int, data: WorkPatch, request: Request,
                db: Session = Depends(get_db)):
     """状態を書き換える。
 
-    外注さんは工程・誰待ち・メモだけ触れる。SKUと商品名は
-    こちらでしか変えられない（取り違えると別の商品の話になる）。
+    外注さんが触れるのは、工程・誰待ち・メモ・SKU・商品名まで。
+    完了の状態や行の削除はできない。
     """
     row = db.query(WorkStatus).filter(WorkStatus.id == row_id).first()
     if not row:
         raise HTTPException(404, "見つかりません")
 
     guest = _is_share(request)
-    allowed = ({"stage", "ball", "memo"} | set(STEP_KEYS)
+    # SKUと商品名も直せるようにしてある。新しく足した行はSKUが入らない
+    # ことがあり、あとから埋められないと「どの商品の話か」が分からなくなる
+    allowed = ({"stage", "ball", "memo", "sku", "name"} | set(STEP_KEYS)
                | set(EXTRA_STEP_KEYS)) if guest else None
 
     touched_steps = False

@@ -7712,10 +7712,10 @@ if(FIREBASE_CONFIG.databaseURL){
           kids.forEach(k => {
             const cn = (research.cnNames || {})[k] || '';
             lines.push('・' + k + (cn ? '（' + cn + '）' : '')
-              + '　初回 ___ 個 ／ VINE 要・不要');
+              + '　初回 個 ／ VINE 要・不要');
           });
         }else{
-          lines.push('・初回 ___ 個 ／ VINE 要・不要');
+          lines.push('・初回 個 ／ VINE 要・不要');
         }
         // 判断の材料。表の1行目（起点にした競合）から拾う
         const row0 = (research.rows || [])[0] || {};
