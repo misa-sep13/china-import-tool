@@ -12,33 +12,6 @@ const shipTraceColor = (text) => {
   return '#64748b'
 }
 
-// セット商品を親のSKUで発注してしまうのを止める。
-// 中身が登録されている商品は、実際には中身のSKUで届く。親で発注すると
-// 発注済がいつまでも消えず、荷受け画面に残り続ける（実際にy34で起きた）。
-const componentsOf = (item) => {
-  const c = item && item.set_components
-  if (Array.isArray(c)) return c.filter(x => x && x.sku)
-  return []
-}
-
-// 発注しようとしている中にセット商品があれば、名前を挙げて止める。
-// 進めることもできる（どうしても親で出したい事情があるかもしれない）
-const confirmSetOrder = (rows, bySku) => {
-  const bad = rows
-    .map(r => ({ sku: r.sku, comps: componentsOf(bySku.get(r.sku)) }))
-    .filter(x => x.comps.length > 0)
-  if (bad.length === 0) return true
-  const lines = bad.map(x =>
-    `・${x.sku}　→　${x.comps.map(c => `${c.sku}${c.qty > 1 ? ' ×' + c.qty : ''}`).join('、')}`
-  ).join('\n')
-  return window.confirm(
-    'セット商品が含まれています。\n\n'
-    + lines
-    + '\n\nこれらは中身のSKUで届くため、このまま発注すると発注済が消えずに残り続けます。'
-    + '\n中身のSKUで発注し直すことをおすすめします。\n\nこのまま進めますか？'
-  )
-}
-
 /* ===================== 配送依頼タブ ===================== */
 function ShipmentTab() {
   const qc = useQueryClient()
@@ -959,7 +932,6 @@ export default function RakutenOrderPage() {
   const handleOrder = async (item) => {
     const qty = orderInputs[item.sku] ?? item.order_qty
     if (!qty || qty <= 0) return
-    if (!confirmSetOrder([{ sku: item.sku }], bySku)) return
     setOrdering(item.sku)
     try {
       // 単品の発注Excelを生成し、同時に発注済みリストへ記録する
@@ -991,7 +963,6 @@ export default function RakutenOrderPage() {
   // 実際の発注はモーダルの中で、色・サイズを目視してから行う
   const handleTaotaroOrder = () => {
     const targets = splitTargets()
-    if (targets.length > 0 && !confirmSetOrder(targets, bySku)) return
     if (targets.length === 0) {
       alert('チェックした商品（発注数1以上）がありません')
       return
@@ -1016,7 +987,6 @@ export default function RakutenOrderPage() {
       alert('チェックした商品（発注数1以上）がありません')
       return
     }
-    if (!confirmSetOrder(targets, bySku)) return
     setDownloading(true)
     try {
       // 航空・船が混ざっていてもExcelは1つ。航空便の行だけ備考で区別する

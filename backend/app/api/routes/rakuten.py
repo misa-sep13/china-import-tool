@@ -1252,6 +1252,34 @@ def update_stock(product_id: int, body: dict, request: Request, db: Session = De
 # Order Recommendations（発注推奨リスト）
 # ============================================================
 
+def _parent_ordered_from_components(product, ordered_by_sku: dict) -> int:
+    """親発注品の「あと何セット来るか」を、構成品の発注済から出す。
+
+    構成品が自分のSKUを持つ商品は、発注済もそのSKUで残る（入荷が
+    そのSKUで来るため）。親のSKUだけを見ていると発注済が0に見えて、
+    まだ来ていないのに次の発注を勧めてしまう。
+
+    セットは全部の構成品が揃って初めて1セットなので、在庫の計算と
+    同じく、構成品ごとのセット数のうち一番少ないものを採る。
+    """
+    try:
+        comps = json.loads(product.set_components or "[]")
+    except Exception:
+        return 0
+    req: dict[str, int] = {}
+    for c in comps:
+        c_sku = (c.get("sku") or "").strip()
+        if c_sku:
+            req[c_sku] = req.get(c_sku, 0) + (c.get("qty") or 1)
+    if not req:
+        return 0
+    sets = None
+    for c_sku, c_qty in req.items():
+        n = int(ordered_by_sku.get(c_sku, 0) or 0) // max(1, c_qty)
+        sets = n if sets is None else min(sets, n)
+    return sets or 0
+
+
 def _ordered_by_sku_stage(db):
     """未納品の発注数をSKU×ステージ（発注済1/発注済2）ごとに集計"""
     rows = (
@@ -1487,6 +1515,10 @@ def get_recommendations(db: Session = Depends(get_db)):
     for p in all_order_items:
         ordered_1 = ordered1_by_sku.get(p.sku, 0)
         ordered_2 = ordered2_by_sku.get(p.sku, 0)
+        # 親発注品は、構成品のSKUで残った発注済も自分のぶんとして数える
+        if p.sku in parent_orders:
+            ordered_1 += _parent_ordered_from_components(p, ordered1_by_sku)
+            ordered_2 += _parent_ordered_from_components(p, ordered2_by_sku)
         ordered = ordered_1 + ordered_2
         agg = unit_sales.get(p.sku, {})
         sales_recent = agg.get("recent", 0)
@@ -1600,6 +1632,11 @@ def get_all_products_order(db: Session = Depends(get_db)):
     for p in targets:
         ordered_1 = ordered1_by_sku.get(p.sku, 0)
         ordered_2 = ordered2_by_sku.get(p.sku, 0)
+        # 親発注品（セットごと仕入れる商品）は、構成品のSKUで残った
+        # 発注済も自分のぶんとして数える。発注推奨リストと条件を揃える
+        if not p.is_component and (p.buy_url or "").strip() and p.set_components:
+            ordered_1 += _parent_ordered_from_components(p, ordered1_by_sku)
+            ordered_2 += _parent_ordered_from_components(p, ordered2_by_sku)
         ordered = ordered_1 + ordered_2
         agg = unit_sales.get(p.sku, {})
         sales_recent = agg.get("recent", 0) or (p.sales_30_recent or 0)
@@ -2201,16 +2238,26 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
         p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
         if not p:
             continue
-        if record_history:
-            # 同じ商品を航空・船に分けたときは別々の発注として記録する。
-            # まとめると、どちらで何個頼んだのか入荷時に照合できなくなる
-            key = (sku, item_shipping)
+        # 発注済をどのSKUで残すか。入荷するSKUと揃えないと、いつまでも
+        # 消えずに「まだ来る」と誤解したまま次の発注が止まる。
+        # 構成品が自分のSKUを持つなら、そのSKUでそのまま入ってくるので
+        # 構成品ごとに残す。自分のSKUを持たない部材は親のSKUで入るので、
+        # 発注1件につき親で1行だけ残す（部材の数だけ増やさない）。
+        # 同じ商品を航空・船に分けたときは、便ごとに別の発注として残す。
+        recorded_parent = False
+
+        def _hist(h_sku: str, h_name: str, h_qty: int):
+            if not record_history or h_qty <= 0:
+                return
+            key = (h_sku, item_shipping)
             h = history_items.setdefault(
-                key, {"sku": sku, "name": p.name, "qty": 0, "shipping": item_shipping}
+                key, {"sku": h_sku, "name": h_name, "qty": 0, "shipping": item_shipping}
             )
-            h["qty"] += qty
+            h["qty"] += h_qty
         # 本体行（set_componentsありかつspec空の場合はスキップ）
         if not (p.set_components and not (p.spec or "").strip()):
+            _hist(sku, p.name, qty)           # 販売単位（セット数）で残す
+            recorded_parent = True
             # 発注数は販売単位（セット数）。タオタロウへ渡す数量は仕入単位（個数）なので
             # セット入数(set_size)を掛ける（例: y79 2枚セット×40 → 80個）。
             # セット商品(set_components)は構成品行の qty×comp_qty 側で換算されるため、
@@ -2270,6 +2317,14 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
                 "customer_memo": comp.get("customer_memo", ""),
                 "notes":         with_shipping_note(comp.get("notes", ""), item_shipping),
             })
+            if comp_sku:
+                # その構成品のSKUでそのまま入荷する
+                cp = db.query(RakutenProduct).filter(RakutenProduct.sku == comp_sku).first()
+                _hist(comp_sku, (cp.name if cp else comp_sku), qty * comp_qty)
+            elif not recorded_parent:
+                # 自分のSKUを持たない部材は親のSKUで入る。発注1件につき1行
+                _hist(sku, p.name, qty)
+                recorded_parent = True
 
     xls = build_rakuten_taotaro_excel(excel_items)
     if record_history and history_items:
