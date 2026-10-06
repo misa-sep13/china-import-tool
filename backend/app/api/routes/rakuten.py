@@ -2233,7 +2233,19 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
             pcomps = json.loads(getattr(p, 'purchase_components', None) or "[]")
         except Exception:
             pcomps = []
-        for comp in comps + pcomps:
+        def _resolve_x(c):
+            """この構成品がどの仕入先商品・どの色かを、マスタも見て確定する。"""
+            u = c.get("buy_url", "") or ""
+            sp = c.get("supplier_spec", "") or ""
+            cs = c.get("sku")
+            if cs and (not u or not sp):
+                cp = db.query(RakutenProduct).filter(RakutenProduct.sku == cs).first()
+                if cp and cp.is_component:
+                    u = u or cp.buy_url or ""
+                    sp = sp or getattr(cp, "supplier_spec", "") or ""
+            return u, sp
+
+        for comp in _merge_purchase_components(comps, pcomps, _resolve_x):
             comp_sku = comp.get("sku")
             comp_qty = comp.get("qty", 1)
             # set_components内に直接情報がある場合はそちらを使う
@@ -5048,6 +5060,45 @@ def _join_notes(*parts) -> str:
     return " / ".join(out)
 
 
+def _offer_key(url: str) -> str:
+    """1688・淘宝の商品番号だけ取り出す。同じ商品でもURLのパラメータが
+    違うことがあるので、番号で同じものかどうかを見る。"""
+    u = (url or "").strip()
+    m = re.search(r"/offer/(\d+)", u) or re.search(r"[?&]id=(\d+)", u)
+    return m.group(1) if m else u.split("?")[0]
+
+
+def _merge_purchase_components(comps: list, pcomps: list, resolve) -> list:
+    """構成品（set_components）と発注用付属品（purchase_components）をつなぐ。
+
+    同じ仕入先商品・同じ色が両方に登録されていると、同じ色を2回頼んで
+    しまう（y34のペット歯ブラシが実際に3色とも倍の数で出ていた）。
+    set_components 側はSKUを持っていて入荷の照合に使えるので残し、
+    purchase_components 側の重複は落とす。ただし備考と単価は
+    purchase_components 側にしか無いことがあるので、残す行へ移しておく。
+
+    同じリストの中の重複はそのままにする。2組セットを同じSKU2行で
+    表している商品（y76・y83など）があり、まとめると数が半分になる。
+    """
+    seen = {}
+    for c in comps:
+        url, spec = resolve(c)
+        seen.setdefault((_offer_key(url), (spec or "").strip()), c)
+    out = list(comps)
+    for c in pcomps:
+        url, spec = resolve(c)
+        hit = seen.get((_offer_key(url), (spec or "").strip()))
+        if hit is None:
+            out.append(c)
+            continue
+        # 落とす側にしか無い情報は、残す行へ引き継ぐ
+        for src, dst in (("notes", "notes"), ("customer_memo", "customer_memo"),
+                         ("price", "price")):
+            if not (hit.get(dst) or "") and (c.get(src) or ""):
+                hit[dst] = c[src]
+    return out
+
+
 def _taotaro_rows(order_items: list, db: Session) -> list:
     """発注リストを、1688の商品1件ずつの行にほどく。
 
@@ -5104,7 +5155,19 @@ def _taotaro_rows(order_items: list, db: Session) -> list:
                 "note": _join_notes(p.customer_memo, p.notes),
             })
 
-        for comp in comps + pcomps:
+        def _resolve_t(c):
+            """この構成品がどの仕入先商品・どの色かを、マスタも見て確定する。"""
+            u = c.get("buy_url", "") or ""
+            sp = c.get("supplier_spec", "") or ""
+            cs = c.get("sku")
+            if cs and (not u or not sp):
+                cp = db.query(RakutenProduct).filter(RakutenProduct.sku == cs).first()
+                if cp and cp.is_component:
+                    u = u or cp.buy_url or ""
+                    sp = sp or getattr(cp, "supplier_spec", "") or ""
+            return u, sp
+
+        for comp in _merge_purchase_components(comps, pcomps, _resolve_t):
             comp_sku = comp.get("sku")
             comp_qty = comp.get("qty", 1)
             comp_url = comp.get("buy_url", "")
