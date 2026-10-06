@@ -9,6 +9,8 @@ const CATEGORIES = ['標準', 'ファッション', '大型']
 const EMPTY = {
   sku: '', fnsku: '', asin: '', name: '', buy_url: '',
   color: '', size: '', spec: '', customer_memo: '', price: '', cost_jpy: '',
+  // 普段はSP-APIが入れるが、取れない商品があるので手でも入れられるようにする
+  selling_price: '',
   note: '',
   set_size: 1, extra_stock: 0, amazon_fee_rate: 0.1, category: '標準',
   // 発注用付属品。本体と一緒にタオタロウへ頼むもの。在庫には連動しない
@@ -29,6 +31,8 @@ const buildFormData = (source) => {
   })
   data.price = toNumber(source.price, 0)
   data.cost_jpy = toNumber(source.cost_jpy, 0)
+  // 空のまま送ると0で上書きしてしまう。入っていなければ空のままにする
+  data.selling_price = source.selling_price ?? ''
   data.set_size = Math.max(1, Math.trunc(toNumber(source.set_size, 1)))
   data.extra_stock = Math.max(0, Math.trunc(toNumber(source.extra_stock, 0)))
   data.amazon_fee_rate = toNumber(source.amazon_fee_rate, 0.1)
@@ -454,6 +458,11 @@ export default function ProductsPage() {
                   <input type="number" min={1} {...f('set_size')} />
                 </div>
                 <div className="form-group">
+                  {/* 普段はSP-APIが入れるが、取れない商品や、取れるまでの間は
+                      手で入れたい。入れておけば利益の計算もその値で出る */}
+                  <label>販売価格（円）</label>
+                  <input type="number" step="1" {...f('selling_price')}
+                    placeholder="SP-APIで取れないときだけ手入力" />
                   <label>Amazon手数料率</label>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <input type="number" step="0.01" min={0} max={1} {...f('amazon_fee_rate')} style={{ width: 80 }} />
