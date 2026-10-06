@@ -351,6 +351,9 @@ class RakutenSettingsSchema(BaseModel):
     super_sale_mode:    str   = 'A'
     super_sale_start:   Optional[date] = None
     super_sale_end:     Optional[date] = None
+    cny_closed_before:  int   = 7
+    cny_closed_after:   int   = 15
+    national_closed_days: int = 7
     commission_rate:    float = 0.09
     default_shipping_fee: int = 180
     rms_service_secret: Optional[str] = None
@@ -1373,6 +1376,73 @@ def _super_sale_add_qty(settings_row, product, auto_by_sku: dict) -> int:
     return auto_by_sku.get(product.sku, 0)
 
 
+def _china_holiday_effect(settings_row, today=None):
+    """中国の長期休暇で伸びるリードタイムを出す。
+
+    春節と国慶節は工場が止まるので、その期間をまたぐ発注は入荷が遅れる。
+    遅れるぶんを lead_days に足すと、休暇が近づくほど発注数が自然に増え、
+    休暇を過ぎれば勝手に元へ戻る。
+    """
+    from app.services.china_holiday import order_lead_effect
+    from datetime import date as _date
+
+    today = today or _date.today()
+    return order_lead_effect(
+        today,
+        settings_row.lead_days or 0,
+        # 次の発注までの間隔。在庫を何日分持つかの設定をそのまま使う
+        review_days=settings_row.target_days or 30,
+        cny_before=getattr(settings_row, "cny_closed_before", 7) or 0,
+        cny_after=getattr(settings_row, "cny_closed_after", 15) or 0,
+        national_days=getattr(settings_row, "national_closed_days", 7) or 0,
+    )
+
+
+def _china_holiday_out(eff):
+    """画面に出すための形。"""
+    return {
+        "enabled":             eff.extra_days > 0,
+        "base_lead_days":      eff.base_lead_days,
+        "effective_lead_days": eff.effective_lead_days,
+        "plan_lead_days":      eff.plan_lead_days,
+        "extra_days":          eff.extra_days,
+        "reason":              eff.reason,
+        "arrival_date":        eff.arrival_date.isoformat() if eff.arrival_date else None,
+        "next_name":           eff.next_period.name if eff.next_period else None,
+        "next_start":          eff.next_period.start.isoformat() if eff.next_period else None,
+        "next_end":            eff.next_period.end.isoformat() if eff.next_period else None,
+    }
+
+
+@router.get("/china-holiday/preview")
+def china_holiday_preview(
+    lead_days: int = 20,
+    target_days: int = 30,
+    cny_before: int = 7,
+    cny_after: int = 15,
+    national_days: int = 7,
+):
+    """設定画面用。保存前の値でも効き目を確かめられるようにする。
+
+    画面側で同じ計算を書くと実際の発注数とズレるので、ここで出す。
+    """
+    from app.services.china_holiday import order_lead_effect, closed_periods
+    from datetime import date as _date
+
+    today = _date.today()
+    eff = order_lead_effect(today, lead_days, target_days, cny_before, cny_after, national_days)
+
+    upcoming = []
+    for p in closed_periods(today.year, today.year + 1, cny_before, cny_after, national_days):
+        if p.end < today:
+            continue
+        upcoming.append({
+            "name": p.name, "start": p.start.isoformat(),
+            "end": p.end.isoformat(), "days": p.days,
+        })
+    return {"today": today.isoformat(), "effect": _china_holiday_out(eff), "upcoming": upcoming[:4]}
+
+
 def _super_sale_exclusion(settings_row):
     """除外モード（A）のときだけ、日販から除くセール期間を返す。
 
@@ -1392,11 +1462,18 @@ def get_recommendations(db: Session = Depends(get_db)):
     ss_start, ss_end = _super_sale_exclusion(settings_row)
     ss_qty_by_sku = _super_sale_qty_by_sku(db, settings_row)
     sku_daily_avgs = _daily_avg_from_table(db, ss_start, ss_end)
+    # 中国の長期休暇ぶんリードタイムを延ばす（休暇が無い時期は延長0で素通り）
+    holiday = _china_holiday_effect(settings_row)
     s = RakutenCalcSettings(
-        lead_days=settings_row.lead_days,
+        lead_days=holiday.plan_lead_days,
         target_days=settings_row.target_days,
         safety_stock_rate=settings_row.safety_stock_rate,
-        threshold_days=settings_row.threshold_days,
+        # 入荷までの日数より早い段階で発注しないと間に合わないので、
+        # リードタイムが伸びたときは発注タイミングの閾値も合わせて広げる
+        threshold_days=max(
+            settings_row.threshold_days or 0,
+            holiday.plan_lead_days + (settings_row.target_days or 0),
+        ),
     )
 
     # 発注済み（未納品）の数量をSKU×ステージごとに集計
@@ -1542,7 +1619,11 @@ def get_recommendations(db: Session = Depends(get_db)):
             "sales_30_prev":   sales_prev,
         })
 
-    return {"items": items, "settings": RakutenSettingsSchema.model_validate(settings_row)}
+    return {
+        "items": items,
+        "settings": RakutenSettingsSchema.model_validate(settings_row),
+        "china_holiday": _china_holiday_out(holiday),
+    }
 
 
 @router.get("/orders/all-products")
@@ -1552,11 +1633,18 @@ def get_all_products_order(db: Session = Depends(get_db)):
     ss_start, ss_end = _super_sale_exclusion(settings_row)
     ss_qty_by_sku = _super_sale_qty_by_sku(db, settings_row)
     sku_daily_avgs = _daily_avg_from_table(db, ss_start, ss_end)
+    # 中国の長期休暇ぶんリードタイムを延ばす（休暇が無い時期は延長0で素通り）
+    holiday = _china_holiday_effect(settings_row)
     s = RakutenCalcSettings(
-        lead_days=settings_row.lead_days,
+        lead_days=holiday.plan_lead_days,
         target_days=settings_row.target_days,
         safety_stock_rate=settings_row.safety_stock_rate,
-        threshold_days=settings_row.threshold_days,
+        # 入荷までの日数より早い段階で発注しないと間に合わないので、
+        # リードタイムが伸びたときは発注タイミングの閾値も合わせて広げる
+        threshold_days=max(
+            settings_row.threshold_days or 0,
+            holiday.plan_lead_days + (settings_row.target_days or 0),
+        ),
     )
     ordered1_by_sku, ordered2_by_sku = _ordered_by_sku_stage(db)
     all_products = db.query(RakutenProduct).filter(
@@ -1649,7 +1737,11 @@ def get_all_products_order(db: Session = Depends(get_db)):
             "sales_30_recent": sales_recent,
             "sales_30_prev":   sales_prev,
         })
-    return {"items": items, "settings": RakutenSettingsSchema.model_validate(settings_row)}
+    return {
+        "items": items,
+        "settings": RakutenSettingsSchema.model_validate(settings_row),
+        "china_holiday": _china_holiday_out(holiday),
+    }
 
 
 # ============================================================

@@ -227,6 +227,10 @@ def _migrate():
         ("title_optimizations","manage_number", "ALTER TABLE title_optimizations ADD COLUMN manage_number VARCHAR"),
         # まとめ買い除外キャップ
         ("rakuten_settings","order_qty_cap", "ALTER TABLE rakuten_settings ADD COLUMN order_qty_cap INTEGER DEFAULT 3"),
+        # 中国の長期休暇（春節・国慶節）でリードタイムを自動延長する設定
+        ("rakuten_settings","cny_closed_before",     "ALTER TABLE rakuten_settings ADD COLUMN cny_closed_before INTEGER DEFAULT 7"),
+        ("rakuten_settings","cny_closed_after",      "ALTER TABLE rakuten_settings ADD COLUMN cny_closed_after INTEGER DEFAULT 15"),
+        ("rakuten_settings","national_closed_days",  "ALTER TABLE rakuten_settings ADD COLUMN national_closed_days INTEGER DEFAULT 7"),
         # 在庫切れフラグ
         ("rakuten_daily_sales","is_stockout", "ALTER TABLE rakuten_daily_sales ADD COLUMN is_stockout BOOLEAN DEFAULT FALSE"),
         ("order_settings","order_qty_cap", "ALTER TABLE order_settings ADD COLUMN order_qty_cap INTEGER DEFAULT 3"),

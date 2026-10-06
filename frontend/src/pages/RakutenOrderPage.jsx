@@ -1027,8 +1027,32 @@ export default function RakutenOrderPage() {
     </button>
   )
 
+  const holiday = allData?.china_holiday
+
   return (
     <div>
+      {/* 中国の長期休暇で入荷が遅れるぶん、発注数を多めに出していることを知らせる。
+          何も出ていないと「急に数が増えた」と見えて混乱するため */}
+      {holiday?.enabled && (
+        <div style={{ background: '#fff7ed', border: '2px solid #ea580c', borderRadius: 8,
+          padding: 14, marginBottom: 16 }}>
+          <div style={{ fontWeight: 700, color: '#9a3412', marginBottom: 4 }}>
+            🏮 {holiday.reason}で工場が止まるため、発注数を多めに出しています
+          </div>
+          <div style={{ fontSize: 13, color: '#9a3412' }}>
+            発注数の計算に使う日数を {holiday.base_lead_days}日 → <strong>{holiday.plan_lead_days}日</strong>
+            （+{holiday.extra_days}日）に広げています。
+            いま発注したぶんの入荷見込みは <strong>{holiday.arrival_date}</strong>
+            （{holiday.effective_lead_days}日後）です。
+            <div style={{ marginTop: 4 }}>
+              ※ 休み明けの入荷が遅れるぶんも先に見込んでいます。
+              休み前の最後の発注が通常数量だと、休み中に在庫が切れるためです。
+              休暇が終われば自動で元に戻ります。
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 発注済とタオタロウの実際の注文を突き合わせる。発注済は
           「あと何個来るか」として発注数に効くので、ずれていると
           足りているように見えて次の発注が遅れる */}
