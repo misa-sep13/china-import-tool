@@ -74,6 +74,8 @@ export default function TaotaroOrderModal({
             sku: it.sku, qty: it.qty, buy_url: it.buy_url || '',
             name: it.name || '', color: it.color || '',
             size: it.size || '', spec: it.spec || '',
+            // 船便・航空便を分けて頼むので、どちらの便かも渡す
+            shipping: it.shipping || '',
           })),
         })
         if (!alive) return
@@ -87,7 +89,12 @@ export default function TaotaroOrderModal({
           // FBA納品。Amazon（ASINあり）は既定で入れるが、外せるようにする。
           // 一時的に自宅へ送ってもらう、ということがあるため
           fba: !!x.asin,
-          remark: [x.note || '', x.asin ? FBA_NOTE : ''].filter(Boolean).join(' / '),
+          // 便が分かれている行は、どちらの便かを備考の先頭に入れる。
+          // 入れないと現場でまとめて同じ便に載せられてしまう
+          remark: [
+            x.shipping === 'air' ? '航空便用' : x.shipping === 'sea' ? '船便用' : '',
+            x.note || '', x.asin ? FBA_NOTE : '',
+          ].filter(Boolean).join(' / '),
           inspect: x.inspect || {},
           // 「その他」は、タオタロウの画面と同じくチェックを入れてから書く形。
           // 商品マスタに覚えた文章があるなら、最初から入れた状態で開く
@@ -134,6 +141,7 @@ export default function TaotaroOrderModal({
           // どの発注から展開された行か。発注済は販売単位で残すので、
           // 部材ごとに行が増えても数が膨らまないようにサーバーへ渡す
           origin_sku: t.origin_sku || t.sku, origin_qty: t.origin_qty,
+          shipping: t.shipping || '',
           is_accessory: !!t.is_accessory, is_part: !!t.is_part,
           title: t.title || t.name, platform: t.platform,
           product_id: t.product_id, sku_id: t.skuId,
@@ -269,6 +277,18 @@ function Row({ r, i, patch, pickSku }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
             {r.sku} <span style={{ fontWeight: 400, color: C.sub }}>×{r.qty}</span>
+            {r.shipping === 'air' && (
+              <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: '#1d4ed8',
+                background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 4, padding: '1px 6px' }}>
+                航空便
+              </span>
+            )}
+            {r.shipping === 'sea' && (
+              <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: '#0f766e',
+                background: '#f0fdfa', border: '1px solid #99f6e4', borderRadius: 4, padding: '1px 6px' }}>
+                船便
+              </span>
+            )}
             {r.remembered && <span style={{
               fontSize: 11, color: C.good, marginLeft: 8,
             }}>前回と同じ組み合わせ</span>}

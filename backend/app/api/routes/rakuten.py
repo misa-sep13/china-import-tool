@@ -5171,6 +5171,7 @@ def _taotaro_rows(order_items: list, db: Session) -> list:
             qty = 0
         if not sku or not qty:
             continue
+        shipping = (oi.get("shipping") or "").strip()
         p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
         if not p:
             continue
@@ -5200,7 +5201,7 @@ def _taotaro_rows(order_items: list, db: Session) -> list:
                 "buy_url": p.buy_url or "",
                 "spec": getattr(p, "supplier_spec", "") or "",
                 "qty": qty * (p.set_size or 1),
-                "is_part": False,
+                "is_part": False, "shipping": shipping,
                 # 発注済に残すのは販売単位の数。ここで展開した個数から
                 # 割り戻そうとすると、部材ごとに行が増えたぶんだけ
                 # 二重に数えてしまう（4色セット30個が120個になっていた）
@@ -5240,7 +5241,7 @@ def _taotaro_rows(order_items: list, db: Session) -> list:
                 "name": comp.get("name", "") or comp_sku or "",
                 "buy_url": comp_url, "spec": comp_spec,
                 "qty": qty * comp_qty,
-                "origin_sku": sku, "origin_qty": qty,
+                "origin_sku": sku, "origin_qty": qty, "shipping": shipping,
                 # 自分のSKUを持たない部材は、親のSKUで並ぶ。
                 # 覚えた組み合わせを共有すると、4色セットの4行すべてに
                 # 同じ色が入ってしまうので、印を付けて区別する
@@ -5269,6 +5270,7 @@ def rakuten_taotaro_preview(body: dict, db: Session = Depends(get_db)):
             "origin_sku": r.get("origin_sku") or r["sku"],
             "origin_qty": r.get("origin_qty"),
             "is_part": bool(r.get("is_part")),
+            "shipping": r.get("shipping") or "",
             "buy_url": r["buy_url"], "color": r["spec"], "size": "",
             "ok": False, "error": "", "skus": [], "chosen": None,
             "product_id": None, "platform": "", "title": "",
@@ -5427,10 +5429,13 @@ def rakuten_taotaro_submit(body: dict, db: Session = Depends(get_db)):
         if not p:
             continue
 
+        shipping = (it.get("shipping") or "").strip()
         if sku == origin:
-            if origin in seen_origin:
+            # 便ごとに別の発注として残す。まとめると、どちらの便で何個
+            # 頼んだのかが入荷のときに分からなくなる
+            if (origin, shipping) in seen_origin:
                 continue                      # 同じ発注の別部材。数はもう残した
-            seen_origin.add(origin)
+            seen_origin.add((origin, shipping))
             oq = it.get("origin_qty")
             if oq:
                 qty = int(oq)                 # 発注画面で入れた数（販売単位）
@@ -5448,11 +5453,13 @@ def rakuten_taotaro_submit(body: dict, db: Session = Depends(get_db)):
             RakutenOrderHistory.is_deleted == False,
             RakutenOrderHistory.is_delivered == False,
         ).first() is not None
+        # 船便が既定なので、印を付けるのは航空便だけにする（Excelと揃える）
+        ship_label = "航空便予定" if shipping == "air" else ""
         db.add(RakutenOrderHistory(
             sku=p.sku, name=p.name, qty=qty,
             stage=2 if has_pending else 1,
             ordered_at=ordered_at,
-            memo="タオタロウAPIで発注",
+            memo=f"タオタロウAPIで発注（{ship_label}）" if ship_label else "タオタロウAPIで発注",
         ))
         recorded += 1
     db.commit()

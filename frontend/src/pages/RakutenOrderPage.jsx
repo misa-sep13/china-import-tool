@@ -930,12 +930,17 @@ export default function RakutenOrderPage() {
   const bySku = new Map((allData?.items || []).map(x => [x.sku, x]))
 
   const handleOrder = async (item) => {
-    const qty = orderInputs[item.sku] ?? item.order_qty
-    if (!qty || qty <= 0) return
+    const sea = Number(orderInputs[item.sku] ?? item.order_qty) || 0
+    const air = Number(airInputs[item.sku]) || 0
+    if (sea <= 0 && air <= 0) return
     setOrdering(item.sku)
     try {
-      // 単品の発注Excelを生成し、同時に発注済みリストへ記録する
-      await downloadExcel([{ sku: item.sku, qty: Number(qty) }], '単品発注', item.sku)
+      // 単品の発注Excelを生成し、同時に発注済みリストへ記録する。
+      // 航空便に入れた数があれば、その行も一緒に出す
+      const rows = []
+      if (air > 0) rows.push({ sku: item.sku, qty: air, shipping: 'air' })
+      if (sea > 0) rows.push({ sku: item.sku, qty: sea, shipping: 'sea' })
+      await downloadExcel(rows, '単品発注', item.sku)
       qc.invalidateQueries(['rakuten-all-products-order'])
       qc.invalidateQueries(['rakuten-order-history'])
     } catch (e) {
@@ -945,14 +950,13 @@ export default function RakutenOrderPage() {
     }
   }
 
-  // チェックした商品を1つのリストにする。航空便に入れた数を発注数から引いた
-  // 残りが船便になるので、同じ商品が航空・船の2行になることもある
+  // チェックした商品を1つのリストにする。左の欄が船便の数、「空」が航空便の数で、
+  // 合計は2つを足した数になる。同じ商品が航空・船の2行になることもある
   const splitTargets = () => {
     const rows = []
     displayItems.filter(item => checkedSkus.has(item.sku)).forEach(item => {
-      const total = Number(orderInputs[item.sku] ?? item.order_qty) || 0
-      const airQty = Math.min(Number(airInputs[item.sku]) || 0, total)
-      const seaQty = total - airQty
+      const seaQty = Number(orderInputs[item.sku] ?? item.order_qty) || 0
+      const airQty = Number(airInputs[item.sku]) || 0
       if (airQty > 0) rows.push({ sku: item.sku, qty: airQty, shipping: 'air' })
       if (seaQty > 0) rows.push({ sku: item.sku, qty: seaQty, shipping: 'sea' })
     })
@@ -967,11 +971,9 @@ export default function RakutenOrderPage() {
       alert('チェックした商品（発注数1以上）がありません')
       return
     }
-    // 航空便と船便の分け方はExcel用のもの。発注そのものは同じ商品なので、
-    // 同じSKUはまとめて1件として送る
-    const merged = new Map()
-    targets.forEach(t => merged.set(t.sku, (merged.get(t.sku) || 0) + t.qty))
-    setTaotaroItems([...merged].map(([sku, qty]) => ({ sku, qty })))
+    // 航空便と船便は別の便として頼むので、まとめずに分けたまま渡す。
+    // まとめると「どちらで何個頼んだか」がタオタロウに伝わらない
+    setTaotaroItems(targets.map(t => ({ sku: t.sku, qty: t.qty, shipping: t.shipping })))
   }
 
   const handleTaotaroDone = () => {
@@ -1291,16 +1293,16 @@ export default function RakutenOrderPage() {
                             onChange={e => setOrderInputs(p => ({ ...p, [item.sku]: e.target.value }))}
                             style={{ width: 60, textAlign: 'center', padding: '4px 6px', fontSize: 13 }}
                           />
-                          {/* 航空便に回す数。残りが船便になるので、同じ商品を2便に分けられる。
+                          {/* 航空便で頼む数。左の欄が船便の数なので、合計は2つを足した数。
                               チェックした行だけ出す（普段は船便だけなので邪魔にならないように） */}
                           {isChecked && (
                             <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                               <span style={{ fontSize: 11, color: '#64748b' }}>空</span>
                               <input
-                                type="number" min={0} max={Number(inputVal) || 0}
+                                type="number" min={0}
                                 value={airInputs[item.sku] ?? ''}
                                 placeholder="0"
-                                title="航空便で頼む数。残りは船便になります"
+                                title="航空便で頼む数。左の欄（船便）に足されます"
                                 onChange={e => setAirInputs(p => ({ ...p, [item.sku]: e.target.value }))}
                                 style={{
                                   width: 52, textAlign: 'center', padding: '4px 6px', fontSize: 13,
@@ -1333,6 +1335,14 @@ export default function RakutenOrderPage() {
                             style={{ width: 16, height: 16, cursor: 'pointer' }}
                           />
                         </div>
+                        {/* 合計と内訳をその場で出す。左が船便か合計かを迷って
+                            数を取り違えたことがあるので、必ず見えるようにする */}
+                        {isChecked && Number(airInputs[item.sku]) > 0 && (
+                          <div style={{ fontSize: 11, color: '#1d4ed8', marginTop: 3, whiteSpace: 'nowrap' }}>
+                            船{Number(inputVal) || 0} ＋ 空{Number(airInputs[item.sku]) || 0}
+                            ＝ 計{(Number(inputVal) || 0) + (Number(airInputs[item.sku]) || 0)}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   )
