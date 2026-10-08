@@ -29,7 +29,7 @@ export default function ResearchPage() {
   // 別の画面を作ると同じ中身を二重に持つことになるため
   // iframeで配布版のHTMLを出すタブだけを並べる。除外する側で書くと、
   // タブを足したときに入れ忘れて、中身のかわりにシートが出てしまう
-  const isFrame = ['sheet', 'scout', 'listing'].includes(tab)
+  const isFrame = ['sheet', 'scout'].includes(tab)
 
   // iframeの中へ、APIのURLとログイン済みトークンを渡す。
   // 中のスクリプトはこれを見て保存先とAPIの向き先を決める。
@@ -82,8 +82,7 @@ export default function ResearchPage() {
           { k: 'scout', l: '🔎 セラースカウト' },
           { k: 'keep', l: '🤝 商品キープ' },
           { k: 'images', l: '🎨 画像依頼' },
-          { k: 'listing', l: '🏷 商品登録（採用したもの）' },
-          { k: 'old', l: '（旧）登録画面' },
+          { k: 'old', l: '🏷 採用商品' },
         ].map(t => (
           <button key={t.k} onClick={() => setTab(t.k)}
             className={`btn ${tab === t.k ? 'btn-primary' : 'btn-secondary'}`}>

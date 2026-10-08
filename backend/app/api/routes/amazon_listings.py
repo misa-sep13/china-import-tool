@@ -208,6 +208,30 @@ def list_listings(db: Session = Depends(get_db)):
     cands = sync.candidates(_sheet(db))
     saved = {r.research_id: r for r in db.query(AmazonListing).all()}
 
+    # 一覧に出すのは自社の情報（SKU・商品名・ASIN）。
+    # 競合の数字は判断材料として残すが、主役ではない。
+    # 子SKUは件数ぶん問い合わせると重いので、まとめて1回で引く
+    kids_by_listing: dict = {}
+    if saved:
+        for ch in (db.query(AmazonListingChild)
+                   .filter(AmazonListingChild.listing_id.in_(
+                       [r.id for r in saved.values()]))
+                   .order_by(AmazonListingChild.sort_order,
+                             AmazonListingChild.id).all()):
+            kids_by_listing.setdefault(ch.listing_id, []).append(ch)
+
+    def own(row):
+        """その登録の自社情報。まだ始めていなければ空。"""
+        if not row:
+            return {"parent_sku": "", "own_title": "", "skus": [], "asins": []}
+        kids = kids_by_listing.get(row.id, [])
+        return {
+            "parent_sku": (row.parent_sku or "").strip(),
+            "own_title": (row.title or "").strip(),
+            "skus": [k.sku for k in kids if (k.sku or "").strip()],
+            "asins": [k.asin for k in kids if (k.asin or "").strip()],
+        }
+
     rows = []
     for c in cands:
         row = saved.pop(c["research_id"], None)
@@ -231,6 +255,7 @@ def list_listings(db: Session = Depends(get_db)):
             "child_count": len(c["children"]),
             "listing_id": row.id if row else None,
             "listing_status": row.status if row else None,
+            **own(row),
         })
 
     # シートから消えたが登録レコードだけ残っているもの。取りこぼさないよう出す
@@ -246,6 +271,7 @@ def list_listings(db: Session = Depends(get_db)):
             "bullet_count": len(_loads(r.bullets, [])), "child_count": 0,
             "listing_id": r.id, "listing_status": r.status,
             "orphan": True,
+            **own(r),
         })
     return {"rows": rows}
 

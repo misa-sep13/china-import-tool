@@ -199,16 +199,45 @@ function ListRow({ r, onStart, onOpen, busy }) {
             borderRadius: 6, flexShrink: 0 }} />}
 
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: C.text,
-          whiteSpace: 'normal', display: '-webkit-box',
-          WebkitLineClamp: 1, WebkitBoxOrient: 'vertical',
-          overflow: 'hidden' }}>
-          {r.research_title || '(名前なし)'}
+        {/* 主役は自社の情報。SKUと商品名が一目で分かるようにする */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'baseline',
+          flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: 'monospace', fontSize: 14,
+            fontWeight: 700, color: r.parent_sku ? C.key : C.sub }}>
+            {r.parent_sku || 'SKU未採番'}
+          </span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: C.text,
+            whiteSpace: 'nowrap', overflow: 'hidden',
+            textOverflow: 'ellipsis', maxWidth: 520 }}
+            title={r.own_title || r.research_title}>
+            {r.own_title || r.research_title || '(名前なし)'}
+          </span>
         </div>
+
+        {/* 子SKUと、出品後に付いた自社ASIN */}
+        {(r.skus?.length > 0 || r.asins?.length > 0) && (
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap',
+            fontSize: 11, color: C.sub, marginTop: 3 }}>
+            {r.skus?.length > 0 && (
+              <span style={{ fontFamily: 'monospace' }}>
+                SKU {r.skus.slice(0, 3).join(' / ')}
+                {r.skus.length > 3 ? ` ほか${r.skus.length - 3}` : ''}
+              </span>
+            )}
+            {r.asins?.length > 0 && (
+              <span style={{ fontFamily: 'monospace', color: C.good,
+                fontWeight: 600 }}>
+                ASIN {r.asins.slice(0, 3).join(' / ')}
+                {r.asins.length > 3 ? ` ほか${r.asins.length - 3}` : ''}
+              </span>
+            )}
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap',
           fontSize: 12, color: C.sub, marginTop: 5 }}>
-          <span>ASIN <b style={{ color: C.key }}>{r.rival_asin || '—'}</b></span>
+          {/* ここから下は競合の数字。判断材料として小さく残す */}
+          <span>競合ASIN <b style={{ color: C.sub }}>{r.rival_asin || '—'}</b></span>
           <span>月間 <b style={{ color: C.text }}>{r.monthly_sales ?? '—'}</b>個</span>
           <span>レビュー <b style={{ color: C.text }}>{r.review_count ?? '—'}</b>件
             {r.review_rate ? ` ★${r.review_rate}` : ''}</span>
