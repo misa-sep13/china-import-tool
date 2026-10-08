@@ -37,6 +37,9 @@ class ProductCreate(BaseModel):
     purchase_components: Optional[str] = None  # JSON文字列（発注用付属品・在庫連動しない）
     is_component: Optional[bool] = False       # 付属品（他商品から参照される側）フラグ
     is_material: Optional[bool] = False        # 発送用の梱包資材（商品原価に載せず資材費に計上）
+    # タオタロウ発注の検品オプション（JSON文字列）。
+    # 発注画面で選んで覚えさせるほか、マスタから直接登録できるようにしてある
+    taotaro_inspect: Optional[str] = None
 
 def _restore_deleted_product(existing: Product, data: ProductCreate, db: Session) -> Product:
     for k, v in data.model_dump().items():
@@ -77,6 +80,7 @@ class ProductUpdate(BaseModel):
     purchase_components: Optional[str] = None
     is_component: Optional[bool] = None
     is_material: Optional[bool] = None
+    taotaro_inspect: Optional[str] = None
 
 class ProductOut(ProductCreate):
     id: int
@@ -363,3 +367,19 @@ def reset_amazon_ids(dry_run: bool = True, db: Session = Depends(get_db)):
         p.fnsku = None
     db.commit()
     return {"dry_run": False, "消した件数": len(target), "対象": target}
+
+
+@router.get("/inspect-options")
+def list_inspect_options():
+    """タオタロウ発注の検品オプション一覧。
+
+    商品マスタから手で登録できるようにするために、名前と中身の対応を
+    画面へ渡す。発注画面で選ぶものと同じ並び。
+    """
+    from app.services import taotaro
+    return {
+        "flags": [{"key": k, "label": v}
+                  for k, v in taotaro.INSPECT_FLAGS.items()],
+        "texts": [{"key": k, "label": v}
+                  for k, v in taotaro.INSPECT_TEXT.items()],
+    }

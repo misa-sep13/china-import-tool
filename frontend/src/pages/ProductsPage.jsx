@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import { normalizeSearch } from '../searchUtil'
@@ -15,6 +15,8 @@ const EMPTY = {
   set_size: 1, extra_stock: 0, amazon_fee_rate: 0.1, category: '標準',
   // 発注用付属品。本体と一緒にタオタロウへ頼むもの。在庫には連動しない
   purchase_components: '',
+  // タオタロウ発注の検品オプション（JSON文字列）
+  taotaro_inspect: '',
 }
 const EDITABLE_FIELDS = Object.keys(EMPTY)
 
@@ -33,10 +35,62 @@ const buildFormData = (source) => {
   data.cost_jpy = toNumber(source.cost_jpy, 0)
   // 空のまま送ると0で上書きしてしまう。入っていなければ空のままにする
   data.selling_price = source.selling_price ?? ''
+  data.taotaro_inspect = source.taotaro_inspect ?? ''
   data.set_size = Math.max(1, Math.trunc(toNumber(source.set_size, 1)))
   data.extra_stock = Math.max(0, Math.trunc(toNumber(source.extra_stock, 0)))
   data.amazon_fee_rate = toNumber(source.amazon_fee_rate, 0.1)
   return data
+}
+
+/**
+ * タオタロウ発注の検品オプション。
+ *
+ * これまでは発注画面で選んで「覚える」しか登録の口が無かったので、
+ * 発注前にマスタへ入れておけなかった。ここで直接登録できるようにする。
+ * 中身は発注時にそのまま送る形（{"var1":"1", "var7":"..."}）で持つ。
+ */
+function InspectPicker({ value, onChange }) {
+  const [opts, setOpts] = useState({ flags: [], texts: [] })
+  useEffect(() => {
+    api.get('/products/inspect-options')
+      .then(r => setOpts(r.data))
+      .catch(() => {})
+  }, [])
+
+  let cur = {}
+  try { cur = value ? JSON.parse(value) : {} } catch (e) { cur = {} }
+
+  const set = (key, v) => {
+    const next = { ...cur }
+    if (v) next[key] = v
+    else delete next[key]
+    onChange(Object.keys(next).length ? JSON.stringify(next) : '')
+  }
+
+  return (
+    <div style={{ border: '1px solid #e2e8f0', borderRadius: 6, padding: 8,
+      background: '#f8fafc' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }}>
+        {opts.flags.map(o => (
+          <label key={o.key} style={{ fontSize: 12, display: 'flex',
+            alignItems: 'center', gap: 4, cursor: 'pointer', margin: 0 }}>
+            <input type="checkbox" checked={!!cur[o.key]}
+              onChange={e => set(o.key, e.target.checked ? '1' : '')}
+              style={{ width: 'auto', margin: 0 }} />
+            {o.label}
+          </label>
+        ))}
+      </div>
+      {opts.texts.map(o => (
+        <input key={o.key} value={cur[o.key] || ''} placeholder={o.label}
+          onChange={e => set(o.key, e.target.value)}
+          style={{ marginTop: 6, fontSize: 12 }} />
+      ))}
+      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
+        ここで入れておくと、次のタオタロウ発注で最初から選ばれた状態になります。
+      </div>
+    </div>
+  )
 }
 
 const formatApiError = (e) => {
@@ -463,6 +517,10 @@ export default function ProductsPage() {
                   <label>販売価格（円）</label>
                   <input type="number" step="1" {...f('selling_price')}
                     placeholder="SP-APIで取れないときだけ手入力" />
+                  <label>タオタロウ発注のオプション</label>
+                  <InspectPicker
+                    value={form.taotaro_inspect}
+                    onChange={v => setForm(p => ({ ...p, taotaro_inspect: v }))} />
                   <label>Amazon手数料率</label>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <input type="number" step="0.01" min={0} max={1} {...f('amazon_fee_rate')} style={{ width: 80 }} />
