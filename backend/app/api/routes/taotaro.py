@@ -76,6 +76,18 @@ def list_send_orders(
     return d
 
 
+@router.get("/orders")
+def list_orders(page: int = 1, limit: int = Query(100, ge=1, le=100),
+                start_time: Optional[int] = None):
+    """タオタロウに入っている注文の一覧。読むだけ。
+
+    発注したつもりのものが本当に向こうに入っているかを
+    突き合わせるためのもの。out_id が自社のSKU。
+    """
+    return _call(taotaro.list_orders, page=page, limit=limit,
+                 start_time=start_time)
+
+
 @router.get("/send-orders/{sid:int}")
 def get_send_order(sid: int):
     """配送依頼の詳細。費用の内訳と同梱注文の明細。"""
