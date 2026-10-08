@@ -99,7 +99,33 @@ export default function ListingTab() {
   }
 
   const shown = useMemo(
-    () => onlyReady ? rows.filter(r => r.listing_id) : rows,
+    () => {
+      const base = onlyReady ? rows.filter(r => r.listing_id) : rows
+      // SKU順。a019 → a016 → … → a01 と、数の大きいものが上。
+      // 文字のまま並べると a1 < a10 < a2 になるので、数字は数として見る。
+      // まだ採番していないものは、これからのものなので一番上に出す
+      const key = (r) => (r.parent_sku || '').trim()
+      const parts = (v) => (v.toLowerCase().match(/\d+|\D+/g) || [])
+      return [...base].sort((a, b) => {
+        const ka = key(a), kb = key(b)
+        if (!ka && !kb) return 0
+        if (!ka) return -1
+        if (!kb) return 1
+        const pa = parts(ka), pb = parts(kb)
+        for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+          const x = pa[i], y = pb[i]
+          if (x === undefined) return 1
+          if (y === undefined) return -1
+          const nx = /^\d+$/.test(x), ny = /^\d+$/.test(y)
+          if (nx && ny) {
+            if (Number(x) !== Number(y)) return Number(y) - Number(x)
+          } else if (x !== y) {
+            return x < y ? -1 : 1
+          }
+        }
+        return 0
+      })
+    },
     [rows, onlyReady])
 
   if (openId) {
