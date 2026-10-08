@@ -8887,9 +8887,54 @@ if(FIREBASE_CONFIG.databaseURL){
     const titleBlock = [parent].concat(kids.map(c =>
       ((c.name || '').trim() ? '（' + c.name.trim() + '）' : '') + (c.title || '').trim()
     )).filter(Boolean).join('\n');
+    // ファイルの一番上に「外注さんが最初に見る情報」をまとめる。
+    // SKU・カラー・素材のURLが下のほうにあると毎回聞かれるので、
+    // 構成案より先に、この1ブロックで渡しきる。
+    // （配布版のプロンプトを取り込んだときに落としてしまい、商品補足・
+    //   SKU・商品備考が指示書に出なくなっていた）
+    const refUrls = (research.refUrls || []).map(u => (u || '').trim()).filter(Boolean);
+    const note0 = (((research.rows || [])[0] || {}).note || '').trim();
+    const regKids = (research.regChildren || []).filter(x => x.sku || x.color);
+    const extra = ['■この商品について', ''];
+    if((research.parentSku || '').trim()){
+      extra.push('SKU（親）：' + research.parentSku.trim());
+    }
+    if((research.cnName || '').trim()){
+      extra.push('中国語名：' + research.cnName.trim());
+    }
+    if(regKids.length){
+      extra.push('', 'カラー別のSKU');
+      regKids.forEach(x => extra.push(
+        '　・' + (x.color || '（色なし）') + '　' + (x.sku || '（SKU未採番）')));
+    }else if(kids.length){
+      extra.push('', 'カラー');
+      kids.forEach(c => extra.push(
+        '　・' + ((c.name || '').trim() || (c.title || '').trim())));
+    }
+    const specs = basicSpecs(research);
+    if(specs.length){
+      extra.push('', '基本情報（商品タイトル・説明文から拾ったもの。念のためご確認ください）');
+      specs.forEach(x => extra.push('　' + x));
+    }
+    extra.push('');
+    // 画像素材の取り出し元。デザイナーが最初に開くものなので上に置く
+    extra.push('画像素材（1688）');
+    if(urls.length){ urls.forEach(u => extra.push('　' + u)); }
+    else { extra.push('　(未入力)'); }
+    if(refUrls.length){
+      extra.push('', '参考URL');
+      refUrls.forEach(u => extra.push('　' + u));
+    }
+    if((research.imgNote || '').trim()){
+      extra.push('', '商品補足：' + research.imgNote.trim());
+    }
+    if(note0){ extra.push('', '商品備考：' + note0); }
+    extra.push('', '');
+
     return [
       '商品画像作成指示書',
-      '',
+      ''
+    ].concat(extra).concat([
       '■商品タイトル',
       titleBlock || '(未入力)',
       '',
@@ -8913,7 +8958,7 @@ if(FIREBASE_CONFIG.databaseURL){
       '',
       '■商品画像の色合い',
       tone || '(未入力)'
-    ].join('\n');
+    ]).join('\n');
   }
 
   // STEP3：画像作成指示書。③タイトル・⑤5行・ターゲット・色合い・自社の事実・競合情報・URLを入れ直す（2026-09-14 同じチャット版は撤去）。
