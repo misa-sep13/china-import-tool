@@ -209,6 +209,46 @@ def work_sheet_url() -> str:
     return f"{base}/work-public" + (f"?share={token}" if token else "")
 
 
+# 送り主は「トークンの持ち主」になる。自分が送ったものは自分に通知が
+# 来ないので、ゆなのトークンで送っていると、外注さんが書いた連絡に
+# ゆなが気づけない。宛先（To）を付けると、送り主以外には確実に通知が飛ぶ。
+#
+# 両方に通知を飛ばしたいなら、ツール専用のチャットワークアカウントを
+# 作ってそのトークンを使う（CHATWORK_API_TOKEN を差し替えるだけ）。
+# そうすれば送り主が「ツール」になり、ゆなにも外注さんにも通知が行く。
+_me_cache: Optional[int] = None
+_members_cache: dict = {}
+
+
+def _me_id() -> Optional[int]:
+    global _me_cache
+    if _me_cache is not None:
+        return _me_cache
+    try:
+        r = httpx.get(f"{settings.CHATWORK_API_BASE}/me",
+                      headers=_headers(), timeout=TIMEOUT)
+        _me_cache = (_check(r) or {}).get("account_id")
+    except Exception:
+        _me_cache = None
+    return _me_cache
+
+
+def _to_tags(room_id: str) -> str:
+    """その部屋の、自分以外の全員への宛先。"""
+    try:
+        if room_id not in _members_cache:
+            r = httpx.get(
+                f"{settings.CHATWORK_API_BASE}/rooms/{room_id}/members",
+                headers=_headers(), timeout=TIMEOUT)
+            _members_cache[room_id] = _check(r) or []
+        me = _me_id()
+        ids = [m.get("account_id") for m in _members_cache[room_id]
+               if m.get("account_id") and m.get("account_id") != me]
+        return "".join(f"[To:{i}]" for i in ids)
+    except Exception:
+        return ""
+
+
 def notify_work(title: str, lines: list) -> None:
     """状況確認シートの動きを知らせる。
 
@@ -221,7 +261,10 @@ def notify_work(title: str, lines: list) -> None:
         room = work_room()
         if not room:
             return
-        body = "\n".join([f"[info][title]{title}[/title]"]
+        # 宛先を付けて、送り主以外に通知が飛ぶようにする
+        to = _to_tags(room)
+        body = "\n".join(([to] if to else [])
+                         + [f"[info][title]{title}[/title]"]
                          + [str(x) for x in lines if str(x).strip()]
                          + [work_sheet_url(), "[/info]"])
         send_message(room, body)
