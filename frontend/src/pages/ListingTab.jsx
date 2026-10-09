@@ -263,7 +263,23 @@ function ListRow({ r, onStart, onOpen, busy }) {
         <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap',
           fontSize: 12, color: C.sub, marginTop: 5 }}>
           {/* ここから下は競合の数字。判断材料として小さく残す */}
-          <span>競合ASIN <b style={{ color: C.sub }}>{r.rival_asin || '—'}</b></span>
+          <span>競合ASIN{' '}
+            {r.rival_asin
+              ? <a href={`https://www.amazon.co.jp/dp/${r.rival_asin}`}
+                  target="_blank" rel="noreferrer"
+                  style={{ fontWeight: 700 }}>{r.rival_asin}</a>
+              : <b style={{ color: C.sub }}>—</b>}
+          </span>
+          {r.urls_1688?.length > 0 && (
+            <span>仕入元{' '}
+              {r.urls_1688.slice(0, 3).map((u, i) => (
+                <a key={i} href={u} target="_blank" rel="noreferrer"
+                  style={{ fontWeight: 700, marginRight: 6 }}>
+                  1688{r.urls_1688.length > 1 ? `(${i + 1})` : ''}
+                </a>
+              ))}
+            </span>
+          )}
           <span>月間 <b style={{ color: C.text }}>{r.monthly_sales ?? '—'}</b>個</span>
           <span>レビュー <b style={{ color: C.text }}>{r.review_count ?? '—'}</b>件
             {r.review_rate ? ` ★${r.review_rate}` : ''}</span>

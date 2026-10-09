@@ -255,6 +255,9 @@ def list_listings(db: Session = Depends(get_db)):
             "child_count": len(c["children"]),
             "listing_id": row.id if row else None,
             "listing_status": row.status if row else None,
+            # 仕入元のページ。一覧からそのまま開けるようにする
+            "urls_1688": c.get("urls_1688") or (
+                [c["main_url"]] if c.get("main_url") else []),
             **own(row),
         })
 
@@ -271,6 +274,7 @@ def list_listings(db: Session = Depends(get_db)):
             "bullet_count": len(_loads(r.bullets, [])), "child_count": 0,
             "listing_id": r.id, "listing_status": r.status,
             "orphan": True,
+            "urls_1688": [],
             **own(r),
         })
     return {"rows": rows}
