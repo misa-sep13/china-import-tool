@@ -74,11 +74,11 @@ def list_requests(include_done: int = 0, db: Session = Depends(get_db)):
     q = db.query(ImageRequest).filter(ImageRequest.is_deleted == False)
     if not include_done:
         q = q.filter(ImageRequest.status != "done")
-    # 新しく足したものが下に来るように、古い順。上下に動かした並びが
+    # 新しく足したものが上に来るように、新しい順。上下に動かした並びが
     # あればそちらを優先する（sort_order を入れていないものは作った順）
     rows = q.order_by(
-        sa_func.coalesce(ImageRequest.sort_order, ImageRequest.id).asc(),
-        ImageRequest.id.asc(),
+        sa_func.coalesce(ImageRequest.sort_order, ImageRequest.id).desc(),
+        ImageRequest.id.desc(),
     ).all()
     done = (db.query(ImageRequest)
             .filter(ImageRequest.is_deleted == False,
@@ -235,11 +235,13 @@ def move_request(req_id: int, direction: str, request: Request,
     if direction not in ("up", "down"):
         raise HTTPException(400, "up か down を指定してください")
 
+    # 一覧と同じ並び（新しいものが上）で数える。ここが逆だと
+    # ▲を押したのに下へ動いて見える
     rows = (db.query(ImageRequest)
             .filter(ImageRequest.is_deleted == False)
             .order_by(sa_func.coalesce(ImageRequest.sort_order,
-                                       ImageRequest.id).asc(),
-                      ImageRequest.id.asc())
+                                       ImageRequest.id).desc(),
+                      ImageRequest.id.desc())
             .all())
     idx = next((i for i, r in enumerate(rows) if r.id == req_id), None)
     if idx is None:

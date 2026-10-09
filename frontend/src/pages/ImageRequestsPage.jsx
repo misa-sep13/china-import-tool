@@ -345,7 +345,7 @@ export default function ImageRequestsPage({ share = '' }) {
       )}
 
       <div style={{ fontSize: 11, color: C.sub, marginTop: 8, lineHeight: 1.8 }}>
-        新しく足したものが下に並びます。▲▼ で順番を入れ替えられます。
+        新しく足したものが上に並びます。▲▼ で順番を入れ替えられます。
         進み具合を「完了」にすると、この一覧から消えます（「完了したものも出す」で戻せます）。
         <br />
         「写真」はリサーチシートに貼ってあるライバルの画像です。
