@@ -93,10 +93,22 @@ def list_requests(include_done: int = 0, db: Session = Depends(get_db)):
                          .order_by(_Photo.sort_order, _Photo.id).all()):
             photos.setdefault(rid, []).append(pid)
 
+    # 納品データ（置いてあるファイル）。中身は重いので件数と大きさだけ
+    from app.models.image_request import ImageRequestFile as _File
+    files: dict = {}
+    if ids:
+        for fid, rid, fname, fsize in (
+                db.query(_File.id, _File.request_id, _File.name, _File.size)
+                .filter(_File.request_id.in_(ids))
+                .order_by(_File.id).all()):
+            files.setdefault(rid, []).append(
+                {"id": fid, "name": fname or "", "size": fsize or 0})
+
     items = []
     for r in rows:
         d = _out(r)
         d["photos"] = photos.get(r.id, [])
+        d["files"] = files.get(r.id, [])
         # ライバルの画像があるか。URLは画面側が組み立てる
         d["has_cover"] = bool(_cover_image(db, r))
         items.append(d)
@@ -177,6 +189,7 @@ def update_request(req_id: int, data: ImageRequestPatch, request: Request,
 
     guest = _is_share(request)
     allowed = {"status", "reply", "deliverable_url"} if guest else None
+    dropped = 0   # 完了にしたときに消した納品データの数
 
     for field, value in data.model_dump(exclude_unset=True).items():
         if value is None:
@@ -196,10 +209,17 @@ def update_request(req_id: int, data: ImageRequestPatch, request: Request,
                 raise HTTPException(400, "その進み具合は選べません")
             # 完了にした時刻を残す。戻したら消す（やり直しがあるため）
             row.done_at = datetime.now(timezone.utc) if value == "done" else None
+            # 完了＝商品登録まで終わったということ。納品データはもう
+            # 要らないので、ここで消して容量を空ける
+            if value == "done":
+                dropped = _drop_files(db, row.id)
         setattr(row, field, value)
     db.commit()
     db.refresh(row)
-    return _out(row)
+    out = _out(row)
+    if dropped:
+        out["dropped_files"] = dropped
+    return out
 
 
 @router.post("/{req_id:int}/move")
@@ -378,6 +398,8 @@ def delete_photo(photo_id: int, request: Request,
 # （amazon_research_sheet）、行ごとの image に貼り付けた画像が入る。
 # data URL のことも、Amazonの画像URLのこともある。
 
+from urllib.parse import quote
+
 import base64 as _base64
 import binascii as _binascii
 import json as _json
@@ -467,3 +489,98 @@ def get_cover(req_id: int, db: Session = Depends(get_db)):
     if url.startswith("http"):
         return RedirectResponse(url, status_code=302)
     raise HTTPException(404, "画像がありません")
+
+
+# ============================================================
+# 納品データの一時置き場
+# ============================================================
+# 外注さんから届く画像（ZIP）を、依頼の行に置いておく。商品登録に
+# 使ったら要らないので、進み具合を「完了」にした時点で中身を消す。
+# ずっと置くとすぐ容量を食う（10MBのZIPが依頼のぶんだけ増える）。
+
+from app.models.image_request import ImageRequestFile
+
+_MAX_FILE = 60 * 1024 * 1024     # 1ファイル60MBまで
+_MAX_TOTAL = 200 * 1024 * 1024   # 1依頼あたり合計200MBまで
+
+
+def _file_out(f: ImageRequestFile) -> dict:
+    return {"id": f.id, "name": f.name or "", "size": f.size or 0,
+            "created_at": f.created_at.isoformat() if f.created_at else None}
+
+
+def _drop_files(db: Session, req_id: int) -> int:
+    """その依頼の納品データを消す。完了にしたときに呼ぶ。"""
+    n = (db.query(ImageRequestFile)
+         .filter(ImageRequestFile.request_id == req_id)
+         .delete(synchronize_session=False))
+    return n or 0
+
+
+@router.post("/{req_id:int}/files")
+async def add_files(req_id: int, request: Request,
+                    files: list[UploadFile] = File(...),
+                    db: Session = Depends(get_db)):
+    """納品データを置く。外注さんの画面からも置ける。"""
+    req = db.query(ImageRequest).filter(ImageRequest.id == req_id).first()
+    if not req:
+        raise HTTPException(404, "依頼が見つかりません")
+    have = sum(int(f.size or 0) for f in db.query(ImageRequestFile)
+               .filter(ImageRequestFile.request_id == req_id).all())
+
+    saved = []
+    for f in files:
+        raw = await f.read()
+        if not raw:
+            continue
+        if len(raw) > _MAX_FILE:
+            raise HTTPException(400, f"{f.filename} が大きすぎます（60MBまで）")
+        have += len(raw)
+        if have > _MAX_TOTAL:
+            raise HTTPException(
+                400, "この依頼に置ける合計を超えました（200MBまで）。"
+                     "要らないものを消してから入れてください")
+        row = ImageRequestFile(
+            request_id=req_id, name=(f.filename or "file")[:200],
+            content_type=f.content_type or "application/octet-stream",
+            size=len(raw), data=raw)
+        db.add(row)
+        db.flush()
+        saved.append(_file_out(row))
+    db.commit()
+    return {"items": saved}
+
+
+@router.get("/{req_id:int}/files")
+def list_files(req_id: int, db: Session = Depends(get_db)):
+    rows = (db.query(ImageRequestFile)
+            .filter(ImageRequestFile.request_id == req_id)
+            .order_by(ImageRequestFile.id).all())
+    return {"items": [_file_out(f) for f in rows]}
+
+
+@router.get("/file/{file_id:int}")
+def get_file(file_id: int, db: Session = Depends(get_db)):
+    """納品データを落とす。<a href> から開くので合言葉はURLに付ける。"""
+    f = (db.query(ImageRequestFile)
+         .filter(ImageRequestFile.id == file_id).first())
+    if not f or not f.data:
+        raise HTTPException(404, "ファイルが見つかりません")
+    name = quote(f.name or "file")
+    return Response(
+        content=f.data,
+        media_type=f.content_type or "application/octet-stream",
+        headers={"Content-Disposition":
+                 f"attachment; filename*=UTF-8''{name}"})
+
+
+@router.delete("/file/{file_id:int}")
+def delete_file(file_id: int, request: Request, db: Session = Depends(get_db)):
+    """納品データを消す。置いた本人が間違えたときに使う。"""
+    f = (db.query(ImageRequestFile)
+         .filter(ImageRequestFile.id == file_id).first())
+    if not f:
+        raise HTTPException(404, "ファイルが見つかりません")
+    db.delete(f)
+    db.commit()
+    return {"ok": True}

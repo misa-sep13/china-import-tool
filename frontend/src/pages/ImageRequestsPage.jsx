@@ -192,7 +192,7 @@ export default function ImageRequestsPage({ share = '' }) {
           <thead>
             <tr>
               {[...(share ? [] : ['並び']), '依頼日', '', '写真', 'SKU', '商品名',
-                '参考画像', '商品補足', '進み具合', '連絡', ''].map((h, i) => (
+                '参考画像', '納品データ', '商品補足', '進み具合', '連絡', ''].map((h, i) => (
                   <th key={i} style={th}>{h}</th>
                 ))}
             </tr>
@@ -200,7 +200,7 @@ export default function ImageRequestsPage({ share = '' }) {
           <tbody>
             {shown.length === 0 && (
               <tr><td style={{ ...td, color: C.sub, padding: 20 }}
-                colSpan={share ? 10 : 11}>
+                colSpan={share ? 11 : 12}>
                 {q ? `「${q}」に当てはまる依頼はありません。`
                   : '作業中の依頼はありません。'}
               </td></tr>
@@ -283,6 +283,9 @@ export default function ImageRequestsPage({ share = '' }) {
                     <Photos r={r} share={share} cfg={cfg} reload={load}
                       setErr={setErr} onOpen={setBig} />
                   </td>
+                  <td style={{ ...td, width: 160 }}>
+                    <Deliveries r={r} cfg={cfg} reload={load} setErr={setErr} />
+                  </td>
                   <td style={{ ...td, width: '34%' }}>
                     {share ? (
                       <span style={{ whiteSpace: 'pre-wrap' }}>{r.detail || '—'}</span>
@@ -347,6 +350,8 @@ export default function ImageRequestsPage({ share = '' }) {
         <br />
         「写真」はリサーチシートに貼ってあるライバルの画像です。
         参考画像ともどもクリックで拡大できます。
+        <b>納品データ</b>は一時置きです。進み具合を<b>「完了」にすると消えます</b>
+        （商品登録に使い終わったもので容量を食わないように）。
         {!share && <><br />
           参考画像は「＋」でファイルを選ぶ・枠へドラッグ＆ドロップ・
           <b>「📋」を押してから Ctrl+V</b>のどれでも入ります（まとめて可）。
@@ -354,6 +359,94 @@ export default function ImageRequestsPage({ share = '' }) {
           リサーチシートで「💬 Chatworkで送る」を押すと、ここに自動で1件増えます。
         </>}
       </div>
+    </div>
+  )
+}
+
+/**
+ * 納品データ（外注さんから届いた画像のZIPなど）の一時置き場。
+ *
+ * 商品登録に使ったら要らないので、進み具合を「完了」にした時点で
+ * サーバー側が中身を消す。ずっと置くとすぐ容量を食うため。
+ */
+function Deliveries({ r, cfg, reload, setErr }) {
+  const [busy, setBusy] = useState(false)
+  const files = r.files || []
+
+  const mb = (n) => (n >= 1024 * 1024
+    ? `${(n / 1024 / 1024).toFixed(1)}MB`
+    : `${Math.max(1, Math.round(n / 1024))}KB`)
+
+  const send = async (list) => {
+    const picked = [...(list || [])]
+    if (!picked.length) return
+    setBusy(true); setErr('')
+    try {
+      const fd = new FormData()
+      picked.forEach(f => fd.append('files', f))
+      await api.post(`/image-requests/${r.id}/files`, fd, cfg())
+      await reload()
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  // ログインの通行証を付けて落とす必要があるので、リンクではなく
+  // こちらで読み込んでから保存する
+  const download = async (f) => {
+    setBusy(true)
+    try {
+      const res = await api.get(`/image-requests/file/${f.id}`,
+        cfg({ responseType: 'blob' }))
+      const url = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = url; a.download = f.name || 'file'
+      document.body.appendChild(a); a.click(); a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  const remove = async (f) => {
+    if (!confirm(`${f.name} を消しますか？`)) return
+    setBusy(true)
+    try {
+      await api.delete(`/image-requests/file/${f.id}`, cfg())
+      await reload()
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div
+      onDragOver={e => e.preventDefault()}
+      onDrop={e => { e.preventDefault(); send(e.dataTransfer.files) }}
+      style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {files.map(f => (
+        <div key={f.id} style={{ display: 'flex', alignItems: 'center',
+          gap: 4, fontSize: 11 }}>
+          <button onClick={() => download(f)} disabled={busy}
+            title="落とす"
+            style={{ border: 'none', background: 'none', padding: 0,
+              color: C.key, cursor: 'pointer', textAlign: 'left',
+              maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap' }}>
+            📦 {f.name}
+          </button>
+          <span style={{ color: C.sub }}>{mb(f.size)}</span>
+          <button onClick={() => remove(f)} disabled={busy} title="消す"
+            style={{ border: 'none', background: 'none', padding: 0,
+              color: C.bad, cursor: 'pointer' }}>×</button>
+        </div>
+      ))}
+      <label title="ZIPや画像を置く（ここへドラッグしても入ります）"
+        style={{ fontSize: 11, color: busy ? C.sub : C.key, cursor: 'pointer' }}>
+        {busy ? '…' : '＋ 納品データを置く'}
+        <input type="file" multiple hidden disabled={busy}
+          onChange={e => { send(e.target.files); e.target.value = '' }} />
+      </label>
     </div>
   )
 }

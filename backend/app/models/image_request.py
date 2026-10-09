@@ -74,3 +74,21 @@ class ImageRequestPhoto(Base):
     thumb = Column(LargeBinary)                # 一覧に並べる縮小
     sort_order = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ImageRequestFile(Base):
+    """外注さんから届いた納品データ（画像のZIPなど）の一時置き場。
+
+    チャットワークで受け取ったファイルを、依頼の行に紐づけて置いておく。
+    商品登録に使ったら要らなくなるので、進み具合を「完了」にした時点で
+    中身を消す。ずっと置くとすぐ容量を食う（10MBのZIPが依頼のぶんだけ増える）。
+    """
+    __tablename__ = "image_request_files"
+
+    id = Column(Integer, primary_key=True, index=True)
+    request_id = Column(Integer, index=True, nullable=False)
+    name = Column(String)
+    content_type = Column(String, default="application/octet-stream")
+    size = Column(Integer, default=0)
+    data = Column(LargeBinary)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
