@@ -439,12 +439,7 @@ function Deliveries({ r, cfg, reload, setErr }) {
       onDragOver={e => e.preventDefault()}
       onDrop={e => { e.preventDefault(); send(e.dataTransfer.files) }}
       style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-      {/* 動画が何本あるかは、並びを見なくても分かるようにする */}
-      {files.filter(f => kindOf(f.name).label === '動画').length > 0 && (
-        <div style={{ fontSize: 11, color: '#7c3aed', fontWeight: 700 }}>
-          🎬 動画 {files.filter(f => kindOf(f.name).label === '動画').length}本
-        </div>
-      )}
+
       {files.map(f => (
         <div key={f.id} style={{ display: 'flex', alignItems: 'center',
           gap: 4, fontSize: 11 }}>
