@@ -377,6 +377,21 @@ function Deliveries({ r, cfg, reload, setErr }) {
     ? `${(n / 1024 / 1024).toFixed(1)}MB`
     : `${Math.max(1, Math.round(n / 1024))}KB`)
 
+  // 中身が何かひと目で分かるように、種類で印を変える
+  const kindOf = (name) => {
+    const e = (name || '').toLowerCase().split('.').pop()
+    if (['mp4', 'mov', 'm4v', 'avi', 'wmv', 'mkv', 'webm'].includes(e)) {
+      return { icon: '🎬', label: '動画', color: '#7c3aed' }
+    }
+    if (['zip', 'rar', '7z'].includes(e)) {
+      return { icon: '📦', label: 'まとめ', color: C.key }
+    }
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'].includes(e)) {
+      return { icon: '🖼', label: '画像', color: '#0f766e' }
+    }
+    return { icon: '📄', label: '', color: C.sub }
+  }
+
   const send = async (list) => {
     const picked = [...(list || [])]
     if (!picked.length) return
@@ -424,16 +439,23 @@ function Deliveries({ r, cfg, reload, setErr }) {
       onDragOver={e => e.preventDefault()}
       onDrop={e => { e.preventDefault(); send(e.dataTransfer.files) }}
       style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {/* 動画が何本あるかは、並びを見なくても分かるようにする */}
+      {files.filter(f => kindOf(f.name).label === '動画').length > 0 && (
+        <div style={{ fontSize: 11, color: '#7c3aed', fontWeight: 700 }}>
+          🎬 動画 {files.filter(f => kindOf(f.name).label === '動画').length}本
+        </div>
+      )}
       {files.map(f => (
         <div key={f.id} style={{ display: 'flex', alignItems: 'center',
           gap: 4, fontSize: 11 }}>
           <button onClick={() => download(f)} disabled={busy}
-            title="落とす"
+            title={`落とす（${kindOf(f.name).label || 'ファイル'}）`}
             style={{ border: 'none', background: 'none', padding: 0,
-              color: C.key, cursor: 'pointer', textAlign: 'left',
+              color: kindOf(f.name).color, cursor: 'pointer',
+              textAlign: 'left',
               maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis',
               whiteSpace: 'nowrap' }}>
-            📦 {f.name}
+            {kindOf(f.name).icon} {f.name}
           </button>
           <span style={{ color: C.sub }}>{mb(f.size)}</span>
           <button onClick={() => remove(f)} disabled={busy} title="消す"
