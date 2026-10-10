@@ -19,10 +19,14 @@ const C = {
 }
 
 const STATUS_COLOR = {
-  requested: { bg: '#fff7ed', fg: '#9a3412' },
-  working:   { bg: '#eff6ff', fg: '#1d4ed8' },
-  review:    { bg: '#fefce8', fg: '#854d0e' },
-  done:      { bg: '#f0fdf4', fg: '#166534' },
+  requested:    { bg: '#fff7ed', fg: '#9a3412' },
+  working:      { bg: '#eff6ff', fg: '#1d4ed8' },
+  review:       { bg: '#fefce8', fg: '#854d0e' },
+  // 画像はできたが、まだ商品登録が残っている段階。
+  // 作業そのものは終わっているので、完了に近い色にしておく
+  image_done:   { bg: '#ecfdf5', fg: '#047857' },
+  listing_wait: { bg: '#faf5ff', fg: '#7e22ce' },
+  done:         { bg: '#f0fdf4', fg: '#166534' },
 }
 
 const SOURCE_LABEL = { amazon: 'Amazon', rakuten: '楽天', manual: '手動' }
@@ -350,8 +354,10 @@ export default function ImageRequestsPage({ share = '' }) {
         <br />
         「写真」はリサーチシートに貼ってあるライバルの画像です。
         参考画像ともどもクリックで拡大できます。
-        <b>納品データ</b>は一時置きです。進み具合を<b>「完了」にすると消えます</b>
-        （商品登録に使い終わったもので容量を食わないように）。
+        <b>納品データ（画像・動画）と参考画像</b>は一時置きです。進み具合を
+        <b>「完了」にすると消えます</b>（商品登録に使い終わったもので容量を食わないように）。
+        <b style={{ color: '#b91c1c' }}>消したものは戻せません</b>ので、
+        まだ使うものがあるうちは「画像制作完了」や「商品登録待ち」で止めてください。
         {!share && <><br />
           参考画像は「＋」でファイルを選ぶ・枠へドラッグ＆ドロップ・
           <b>「📋」を押してから Ctrl+V</b>のどれでも入ります（まとめて可）。

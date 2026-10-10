@@ -21,12 +21,17 @@ from app.models.image_request import ImageRequest
 
 router = APIRouter(prefix="/image-requests", tags=["image-requests"])
 
-# 依頼を出してから手を離れるまで。done になったら作業中の一覧から消える
-STATUSES = ["requested", "working", "review", "done"]
+# 依頼を出してから手を離れるまで。done になったら作業中の一覧から消える。
+# 画像ができてから商品登録が済むまでに間が空くので、その間を
+# 「画像制作完了」→「商品登録待ち」の2段で持つ。
+# 納品データが消えるのは done のときだけ（商品登録で使うため）
+STATUSES = ["requested", "working", "review", "image_done", "listing_wait", "done"]
 STATUS_LABEL = {
     "requested": "依頼済",
     "working": "作業中",
     "review": "確認待ち",
+    "image_done": "画像制作完了",
+    "listing_wait": "商品登録待ち",
     "done": "完了",
 }
 
@@ -189,7 +194,8 @@ def update_request(req_id: int, data: ImageRequestPatch, request: Request,
 
     guest = _is_share(request)
     allowed = {"status", "reply", "deliverable_url"} if guest else None
-    dropped = 0   # 完了にしたときに消した納品データの数
+    dropped = 0          # 完了にしたときに消した納品データの数
+    dropped_photos = 0   # 同じく消した参考画像の数
 
     for field, value in data.model_dump(exclude_unset=True).items():
         if value is None:
@@ -209,16 +215,19 @@ def update_request(req_id: int, data: ImageRequestPatch, request: Request,
                 raise HTTPException(400, "その進み具合は選べません")
             # 完了にした時刻を残す。戻したら消す（やり直しがあるため）
             row.done_at = datetime.now(timezone.utc) if value == "done" else None
-            # 完了＝商品登録まで終わったということ。納品データはもう
-            # 要らないので、ここで消して容量を空ける
+            # 完了＝商品登録まで終わったということ。納品データも参考画像も
+            # もう要らないので、ここで消して容量を空ける
             if value == "done":
                 dropped = _drop_files(db, row.id)
+                dropped_photos = _drop_photos(db, row.id)
         setattr(row, field, value)
     db.commit()
     db.refresh(row)
     out = _out(row)
     if dropped:
         out["dropped_files"] = dropped
+    if dropped_photos:
+        out["dropped_photos"] = dropped_photos
     return out
 
 
@@ -515,6 +524,20 @@ def _drop_files(db: Session, req_id: int) -> int:
     """その依頼の納品データを消す。完了にしたときに呼ぶ。"""
     n = (db.query(ImageRequestFile)
          .filter(ImageRequestFile.request_id == req_id)
+         .delete(synchronize_session=False))
+    return n or 0
+
+
+def _drop_photos(db: Session, req_id: int) -> int:
+    """その依頼の参考画像を消す。完了にしたときに呼ぶ。
+
+    参考画像は依頼を出すときの説明用で、商品登録まで終われば用が済む。
+    1枚ずつは小さくても依頼の数だけ積もるので、納品データと一緒に消す。
+    戻すことはできないので、消すのは完了にしたときだけにする。
+    """
+    from app.models.image_request import ImageRequestPhoto
+    n = (db.query(ImageRequestPhoto)
+         .filter(ImageRequestPhoto.request_id == req_id)
          .delete(synchronize_session=False))
     return n or 0
 
