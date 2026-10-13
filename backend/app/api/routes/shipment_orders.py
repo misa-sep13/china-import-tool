@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func as sqlfunc
@@ -368,6 +370,31 @@ def match_products(items: List[dict], db: Session = Depends(get_db)):
             pass
         return score
 
+    # 色ごとの単品で持っている商品（3本セットなど）は、セット側の在庫を
+    # 構成品から計算している。配送依頼をセット側に入れると、構成品にも
+    # セットにも在庫が入って二重になる。届くのは色ごとの単品なので、
+    # セットに当たったときは、同じ色の構成品へ寄せ直す。
+    # （実際 y34 のペット歯ブラシで、同じ色が単品とセットに分かれて入った）
+    by_sku = {p.sku: p for p in rakuten_products if p.sku}
+
+    def _to_component(item: dict, product):
+        try:
+            comps = json.loads(product.set_components or '[]')
+        except (ValueError, TypeError):
+            comps = []
+        if not comps:
+            return product
+        spec_text = _norm_text(
+            f"{item.get('color', '')} {item.get('size', '')}")
+        for c in comps:
+            cp = by_sku.get((c.get('sku') or '').strip())
+            if not cp:
+                continue
+            cs = _norm_text(cp.supplier_spec or '')
+            if cs and (cs == spec_text or cs in spec_text or spec_text in cs):
+                return cp
+        return product
+
     matched = []
     unmatched = []
     for item in items:
@@ -379,6 +406,7 @@ def match_products(items: List[dict], db: Session = Depends(get_db)):
         best_score, product = candidates[0] if candidates else (0, None)
         second_score = candidates[1][0] if len(candidates) > 1 else 0
         if product and best_score >= 50 and best_score > second_score:
+            product = _to_component(item, product)
             matched.append({**item, "product_id": product.id, "sku": product.sku, "name_jp": product.name})
         else:
             unmatched.append(item)
