@@ -36,6 +36,13 @@ class ImportPermit(Base):
     consumption_tax = Column(Integer, default=0)    # 消費税
     local_consumption_tax = Column(Integer, default=0)  # 地方消費税
 
+    # 許可書の1枚目から読む、便を見分けるための値。
+    # タオタロウの配送依頼と重量・箱数で突き合わせるのに使う
+    cargo_weight = Column(Float, default=0)         # 貨物重量(kg)
+    package_count = Column(Integer, default=0)      # 貨物個数
+    arrival_date = Column(String)                   # 入港年月日 YYYY-MM-DD
+    transport = Column(String)                      # sea / air
+
     # 原本
     filename = Column(String)
     size_bytes = Column(Integer, default=0)

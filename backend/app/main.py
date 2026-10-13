@@ -286,6 +286,16 @@ def _migrate():
         ("welfare_packing_orders","source_batch",
          "ALTER TABLE welfare_packing_orders ADD COLUMN source_batch VARCHAR"),
 
+        # 輸入許可書の、便を見分けるための値（重量・箱数・入港日・船/空）
+        ("import_permits","cargo_weight",
+         "ALTER TABLE import_permits ADD COLUMN cargo_weight FLOAT DEFAULT 0"),
+        ("import_permits","package_count",
+         "ALTER TABLE import_permits ADD COLUMN package_count INTEGER DEFAULT 0"),
+        ("import_permits","arrival_date",
+         "ALTER TABLE import_permits ADD COLUMN arrival_date VARCHAR"),
+        ("import_permits","transport",
+         "ALTER TABLE import_permits ADD COLUMN transport VARCHAR"),
+
         # 広告の除外一覧。「再開する」の予約をここに置く
         ("rakuten_ad_excluded","resume_requested",
          "ALTER TABLE rakuten_ad_excluded ADD COLUMN resume_requested BOOLEAN DEFAULT FALSE"),
