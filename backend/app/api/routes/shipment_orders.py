@@ -349,9 +349,12 @@ def match_products(items: List[dict], db: Session = Depends(get_db)):
         elif spec and size and spec == size:
             score += 70
         elif spec and color and (spec in color or color in spec):
-            score += 30
+            # 一部だけ重なるときは、長く重なったほうを採る。
+            # 「红条纹」と「条纹」はどちらも「红条纹 笔袋」に含まれるので、
+            # 同点になって『決められません』で止まっていた
+            score += 30 + min(len(spec), 10)
         elif spec and size and (spec in size or size in spec):
-            score += 30
+            score += 30 + min(len(spec), 10)
 
         try:
             item_price = float(item.get("unit_price_cny") or 0)
