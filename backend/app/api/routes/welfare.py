@@ -998,6 +998,9 @@ class WelfareWorkInstructionIn(BaseModel):
     name_jp: Optional[str] = None
     source_product_name: Optional[str] = None
     instruction: Optional[str] = None
+    # どの便（タブ）に置くか。配送依頼Noがそのままタブ名になることがあり、
+    # あとで正しい便へ移せるようにしておく
+    source_sheet: Optional[str] = None
     remaining_units: Optional[int] = None
     remaining_qty: Optional[int] = None
     note: Optional[str] = None
@@ -1089,6 +1092,8 @@ def update_work_instruction(instruction_id: int, data: WelfareWorkInstructionIn,
         row.source_product_name = data.source_product_name
     if data.instruction is not None:
         row.instruction = data.instruction
+    if data.source_sheet is not None:
+        row.source_sheet = data.source_sheet
     if data.remaining_units is not None:
         if data.remaining_units < 0:
             raise HTTPException(status_code=400, detail="残は0以上で入力してください")

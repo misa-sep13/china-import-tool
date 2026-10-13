@@ -24,7 +24,12 @@ const fmtWorkDate = (row) => {
   if (/^\d{3}$/.test(sheet)) return `${Number(sheet.slice(0, 1))}/${Number(sheet.slice(1))}`
   if (/^\d{4}$/.test(sheet)) return `${Number(sheet.slice(0, 2))}/${Number(sheet.slice(2))}`
   const mixed = sheet.match(/^(\d{1,2})[/-](\d{1,2})(.*)$/)
-  if (mixed) return `${Number(mixed[1])}/${Number(mixed[2])}${mixed[3] || ''}`
+  // 「71/3983に同梱でお願いします。」のような配送依頼Noを日付と読んで
+  // しまい、おかしなタブが増えていた。月日として有り得る値のときだけ使う
+  if (mixed && Number(mixed[1]) >= 1 && Number(mixed[1]) <= 12
+      && Number(mixed[2]) >= 1 && Number(mixed[2]) <= 31) {
+    return `${Number(mixed[1])}/${Number(mixed[2])}${mixed[3] || ''}`
+  }
   const dotted = sheet.match(/^(\d{1,2})・(\d{1,2})(.*)$/)
   if (dotted) return sheet
   const compact = sheet.match(/^(\d{3,4})(.+)$/)
