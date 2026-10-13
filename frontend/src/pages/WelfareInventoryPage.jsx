@@ -613,16 +613,23 @@ export default function WelfareInventoryPage() {
               onClick={() => setSendOrders(null)}>閉じる</button>
           </div>
           <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-            <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+            {/* 中身の品名が長いと表が右へ伸びきってしまうので、
+                幅を決めて中身だけ折り返す */}
+            <table style={{ width: '100%', fontSize: 13,
+              borderCollapse: 'collapse', tableLayout: 'fixed' }}>
               <thead><tr style={{ background: '#f8fafc' }}>
-                {['配送依頼No', '状態', '中身', '重量', '費用(元)', '更新', ''].map(h => (
-                  <th key={h} style={{ padding: '6px 10px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
-                ))}
+                {[['配送依頼No', 180], ['状態', 110], ['中身', 'auto'],
+                  ['重量', 70], ['費用(元)', 80], ['更新', 90], ['', 86]]
+                  .map(([h, w]) => (
+                    <th key={h} style={{ padding: '6px 10px', textAlign: 'left',
+                      whiteSpace: 'nowrap',
+                      width: w === 'auto' ? undefined : w }}>{h}</th>
+                  ))}
               </tr></thead>
               <tbody>
                 {sendOrders.map(x => (
                   <tr key={x.sid} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '6px 10px' }}>
+                    <td style={{ padding: '6px 10px', wordBreak: 'break-all' }}>
                       <div>{x.sn || x.sid}</div>
                       {/* 番号と金額だけではどの便か分からないので、
                           いちばん新しい追跡を添える */}
@@ -637,8 +644,14 @@ export default function WelfareInventoryPage() {
                       )}
                     </td>
                     <td style={{ padding: '6px 10px' }}>{x.state_label}</td>
-                    <td style={{ padding: '6px 10px', maxWidth: 320 }}>
-                      <div style={{ fontSize: 12 }}>{(x.titles || []).join('／')}</div>
+                    <td style={{ padding: '6px 10px' }}>
+                      {/* 2行で切る。全部はマウスを乗せれば読める */}
+                      <div title={(x.titles || []).join('／')}
+                        style={{ fontSize: 12, display: '-webkit-box',
+                          WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden', wordBreak: 'break-all' }}>
+                        {(x.titles || []).join('／')}
+                      </div>
                       {x.order_count > 0 && (
                         <div style={{ fontSize: 11, color: '#94a3b8' }}>{x.order_count}明細</div>
                       )}
