@@ -14,6 +14,7 @@ from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import bindparam as sa_bindparam, text as sa_text
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -421,38 +422,54 @@ def put_sheet(body: SheetIn, workspace: str = "default", db: Session = Depends(g
     ws = (body.workspace or workspace or "default").strip() or "default"
     raw = json.dumps(body.data, ensure_ascii=False)
 
-    row = db.query(AmazonResearchSheet).filter(
-        AmazonResearchSheet.workspace == ws).first()
-    if row is None:
-        row = AmazonResearchSheet(workspace=ws)
-        db.add(row)
-
-    # 前回の世代から間隔が空いていれば、上書き前の中身を控える
+    # シートは画像をそのまま抱えるので数MBになる。data を Python 側へ
+    # 読み込むとそれだけメモリを食うので、ここでは触らない
+    # （控えの作成も古い世代の削除も、データベースの中だけで済ませる）。
+    # 以前は「控え1つ＋消す世代ぶん全部」をメモリに載せていて、
+    # サーバーがメモリ上限を超えて再起動していた
     now = datetime.now(timezone.utc)
-    last = (db.query(AmazonResearchSheetBackup)
-            .filter(AmazonResearchSheetBackup.workspace == ws)
-            .order_by(AmazonResearchSheetBackup.created_at.desc())
-            .first())
-    should_backup = row.data and (
-        last is None
-        or last.created_at is None
-        or (now - last.created_at).total_seconds() >= _BACKUP_INTERVAL_SEC
+    cur = (db.query(AmazonResearchSheet.id, AmazonResearchSheet.size_bytes)
+           .filter(AmazonResearchSheet.workspace == ws).first())
+    last_at = (db.query(AmazonResearchSheetBackup.created_at)
+               .filter(AmazonResearchSheetBackup.workspace == ws)
+               .order_by(AmazonResearchSheetBackup.created_at.desc())
+               .limit(1).scalar())
+    should_backup = cur is not None and (
+        last_at is None
+        or (now - last_at).total_seconds() >= _BACKUP_INTERVAL_SEC
     )
     if should_backup:
-        db.add(AmazonResearchSheetBackup(
-            workspace=ws, data=row.data, size_bytes=row.size_bytes or 0))
-        # 古い世代を落とす
-        olds = (db.query(AmazonResearchSheetBackup)
-                .filter(AmazonResearchSheetBackup.workspace == ws)
-                .order_by(AmazonResearchSheetBackup.created_at.desc())
-                .offset(_BACKUP_KEEP).all())
-        for o in olds:
-            db.delete(o)
+        # 上書き前の中身を、読み出さずにそのまま控えへ写す
+        db.execute(sa_text(
+            "INSERT INTO amazon_research_sheet_backups"
+            " (workspace, data, size_bytes, created_at)"
+            " SELECT workspace, data, size_bytes, :now"
+            " FROM amazon_research_sheets WHERE workspace = :ws"
+            " AND data IS NOT NULL"), {"ws": ws, "now": now})
+        # 古い世代を落とす。idだけ引いてから消す（中身は読まない）
+        keep = [r[0] for r in db.execute(sa_text(
+            "SELECT id FROM amazon_research_sheet_backups WHERE workspace = :ws"
+            " ORDER BY created_at DESC, id DESC LIMIT :keep"),
+            {"ws": ws, "keep": _BACKUP_KEEP}).fetchall()]
+        if keep:
+            db.execute(sa_text(
+                "DELETE FROM amazon_research_sheet_backups"
+                " WHERE workspace = :ws AND id NOT IN :keep"
+            ).bindparams(sa_bindparam("keep", expanding=True)),
+                {"ws": ws, "keep": keep})
 
-    row.data = raw
-    row.size_bytes = len(raw.encode("utf-8"))
+    size = len(raw.encode("utf-8"))
+    if cur is None:
+        db.add(AmazonResearchSheet(workspace=ws, data=raw, size_bytes=size))
+    else:
+        db.execute(sa_text(
+            "UPDATE amazon_research_sheets SET data = :d, size_bytes = :n,"
+            " updated_at = :now WHERE workspace = :ws"),
+            {"d": raw, "n": size, "now": now, "ws": ws})
     db.commit()
-    db.refresh(row)
+    row = db.query(AmazonResearchSheet.size_bytes,
+                   AmazonResearchSheet.updated_at).filter(
+        AmazonResearchSheet.workspace == ws).first()
     return {
         "saved": True,
         "size_bytes": row.size_bytes,
