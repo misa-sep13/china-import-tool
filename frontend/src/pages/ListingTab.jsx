@@ -43,20 +43,36 @@ export default function ListingTab() {
   // 発番しただけではGS1に登録されない。溜まったら一括で届け出るので、
   // 未登録の件数をここに出しておく
   const [gs1, setGs1] = useState(null)
+  // 出品に使うブランド。Amazonのブランド登録が通るまでは「ノーブランド品」で
+  // 出すしかないので、通った時点でここを切り替える
+  const [brand, setBrand] = useState(null)
 
   const load = useCallback(async () => {
     setErr('')
     try {
-      const [r, g] = await Promise.all([
+      const [r, g, st] = await Promise.all([
         api.get('/amazon-listings'),
         api.get('/amazon-research/jan/gs1-pending').catch(() => null),
+        api.get('/amazon-research/settings').catch(() => null),
       ])
       setRows(r.data.rows || [])
       setGs1(g ? g.data : null)
+      if (st) setBrand({ name: st.data.brand_name || '', ready: !!st.data.brand_ready })
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     }
   }, [])
+
+  const saveBrand = async (next) => {
+    setBrand(next)
+    try {
+      await api.put('/amazon-research/settings',
+        { brand_name: next.name, brand_ready: next.ready })
+      await load()
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    }
+  }
   useEffect(() => { load() }, [load])
 
   const gs1Export = async () => {
@@ -153,6 +169,43 @@ export default function ListingTab() {
           粗利率は競合リサーチシートと同じ計算です
         </div>
       </div>
+
+      {brand && (
+        <div style={{ ...card, marginBottom: 10,
+          background: brand.ready ? '#f0fdf4' : '#fffbeb',
+          borderColor: brand.ready ? '#86efac' : '#fde68a',
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, fontWeight: 700,
+            color: brand.ready ? '#166534' : '#92400e' }}>
+            {brand.ready ? '🏷 ブランドで出します' : '🏷 いまはノーブランド品で出しています'}
+          </span>
+          <label style={{ fontSize: 12, color: C.sub, display: 'flex',
+            alignItems: 'center', gap: 5 }}>
+            ブランド名
+            <input value={brand.name}
+              placeholder="Aqualiora"
+              onChange={e => setBrand({ ...brand, name: e.target.value })}
+              style={{ ...input, width: 150, fontSize: 12, padding: '3px 6px' }} />
+          </label>
+          <button className="btn btn-secondary" style={{ fontSize: 12 }}
+            disabled={busy || !brand.name.trim()}
+            onClick={() => saveBrand({ ...brand, name: brand.name.trim() })}>
+            保存
+          </button>
+          <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 5 }}>
+            <input type="checkbox" checked={brand.ready}
+              disabled={!brand.name.trim()}
+              onChange={e => saveBrand({ ...brand, ready: e.target.checked })} />
+            ブランド登録が通ったので、このブランド名で出す
+          </label>
+          <span style={{ fontSize: 11, color: C.sub, width: '100%' }}>
+            {brand.ready
+              ? `これから出すものは「${brand.name}」で登録されます。すでに出したものは変わりません。`
+              : 'Amazonのブランド登録が通るまでは、自社ブランド名で出すと弾かれます。'
+                + '通ったらチェックを入れてください。'}
+          </span>
+        </div>
+      )}
 
       {gs1 && gs1.count > 0 && (
         <div style={{ ...card, marginBottom: 10, background: '#fffbeb',

@@ -784,6 +784,24 @@ def _problems(row: AmazonListing, db: Session) -> list:
     # バリエーションは常に色で登録する（色でないと選択肢ごとの画像が出ない）
     if len(kids) > 1:
         shared = any(i.child_id is None for i in imgs)
+        # 同じ色が2つあると、Amazonはバリエーションごと受け付けない
+        seen_axis = {}
+        for c in kids:
+            k = "".join((c.axis1 or "").split()).lower()
+            if k:
+                seen_axis.setdefault(k, []).append(c.sku or c.title or "")
+        for k, who in seen_axis.items():
+            if len(who) > 1:
+                p.append(f"色「{k}」が{len(who)}件あります"
+                         f"（{' / '.join(x for x in who if x)}）。"
+                         "色はSKUごとに別の値にしてください")
+        # SKUの末尾と色が食い違っていないか。並び替えで入れ替わると、
+        # a06_black に白のJANが付いたまま出てしまう
+        for c in kids:
+            suf = (c.sku or "").split("_", 1)[-1] if "_" in (c.sku or "") else ""
+            if suf and (c.axis1 or "").strip() and sku_suffix(c.axis1)                     and not suf.startswith(sku_suffix(c.axis1)):
+                p.append(f"[{c.sku}] SKUと色（{c.axis1}）が食い違っています。"
+                         "色の並べ替えでずれた可能性があります")
         for c in kids:
             who = c.axis1 or c.title[:16] if (c.axis1 or c.title) else c.sku
             if not (c.axis1 or "").strip():
@@ -1138,7 +1156,8 @@ def _axis_attrs(row: AmazonListing, child: AmazonListingChild) -> dict:
 
 
 def _attributes(row: AmazonListing, child: AmazonListingChild,
-                db: Session, parent_sku: str = None) -> dict:
+                db: Session, parent_sku: str = None,
+                has_variation: bool = None) -> dict:
     """1SKUぶんの attributes を組み立てる。
 
     Amazonは項目ごとに [{"value": ..., "marketplace_id": ...}] の形を取る。
@@ -1236,8 +1255,11 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
             "marketplace_id": mp, "child_relationship_type": "variation",
             "parent_sku": parent_sku,
         }]
-        # 軸がある（＝本当のバリエーション）ときだけテーマを送る
-        axis = _axis_attrs(row, child)
+        # バリエーションのときだけテーマと軸の値を送る。
+        # 子だけがテーマを送ると、テーマを持たない親と食い違って弾かれる。
+        # has_variation が渡っていない呼び出しは、これまでどおり
+        # 軸の有無で判断する
+        axis = _axis_attrs(row, child) if has_variation is not False else {}
         if axis:
             a["variation_theme"] = [{"marketplace_id": mp,
                                      "name": VARIATION_THEME}]
@@ -1475,7 +1497,8 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
 
         all_ok = True
         for c in kids:
-            attrs = _attributes(row, c, db, parent_sku=parent_sku)
+            attrs = _attributes(row, c, db, parent_sku=parent_sku,
+                                has_variation=has_variation)
             rec = {"sku": c.sku, "kind": "子" if has_variation else "単品",
                    "jan": c.jan, "attributes": attrs}
             if body.dry_run:
@@ -1810,19 +1833,49 @@ def _pull_children(db: Session, row: AmazonListing, src: dict) -> None:
             kids[0].title = src.get("title") or ""
         return
 
-    for i, sk in enumerate(sheet_kids):
-        if i < len(kids):
-            c = kids[i]
-        else:
+    # 色で突き合わせる。並び順で突き合わせると、シートの色を入れ替えたり
+    # 間に1色足したりしたときに、SKUとJANはそのままで色だけがずれる。
+    # a06_black に白のJANが付く、という壊れ方を実際にしていた。
+    def key(v):
+        return "".join((v or "").split()).lower()
+
+    by_axis = {}
+    for c in kids:
+        k = key(c.axis1)
+        if k:
+            by_axis.setdefault(k, []).append(c)
+
+    used = set()
+    pairs = []          # (シートの子, こちらの子 or None)
+    for sk in sheet_kids:
+        k = key(sk.get("axis1"))
+        hit = None
+        for c in by_axis.get(k, []):
+            if id(c) not in used:
+                hit = c
+                break
+        if hit is not None:
+            used.add(id(hit))
+        pairs.append((sk, hit))
+
+    # 色が付いていない子（単品から育ったものなど）は、順番で引き当てる
+    spare = [c for c in kids if id(c) not in used and not key(c.axis1)]
+    for i, (sk, hit) in enumerate(pairs):
+        if hit is None and spare:
+            pairs[i] = (sk, spare.pop(0))
+            used.add(id(pairs[i][1]))
+
+    for i, (sk, c) in enumerate(pairs):
+        if c is None:
             c = AmazonListingChild(listing_id=row.id)
             db.add(c)
         c.sort_order = i
         c.title = sk.get("title") or ""
         c.axis1 = sk.get("axis1") or ""
 
-    # シートから減ったぶん。まだJANを振っていなければ落とす
-    for c in kids[len(sheet_kids):]:
-        if not c.jan:
+    # シートから消えたぶん。まだJANを振っていなければ落とす
+    for c in kids:
+        if id(c) not in used and not c.jan:
             db.delete(c)
 
 
@@ -2118,7 +2171,8 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
 
     run(parent_sku, _parent_attributes(row, has_variation, db), "親")
     for c in kids:
-        run(c.sku, _attributes(row, c, db, parent_sku=parent_sku),
+        run(c.sku, _attributes(row, c, db, parent_sku=parent_sku,
+                               has_variation=has_variation),
             "子" if has_variation else "単品")
 
     db.commit()
