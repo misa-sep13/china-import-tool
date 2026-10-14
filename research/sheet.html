@@ -2035,7 +2035,10 @@ if(FIREBASE_CONFIG.databaseURL){
 
   let serverSaveTimer = null;
   let serverSaving = false;
-  // サーバーへ送る。打鍵のたびに叩かないよう1.5秒まとめる
+  // サーバーへ送る。打鍵のたびに叩かないよう3秒まとめる。
+  // シートは0.5MBほどあり、1.5秒だと長く打っているあいだ
+  // ずっと書き込み続けることになる（手元への保存は即時なので、
+  // まとめても作業が消えることはない）
   function saveServer(){
     clearTimeout(serverSaveTimer);
     serverSaveTimer = setTimeout(async () => {
@@ -2059,7 +2062,7 @@ if(FIREBASE_CONFIG.databaseURL){
         // 保存できなくても手元(localStorage)には残っているので、作業は止めない
         setStatus('⚠ サーバーに保存できませんでした（手元には残っています）', true);
       }finally{ serverSaving = false; }
-    }, 1500);
+    }, 3000);
   }
 
   function saveLocal(){
