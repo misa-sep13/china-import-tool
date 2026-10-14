@@ -1924,9 +1924,11 @@ def fetch_listing(sku: str) -> dict:
         if r.get("parentSkus"):
             parent = (r.get("parentSkus") or [None])[0]
         theme = r.get("variationTheme") or theme
-    # relationships が空でも、属性側に入っていることがある
-    if not parent:
-        parent = first("child_parent_sku_relationship", "parent_sku")
+    # 属性側の親SKUは「こちらが送った値」であって、Amazonが実際に
+    # 親子として組んだ証拠ではない。混ぜて見ていたため、送り直すだけで
+    # 「紐づいている」と出てしまい、組めていないことに気づけなかった。
+    # 送った値は別に返し、判定には使わない
+    requested_parent = first("child_parent_sku_relationship", "parent_sku")
     if not theme:
         theme = first("variation_theme", "name")
 
@@ -1935,7 +1937,8 @@ def fetch_listing(sku: str) -> dict:
         "asin": s.get("asin"), "fnsku": s.get("fnSku"),
         "item_name": s.get("itemName"),
         "status": s.get("status") or [],
-        "parent_sku": parent,
+        "parent_sku": parent,                     # Amazonが組んだ親
+        "requested_parent_sku": requested_parent,  # こちらが送った親
         "variation_theme": theme,
         "color": first("color"),
         "image_count": len(images),

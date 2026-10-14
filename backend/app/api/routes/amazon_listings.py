@@ -1060,11 +1060,16 @@ def common_attrs(db: Session) -> dict:
 
 # ツールが決められるもの。値の作り方も一緒に持つ
 _AUTO_ATTRS = {
-    "part_number": "sku",        # メーカー型番 ＝ SKU
-    "model_number": "sku",       # 品番・型番 ＝ SKU
+    # 型番は持っていないので、商品ごとに一意なJANを入れる。
+    # SKUを入れていたが、JANのほうが商品を指す番号として妥当
+    # （必須の商品タイプがある）
+    "part_number": "jan",        # メーカー型番 ＝ JAN
+    "model_number": "jan",       # 品番・型番 ＝ JAN
     "manufacturer": "brand",     # メーカー名 ＝ ブランド名
     "model_name": "brand",       # モデル ＝ ブランド名
-    "list_price": "price",       # メーカー希望小売価格 ＝ 売価
+    # メーカー希望小売価格。売価を入れると「参考価格＝売価」になり
+    # 値引きが無いのに参考価格があることになる。参考価格なしの0を入れる
+    "list_price": "zero",        # メーカー希望小売価格 ＝ 0（なし）
     "item_length_width_height": "dims",   # 品目寸法 ＝ 表の三辺
 }
 
@@ -1112,9 +1117,13 @@ def auto_attr_values(db: Session, row, child=None) -> dict:
     if all([row.len_a, row.len_b, row.len_c]):
         a, b, c = sorted([row.len_a, row.len_b, row.len_c], reverse=True)
         dims = {"length": a, "width": b, "height": c}
+    jan = (child.jan if child is not None else None) or ""
+    srcs = {"sku": sku, "brand": brand, "price": price, "dims": dims,
+            "jan": jan, "zero": 0}
     for name, src in _AUTO_ATTRS.items():
-        v = {"sku": sku, "brand": brand, "price": price, "dims": dims}.get(src)
-        if v:
+        v = srcs.get(src)
+        # 0 は「参考価格なし」として送りたいので、空とは区別する
+        if v or v == 0:
             out[name] = v
     return out
 
@@ -1602,7 +1611,11 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
             if has_variation:
                 p = (got.get("parent_sku") or "").strip()
                 if not p:
-                    notes.append("親に紐づいていません（単独の商品になっています）")
+                    req = got.get("requested_parent_sku")
+                    notes.append(
+                        "親に紐づいていません（単独の商品になっています）"
+                        + ("。親SKUは送れているので、Amazon側でまだ"
+                           "組まれていません" if req else ""))
                 elif p != parent_sku:
                     notes.append(f"別の親に紐づいています（{p}）")
             # 画像。Amazonが持てるのはメイン1枚＋サブ8枚の計9枚なので、
