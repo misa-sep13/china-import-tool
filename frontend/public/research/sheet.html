@@ -8621,6 +8621,38 @@ if(FIREBASE_CONFIG.databaseURL){
       (r.problems || []).forEach(pz => {
         d.appendChild(el('div', 'reg-issue', '・' + pz));
       });
+      // GS1へ届け出たかどうかは、こちらの台帳にしか無い（外から確かめる
+      // 手立てが無い）。別の画面まで行かずに、ここで印を付けられるようにする
+      const jans = [...new Set((r.problems || [])
+        .filter(pz => pz.indexOf('GS1に未登録') >= 0)
+        .map(pz => (pz.match(/(\d{13})/) || [])[1])
+        .filter(Boolean))];
+      if(jans.length){
+        const bar = el('div', 'an-row');
+        const b = el('button', 'mini', '✅ この' + jans.length
+          + '件を「GS1へ届け出済み」にする');
+        b.dataset.writes = '1';
+        const say = el('span', 'an-note', '');
+        b.addEventListener('click', async () => {
+          if(!ask('GS1へ届け出済みの印を付けます。' + String.fromCharCode(10,10)
+            + jans.join(String.fromCharCode(10))
+            + String.fromCharCode(10,10) + 'GS1への登録は済んでいますか？')) return;
+          b.disabled = true; say.textContent = '付けています…';
+          try{
+            const res = await fetch(API_BASE + '/amazon-research/jan/gs1-done',
+              {method: 'POST', headers: apiHeaders(),
+               body: JSON.stringify({codes: jans})});
+            if(!res.ok) throw new Error('HTTP ' + res.status);
+            const j = await res.json();
+            say.textContent = (j.marked || 0) + '件に印を付けました。'
+              + 'もう一度「❹ Amazonへ出品する」を押してください';
+          }catch(e){
+            say.textContent = 'うまくいきませんでした：' + (e.message || e);
+          }finally{ b.disabled = false; }
+        });
+        bar.appendChild(b); bar.appendChild(say);
+        d.appendChild(bar);
+      }
       out.appendChild(d);
       return;
     }
