@@ -35,7 +35,9 @@ router = APIRouter(prefix="/amazon-listings", tags=["amazon-listings"])
 MAX_IMAGE_BYTES = 8 * 1024 * 1024      # Amazonが取りに来られる大きさの目安
 # 1つのSKUに付けられる画像の数。共通と色ごとに別々に数える。
 # これを超えて入れてもAmazonへは送られず、消す手間が増えるだけ
-MAX_IMAGES_PER_TARGET = 10
+# 共通に入れられる枚数。Amazonの枠は メイン1＋サブ8＝9枚 で、
+# 色ごとにメインとバリエーションを1枚ずつ使うので、残りは7枚
+MAX_IMAGES_PER_TARGET = 7
 # Amazonが1SKUに持てる画像の枠。メイン1枚＋サブ8枚。
 # 共通をたくさん入れても、ここを超えたぶんは送られない
 AMAZON_IMAGE_SLOTS = 9
@@ -1319,10 +1321,13 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
         if urls:
             a["main_product_image_locator"] = [
                 {"marketplace_id": mp, "media_location": urls[0]}]
-            if len(urls) > 1:
-                a["other_product_image_locator"] = [
-                    {"marketplace_id": mp, "media_location": u}
-                    for u in urls[1:AMAZON_IMAGE_SLOTS]]
+            # サブ画像は other_product_image_locator_1 〜 _8 と、番号付きで
+            # 1枚ずつ送る。まとめて other_product_image_locator で送ると
+            # 「商品タイプに属さない」と言われ、値ごと無視される
+            # （VALIDで通るのにサブ画像が1枚も出なかった原因）
+            for n, u in enumerate(urls[1:AMAZON_IMAGE_SLOTS], start=1):
+                a[f"other_product_image_locator_{n}"] = [
+                    {"marketplace_id": mp, "media_location": u}]
 
     # バリエーションの子。親との紐づけと、軸の値を入れる
     if parent_sku is not None:
@@ -1400,10 +1405,13 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
         if urls:
             a["main_product_image_locator"] = [
                 {"marketplace_id": mp, "media_location": urls[0]}]
-            if len(urls) > 1:
-                a["other_product_image_locator"] = [
-                    {"marketplace_id": mp, "media_location": u}
-                    for u in urls[1:AMAZON_IMAGE_SLOTS]]
+            # サブ画像は other_product_image_locator_1 〜 _8 と、番号付きで
+            # 1枚ずつ送る。まとめて other_product_image_locator で送ると
+            # 「商品タイプに属さない」と言われ、値ごと無視される
+            # （VALIDで通るのにサブ画像が1枚も出なかった原因）
+            for n, u in enumerate(urls[1:AMAZON_IMAGE_SLOTS], start=1):
+                a[f"other_product_image_locator_{n}"] = [
+                    {"marketplace_id": mp, "media_location": u}]
 
     for k, v in extra.items():
         if v is None or (isinstance(v, str) and not v.strip()):

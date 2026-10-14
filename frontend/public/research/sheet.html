@@ -8054,8 +8054,9 @@ if(FIREBASE_CONFIG.databaseURL){
   //
   // Amazonは画像をURLで取りに来るので、サーバーに預けて公開URLで読ませる。
   // バリエーションは色ごとに分けられる（入れていない子は共通を使う）。
-  // Amazonに送れる画像の数（共通・色ごとにそれぞれ）
-  const IMG_MAX_PER_TARGET = 10;
+  // 共通に入れられる枚数。Amazonの枠は メイン1＋サブ8＝9枚 で、
+  // 色ごとにメインとバリエーションを1枚ずつ使うので、残りは7枚
+  const IMG_MAX_PER_TARGET = 7;
 
   function drawImages(box, data, reload, imgStatus){
     box.innerHTML = '';
@@ -8086,7 +8087,9 @@ if(FIREBASE_CONFIG.databaseURL){
       tabs.appendChild(el('span', 'an-note',
         '「共通」は全色に入ります（ドラッグで並べ替え・'
         + IMG_MAX_PER_TARGET + '枚まで）。'
-        + '色タブではメイン画像とバリエーション画像だけを入れます'));
+        + '色タブではメイン画像とバリエーション画像だけを入れます。'
+        + 'メイン1＋共通' + IMG_MAX_PER_TARGET + '＋バリエーション1＝'
+        + (IMG_MAX_PER_TARGET + 2) + '枚がAmazonの上限です'));
       box.appendChild(tabs);
     }
 
