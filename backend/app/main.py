@@ -472,6 +472,53 @@ def _migrate():
     except Exception as e:
         logger.warning(f"migrate: shipment_order_items.product_id FK fix -> {e}")
 
+    # 出品用の商品画像を、長辺1600pxまで縮める。
+    # 大きいままだとAmazonが取りに来たときに配信が間に合わず
+    # 「Media Download Timed Out from Server」で出品が弾かれる。
+    # 入れ直してもらわずに済むよう、起動のたびに少しずつ縮める。
+    # 1回あたりの枚数を区切って、起動が長引かないようにする。
+    try:
+        if "amazon_listing_images" in inspector.get_table_names():
+            from app.api.routes.amazon_listings import _shrink_for_amazon
+            import base64 as _b64
+            from app.core.database import SessionLocal
+            from app.models.amazon_listing import AmazonListingImage
+            sess = SessionLocal()
+            try:
+                # 大きいものから手を付ける（効きが大きい順）
+                rows = (sess.query(AmazonListingImage)
+                        .filter(AmazonListingImage.size > 600 * 1024)
+                        .order_by(AmazonListingImage.size.desc())
+                        .limit(20).all())
+                n = saved = 0
+                for img in rows:
+                    if not img.data:
+                        continue
+                    try:
+                        raw = _b64.b64decode(img.data)
+                    except Exception:
+                        continue
+                    out, mime = _shrink_for_amazon(raw, img.mime or "image/jpeg")
+                    if len(out) >= len(raw):
+                        # これ以上小さくならない。次の起動で拾い直さないよう
+                        # 実際の大きさを入れ直しておく
+                        img.size = len(raw)
+                        continue
+                    img.data = _b64.b64encode(out).decode()
+                    img.mime = mime
+                    img.size = len(out)
+                    n += 1
+                    saved += len(raw) - len(out)
+                if rows:
+                    sess.commit()
+                if n:
+                    logger.info(f"migrate: 商品画像を縮小 ({n}枚 / "
+                                f"{saved/1024/1024:.1f}MB減)")
+            finally:
+                sess.close()
+    except Exception as e:
+        logger.warning(f"migrate: image shrink -> {e}")
+
     # すでに「完了」になっている画像依頼に、参考画像が残っている。
     # 完了時に消す仕組みを入れる前のぶんで、1枚ずつは小さくても
     # 依頼の数だけ積もる（データベースの容量を圧迫していた）。

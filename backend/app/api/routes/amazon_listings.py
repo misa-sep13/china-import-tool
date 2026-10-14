@@ -528,6 +528,11 @@ def _shrink_for_amazon(blob: bytes, mime: str) -> tuple[bytes, str]:
         from PIL import Image
         im = Image.open(io.BytesIO(blob))
         im.load()
+        # すでに基準内のJPEGは触らない。毎回かけ直すと、そのたびに
+        # 圧縮し直して画質が落ちていく（起動のたびに縮める処理があるため）
+        if (max(im.size) <= AMAZON_IMAGE_PX
+                and (mime or "").lower() in ("image/jpeg", "image/jpg")):
+            return blob, mime
         if im.mode in ("RGBA", "LA", "P"):
             # 透過は白で埋める。Amazonは背景が透明な画像を好まない
             bg = Image.new("RGB", im.size, (255, 255, 255))
