@@ -7471,7 +7471,9 @@ if(FIREBASE_CONFIG.databaseURL){
       pRow.appendChild(ful);
 
       const brand = document.createElement('input');
-      brand.type = 'text'; brand.placeholder = 'ブランド名（空でOK）';
+      // 空なら設定のブランド（Aqualiora）で出る。空欄の意味が分からないと
+      // 「ブランドが入っていない」と見えるので、既定を書いておく
+      brand.type = 'text'; brand.placeholder = '空ならAqualiora';
       brand.className = 'reg-brand';
       brand.value = data.brand || '';
       brand.addEventListener('input', () => put('brand', brand.value));
