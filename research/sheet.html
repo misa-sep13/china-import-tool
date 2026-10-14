@@ -7946,12 +7946,14 @@ if(FIREBASE_CONFIG.databaseURL){
             body: JSON.stringify({listing_ids: [data.id], dry_run: false})});
           lastSubmit[data.id] = r.results[0];
           drawSubmit(out, r.results[0]);
-          const sent = r.results[0].sent || [];
+          const res0 = r.results[0];
+          const sent = res0.sent || [];
           const ng = sent.filter(x => !x.ok).length;
-          opStatus.textContent = ng
-            ? (sent.length - ng) + '件を出品、' + ng + '件が失敗しました'
-            : sent.length + '件すべて出品しました';
-          opStatus.classList.toggle('warn', !!ng);
+          opStatus.textContent = !sent.length
+            ? ('出品していません：' + (res0.error || '理由は下に出しました'))
+            : (ng ? (sent.length - ng) + '件を出品、' + ng + '件が失敗しました'
+                  : sent.length + '件すべて出品しました');
+          opStatus.classList.toggle('warn', !sent.length || !!ng);
           mergeData(await regApi('/' + data.id));
           draw();
         }catch(e){ opStatus.textContent = String(e.message || e); }
@@ -8609,6 +8611,19 @@ if(FIREBASE_CONFIG.databaseURL){
 
   function drawSubmit(out, r){
     out.innerHTML = '';
+    // 1件も送らなかったときは、その理由がここにしか無い。
+    // 送った明細しか出していなかったので、止められていても
+    // 画面には何も出ず「0件出品しました」とだけ見えていた
+    if(!(r.sent || []).length){
+      const d = el('div', 'reg-check');
+      d.appendChild(el('b', 'ng', '出品していません：'
+        + (r.error || '理由が返ってきませんでした')));
+      (r.problems || []).forEach(pz => {
+        d.appendChild(el('div', 'reg-issue', '・' + pz));
+      });
+      out.appendChild(d);
+      return;
+    }
     (r.sent || []).forEach(x => {
       const d = el('div', 'reg-check');
       d.appendChild(el('b', x.ok ? 'ok' : 'ng',
