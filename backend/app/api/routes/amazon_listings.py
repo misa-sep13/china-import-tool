@@ -1393,13 +1393,27 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
                              for b in bullets[:5] if str(b).strip()]
     if (row.keywords or "").strip():
         a["generic_keyword"] = one(row.keywords.strip())
-    # 親にも画像を付ける。共通のものを使う（無ければ子の1枚目）
+    # 親の画像。メイン写真は色ごとに持つので、共通には説明画像しか
+    # 入っていない。親のメインには最初の色のメイン写真を使い、
+    # 残りを共通で埋める（共通にメイン用の写真を置かなくて済むように）
     base = _public_base()
     if db is not None and base:
         imgs = (db.query(AmazonListingImage)
                 .filter(AmazonListingImage.listing_id == row.id)
                 .order_by(AmazonListingImage.sort_order).all())
-        mine = [i for i in imgs if i.child_id is None] or imgs
+        shared = [i for i in imgs if i.child_id is None]
+        first_main = None
+        kid_ids = [c.id for c in db.query(AmazonListingChild)
+                   .filter(AmazonListingChild.listing_id == row.id)
+                   .order_by(AmazonListingChild.sort_order).all()]
+        for cid in kid_ids:
+            first_main = next((i for i in imgs
+                               if i.child_id == cid and i.role == "main"), None)
+            if first_main:
+                break
+        mine = ([first_main] if first_main else []) + shared
+        if not mine:
+            mine = imgs
         urls = [f"{base}/api/amazon-listings/public-image/{i.public_token}"
                 for i in mine]
         if urls:
