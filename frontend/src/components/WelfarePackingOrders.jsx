@@ -24,13 +24,17 @@ export default function WelfarePackingOrders({ readOnly = true }) {
   const { data: monthsData } = useQuery({
     queryKey: ['packing-order-months'],
     queryFn: () => api.get('/welfare/packing-orders/months').then(r => r.data),
-    refetchInterval: 60000,
+    // 1分ごとに見に行くと、画面を開きっぱなしにしているあいだ
+    // ずっとデータベースを叩く。梱包の指示はそこまで速報性が要らない
+    refetchInterval: 5 * 60 * 1000,
   })
 
   const { data, isLoading } = useQuery({
     queryKey: ['packing-orders', month],
     queryFn: () => api.get('/welfare/packing-orders', { params: { month } }).then(r => r.data),
-    refetchInterval: 60000,
+    // 1分ごとに見に行くと、画面を開きっぱなしにしているあいだ
+    // ずっとデータベースを叩く。梱包の指示はそこまで速報性が要らない
+    refetchInterval: 5 * 60 * 1000,
   })
 
   const months = monthsData?.months || []

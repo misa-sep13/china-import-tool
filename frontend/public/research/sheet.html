@@ -10787,8 +10787,15 @@ if(FIREBASE_CONFIG.databaseURL){
         busy = false;
       }
     }
-    setInterval(poll, 5000);
+    // セラースカウトからの取り込み待ち。5秒ごとに見ていたが、タブを開いて
+    // いる間ずっとデータベースを叩くので、転送量の無料枠をこれで使っていた
+    // （1日17,000回）。30秒に落とし、画面に戻ったときはすぐ見に行くので
+    // 取り込みの待ち時間は変わらない
+    setInterval(poll, 30000);
     window.addEventListener('focus', poll);
+    document.addEventListener('visibilitychange', () => {
+      if(!document.hidden) poll();
+    });
     poll();
   }
   document.getElementById('printBtn').addEventListener('click', () => window.print());
