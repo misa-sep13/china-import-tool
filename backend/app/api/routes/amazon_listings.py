@@ -813,8 +813,7 @@ def _problems(row: AmazonListing, db: Session) -> list:
     if not all([row.len_a, row.len_b, row.len_c, row.weight]):
         p.append("三辺と重量のどれかが空です")
 
-    imgs = (db.query(AmazonListingImage)
-            .filter(AmazonListingImage.listing_id == row.id).all())
+    imgs = _image_rows(db, row.id)
     if not imgs:
         p.append("商品画像がありません。Amazonは画像が無いと公開されないことがあります")
 
@@ -1212,6 +1211,20 @@ def _public_base() -> str:
 VARIATION_THEME = "COLOR"
 
 
+def _image_rows(db: Session, listing_id: int) -> list:
+    """画像の一覧。中身(base64)は読まない。
+
+    公開URLを作るのに要るのは token だけなのに、行ごと読むと
+    画像の中身まで全部メモリに載る。親と子で何度も呼ぶので、
+    1商品の出品でその何倍も読み込んでいた（出品が返ってこない原因）。
+    """
+    return (db.query(AmazonListingImage.id, AmazonListingImage.child_id,
+                     AmazonListingImage.role, AmazonListingImage.sort_order,
+                     AmazonListingImage.public_token)
+            .filter(AmazonListingImage.listing_id == listing_id)
+            .order_by(AmazonListingImage.sort_order).all())
+
+
 def _axis_attrs(row: AmazonListing, child: AmazonListingChild) -> dict:
     """子の軸の値。色として送る。"""
     v = (child.axis1 or "").strip()
@@ -1299,9 +1312,7 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
     # バリエーション画像はAmazonでも最後尾に出るので、末尾に置く。
     base = _public_base()
     if base:
-        imgs = (db.query(AmazonListingImage)
-                .filter(AmazonListingImage.listing_id == row.id)
-                .order_by(AmazonListingImage.sort_order).all())
+        imgs = _image_rows(db, row.id)
         shared = [i for i in imgs if i.child_id is None]
         ownall = [i for i in imgs if i.child_id == child.id]
         main = next((i for i in ownall if i.role == "main"), None)
@@ -1398,9 +1409,7 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
     # 残りを共通で埋める（共通にメイン用の写真を置かなくて済むように）
     base = _public_base()
     if db is not None and base:
-        imgs = (db.query(AmazonListingImage)
-                .filter(AmazonListingImage.listing_id == row.id)
-                .order_by(AmazonListingImage.sort_order).all())
+        imgs = _image_rows(db, row.id)
         shared = [i for i in imgs if i.child_id is None]
         first_main = None
         kid_ids = [c.id for c in db.query(AmazonListingChild)
@@ -1459,8 +1468,7 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
     parent_sku = ((row.parent_sku or "").strip()
                   or (kids[0].sku or "").split("_")[0])
 
-    imgs = (db.query(AmazonListingImage)
-            .filter(AmazonListingImage.listing_id == row.id).all())
+    imgs = _image_rows(db, row.id)
     # 色ごとに入れていない画像は「共通」として全SKUに使われる
     shared = len([i for i in imgs if i.child_id is None])
 
