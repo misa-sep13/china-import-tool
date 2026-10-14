@@ -8429,6 +8429,9 @@ if(FIREBASE_CONFIG.databaseURL){
       (x.issues || []).forEach(i => {
         d.appendChild(el('div', 'reg-issue', '・' + i.message));
       });
+      // Amazonが400などを返したときは、理由がここにしか入っていない。
+      // 出さないと「弾かれました：400」だけで何が悪いのか分からない
+      if(x.error) d.appendChild(el('div', 'reg-issue', String(x.error).slice(0, 600)));
       out.appendChild(d);
     });
   }
