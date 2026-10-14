@@ -8085,11 +8085,11 @@ if(FIREBASE_CONFIG.databaseURL){
         tabs.appendChild(b);
       });
       tabs.appendChild(el('span', 'an-note',
-        '「共通」は全色に入ります（ドラッグで並べ替え・'
-        + IMG_MAX_PER_TARGET + '枚まで）。'
-        + '色タブではメイン画像とバリエーション画像だけを入れます。'
-        + 'メイン1＋共通' + IMG_MAX_PER_TARGET + '＋バリエーション1＝'
-        + (IMG_MAX_PER_TARGET + 2) + '枚がAmazonの上限です'));
+        '「共通」は説明画像だけを入れます（全色に入る・'
+        + IMG_MAX_PER_TARGET + '枚まで・ドラッグで並べ替え）。'
+        + 'メイン写真は色タブへ。'
+        + '各色は メイン1＋共通' + IMG_MAX_PER_TARGET
+        + '＋バリエーション1＝' + (IMG_MAX_PER_TARGET + 2) + '枚になります'));
       box.appendChild(tabs);
     }
 
@@ -8329,7 +8329,10 @@ if(FIREBASE_CONFIG.databaseURL){
         img.src = base + im.url;
         img.draggable = false;           // 画像単体ではなく枠ごとつかませる
         cell.appendChild(img);
-        if(i === 0) cell.appendChild(el('span', 'reg-main', 'メイン'));
+        // 共通はぜんぶサブ画像。メイン画像は色ごとに持つので、
+        // ここに「メイン」と出すと共通にも要ると誤解させる。
+        // 代わりに何枚目かを出す（Amazonでもこの順に並ぶ）
+        cell.appendChild(el('span', 'reg-main', (i + 1) + '枚目'));
         const del = el('button', 'mini danger', '削除');
         del.dataset.writes = '1';
         del.addEventListener('click', async () => {
