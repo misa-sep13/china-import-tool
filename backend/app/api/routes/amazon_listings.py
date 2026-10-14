@@ -6,6 +6,7 @@
 ここではシートを直接の元にしている。
 """
 import base64
+import io
 import json
 import re
 import secrets
@@ -511,6 +512,41 @@ def delete_listing(listing_id: int, db: Session = Depends(get_db)):
 # ここで預かってトークン付きの公開URLで読ませる。
 # 楽天のR-Cabinetは使わない（Amazonが取りに行けるか分からないため）。
 
+# Amazonが画像を取りに来るとき、大きいままだと配信が間に合わず
+# 「Media Download Timed Out from Server」で弾かれる。
+# Amazonの推奨は長辺1600px。それ以上は意味が無いので縮めて持つ。
+AMAZON_IMAGE_PX = 1600
+
+
+def _shrink_for_amazon(blob: bytes, mime: str) -> tuple[bytes, str]:
+    """長辺1600pxまで縮めてJPEGにする。縮められなければ元のまま返す。
+
+    元の大きさのまま置くと1枚で数MBになり、Amazonの取得が
+    タイムアウトする（実際に出品が弾かれた）。
+    """
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(blob))
+        im.load()
+        if im.mode in ("RGBA", "LA", "P"):
+            # 透過は白で埋める。Amazonは背景が透明な画像を好まない
+            bg = Image.new("RGB", im.size, (255, 255, 255))
+            im = im.convert("RGBA")
+            bg.paste(im, mask=im.split()[-1])
+            im = bg
+        else:
+            im = im.convert("RGB")
+        if max(im.size) > AMAZON_IMAGE_PX:
+            im.thumbnail((AMAZON_IMAGE_PX, AMAZON_IMAGE_PX), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=88, optimize=True)
+        out = buf.getvalue()
+        # 縮めたのに大きくなるなら、元のほうがよい
+        return (out, "image/jpeg") if out and len(out) < len(blob) else (blob, mime)
+    except Exception:
+        return blob, mime
+
+
 @router.post("/{listing_id:int}/images")
 async def add_image(listing_id: int, child_id: Optional[int] = None,
                     role: Optional[str] = None,
@@ -556,6 +592,8 @@ async def add_image(listing_id: int, child_id: Optional[int] = None,
     if not mime.startswith("image/"):
         raise HTTPException(400, "画像ファイルを選んでください")
 
+    blob, mime = _shrink_for_amazon(blob, mime)
+
     last = (db.query(AmazonListingImage)
             .filter(AmazonListingImage.listing_id == listing_id)
             .order_by(AmazonListingImage.sort_order.desc()).first())
@@ -570,6 +608,38 @@ async def add_image(listing_id: int, child_id: Optional[int] = None,
     db.commit()
     db.refresh(img)
     return _image_out(img)
+
+
+@router.post("/images/shrink")
+def shrink_images(listing_id: Optional[int] = None, limit: int = 200,
+                  db: Session = Depends(get_db)):
+    """すでに入れてある画像を、長辺1600pxまで縮める。
+
+    縮める前に入れた画像は大きいままで、Amazonの取得が
+    タイムアウトする。入れ直さずに済むよう、ここで縮める。
+    listing_id を指定すればその商品だけ。
+    """
+    q = db.query(AmazonListingImage)
+    if listing_id:
+        q = q.filter(AmazonListingImage.listing_id == listing_id)
+    done = saved = 0
+    for img in q.order_by(AmazonListingImage.id).limit(max(1, limit)).all():
+        if not img.data:
+            continue
+        try:
+            raw = base64.b64decode(img.data)
+        except Exception:
+            continue
+        out, mime = _shrink_for_amazon(raw, img.mime or "image/jpeg")
+        if len(out) >= len(raw):
+            continue                       # これ以上小さくならない
+        img.data = base64.b64encode(out).decode()
+        img.mime = mime
+        img.size = len(out)
+        done += 1
+        saved += len(raw) - len(out)
+    db.commit()
+    return {"縮めた枚数": done, "減った容量MB": round(saved / 1024 / 1024, 2)}
 
 
 @router.delete("/images/{image_id:int}")
