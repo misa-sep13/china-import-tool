@@ -14,7 +14,8 @@ from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import bindparam as sa_bindparam, text as sa_text
+from sqlalchemy import (bindparam as sa_bindparam, func as sa_func,
+                        text as sa_text)
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -395,6 +396,69 @@ _BACKUP_INTERVAL_SEC = 600 # この間隔を空けて世代を作る（保存の
 class SheetIn(BaseModel):
     data: dict | list | None = None
     workspace: Optional[str] = None
+
+
+@router.get("/sheet/stats")
+def sheet_stats(workspace: str = "default", db: Session = Depends(get_db)):
+    """シートの中身の内訳。何が容量を食っているかを見るためのもの。
+
+    シートを丸ごと往復しているせいで通信量とメモリを使い切ったので、
+    減らす前に「どこが大きいのか」を数字で押さえる。
+    """
+    row = (db.query(AmazonResearchSheet)
+           .filter(AmazonResearchSheet.workspace == workspace).first())
+    if row is None or not row.data:
+        raise HTTPException(404, "シートがありません")
+    total = len(row.data.encode("utf-8"))
+
+    def walk(node, path, acc):
+        """葉（文字列・数値）の大きさを、キーごとに足していく。"""
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, f"{path}.{k}" if path else str(k), acc)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, f"{path}[]", acc)
+        else:
+            if node is None or node is True or node is False:
+                return
+            n = len(str(node).encode("utf-8"))
+            e = acc.setdefault(path, {"bytes": 0, "count": 0, "data_url": 0})
+            e["bytes"] += n
+            e["count"] += 1
+            if isinstance(node, str) and node.startswith("data:"):
+                e["data_url"] += n
+
+    acc: dict = {}
+    try:
+        walk(json.loads(row.data), "", acc)
+    except (ValueError, TypeError):
+        raise HTTPException(400, "シートの中身が読めません")
+
+    rows = sorted(acc.items(), key=lambda kv: -kv[1]["bytes"])
+    img = sum(v["data_url"] for v in acc.values())
+    bk = db.query(AmazonResearchSheetBackup).filter(
+        AmazonResearchSheetBackup.workspace == workspace).count()
+    bk_bytes = db.query(sa_func.coalesce(
+        sa_func.sum(AmazonResearchSheetBackup.size_bytes), 0)).filter(
+        AmazonResearchSheetBackup.workspace == workspace).scalar() or 0
+
+    def mb(n):
+        return round(n / 1024 / 1024, 2)
+
+    return {
+        "workspace": workspace,
+        "シート本体MB": mb(total),
+        "うち画像(data URL)MB": mb(img),
+        "画像の割合%": round(img / total * 100, 1) if total else 0,
+        "控えの世代数": bk,
+        "控え合計MB": mb(bk_bytes),
+        "大きい項目": [
+            {"場所": k or "(直下)", "MB": mb(v["bytes"]),
+             "件数": v["count"], "画像MB": mb(v["data_url"])}
+            for k, v in rows[:20] if v["bytes"] > 1024
+        ],
+    }
 
 
 @router.get("/sheet")
