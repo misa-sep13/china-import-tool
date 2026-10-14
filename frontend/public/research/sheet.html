@@ -2426,6 +2426,38 @@ if(FIREBASE_CONFIG.databaseURL){
   }
 
   // ---- 描画 ----
+  // Chromeは同じページでダイアログを何度も出すと「このページでこれ以上
+  // ダイアログを表示しない」のチェックを出す。入れられると ask() は
+  // 何も出さずに false を返すようになり、ボタンを押しても無言で
+  // 何も起きなくなる（出品が動かない原因がこれだった）。
+  // 人が押していれば必ず時間がかかるので、即座にfalseが返ったら
+  // 止められていると判断して、画面に理由を出す。
+  let dialogsBlocked = false;
+  function warnDialogsBlocked(){
+    dialogsBlocked = true;
+    let bar = document.getElementById('dlgBlocked');
+    if(!bar){
+      bar = document.createElement('div');
+      bar.id = 'dlgBlocked';
+      bar.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99999;'
+        + 'background:#fef2f2;color:#991b1b;border-bottom:2px solid #dc2626;'
+        + 'padding:10px 16px;font-size:13px;font-weight:700;text-align:center';
+      bar.textContent = 'このページの確認ダイアログがブラウザに止められています。'
+        + 'ボタンを押しても何も起きません。ページを再読み込み（F5）してから、'
+        + 'もう一度操作してください。';
+      document.body.appendChild(bar);
+    }
+    return false;
+  }
+  function ask(msg){
+    if(dialogsBlocked) return warnDialogsBlocked();
+    const t0 = (performance && performance.now) ? performance.now() : Date.now();
+    const ok = window.confirm(msg);
+    const dt = ((performance && performance.now) ? performance.now() : Date.now()) - t0;
+    if(!ok && dt < 30) return warnDialogsBlocked();   // 人の操作では有り得ない速さ
+    return ok;
+  }
+
   function el(tag, cls, text){
     const e = document.createElement(tag);
     if(cls) e.className = cls;
@@ -3810,7 +3842,7 @@ if(FIREBASE_CONFIG.databaseURL){
       if(isFirst){
         const targets = research.rows.slice(1);
         if(!cnFilled(first, key)){ alert('1行目のこの欄がまだ空です。'); return; }
-        if(!confirm('この欄の内容を下の' + targets.length + '行に上書きコピーします。\nそれぞれの行に入っている内容は消えます。よろしいですか？')) return;
+        if(!ask('この欄の内容を下の' + targets.length + '行に上書きコピーします。\nそれぞれの行に入っている内容は消えます。よろしいですか？')) return;
         targets.forEach(r => cnCopy(first, r, key));
       }else{
         if(!cnFilled(first, key)){ alert('1行目のこの欄がまだ空です。'); return; }
@@ -4008,7 +4040,7 @@ if(FIREBASE_CONFIG.databaseURL){
       if(p.reviews) lost.push('レビュー');
       if(p.keywords) lost.push('キーワード');
       if(p.imgtext) lost.push('商品画像の文字');
-      if(!confirm('「' + ((row.competitor || '').trim() || '名称未入力') + '」の行を削除します。\n'
+      if(!ask('「' + ((row.competitor || '').trim() || '名称未入力') + '」の行を削除します。\n'
         + (lost.length ? '\n貼り付けた ' + lost.join('・') + ' も一緒に消えます。\n' : '')
         + '\nこの操作は元に戻せません。削除しますか？')) return;
       research.rows = research.rows.filter(r => r !== row);
@@ -4685,7 +4717,7 @@ if(FIREBASE_CONFIG.databaseURL){
         if(cur){
           // まとめて投げ込んだときは、既に入っているものを黙って壊さない
           if(multi){ skipped++; continue; }
-          if(!confirm('この商品にはすでにレビューが入っています。読み込んだ内容で置き換えますか？')){ skipped++; continue; }
+          if(!ask('この商品にはすでにレビューが入っています。読み込んだ内容で置き換えますか？')){ skipped++; continue; }
         }
         savePage(targetId, {reviews: r.text});
         files_ok++; reviews_ok += r.count;
@@ -4707,7 +4739,7 @@ if(FIREBASE_CONFIG.databaseURL){
       if(!rvTa.value.trim()){ rvStatus.textContent = 'この商品のレビューは空です'; return; }
       const row = research.rows.find(x => x.id === pick.value);
       const who = (row && (row.competitor || row.asin || '').trim()) || 'この商品';
-      if(!confirm('「' + who + '」のレビューを消します。よろしいですか？')) return;
+      if(!ask('「' + who + '」のレビューを消します。よろしいですか？')) return;
       rvTa.value = '';
       autosave();
       rvStatus.textContent = 'レビューを消しました';
@@ -4801,7 +4833,7 @@ if(FIREBASE_CONFIG.databaseURL){
         if(cur){
           // まとめて投げ込んだときは、既に入っているものを黙って壊さない
           if(multi){ skipped++; continue; }
-          if(!confirm('この商品にはすでにキーワードが入っています。読み込んだ内容で置き換えますか？')){ skipped++; continue; }
+          if(!ask('この商品にはすでにキーワードが入っています。読み込んだ内容で置き換えますか？')){ skipped++; continue; }
         }
         savePage(targetId, {keywords: r.text});
         files_ok++; words_ok += r.count;
@@ -4846,7 +4878,7 @@ if(FIREBASE_CONFIG.databaseURL){
       if(!kwTa.value.trim()){ kwStatus.textContent = 'この商品のキーワードは空です'; return; }
       const row = research.rows.find(x => x.id === pick.value);
       const who = (row && (row.competitor || row.asin || '').trim()) || 'この商品';
-      if(!confirm('「' + who + '」のキーワードを消します。よろしいですか？')) return;
+      if(!ask('「' + who + '」のキーワードを消します。よろしいですか？')) return;
       kwTa.value = '';
       autosave();
       kwStatus.textContent = 'キーワードを消しました';
@@ -4995,7 +5027,7 @@ if(FIREBASE_CONFIG.databaseURL){
     const imgClear = el('button', 'mini danger', '🧹 クリア');
     imgClear.addEventListener('click', () => {
       if(!imgTa.value.trim()){ imgStatus.textContent = 'すでに空です'; return; }
-      if(!confirm('この商品の「商品画像の文字」を消します。よろしいですか？')) return;
+      if(!ask('この商品の「商品画像の文字」を消します。よろしいですか？')) return;
       imgTa.value = ''; autosave(); imgStatus.textContent = '消しました';
     });
     imgRow.appendChild(imgClear);
@@ -5006,7 +5038,7 @@ if(FIREBASE_CONFIG.databaseURL){
       if(!/^[A-Z0-9]{10}$/.test(asin)){ imgStatus.textContent = 'この商品の行にASINを入れてください'; return; }
       const id = pick.value;               // 取得中にタブを切り替えても押した時点の商品へ保存する
       const cur = ((getPage(id) || {}).imgtext || '').trim();
-      if(cur && !confirm('この商品にはすでに商品画像の文字が入っています。取得した内容で置き換えますか？')){
+      if(cur && !ask('この商品にはすでに商品画像の文字が入っています。取得した内容で置き換えますか？')){
         imgStatus.textContent = '今の内容を残しました'; return;
       }
       imgAuto.disabled = true;
@@ -5132,7 +5164,7 @@ if(FIREBASE_CONFIG.databaseURL){
         return;
       }
       const cur = ((getPage(id) || {}).reviews || '').trim();
-      if(cur && !confirm('この商品にはすでにレビューが入っています。取得した内容で置き換えますか？')){
+      if(cur && !ask('この商品にはすでにレビューが入っています。取得した内容で置き換えますか？')){
         rvStatus.textContent = '今の内容を残しました'; return;
       }
       savePage(id, {reviews: got.text});
@@ -5156,7 +5188,7 @@ if(FIREBASE_CONFIG.databaseURL){
         return;
       }
       const cur = ((getPage(id) || {}).keywords || '').trim();
-      if(cur && !confirm('この商品にはすでにキーワードが入っています。取得した内容で置き換えますか？')){
+      if(cur && !ask('この商品にはすでにキーワードが入っています。取得した内容で置き換えますか？')){
         kwStatus.textContent = '今の内容を残しました'; return;
       }
       savePage(id, {keywords: got.text});
@@ -5319,7 +5351,7 @@ if(FIREBASE_CONFIG.databaseURL){
     });
     sugClear.addEventListener('click', () => {
       if(!sugTotal()){ sugViewStatus.textContent = 'すでに空です'; return; }
-      if(!confirm('このリサーチのサジェスト' + sugTotal() + '件を消しますか？')) return;
+      if(!ask('このリサーチのサジェスト' + sugTotal() + '件を消しますか？')) return;
       research.sugGroups = [];
       delete research.sugAt; delete research.sugDeepUsed;
       scheduleSave(); drawSugView(); drawChips();
@@ -5972,7 +6004,7 @@ if(FIREBASE_CONFIG.databaseURL){
     });
     pasteClear.addEventListener('click', () => {
       if(!pasteTa.value.trim()){ pasteStatus.textContent = 'すでに空です'; return; }
-      if(!confirm('保存してあるSTEP1の答えを消しますか？\n①②③に入れた内容は消えません。')) return;
+      if(!ask('保存してあるSTEP1の答えを消しますか？\n①②③に入れた内容は消えません。')) return;
       pasteTa.value = '';
       answerSave('消しました');
     });
@@ -6433,7 +6465,7 @@ if(FIREBASE_CONFIG.databaseURL){
         return;
       }
       if((searchTa.value.trim() || specTa.value.trim())
-         && !confirm('①②を、AIが作ったもので置き換えますか？')) return;
+         && !ask('①②を、AIが作ったもので置き換えますか？')) return;
 
       // 材料をかき集める。競合の商品名・仕様・レビューは効きが大きい
       const rows = research.rows || [];
@@ -6562,7 +6594,7 @@ if(FIREBASE_CONFIG.databaseURL){
         return;
       }
       if((research.titleParent || '').trim()
-         && !confirm('いまの親タイトルを下書きで置き換えますか？')) return;
+         && !ask('いまの親タイトルを下書きで置き換えますか？')) return;
       research.titleParent = t;
       edSave(); drawTitles();
       tGenStatus.textContent = t.length + '字で作りました。ここから手で直してください';
@@ -6687,7 +6719,7 @@ if(FIREBASE_CONFIG.databaseURL){
           const del = el('button', 'mini danger tl-del', '✕');
           del.title = 'この子を削除します';
           del.addEventListener('click', () => {
-            if((obj.name || obj.title) && !confirm('この子（バリエーション）を削除しますか？')) return;
+            if((obj.name || obj.title) && !ask('この子（バリエーション）を削除しますか？')) return;
             research.titleChildren.splice(idx, 1);
             if(activeTitle === ti) activeTitle = null;
             drawTitles(); edSave(); edRefresh();
@@ -6837,7 +6869,7 @@ if(FIREBASE_CONFIG.databaseURL){
     });
     p2Clear.addEventListener('click', () => {
       if(!p2Ta.value.trim()){ p2Status.textContent = 'すでに空です'; return; }
-      if(!confirm('保存してあるSTEP2の答えを消しますか？\n⑤・ターゲット顧客・色合いに入れた内容は消えません。')) return;
+      if(!ask('保存してあるSTEP2の答えを消しますか？\n⑤・ターゲット顧客・色合いに入れた内容は消えません。')) return;
       p2Ta.value = '';
       p2SaveNow('消しました');
     });
@@ -6878,7 +6910,7 @@ if(FIREBASE_CONFIG.databaseURL){
     cClear.addEventListener('click', () => {
       if(!cTa.value.trim()){ cStatus.textContent = 'すでに空です'; return; }
       // 保存される欄になったので、消すときは一度確認する
-      if(!confirm('貼り付けた5行を消します。よろしいですか？')) return;
+      if(!ask('貼り付けた5行を消します。よろしいですか？')) return;
       cTa.value = ''; cOut.innerHTML = '';
       cStatus.textContent = '消しました';
       edSave(); edRefresh();
@@ -6968,7 +7000,7 @@ if(FIREBASE_CONFIG.databaseURL){
 
     dClear.addEventListener('click', () => {
       if(!gTa.value.trim()){ dStatus.textContent = 'すでに空です'; return; }
-      if(!confirm('貼り付けた構成案を消します。よろしいですか？')) return;
+      if(!ask('貼り付けた構成案を消します。よろしいですか？')) return;
       gTa.value = ''; dStatus.textContent = '消しました'; edSave();
     });
 
@@ -7053,7 +7085,7 @@ if(FIREBASE_CONFIG.databaseURL){
       const doc = buildGuideDoc();
       const roomName = cwSel.options[cwSel.selectedIndex].textContent;
       // 送ると相手に通知が飛ぶ。取り消しづらいので必ず確認を挟む
-      if(!confirm('Chatworkへ送ります。\n\n送り先：' + roomName
+      if(!ask('Chatworkへ送ります。\n\n送り先：' + roomName
                   + '\nファイル：' + doc.name
                   + (!doc.guide ? '\n\n※構成案が空です。■の項目だけのファイルになります' : '')
                   + '\n\nよろしいですか？')) return;
@@ -7786,7 +7818,7 @@ if(FIREBASE_CONFIG.databaseURL){
         const body = qtyBody();
         const who = qtySel.options[qtySel.selectedIndex].textContent;
         // 送ると相手に通知が飛ぶ。取り消せないので、送る前に中身を見せる
-        if(!confirm('次の内容を Chatwork「' + who + '」へ送ります。\n\n'
+        if(!ask('次の内容を Chatwork「' + who + '」へ送ります。\n\n'
           + body.replace(/\[\/?info\]|\[\/?title\]/g, '') + '\n\nよろしいですか？')) return;
         qtyBtn.disabled = true;
         qtyStatus.textContent = '送っています…';
@@ -7902,7 +7934,7 @@ if(FIREBASE_CONFIG.databaseURL){
         }
       });
       sub.addEventListener('click', async () => {
-        if(!confirm('Amazonへ出品します。よろしいですか？')) return;
+        if(!ask('Amazonへ出品します。よろしいですか？')) return;
         sub.disabled = true; opStatus.textContent = '送っています…';
         try{
           await flush();
@@ -8275,7 +8307,7 @@ if(FIREBASE_CONFIG.databaseURL){
         const d = el('button', 'mini danger', '削除');
         d.dataset.writes = '1';
         d.addEventListener('click', async () => {
-          if(!confirm('この画像を消しますか？')) return;
+          if(!ask('この画像を消しますか？')) return;
           await fetch(API_BASE + '/amazon-listings/images/' + im.id,
             {method: 'DELETE', headers: apiHeaders()});
           await reload();
@@ -8352,7 +8384,7 @@ if(FIREBASE_CONFIG.databaseURL){
         const del = el('button', 'mini danger', '削除');
         del.dataset.writes = '1';
         del.addEventListener('click', async () => {
-          if(!confirm('この画像を消しますか？')) return;
+          if(!ask('この画像を消しますか？')) return;
           await fetch(API_BASE + '/amazon-listings/images/' + im.id,
             {method: 'DELETE', headers: apiHeaders()});
           await reload();
@@ -10181,7 +10213,7 @@ if(FIREBASE_CONFIG.databaseURL){
         + (extras.length ? '・' + extras.join('\n・') + '\n' : '')
         + '\n本当に消しても良いですか？';
 
-      if(!confirm(detail)) return;
+      if(!ask(detail)) return;
       state.researches = state.researches.filter(r => r !== research);
       render(); scheduleSave();
     });
@@ -10466,7 +10498,7 @@ if(FIREBASE_CONFIG.databaseURL){
       const back = el('button', 'mini', '最新の控えから復元');
       back.style.marginLeft = '8px';
       back.addEventListener('click', () => {
-        if(!confirm('いま画面にある内容を、控え（' + j.savedAtText + '）で置き換えます。\n'
+        if(!ask('いま画面にある内容を、控え（' + j.savedAtText + '）で置き換えます。\n'
           + '今の内容は失われます。よろしいですか？')) return;
         bkRestore(null, false).then(okRes => { if(okRes) bkOverlay.classList.remove('open'); });
       });
@@ -10492,7 +10524,7 @@ if(FIREBASE_CONFIG.databaseURL){
         const b = el('button', 'mini', 'この時点に戻す');
         b.title = hRow.note || '';
         b.addEventListener('click', () => {
-          if(!confirm('いま画面にある内容を、' + (hRow.savedAtText || hRow.id) + ' の状態'
+          if(!ask('いま画面にある内容を、' + (hRow.savedAtText || hRow.id) + ' の状態'
             + '（リサーチ' + hRow.researches + '件 / ' + hRow.rows + '行）で置き換えます。\n'
             + '今の内容は失われます。よろしいですか？')) return;
           bkRestore(hRow.id, false).then(okRes => { if(okRes) bkOverlay.classList.remove('open'); });
@@ -10683,7 +10715,7 @@ if(FIREBASE_CONFIG.databaseURL){
     btn.addEventListener('click', async () => {
       const targets = research.rows.filter(r => /^[A-Z0-9]{10}$/.test((r.asin || '').trim().toUpperCase()));
       if(!targets.length){ status.textContent = 'ASINが入っている行がありません'; return; }
-      if(ov.checked && !confirm('すでに入っている値も、SP-APIの値で置き換えます。\n'
+      if(ov.checked && !ask('すでに入っている値も、SP-APIの値で置き換えます。\n'
         + '手で直した商品名・売価・寸法などは上書きされます。\n'
         + '（薄緑の欄＝販売個数・レビュー、オレンジの欄＝商品備考・勝てる要素・1688の3列は触りません）\n\n'
         + targets.length + '行を取り込みますか？')) return;
@@ -10902,7 +10934,7 @@ if(FIREBASE_CONFIG.databaseURL){
 
   // 係数をいじって分からなくなったとき用。為替と取得時刻は残す。
   document.getElementById('resetSettingsBtn').addEventListener('click', () => {
-    if(!confirm('原価の係数を既定値に戻しますか？（為替の設定はそのままです）')) return;
+    if(!ask('原価の係数を既定値に戻しますか？（為替の設定はそのままです）')) return;
     const d = defaultSettings();
     ['rateAdjust','chinaFixed','tariffRate','packFactor','shipYuan']
       .forEach(k => state.settings[k] = d[k]);   // ボタンを押したときだけ輸入関連費も既定へ戻す
