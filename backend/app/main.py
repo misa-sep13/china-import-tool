@@ -470,6 +470,22 @@ def _migrate():
     except Exception as e:
         logger.warning(f"migrate: shipment_order_items.product_id FK fix -> {e}")
 
+    # すでに「完了」になっている画像依頼に、参考画像が残っている。
+    # 完了時に消す仕組みを入れる前のぶんで、1枚ずつは小さくても
+    # 依頼の数だけ積もる（データベースの容量を圧迫していた）。
+    # 納品データは以前から完了時に消しているので、ここでは写真だけ。
+    try:
+        names = inspector.get_table_names()
+        if {"image_requests", "image_request_photos"} <= set(names):
+            with engine.begin() as conn:
+                r = conn.execute(text(
+                    "DELETE FROM image_request_photos WHERE request_id IN "
+                    "(SELECT id FROM image_requests WHERE status = 'done')"))
+            if r.rowcount:
+                logger.info(f"migrate: 完了済み依頼の参考画像を削除 ({r.rowcount}枚)")
+    except Exception as e:
+        logger.warning(f"migrate: done photos cleanup -> {e}")
+
     # ブランド登録が通ったので、入れていなければ自社ブランドを入れておく。
     # 空のままだと、何のブランドで出るのか画面から分からない
     try:
