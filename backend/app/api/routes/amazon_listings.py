@@ -846,7 +846,11 @@ def prepare(listing_id: int, db: Session = Depends(get_db)):
 #   ・SKUと色が食い違う … SKUの付け方から色を推し量っているだけで、
 #     当たらないこともある。推測が外れたせいで出品できないのは行き過ぎ
 # どちらも止めていたため、気づかないうちに1件も送られていなかった
-_NOT_BLOCKING = ("画像がありません", "共通の画像が", "食い違っています")
+#   ・GS1に未登録 … 届け出たかどうかはこちらの台帳の記録でしかなく、
+#     実際に登録してあっても印が付いていないことがある。本当に未登録なら
+#     Amazonが弾いてくれるので、こちらで止めずに送ってみる
+_NOT_BLOCKING = ("画像がありません", "共通の画像が", "食い違っています",
+                 "GS1に未登録")
 
 
 def _blocking(problems: list) -> list:
@@ -911,8 +915,9 @@ def _problems(row: AmazonListing, db: Session) -> list:
             # GS1に届け出ていないJANは、Amazonが受け付けない
             j = db.query(JanCode).filter(JanCode.code == c.jan).first()
             if j is not None and j.gs1_registered_at is None:
-                p.append(f"[{who}] JAN {c.jan} がGS1に未登録です。"
-                         "登録しないとAmazonに弾かれます")
+                p.append(f"[{who}] JAN {c.jan} がGS1に未登録です"
+                         "（このツールの記録上）。実際に届け出てあれば"
+                         "そのまま出品できます")
     # バリエーションは常に色で登録する（色でないと選択肢ごとの画像が出ない）
     if len(kids) > 1:
         shared = any(i.child_id is None for i in imgs)
