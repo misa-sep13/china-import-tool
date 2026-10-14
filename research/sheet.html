@@ -8176,8 +8176,19 @@ if(FIREBASE_CONFIG.databaseURL){
     }
     render();
 
-    box.addEventListener('dragover', e => e.preventDefault());
-    box.addEventListener('drop', e => { e.preventDefault(); upload(e.dataTransfer.files); });
+    // ドロップの受け口は box に付ける。box.innerHTML を空にしても box 自身の
+    // リスナーは消えないので、描き直すたびに足すと重なっていく。
+    // 重なった状態で1枚ドロップすると、その回数ぶん同じ画像が入る
+    // （共通が9枚になった）。登録は1度だけにして、中身は毎回差し替える
+    box.__imgUpload = upload;
+    if(!box.__imgDndBound){
+      box.__imgDndBound = true;
+      box.addEventListener('dragover', e => e.preventDefault());
+      box.addEventListener('drop', e => {
+        e.preventDefault();
+        if(box.__imgUpload) box.__imgUpload(e.dataTransfer.files);
+      });
+    }
   }
 
   // 検証の結果を出す。足りない項目はその場で入れられるようにする
