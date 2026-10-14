@@ -7234,12 +7234,28 @@ if(FIREBASE_CONFIG.databaseURL){
   // の順に進む。押すまで何も作らないので、リサーチ中の枠でも邪魔にならない。
 
   async function regApi(path, opt){
-    const res = await fetch(API_BASE + '/amazon-listings' + path,
-      Object.assign({}, opt, {
-        headers: Object.assign(
-          {'Content-Type': 'application/json'}, apiHeaders(),
-          (opt || {}).headers || {}),
-      }));
+    // 返ってこないまま黙って止まると、出品できたのか分からない。
+    // 3分で打ち切って理由を出す（出品はSKUごとにAmazonへ送るので
+    // 少し時間がかかるが、それでも3分はかからない）
+    const ctl = new AbortController();
+    const to = setTimeout(() => ctl.abort(), 180000);
+    let res;
+    try{
+      res = await fetch(API_BASE + '/amazon-listings' + path,
+        Object.assign({}, opt, {
+          signal: ctl.signal,
+          headers: Object.assign(
+            {'Content-Type': 'application/json'}, apiHeaders(),
+            (opt || {}).headers || {}),
+        }));
+    }catch(e){
+      clearTimeout(to);
+      if(e && e.name === 'AbortError')
+        throw new Error('サーバーから返事がありません（3分で打ち切りました）。'
+          + 'もう一度押すか、しばらく待ってから試してください');
+      throw new Error('サーバーに繋がりませんでした：' + (e.message || e));
+    }
+    clearTimeout(to);
     const j = await res.json().catch(() => ({}));
     if(!res.ok) throw new Error(j.detail || ('HTTP ' + res.status));
     return j;
