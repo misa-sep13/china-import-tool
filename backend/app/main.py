@@ -474,15 +474,26 @@ def _migrate():
     # 完了時に消す仕組みを入れる前のぶんで、1枚ずつは小さくても
     # 依頼の数だけ積もる（データベースの容量を圧迫していた）。
     # 納品データは以前から完了時に消しているので、ここでは写真だけ。
+    # 起動を止めないよう、少しずつ消して時間も区切る。まとめて消すと
+    # データベースが重いときに起動が終わらず、アプリが落ち続ける
     try:
         names = inspector.get_table_names()
         if {"image_requests", "image_request_photos"} <= set(names):
-            with engine.begin() as conn:
-                r = conn.execute(text(
-                    "DELETE FROM image_request_photos WHERE request_id IN "
-                    "(SELECT id FROM image_requests WHERE status = 'done')"))
-            if r.rowcount:
-                logger.info(f"migrate: 完了済み依頼の参考画像を削除 ({r.rowcount}枚)")
+            gone = 0
+            for _ in range(10):                   # 1回の起動で最大500枚
+                with engine.begin() as conn:
+                    if engine.dialect.name == "postgresql":
+                        conn.execute(text("SET LOCAL statement_timeout = '15s'"))
+                    r = conn.execute(text(
+                        "DELETE FROM image_request_photos WHERE id IN ("
+                        "  SELECT p.id FROM image_request_photos p"
+                        "  JOIN image_requests r ON r.id = p.request_id"
+                        "  WHERE r.status = 'done' LIMIT 50)"))
+                if not r.rowcount:
+                    break
+                gone += r.rowcount
+            if gone:
+                logger.info(f"migrate: 完了済み依頼の参考画像を削除 ({gone}枚)")
     except Exception as e:
         logger.warning(f"migrate: done photos cleanup -> {e}")
 
@@ -491,6 +502,8 @@ def _migrate():
     try:
         if "amazon_research_settings" in inspector.get_table_names():
             with engine.begin() as conn:
+                if engine.dialect.name == "postgresql":
+                    conn.execute(text("SET LOCAL statement_timeout = '10s'"))
                 r = conn.execute(text(
                     "UPDATE amazon_research_settings SET brand_name = 'Aqualiora' "
                     "WHERE brand_name IS NULL OR brand_name = ''"))
