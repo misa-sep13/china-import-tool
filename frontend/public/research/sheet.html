@@ -8424,7 +8424,8 @@ if(FIREBASE_CONFIG.databaseURL){
     (v.checked || []).forEach(x => {
       const d = el('div', 'reg-check');
       d.appendChild(el('b', x.ok ? 'ok' : 'ng',
-        x.kind + ' ' + x.sku + '：' + (x.ok ? '問題なし' : x.status)));
+        x.kind + ' ' + x.sku + '：'
+        + (x.ok ? '検証OK（まだ出品していません）' : ('弾かれました：' + x.status))));
       (x.issues || []).forEach(i => {
         d.appendChild(el('div', 'reg-issue', '・' + i.message));
       });
@@ -8547,7 +8548,9 @@ if(FIREBASE_CONFIG.databaseURL){
     (r.sent || []).forEach(x => {
       const d = el('div', 'reg-check');
       d.appendChild(el('b', x.ok ? 'ok' : 'ng',
-        x.kind + ' ' + x.sku + '：' + (x.status || (x.ok ? 'OK' : '失敗'))));
+        x.kind + ' ' + x.sku + '：'
+        + (x.ok ? '出品しました（' + (x.status || 'ACCEPTED') + '）'
+                : ('失敗：' + (x.status || '')))));
       (x.issues || []).forEach(i => {
         d.appendChild(el('div', 'reg-issue', '・' + i.message));
       });

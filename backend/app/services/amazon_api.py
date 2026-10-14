@@ -1995,7 +1995,10 @@ def submit_listing(sku: str, product_type: str, attributes: dict,
     # ACCEPTED でも issues に警告が入ることがある。そのまま返す
     issues = r.get("issues") or []
     fatal = [i for i in issues if i.get("severity") == "ERROR"]
-    return {"ok": r.get("status") == "ACCEPTED" and not fatal,
+    # 本番の送信は ACCEPTED、検証(VALIDATION_PREVIEW)は VALID が返る。
+    # VALIDを失敗扱いにしていたため、検証に通っているのに画面へ
+    # 「VALID」と出て、出品できたのかどうか分からなかった
+    return {"ok": r.get("status") in ("ACCEPTED", "VALID") and not fatal,
             "status": r.get("status"), "sku": r.get("sku"),
             "issues": issues}
 
