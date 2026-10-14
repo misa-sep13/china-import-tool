@@ -7877,6 +7877,7 @@ if(FIREBASE_CONFIG.databaseURL){
         + '　→　❸ 足りない項目を出す　→　❹ Amazonへ送る'));
 
       const out = el('div', 'reg-out');
+      out.dataset.regOut = data.id;
       panel.appendChild(out);
       // 出品したあとは画面を描き直すので、そのままだと結果が消える
       // （一瞬出てすぐ消え、出品できたのか分からなかった）。
@@ -7971,6 +7972,28 @@ if(FIREBASE_CONFIG.databaseURL){
           opStatus.classList.toggle('warn', !sent.length || !!ng);
           mergeData(await regApi('/' + data.id));
           draw();
+          // 送った直後の応答には、受け付けたあとに見つかる問題が入らない。
+          // 「不足している情報」の中身は読み戻さないと分からないのに、
+          // そのボタンを別に押してもらう形だったので、ここで続けて読む
+          if(sent.length && !ng){
+            opStatus.textContent = 'Amazonの処理を待っています…（20秒ほど）';
+            await new Promise(r => setTimeout(r, 20000));
+            opStatus.textContent = 'Amazonから読み戻しています…';
+            try{
+              const v = await regApi('/' + data.id + '/verify', {method: 'POST'});
+              lastSubmit[data.id] = null;
+              const box2 = document.querySelector(
+                '[data-reg-out="' + data.id + '"]') || out;
+              drawVerify(box2, v);
+              opStatus.textContent = v.ok
+                ? '出品しました。Amazonの中身も送ったとおりです'
+                : '出品しましたが、Amazon側で ' + v.ng + '件 要確認です（下に出しました）';
+              opStatus.classList.toggle('warn', !v.ok);
+            }catch(e){
+              opStatus.textContent = '出品しました。読み戻しは失敗：'
+                + (e.message || e);
+            }
+          }
         }catch(e){ opStatus.textContent = String(e.message || e); }
         finally{ sub.disabled = false; }
       });
