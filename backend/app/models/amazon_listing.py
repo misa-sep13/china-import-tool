@@ -114,6 +114,13 @@ class AmazonListingImage(Base):
     mime       = Column(String)
     size       = Column(Integer)
     data       = Column(Text)              # base64
-    sort_order = Column(Integer, default=0)   # 0がメイン画像
+    sort_order = Column(Integer, default=0)   # 共通画像の並び順
+    # 色ごとの画像の役割。
+    #   main      … その色のメイン画像（1枚目に出す）
+    #   variation … 色が並んだバリエーション画像（最後尾に出す）
+    #   空        … 共通の画像、または役割を決めていない色ごとの画像
+    # 商品画像の大半は全色で同じなので共通に入れ、色で変わる
+    # メインとバリエーションだけを色ごとに持たせる
+    role       = Column(String, nullable=True)
     public_token = Column(String, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

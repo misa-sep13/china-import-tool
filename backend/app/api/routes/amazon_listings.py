@@ -36,6 +36,9 @@ MAX_IMAGE_BYTES = 8 * 1024 * 1024      # Amazonが取りに来られる大きさ
 # 1つのSKUに付けられる画像の数。共通と色ごとに別々に数える。
 # これを超えて入れてもAmazonへは送られず、消す手間が増えるだけ
 MAX_IMAGES_PER_TARGET = 10
+# Amazonが1SKUに持てる画像の枠。メイン1枚＋サブ8枚。
+# 共通をたくさん入れても、ここを超えたぶんは送られない
+AMAZON_IMAGE_SLOTS = 9
 
 
 # ---------- 入れ物 ----------
@@ -99,6 +102,7 @@ def _child_out(c: AmazonListingChild) -> dict:
 def _image_out(i: AmazonListingImage) -> dict:
     return {"id": i.id, "child_id": i.child_id, "file_name": i.file_name,
             "mime": i.mime, "size": i.size, "sort_order": i.sort_order,
+            "role": i.role,
             "url": f"/api/amazon-listings/public-image/{i.public_token}"}
 
 
@@ -507,20 +511,38 @@ def delete_listing(listing_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{listing_id:int}/images")
 async def add_image(listing_id: int, child_id: Optional[int] = None,
+                    role: Optional[str] = None,
                     file: UploadFile = File(...),
                     db: Session = Depends(get_db)):
     row = db.get(AmazonListing, listing_id)
     if not row:
         raise HTTPException(404, "ありません")
 
-    have = (db.query(AmazonListingImage)
-            .filter(AmazonListingImage.listing_id == listing_id,
-                    AmazonListingImage.child_id == child_id).count())
-    if have >= MAX_IMAGES_PER_TARGET:
-        where = "この色" if child_id else "共通"
-        raise HTTPException(
-            400, f"{where}の画像は{MAX_IMAGES_PER_TARGET}枚までです"
-                 f"（いま{have}枚）。要らないものを消してから入れてください")
+    role = (role or "").strip() or None
+    if role not in (None, "main", "variation"):
+        raise HTTPException(400, "画像の役割の指定が違います")
+    if role and child_id is None:
+        raise HTTPException(400, "メイン・バリエーションは色ごとに入れてください")
+
+    if role:
+        # メインとバリエーションは色ごとに1枚ずつ。入れ替えたいときは
+        # 消してから入れ直すより、古いほうを落として差し替えるほうが早い
+        old = (db.query(AmazonListingImage)
+               .filter(AmazonListingImage.listing_id == listing_id,
+                       AmazonListingImage.child_id == child_id,
+                       AmazonListingImage.role == role).all())
+        for o in old:
+            db.delete(o)
+    else:
+        have = (db.query(AmazonListingImage)
+                .filter(AmazonListingImage.listing_id == listing_id,
+                        AmazonListingImage.child_id == child_id,
+                        AmazonListingImage.role.is_(None)).count())
+        if have >= MAX_IMAGES_PER_TARGET:
+            where = "この色" if child_id else "共通"
+            raise HTTPException(
+                400, f"{where}の画像は{MAX_IMAGES_PER_TARGET}枚までです"
+                     f"（いま{have}枚）。要らないものを消してから入れてください")
 
     blob = await file.read()
     if not blob:
@@ -538,7 +560,7 @@ async def add_image(listing_id: int, child_id: Optional[int] = None,
     img = AmazonListingImage(
         listing_id=listing_id, child_id=child_id,
         file_name=file.filename or "image", mime=mime, size=len(blob),
-        data=base64.b64encode(blob).decode(),
+        data=base64.b64encode(blob).decode(), role=role,
         sort_order=((last.sort_order or 0) + 1) if last else 0,
         public_token=secrets.token_urlsafe(24),
     )
@@ -831,13 +853,24 @@ def _problems(row: AmazonListing, db: Session) -> list:
             if suf and (c.axis1 or "").strip() and sku_suffix(c.axis1)                     and not suf.startswith(sku_suffix(c.axis1)):
                 p.append(f"[{c.sku}] SKUと色（{c.axis1}）が食い違っています。"
                          "色の並べ替えでずれた可能性があります")
+        n_shared = len([i for i in imgs if i.child_id is None])
+        if n_shared > AMAZON_IMAGE_SLOTS - 2:
+            p.append(f"共通の画像が{n_shared}枚あります。"
+                     f"メインとバリエーションを入れると{AMAZON_IMAGE_SLOTS}枚に"
+                     f"収まらないので、古いものから送られません"
+                     f"（共通は{AMAZON_IMAGE_SLOTS - 2}枚までが目安です）")
         for c in kids:
             who = c.axis1 or c.title[:16] if (c.axis1 or c.title) else c.sku
             if not (c.axis1 or "").strip():
                 p.append(f"[{c.title[:16] if c.title else c.sku}] 色が空です")
-            # 色ごとの画像が無ければ共通を使う。どちらも無ければ画像なし
-            if imgs and not shared and not any(i.child_id == c.id for i in imgs):
+            # メイン画像は色ごとに要る。共通しか無いと、どの色も
+            # 同じ写真になってしまう
+            own = [i for i in imgs if i.child_id == c.id]
+            if imgs and not any(i.role == "main" for i in own) and not own                     and not shared:
                 p.append(f"[{who}] 画像がありません（共通の画像もありません）")
+            elif imgs and shared and not any(i.role == "main" for i in own)                     and not own:
+                p.append(f"[{who}] メイン画像がありません。"
+                         "共通の画像で代用されるので、色ごとの写真を入れてください")
     return p
 
 
@@ -1258,14 +1291,29 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
             "marketplace_id": mp, "value": row.weight, "unit": "kilograms",
         }]
 
-    # 画像。この子ぶんが無ければ親の画像を使う
+    # 画像の並び。商品画像の大半は全色で同じなので共通に入れておき、
+    # 色で変わるメインとバリエーションだけを色ごとに持たせる。
+    #   その色のメイン → 共通の画像すべて → その色のバリエーション画像
+    # バリエーション画像はAmazonでも最後尾に出るので、末尾に置く。
     base = _public_base()
     if base:
         imgs = (db.query(AmazonListingImage)
                 .filter(AmazonListingImage.listing_id == row.id)
                 .order_by(AmazonListingImage.sort_order).all())
-        mine = ([i for i in imgs if i.child_id == child.id]
-                or [i for i in imgs if i.child_id is None])
+        shared = [i for i in imgs if i.child_id is None]
+        ownall = [i for i in imgs if i.child_id == child.id]
+        main = next((i for i in ownall if i.role == "main"), None)
+        var = next((i for i in ownall if i.role == "variation"), None)
+        rest = [i for i in ownall if i is not main and i is not var]
+        if main is None:
+            # 役割を決めていない古いデータや、共通しか無い商品に備える
+            main = rest.pop(0) if rest else (shared[0] if shared else None)
+        mid = rest + [i for i in shared if i is not main]
+        # Amazonが受け取れるのはメイン1枚＋サブ8枚の計9枚。溢れるときは
+        # 真ん中（共通）から落とす。メインとバリエーションは必ず残す
+        # （バリエーション画像は最後尾に出したいので、ここで切られては困る）
+        room = AMAZON_IMAGE_SLOTS - (1 if main else 0) - (1 if var else 0)
+        mine = ([main] if main else []) + mid[:max(0, room)]             + ([var] if var else [])
         urls = [f"{base}/api/amazon-listings/public-image/{i.public_token}"
                 for i in mine]
         if urls:
@@ -1274,7 +1322,7 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
             if len(urls) > 1:
                 a["other_product_image_locator"] = [
                     {"marketplace_id": mp, "media_location": u}
-                    for u in urls[1:9]]
+                    for u in urls[1:AMAZON_IMAGE_SLOTS]]
 
     # バリエーションの子。親との紐づけと、軸の値を入れる
     if parent_sku is not None:
@@ -1355,7 +1403,7 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
             if len(urls) > 1:
                 a["other_product_image_locator"] = [
                     {"marketplace_id": mp, "media_location": u}
-                    for u in urls[1:9]]
+                    for u in urls[1:AMAZON_IMAGE_SLOTS]]
 
     for k, v in extra.items():
         if v is None or (isinstance(v, str) and not v.strip()):

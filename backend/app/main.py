@@ -226,6 +226,8 @@ def _migrate():
         # キーワード分析：商品管理番号
         ("title_optimizations","manage_number", "ALTER TABLE title_optimizations ADD COLUMN manage_number VARCHAR"),
         # まとめ買い除外キャップ
+        ("amazon_listing_images","role",
+         "ALTER TABLE amazon_listing_images ADD COLUMN role VARCHAR"),
         ("rakuten_settings","order_qty_cap", "ALTER TABLE rakuten_settings ADD COLUMN order_qty_cap INTEGER DEFAULT 3"),
         # 在庫切れフラグ
         ("rakuten_daily_sales","is_stockout", "ALTER TABLE rakuten_daily_sales ADD COLUMN is_stockout BOOLEAN DEFAULT FALSE"),
