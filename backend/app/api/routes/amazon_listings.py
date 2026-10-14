@@ -1359,8 +1359,10 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
 
     price = child.price or row.price
     if price:
+        # audience が無いと、誰向けの値段か決まらず申し出として成立しない。
+        # 価格が入らないので出品情報が埋まらず、ASINが出ないままになる
         a["purchasable_offer"] = [{
-            "marketplace_id": mp, "currency": "JPY",
+            "marketplace_id": mp, "audience": "ALL", "currency": "JPY",
             "our_price": [{"schedule": [{"value_with_tax": int(price)}]}],
         }]
     # FBAか自己発送か。DEFAULT は自己発送を意味するので、
@@ -1424,18 +1426,6 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
             for n, u in enumerate(urls[1:AMAZON_IMAGE_SLOTS], start=1):
                 a[f"other_product_image_locator_{n}"] = [
                     {"marketplace_id": mp, "media_location": u}]
-
-    # 商品コード（JAN）。これが無いとAmazonは新しいASINを作れない。
-    # 送っていなかったため、受け付けられてもASINが出ず、
-    # セラーセントラルで「不足している情報」のままだった。
-    # 13桁のJANはEANとして送る（JANはEAN-13と同じ規格）
-    jan = (child.jan or "").strip() if child is not None else ""
-    if jan:
-        a["externally_assigned_product_identifier"] = [{
-            "marketplace_id": mp,
-            "type": "ean" if len(jan) == 13 else "upc",
-            "value": jan,
-        }]
 
     # バリエーションの子。親との紐づけと、軸の値を入れる
     if parent_sku is not None:
