@@ -10,6 +10,7 @@ import io
 import json
 import re
 import secrets
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -1628,6 +1629,12 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
                 notes.append(f"画像が1枚も入っていません（送ったのは{want}枚）")
             elif want and have < want:
                 notes.append(f"画像が足りません（Amazon {have}枚 / 送ったのは{want}枚）")
+            want_price = c.price or row.price
+            if want_price and not got.get("price"):
+                notes.append(
+                    f"値段が入っていません（送ったのは{int(want_price)}円）。"
+                    "値段が無いと在庫管理で「出品情報がありません」になり、"
+                    "ASINが出ていても売れる状態になりません")
             if not got.get("fnsku"):
                 notes.append("FNSKUがまだ出ていません（FBA在庫を作ると出ます）")
             if not got.get("asin"):
@@ -1642,6 +1649,7 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
             "kind": "子" if has_variation else "単品", "sku": c.sku,
             "ok": not notes, "asin": got.get("asin"),
             "fnsku": got.get("fnsku"), "color": got.get("color"),
+            "price": got.get("price"),
             "images": got.get("image_count"), "notes": notes,
             "url": (f"https://www.amazon.co.jp/dp/{got['asin']}"
                     if got.get("asin") else None),
@@ -1652,6 +1660,35 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
         "note": ("画像が正しい色のものかまでは分かりません。"
                  "商品ページを開いて目で確かめてください"),
     }
+
+
+# 親ができるまで待てる上限（1リクエスト全体で）。
+# 画面側の待ち時間は3分なので、それより短くしておく
+_PARENT_WAIT_SECONDS = 120
+_PARENT_POLL_SECONDS = 10
+
+
+def _wait_for_parent(sku: str, deadline: float) -> dict:
+    """親がAmazonのカタログにできるまで待つ。
+
+    出品のPUTが返す ACCEPTED は「依頼を受け取った」という意味でしかなく、
+    カタログに商品ができた印ではない。Amazonの処理は後追いなので、
+    受け取った直後に子を送ると、親はまだ存在しない。
+    そうすると子は必ず
+
+        商品がカタログにないため、SKUに出品情報を追加できません
+
+    で弾かれる。送る中身をいくら直しても直らなかったのはこれが理由で、
+    親子が組めず、子が全滅していた。
+    ASINが出たら親ができた合図なので、それまで待ってから子を送る。
+    """
+    while True:
+        got = amazon_api.fetch_listing(sku)
+        if got.get("asin"):
+            return got
+        if time.monotonic() >= deadline:
+            return got
+        time.sleep(_PARENT_POLL_SECONDS)
 
 
 @router.post("/submit")
@@ -1668,6 +1705,9 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
         raise HTTPException(400, "選ばれていません")
 
     results = []
+    # 親待ちの上限は、1回の送信ぜんたいで使い切る。商品ごとに待つと
+    # 複数まとめて出したときに画面が待ちきれなくなる
+    deadline = time.monotonic() + _PARENT_WAIT_SECONDS
     for lid in body.listing_ids:
         row = db.get(AmazonListing, lid)
         if not row:
@@ -1714,6 +1754,22 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
                 db.commit()
                 results.append(item)
                 continue
+            # 親がカタログにできるのを待ってから子を送る。
+            # 待たずに送ると、親がまだ無いので子が全部弾かれる
+            if has_variation:
+                got = _wait_for_parent(parent_sku, deadline)
+                rec["parent_asin"] = got.get("asin")
+                if not got.get("asin"):
+                    item["ok"] = False
+                    item["error"] = (
+                        "親はAmazonが受け取りましたが、まだカタログに"
+                        "できていません。親のいない子を送ると全部弾かれるので、"
+                        "子はまだ送っていません。数分おいてから、もう一度"
+                        "「④ Amazonへ出品する」を押してください")
+                    row.status = "submitted"
+                    db.commit()
+                    results.append(item)
+                    continue
 
         all_ok = True
         for c in kids:

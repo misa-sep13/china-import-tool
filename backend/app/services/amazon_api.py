@@ -1929,6 +1929,17 @@ def fetch_listing(sku: str) -> dict:
     # 「紐づいている」と出てしまい、組めていないことに気づけなかった。
     # 送った値は別に返し、判定には使わない
     requested_parent = first("child_parent_sku_relationship", "parent_sku")
+
+    # 値段。入っていないと在庫管理で「出品情報がありません」になり、
+    # ASINが出ていても売れる状態にならない。枚数と同じで、
+    # 実際に入ったかどうかは読み戻さないと分からない
+    price = None
+    try:
+        offer = (attrs.get("purchasable_offer") or [{}])[0]
+        price = ((offer.get("our_price") or [{}])[0]
+                 .get("schedule") or [{}])[0].get("value_with_tax")
+    except Exception:
+        price = None
     if not theme:
         theme = first("variation_theme", "name")
 
@@ -1941,6 +1952,7 @@ def fetch_listing(sku: str) -> dict:
         "requested_parent_sku": requested_parent,  # こちらが送った親
         "variation_theme": theme,
         "color": first("color"),
+        "price": price,
         "image_count": len(images),
         "image_keys": images,
         "issues": [{"message": i.get("message"), "severity": i.get("severity")}
