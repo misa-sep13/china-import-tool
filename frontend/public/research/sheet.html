@@ -8061,6 +8061,11 @@ if(FIREBASE_CONFIG.databaseURL){
     box.innerHTML = '';
     let target = null;                 // null＝共通
     const kids = (data.children || []).filter(c => c.id);
+    // 画像を入れると画面を描き直す。そのたびに「共通」へ戻ると、
+    // 色ごとに入れるとき毎回タブを選び直すことになる。
+    // 直前に見ていた色が残っていれば、そこを開いたままにする
+    const keep = box.__imgTarget;
+    if(keep != null && kids.some(c => c.id === keep)) target = keep;
     const imgs = data.images || [];
     const base = API_BASE.replace(/\/api$/, '');
 
