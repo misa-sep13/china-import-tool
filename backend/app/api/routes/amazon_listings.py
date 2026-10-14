@@ -1425,6 +1425,18 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
                 a[f"other_product_image_locator_{n}"] = [
                     {"marketplace_id": mp, "media_location": u}]
 
+    # 商品コード（JAN）。これが無いとAmazonは新しいASINを作れない。
+    # 送っていなかったため、受け付けられてもASINが出ず、
+    # セラーセントラルで「不足している情報」のままだった。
+    # 13桁のJANはEANとして送る（JANはEAN-13と同じ規格）
+    jan = (child.jan or "").strip() if child is not None else ""
+    if jan:
+        a["externally_assigned_product_identifier"] = [{
+            "marketplace_id": mp,
+            "type": "ean" if len(jan) == 13 else "upc",
+            "value": jan,
+        }]
+
     # バリエーションの子。親との紐づけと、軸の値を入れる
     if parent_sku is not None:
         a["parentage_level"] = one("child")
