@@ -704,7 +704,7 @@ def prepare(listing_id: int, db: Session = Depends(get_db)):
 
 # 出ていても送信は止めないもの。画像は後から足せるし、
 # ノーブランドの案内はそもそも「そう出します」という知らせなので
-_NOT_BLOCKING = ("画像がありません", "ノーブランド")
+_NOT_BLOCKING = ("画像がありません",)
 
 
 def _blocking(problems: list) -> list:
@@ -735,16 +735,7 @@ def _problems(row: AmazonListing, db: Session) -> list:
         p.append(f"商品タイトルが長すぎます（{len(row.title)}字）")
     if not row.product_type:
         p.append("商品タイプがありません。「出品の準備」を押してください")
-    st = db.query(AmazonResearchSettings).first()
-    if st is None or not st.brand_ready:
-        p.append("ブランド登録がまだなので「ノーブランド」で出します"
-                 "（自社ブランド名では弾かれます）")
-        # ブランド名がタイトルに残っていると、ノーブランドと食い違って弾かれる
-        own = ((st.brand_name if st else "") or "").strip()
-        if own and own.lower() in (row.title or "").lower():
-            p.append(f"商品タイトルに「{own}」が入っています。"
-                     "ノーブランドで出す間は外してください")
-    elif not (row.brand or st.brand_name or "").strip():
+    if not _brand_for(db, row).strip():
         p.append("ブランド名がありません")
     if not row.price:
         p.append("価格がありません")
@@ -814,19 +805,18 @@ def _problems(row: AmazonListing, db: Session) -> list:
 
 # ---------- Amazonへ送る ----------
 
-# ブランド登録（Amazonブランド登録）が済むまで、自社ブランド名では弾かれる。
-# 済むまではブランド無しで出す。設定の brand_ready で切り替える。
+# 自社ブランドのAmazonブランド登録が通ったので、これからは必ず自社ブランドで
+# 出す。ノーブランド品では登録しない。
 #
-# セラーセントラルの「この商品にはブランド名がありません」に当たる値は
-# 「ノーブランド品」。画面の表記に合わせてある。
-NO_BRAND = "ノーブランド品"
+# 商品ごとの「ブランド名」は空が既定で、空なら設定のブランド名を使う。
+# 設定も空なら、ここの既定に落とす（未設定のまま無ブランドで出ないように）。
+DEFAULT_BRAND = "Aqualiora"
 
 
 def _brand_for(db: Session, row: AmazonListing) -> str:
     st = db.query(AmazonResearchSettings).first()
-    if st is not None and st.brand_ready:
-        return (row.brand or st.brand_name or "").strip()
-    return NO_BRAND
+    own = (st.brand_name if st else "") or ""
+    return ((row.brand or "").strip() or own.strip() or DEFAULT_BRAND)
 
 
 # ---------- どのカテゴリでもだいたい聞かれる項目 ----------

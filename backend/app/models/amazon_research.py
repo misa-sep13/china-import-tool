@@ -99,10 +99,12 @@ class AmazonResearchSettings(Base):
     # Amazonへの新規出品に使う。GS1事業者コードは自社に割り当てられた固定値で、
     # 後ろに連番を付けて13桁のJANにする（採番の実体は JanCode 台帳）
     gs1_prefix = Column(String)            # 例: 4570001（7桁）/ 456901234（9桁）
-    brand_name = Column(String)            # 出品時のブランド名
-    # ブランド登録（Amazonブランド登録）が済んだか。
-    # 済むまで自社ブランド名では弾かれるので、「ノーブランド」で出す
-    brand_ready = Column(Boolean, default=False)
+    # 出品時のブランド名。ブランド登録が通ったので、これからは必ず
+    # 自社ブランドで出す（ノーブランド品では登録しない）
+    brand_name = Column(String, default="Aqualiora")
+    # 以前「ブランド登録が済むまでノーブランドで出す」ために使っていた印。
+    # もう見ていないが、古いデータが入っているので列は残してある
+    brand_ready = Column(Boolean, default=True)
     # どのカテゴリでもだいたい聞かれる項目の既定値（JSON）。
     # 商品ごとに入れ直さなくて済むよう、ここに1度だけ入れておく
     common_attrs = Column(Text)

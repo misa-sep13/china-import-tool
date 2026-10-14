@@ -57,7 +57,7 @@ export default function ListingTab() {
       ])
       setRows(r.data.rows || [])
       setGs1(g ? g.data : null)
-      if (st) setBrand({ name: st.data.brand_name || '', ready: !!st.data.brand_ready })
+      if (st) setBrand({ name: st.data.brand_name || '' })
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     }
@@ -66,8 +66,7 @@ export default function ListingTab() {
   const saveBrand = async (next) => {
     setBrand(next)
     try {
-      await api.put('/amazon-research/settings',
-        { brand_name: next.name, brand_ready: next.ready })
+      await api.put('/amazon-research/settings', { brand_name: next.name })
       await load()
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
@@ -171,38 +170,25 @@ export default function ListingTab() {
       </div>
 
       {brand && (
-        <div style={{ ...card, marginBottom: 10,
-          background: brand.ready ? '#f0fdf4' : '#fffbeb',
-          borderColor: brand.ready ? '#86efac' : '#fde68a',
-          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 13, fontWeight: 700,
-            color: brand.ready ? '#166534' : '#92400e' }}>
-            {brand.ready ? '🏷 ブランドで出します' : '🏷 いまはノーブランド品で出しています'}
+        <div style={{ ...card, marginBottom: 10, background: '#f0fdf4',
+          borderColor: '#86efac', display: 'flex', alignItems: 'center',
+          gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: '#166534' }}>
+            🏷 ブランド
           </span>
-          <label style={{ fontSize: 12, color: C.sub, display: 'flex',
-            alignItems: 'center', gap: 5 }}>
-            ブランド名
-            <input value={brand.name}
-              placeholder="Aqualiora"
-              onChange={e => setBrand({ ...brand, name: e.target.value })}
-              style={{ ...input, width: 150, fontSize: 12, padding: '3px 6px' }} />
-          </label>
+          <input value={brand.name}
+            placeholder="Aqualiora"
+            onChange={e => setBrand({ ...brand, name: e.target.value })}
+            style={{ ...input, width: 170, fontSize: 12, padding: '3px 6px' }} />
           <button className="btn btn-secondary" style={{ fontSize: 12 }}
             disabled={busy || !brand.name.trim()}
             onClick={() => saveBrand({ ...brand, name: brand.name.trim() })}>
             保存
           </button>
-          <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 5 }}>
-            <input type="checkbox" checked={brand.ready}
-              disabled={!brand.name.trim()}
-              onChange={e => saveBrand({ ...brand, ready: e.target.checked })} />
-            ブランド登録が通ったので、このブランド名で出す
-          </label>
           <span style={{ fontSize: 11, color: C.sub, width: '100%' }}>
-            {brand.ready
-              ? `これから出すものは「${brand.name}」で登録されます。すでに出したものは変わりません。`
-              : 'Amazonのブランド登録が通るまでは、自社ブランド名で出すと弾かれます。'
-                + '通ったらチェックを入れてください。'}
+            これから出すものは「{brand.name.trim() || 'Aqualiora'}」で登録されます。
+            商品ごとに別のブランドにしたいときだけ、その商品の「ブランド名」に入れてください
+            （空ならここの値を使います）。
           </span>
         </div>
       )}

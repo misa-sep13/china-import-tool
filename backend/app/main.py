@@ -470,6 +470,19 @@ def _migrate():
     except Exception as e:
         logger.warning(f"migrate: shipment_order_items.product_id FK fix -> {e}")
 
+    # ブランド登録が通ったので、入れていなければ自社ブランドを入れておく。
+    # 空のままだと、何のブランドで出るのか画面から分からない
+    try:
+        if "amazon_research_settings" in inspector.get_table_names():
+            with engine.begin() as conn:
+                r = conn.execute(text(
+                    "UPDATE amazon_research_settings SET brand_name = 'Aqualiora' "
+                    "WHERE brand_name IS NULL OR brand_name = ''"))
+            if r.rowcount:
+                logger.info(f"migrate: backfilled brand_name ({r.rowcount}件)")
+    except Exception as e:
+        logger.warning(f"migrate: brand_name backfill -> {e}")
+
     drop_migrations = [
         ("order_settings", "new_product_required_days"),
         ("order_settings", "sale_extra_days"),
