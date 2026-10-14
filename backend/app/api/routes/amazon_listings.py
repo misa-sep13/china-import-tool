@@ -1569,6 +1569,15 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
         else:
             if not got.get("variation_theme"):
                 notes.append("バリエーションテーマが入っていません")
+            if not got.get("asin"):
+                notes.append("ASINがまだ出ていません。"
+                             "必須項目が足りないと、受け付けられても商品にならない")
+            # 受け付けたあとで見つかった問題は、読み戻さないと分からない。
+            # 子だけ拾っていて親を拾っていなかったため、親の不足が
+            # 見えず「不足している情報」の理由にたどり着けなかった
+            for i in (got.get("issues") or []):
+                if i.get("message"):
+                    notes.append(f"Amazonからの指摘: {i.get('message')}")
         if notes:
             ng += 1
         out.append({
@@ -1604,6 +1613,9 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
                 notes.append(f"画像が足りません（Amazon {have}枚 / 送ったのは{want}枚）")
             if not got.get("fnsku"):
                 notes.append("FNSKUがまだ出ていません（FBA在庫を作ると出ます）")
+            if not got.get("asin"):
+                notes.append("ASINがまだ出ていません。"
+                             "必須項目が足りないと、受け付けられても商品にならない")
             for i in (got.get("issues") or []):
                 if i.get("severity") in ("ERROR", "WARNING"):
                     notes.append(f"Amazonからの指摘: {i.get('message')}")
