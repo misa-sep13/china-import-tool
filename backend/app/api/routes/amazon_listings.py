@@ -1603,9 +1603,11 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
                     notes.append("親に紐づいていません（単独の商品になっています）")
                 elif p != parent_sku:
                     notes.append(f"別の親に紐づいています（{p}）")
-            # 画像。送ったぶんが入っているか
+            # 画像。Amazonが持てるのはメイン1枚＋サブ8枚の計9枚なので、
+            # 用意した枚数がそれを超えていても、入るのは9枚まで。
+            # 用意した枚数と比べると、正常なのに「足りません」と出てしまう
             mine = len([i for i in imgs if i.child_id == c.id])
-            want = mine + shared
+            want = min(mine + shared, AMAZON_IMAGE_SLOTS)
             have = got.get("image_count") or 0
             if want and not have:
                 notes.append(f"画像が1枚も入っていません（送ったのは{want}枚）")
