@@ -8221,6 +8221,27 @@ if(FIREBASE_CONFIG.databaseURL){
         cell.textContent = '＋ ' + label;
         cell.addEventListener('click', () => pick(roleKey));
       }
+      // ここへ直接ドラッグ＆ドロップできるようにする。
+      // 枠の外に落ちると役割なしで入ってしまうので、この枠で受け止める
+      cell.addEventListener('dragover', e => {
+        if(dragId != null) return;          // 並べ替え中のものは受けない
+        e.preventDefault();
+        e.stopPropagation();
+        cell.style.outline = '2px solid #2563eb';
+      });
+      cell.addEventListener('dragleave', () => { cell.style.outline = ''; });
+      cell.addEventListener('drop', e => {
+        if(dragId != null) return;
+        e.preventDefault();
+        e.stopPropagation();                // box側の「追加」へ渡さない
+        cell.style.outline = '';
+        const fs = (e.dataTransfer && e.dataTransfer.files) || [];
+        if(!fs.length) return;
+        pickRole = roleKey;
+        upload(fs);
+      });
+      cell.title = 'クリックで選ぶか、画像をここへドラッグ';
+
       wrap.appendChild(cell);
       const bar = el('div', 'an-row');
       const b = el('button', 'mini', im ? '差し替え' : '入れる');
@@ -8248,6 +8269,7 @@ if(FIREBASE_CONFIG.databaseURL){
 
     function render(){
       strip.innerHTML = '';
+      box.__imgTarget = target;
       if(target !== null){
         const two = el('div', 'reg-slots');
         two.appendChild(slot('main', 'メイン画像',
@@ -8258,6 +8280,7 @@ if(FIREBASE_CONFIG.databaseURL){
         strip.appendChild(el('div', 'an-note',
           'この2枚のあいだに「共通」の画像がそのまま入ります。'
           + '商品説明の画像は共通へ入れてください'));
+        markTabs();
         return;
       }
       const mine = (data.images || []).filter(
@@ -8311,16 +8334,21 @@ if(FIREBASE_CONFIG.databaseURL){
         strip.appendChild(cell);
       });
       const add = el('div', 'reg-img add', '＋ 画像を追加');
-      add.addEventListener('click', () => file.click());
+      add.addEventListener('click', () => { pickRole = null; file.click(); });
       strip.appendChild(add);
-      // タブの選択を出し直す
+      markTabs();
+    }
+
+    // いま選んでいるタブを塗り直す。色タブは早めに描き終えるので、
+    // 両方の経路から必ず通るよう切り出してある
+    // （これを本体に置いていたため、色を選んでも共通が選ばれたままに見えた）
+    function markTabs(){
       const tabs = box.querySelector('.an-row');
-      if(tabs){
-        [...tabs.querySelectorAll('button')].forEach((b, n) => {
-          const id = n === 0 ? null : kids[n - 1].id;
-          b.classList.toggle('on', target === id);
-        });
-      }
+      if(!tabs) return;
+      [...tabs.querySelectorAll('button')].forEach((b, n) => {
+        const id = n === 0 ? null : kids[n - 1].id;
+        b.classList.toggle('on', target === id);
+      });
     }
     render();
 
@@ -8329,11 +8357,19 @@ if(FIREBASE_CONFIG.databaseURL){
     // 重なった状態で1枚ドロップすると、その回数ぶん同じ画像が入る
     // （共通が9枚になった）。登録は1度だけにして、中身は毎回差し替える
     box.__imgUpload = upload;
+    box.__imgSay = imgSay;
     if(!box.__imgDndBound){
       box.__imgDndBound = true;
       box.addEventListener('dragover', e => e.preventDefault());
       box.addEventListener('drop', e => {
         e.preventDefault();
+        // 色タブは「メイン」「バリエーション」の枠で受けるので、
+        // 枠の外に落ちたものは役割が決まらない。入れずに案内する
+        if(box.__imgTarget !== null){
+          if(box.__imgSay) box.__imgSay(
+            'メイン画像かバリエーション画像の枠へ落としてください', true);
+          return;
+        }
         if(box.__imgUpload) box.__imgUpload(e.dataTransfer.files);
       });
     }
