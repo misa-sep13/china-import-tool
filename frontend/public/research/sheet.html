@@ -7863,6 +7863,10 @@ if(FIREBASE_CONFIG.databaseURL){
 
       const out = el('div', 'reg-out');
       panel.appendChild(out);
+      // 出品したあとは画面を描き直すので、そのままだと結果が消える
+      // （一瞬出てすぐ消え、出品できたのか分からなかった）。
+      // 覚えておいて、描き直したあとも出し続ける
+      if(lastSubmit[data.id]) drawSubmit(out, lastSubmit[data.id]);
 
       prep.addEventListener('click', async () => {
         prep.disabled = true; opStatus.textContent = '調べています…';
@@ -7940,8 +7944,14 @@ if(FIREBASE_CONFIG.databaseURL){
           await flush();
           const r = await regApi('/submit', {method: 'POST',
             body: JSON.stringify({listing_ids: [data.id], dry_run: false})});
+          lastSubmit[data.id] = r.results[0];
           drawSubmit(out, r.results[0]);
-          opStatus.textContent = '';
+          const sent = r.results[0].sent || [];
+          const ng = sent.filter(x => !x.ok).length;
+          opStatus.textContent = ng
+            ? (sent.length - ng) + '件を出品、' + ng + '件が失敗しました'
+            : sent.length + '件すべて出品しました';
+          opStatus.classList.toggle('warn', !!ng);
           mergeData(await regApi('/' + data.id));
           draw();
         }catch(e){ opStatus.textContent = String(e.message || e); }
@@ -8593,6 +8603,9 @@ if(FIREBASE_CONFIG.databaseURL){
     box.appendChild(go);
     out.appendChild(box);
   }
+
+  // 出品の結果。画面を描き直しても消えないよう、リサーチごとに覚えておく
+  const lastSubmit = {};
 
   function drawSubmit(out, r){
     out.innerHTML = '';
