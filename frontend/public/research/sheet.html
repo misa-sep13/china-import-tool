@@ -7836,6 +7836,21 @@ if(FIREBASE_CONFIG.databaseURL){
       });
 
       panel.appendChild(el('div', 'reg-sec', '進める（❶→❹の順に押します）'));
+      // 商品タイプが実態と違うと、そのタイプの必須項目が埋まらず
+      // 「不足している情報」になりASINが出ない。❶を押した一瞬しか
+      // 出ていなかったので、いつでも見えるようにする
+      {
+        const pt = (data.product_type || '').trim();
+        const line = el('div', 'reg-hint');
+        line.appendChild(document.createTextNode('商品タイプ：'));
+        const b = el('b', '', pt || '（まだ決まっていません。❶を押してください）');
+        if(pt) b.style.color = '#1d4ed8';
+        line.appendChild(b);
+        if(pt) line.appendChild(document.createTextNode(
+          '　※ 商品の中身と合っていないと、必須項目が埋まらず'
+          + 'Amazonで「不足している情報」になります'));
+        panel.appendChild(line);
+      }
       const ops = el('div', 'an-row');
       const prep = el('button', 'mini', '❶ 出品の準備（商品タイプ・SKU・JAN）');
       prep.dataset.writes = '1';
