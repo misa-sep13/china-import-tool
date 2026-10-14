@@ -401,6 +401,9 @@
   .img-drop{border:1px dashed var(--line-2);border-radius:var(--r-sm);background:var(--surface);min-height:56px;
     display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;padding:3px;
     transition:border-color .12s,background .12s;}
+  .reg-slots{display:flex;gap:14px;flex-wrap:wrap;}
+  .reg-slot{display:flex;flex-direction:column;gap:5px;max-width:190px;}
+  .reg-slot-head{font-size:11.5px;font-weight:700;color:var(--brand-d);}
   .img-drop:hover{border-color:var(--brand);background:#f6f9ff;}
   .img-drop.over{border-color:var(--brand);background:var(--brand-soft);border-style:solid;}
   .img-drop .ph{font-size:10px;color:var(--ink-4);line-height:1.5;padding:4px 2px;}
@@ -8066,16 +8069,19 @@ if(FIREBASE_CONFIG.databaseURL){
       [{id: null, label: '共通'}].concat(
         kids.map(c => ({id: c.id, label: c.axis1 || c.sku || '（色なし）'}))
       ).forEach(t => {
-        const n = imgs.filter(i => (i.child_id == null ? null : i.child_id) === t.id).length;
-        const b = el('button', 'mini' + (target === t.id ? ' on' : ''),
-                     t.label + ' ' + n + '枚');
+        const own = imgs.filter(
+          i => (i.child_id == null ? null : i.child_id) === t.id);
+        const txt = t.id === null
+          ? t.label + ' ' + own.filter(i => !i.role).length + '枚'
+          : t.label + ' ' + own.filter(i => i.role).length + '/2';
+        const b = el('button', 'mini' + (target === t.id ? ' on' : ''), txt);
         b.addEventListener('click', () => { target = t.id; render(); });
         tabs.appendChild(b);
       });
       tabs.appendChild(el('span', 'an-note',
-        '色ごとに入れていないものは「共通」を使います／'
-        + '画像はドラッグで並べ替え（左端がメイン）・'
-        + IMG_MAX_PER_TARGET + '枚まで'));
+        '「共通」は全色に入ります（ドラッグで並べ替え・'
+        + IMG_MAX_PER_TARGET + '枚まで）。'
+        + '色タブではメイン画像とバリエーション画像だけを入れます'));
       box.appendChild(tabs);
     }
 
@@ -8133,9 +8139,12 @@ if(FIREBASE_CONFIG.databaseURL){
       }
       // Amazonに送れるのは1SKUあたり10枚まで。入れても送られないので、
       // ここで止める（サーバー側でも同じ数で断っている）
+      // メイン・バリエーションは1枚だけ。入れ直すと置き換わる
+      if(pickRole){ list.length = Math.min(list.length, 1); }
       const already = (data.images || []).filter(
-        i => (i.child_id == null ? null : i.child_id) === target).length;
-      const room = IMG_MAX_PER_TARGET - already;
+        i => (i.child_id == null ? null : i.child_id) === target
+             && !i.role).length;
+      const room = pickRole ? 1 : IMG_MAX_PER_TARGET - already;
       if(room <= 0){
         imgSay('画像は' + IMG_MAX_PER_TARGET + '枚までです（いま' + already
           + '枚）。要らないものを消してから入れてください', true);
@@ -8164,8 +8173,11 @@ if(FIREBASE_CONFIG.databaseURL){
           const h = {};
           const tk = String(arsCfgEarly('__ARS_TOKEN__') || AUTH_TOKEN || '');
           if(tk) h['Authorization'] = 'Bearer ' + tk;
-          const res = await fetch(API_BASE + '/amazon-listings/' + data.id + '/images'
-            + (target ? '?child_id=' + target : ''),
+          const q = [];
+          if(target) q.push('child_id=' + target);
+          if(pickRole) q.push('role=' + pickRole);
+          const res = await fetch(API_BASE + '/amazon-listings/' + data.id
+            + '/images' + (q.length ? '?' + q.join('&') : ''),
             {method: 'POST', headers: h, body: fd});
           if(res.ok){ ok++; continue; }
           let detail = 'HTTP ' + res.status;
@@ -8179,6 +8191,7 @@ if(FIREBASE_CONFIG.databaseURL){
           errs.push(f.name + '：サーバーに繋がりませんでした');
         }
       }
+      pickRole = null;
       await reload();
       const msgs = [];
       if(ok) msgs.push(ok + '枚を追加しました');
@@ -8190,10 +8203,65 @@ if(FIREBASE_CONFIG.databaseURL){
     }
     file.addEventListener('change', () => { upload(file.files); file.value = ''; });
 
+    // 色ごとの1枚だけの欄（メイン／バリエーション）。
+    // 商品画像の大半は全色で同じなので共通に入れ、色で変わるこの2枚だけ
+    // 色ごとに持たせる。入れ直すと前のものは自動で置き換わる
+    function slot(roleKey, label, hint){
+      const im = (data.images || []).find(
+        i => i.child_id === target && i.role === roleKey);
+      const wrap = el('div', 'reg-slot');
+      wrap.appendChild(el('div', 'reg-slot-head', label));
+      const cell = el('div', 'reg-img' + (im ? '' : ' add'));
+      if(im){
+        const g = document.createElement('img');
+        g.src = base + im.url;
+        cell.appendChild(g);
+        cell.addEventListener('click', () => showZoom(base + im.url));
+      }else{
+        cell.textContent = '＋ ' + label;
+        cell.addEventListener('click', () => pick(roleKey));
+      }
+      wrap.appendChild(cell);
+      const bar = el('div', 'an-row');
+      const b = el('button', 'mini', im ? '差し替え' : '入れる');
+      b.addEventListener('click', () => pick(roleKey));
+      bar.appendChild(b);
+      if(im){
+        const d = el('button', 'mini danger', '削除');
+        d.dataset.writes = '1';
+        d.addEventListener('click', async () => {
+          if(!confirm('この画像を消しますか？')) return;
+          await fetch(API_BASE + '/amazon-listings/images/' + im.id,
+            {method: 'DELETE', headers: apiHeaders()});
+          await reload();
+        });
+        bar.appendChild(d);
+      }
+      wrap.appendChild(bar);
+      wrap.appendChild(el('div', 'an-note', hint));
+      return wrap;
+    }
+
+    // 役割つきで1枚だけ選ばせる
+    let pickRole = null;
+    function pick(roleKey){ pickRole = roleKey; file.click(); }
+
     function render(){
       strip.innerHTML = '';
+      if(target !== null){
+        const two = el('div', 'reg-slots');
+        two.appendChild(slot('main', 'メイン画像',
+          'この色の商品写真。1枚目に出ます'));
+        two.appendChild(slot('variation', 'バリエーション画像',
+          '色が並んだ画像。最後尾に出ます'));
+        strip.appendChild(two);
+        strip.appendChild(el('div', 'an-note',
+          'この2枚のあいだに「共通」の画像がそのまま入ります。'
+          + '商品説明の画像は共通へ入れてください'));
+        return;
+      }
       const mine = (data.images || []).filter(
-        i => (i.child_id == null ? null : i.child_id) === target);
+        i => (i.child_id == null ? null : i.child_id) === target && !i.role);
       mine.forEach((im, i) => {
         const cell = el('div', 'reg-img');
         // つかんで動かせるようにする。1枚目がメイン画像になるので、
