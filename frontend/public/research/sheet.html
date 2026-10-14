@@ -8051,6 +8051,9 @@ if(FIREBASE_CONFIG.databaseURL){
   //
   // Amazonは画像をURLで取りに来るので、サーバーに預けて公開URLで読ませる。
   // バリエーションは色ごとに分けられる（入れていない子は共通を使う）。
+  // Amazonに送れる画像の数（共通・色ごとにそれぞれ）
+  const IMG_MAX_PER_TARGET = 10;
+
   function drawImages(box, data, reload, imgStatus){
     box.innerHTML = '';
     let target = null;                 // null＝共通
@@ -8070,12 +8073,41 @@ if(FIREBASE_CONFIG.databaseURL){
         tabs.appendChild(b);
       });
       tabs.appendChild(el('span', 'an-note',
-        '色ごとに入れていないものは「共通」を使います'));
+        '色ごとに入れていないものは「共通」を使います／'
+        + '画像はドラッグで並べ替え（左端がメイン）・'
+        + IMG_MAX_PER_TARGET + '枚まで'));
       box.appendChild(tabs);
     }
 
     const strip = el('div', 'reg-imgs');
     box.appendChild(strip);
+
+    let dragId = null;                   // いまつかんでいる画像のid
+
+    // つかんだ画像を、落とした先の位置へ入れ替える。
+    // 1枚ずつ動かすと途中で止まったとき並びが崩れるので、
+    // 並べ替えた結果をまとめて1回で送る
+    async function moveImage(fromId, toId){
+      const list = (data.images || []).filter(
+        i => (i.child_id == null ? null : i.child_id) === target);
+      const ids = list.map(i => i.id);
+      const from = ids.indexOf(fromId);
+      const to = ids.indexOf(toId);
+      if(from < 0 || to < 0 || from === to) return;
+      ids.splice(to, 0, ids.splice(from, 1)[0]);
+      imgSay('並べ替えています…');
+      try{
+        const res = await fetch(API_BASE + '/amazon-listings/' + data.id
+          + '/images/order', {method: 'PUT', headers: apiHeaders(),
+            body: JSON.stringify({ids})});
+        if(!res.ok) throw new Error('HTTP ' + res.status);
+        await reload();
+        imgSay('並べ替えました（左端がメイン画像）');
+        setTimeout(() => imgSay(''), 2500);
+      }catch(e){
+        imgSay('並べ替えられませんでした', true);
+      }
+    }
     const file = document.createElement('input');
     file.type = 'file'; file.accept = 'image/*'; file.multiple = true;
     file.style.display = 'none';
@@ -8099,6 +8131,19 @@ if(FIREBASE_CONFIG.databaseURL){
         imgSay('画像ファイルを選んでください（' + all.length + '件は画像ではありません）', true);
         return;
       }
+      // Amazonに送れるのは1SKUあたり10枚まで。入れても送られないので、
+      // ここで止める（サーバー側でも同じ数で断っている）
+      const already = (data.images || []).filter(
+        i => (i.child_id == null ? null : i.child_id) === target).length;
+      const room = IMG_MAX_PER_TARGET - already;
+      if(room <= 0){
+        imgSay('画像は' + IMG_MAX_PER_TARGET + '枚までです（いま' + already
+          + '枚）。要らないものを消してから入れてください', true);
+        return;
+      }
+      let over = 0;
+      if(list.length > room){ over = list.length - room; list.length = room; }
+
       let ok = 0;
       const errs = [];
       imgSay(list.length + '枚を追加しています…');
@@ -8137,6 +8182,7 @@ if(FIREBASE_CONFIG.databaseURL){
       await reload();
       const msgs = [];
       if(ok) msgs.push(ok + '枚を追加しました');
+      if(over) msgs.push(over + '枚は上限（' + IMG_MAX_PER_TARGET + '枚）を超えるので入れていません');
       if(skipped) msgs.push(skipped + '件は画像ではないので飛ばしました');
       if(errs.length) msgs.push('入らなかったもの → ' + errs.join(' ／ '));
       imgSay(msgs.join('　'), !!errs.length);
@@ -8150,8 +8196,39 @@ if(FIREBASE_CONFIG.databaseURL){
         i => (i.child_id == null ? null : i.child_id) === target);
       mine.forEach((im, i) => {
         const cell = el('div', 'reg-img');
+        // つかんで動かせるようにする。1枚目がメイン画像になるので、
+        // 差し替えたいときは先頭へ持ってくるだけで済む
+        cell.draggable = true;
+        cell.dataset.imgId = im.id;
+        cell.title = 'ドラッグで並べ替え（左端がメイン画像）';
+        cell.style.cursor = 'grab';
+        cell.addEventListener('dragstart', e => {
+          dragId = im.id;
+          cell.style.opacity = '0.4';
+          try{ e.dataTransfer.setData('text/plain', String(im.id)); }catch(_){}
+          e.dataTransfer.effectAllowed = 'move';
+        });
+        cell.addEventListener('dragend', () => {
+          dragId = null; cell.style.opacity = '';
+          [...strip.children].forEach(c => { c.style.outline = ''; });
+        });
+        cell.addEventListener('dragover', e => {
+          if(dragId == null || dragId === im.id) return;
+          e.preventDefault();            // ここへ落とせる合図
+          e.stopPropagation();           // 枠全体の「ファイル追加」へ渡さない
+          cell.style.outline = '2px solid #2563eb';
+        });
+        cell.addEventListener('dragleave', () => { cell.style.outline = ''; });
+        cell.addEventListener('drop', e => {
+          if(dragId == null || dragId === im.id) return;
+          e.preventDefault();
+          e.stopPropagation();           // 画像の追加として扱わせない
+          cell.style.outline = '';
+          moveImage(dragId, im.id);
+        });
         const img = document.createElement('img');
         img.src = base + im.url;
+        img.draggable = false;           // 画像単体ではなく枠ごとつかませる
         cell.appendChild(img);
         if(i === 0) cell.appendChild(el('span', 'reg-main', 'メイン'));
         const del = el('button', 'mini danger', '削除');

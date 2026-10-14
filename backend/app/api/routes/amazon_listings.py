@@ -33,6 +33,9 @@ from app.services import amazon_api
 router = APIRouter(prefix="/amazon-listings", tags=["amazon-listings"])
 
 MAX_IMAGE_BYTES = 8 * 1024 * 1024      # Amazonが取りに来られる大きさの目安
+# 1つのSKUに付けられる画像の数。共通と色ごとに別々に数える。
+# これを超えて入れてもAmazonへは送られず、消す手間が増えるだけ
+MAX_IMAGES_PER_TARGET = 10
 
 
 # ---------- 入れ物 ----------
@@ -510,6 +513,15 @@ async def add_image(listing_id: int, child_id: Optional[int] = None,
     if not row:
         raise HTTPException(404, "ありません")
 
+    have = (db.query(AmazonListingImage)
+            .filter(AmazonListingImage.listing_id == listing_id,
+                    AmazonListingImage.child_id == child_id).count())
+    if have >= MAX_IMAGES_PER_TARGET:
+        where = "この色" if child_id else "共通"
+        raise HTTPException(
+            400, f"{where}の画像は{MAX_IMAGES_PER_TARGET}枚までです"
+                 f"（いま{have}枚）。要らないものを消してから入れてください")
+
     blob = await file.read()
     if not blob:
         raise HTTPException(400, "中身が空です")
@@ -544,6 +556,32 @@ def delete_image(image_id: int, db: Session = Depends(get_db)):
     db.delete(img)
     db.commit()
     return {"deleted": True}
+
+
+class ImageOrderIn(BaseModel):
+    ids: list[int]
+
+
+@router.put("/{listing_id:int}/images/order")
+def reorder_images(listing_id: int, body: ImageOrderIn,
+                   db: Session = Depends(get_db)):
+    """画像の並びをまとめて保存する。渡された順にそのまま並べる。
+
+    1枚ずつ動かすと、途中で止まったときに並びが崩れる。
+    画面でドラッグして離した結果を、1回で受け取る。
+    """
+    imgs = {i.id: i for i in db.query(AmazonListingImage)
+            .filter(AmazonListingImage.listing_id == listing_id).all()}
+    n = 0
+    for order, iid in enumerate(body.ids):
+        img = imgs.get(iid)
+        if img is None:
+            continue
+        if img.sort_order != order:
+            img.sort_order = order
+            n += 1
+    db.commit()
+    return {"updated": n}
 
 
 @router.put("/images/{image_id:int}/order")
