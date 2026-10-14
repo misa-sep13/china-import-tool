@@ -7521,6 +7521,9 @@ if(FIREBASE_CONFIG.databaseURL){
       // 既定はFBA。うちはほぼFBAで出すので、空のまま自己発送で出ると
       // 気づかないまま自分で送ることになる
       ful.value = data.fulfillment || 'fba';
+      // 見えているFBAを保存しておく。選び直すまで保存されないままだと、
+      // 画面はFBAなのに中身は空で、出品時にFBMになってしまう
+      if (!data.fulfillment) put('fulfillment', ful.value);
       ful.addEventListener('change', () => put('fulfillment', ful.value));
       pRow.appendChild(ful);
 

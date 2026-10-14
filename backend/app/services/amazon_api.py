@@ -1943,9 +1943,23 @@ def fetch_listing(sku: str) -> dict:
     if not theme:
         theme = first("variation_theme", "name")
 
+    # 出荷方法。画面でFBAにしていてもFBMで出ていたことがあるので、
+    # 実際にどちらで入ったかを見る
+    channel = None
+    fa = attrs.get("fulfillment_availability")
+    if isinstance(fa, list) and fa and isinstance(fa[0], dict):
+        channel = fa[0].get("fulfillment_channel_code")
+
+    # 法令遵守まわり。在庫管理で「出品情報がありません」と出るとき、
+    # 電池の申告が入っていないことがある（Amazonのエラー 90220）。
+    # 送っているつもりでも入っていないことがあるので、読み戻して確かめる
+    batteries = first("batteries_required")
+
     return {
         "ok": True, "found": True, "sku": sku,
         "asin": s.get("asin"), "fnsku": s.get("fnSku"),
+        "fulfillment_channel": channel,
+        "batteries_required": batteries,
         "item_name": s.get("itemName"),
         "status": s.get("status") or [],
         "parent_sku": parent,                     # Amazonが組んだ親

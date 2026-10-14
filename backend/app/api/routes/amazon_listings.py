@@ -164,10 +164,13 @@ def _fulfillment_of(db: Session, row: AmazonListing) -> str:
     v = (row.fulfillment or "").strip().lower()
     if v:
         return v
+    # シートの「配送」に合わせる。判定は登録時（put("fulfillment", ...)）と
+    # 同じにする。ここだけ「FBAと書いてなければ自己発送」になっていたため、
+    # 画面でFBAと出ているのにFBMで出品されていた
     for c in sync.candidates(_sheet(db), all_status=True):
         if c["research_id"] == row.research_id:
-            return "fba" if c.get("fulfill") == "FBA" else "merchant"
-    return "merchant"
+            return "merchant" if c.get("fulfill") == "自己発送" else "fba"
+    return "fba"
 
 
 def _links_of(src: dict) -> list:
@@ -1635,6 +1638,19 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
                     f"値段が入っていません（送ったのは{int(want_price)}円）。"
                     "値段が無いと在庫管理で「出品情報がありません」になり、"
                     "ASINが出ていても売れる状態になりません")
+            want_ch = ("AMAZON_JP" if _fulfillment_of(db, row) == "fba"
+                       else "DEFAULT")
+            got_ch = got.get("fulfillment_channel")
+            if got_ch and got_ch != want_ch:
+                notes.append(
+                    "出荷方法が食い違っています（Amazon "
+                    + ("FBA" if got_ch == "AMAZON_JP" else "自己発送")
+                    + " / 送ったのは "
+                    + ("FBA" if want_ch == "AMAZON_JP" else "自己発送") + "）")
+            if got.get("batteries_required") is None:
+                notes.append(
+                    "電池の申告が入っていません。これが無いと在庫管理で"
+                    "「出品情報がありません」のままになります（Amazonのエラー 90220）")
             if not got.get("fnsku"):
                 notes.append("FNSKUがまだ出ていません（FBA在庫を作ると出ます）")
             if not got.get("asin"):
