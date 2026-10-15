@@ -1075,6 +1075,10 @@ _AUTO_ATTRS = {
     # 値引きが無いのに参考価格があることになる。参考価格なしの0を入れる
     "list_price": "zero",        # メーカー希望小売価格 ＝ 0（なし）
     "item_length_width_height": "dims",   # 品目寸法 ＝ 表の三辺
+    # 推奨されるブラウズノード。空だとAmazonの中でどのカテゴリにも
+    # 並ばず、客から見つけてもらえない。何番を入れるかは分からないので、
+    # 同じ商品を売っているライバルと同じところに置く
+    "recommended_browse_nodes": "browse",
 }
 
 # 商品ごとに変わるもの。名前に含まれていたら item と見なす
@@ -1122,8 +1126,12 @@ def auto_attr_values(db: Session, row, child=None) -> dict:
         a, b, c = sorted([row.len_a, row.len_b, row.len_c], reverse=True)
         dims = {"length": a, "width": b, "height": c}
     jan = (child.jan if child is not None else None) or ""
+    # ライバルが置かれているブラウズノード。ASINごとに覚えるので、
+    # 親と子で何度呼んでも引きに行くのは1回だけ
+    browse = amazon_api.fetch_browse_nodes(row.rival_asin or "")
     srcs = {"sku": sku, "brand": brand, "price": price, "dims": dims,
-            "jan": jan, "zero": 0}
+            "jan": jan, "zero": 0,
+            "browse": browse[0] if browse else None}
     for name, src in _AUTO_ATTRS.items():
         v = srcs.get(src)
         # 0 は「参考価格なし」として送りたいので、空とは区別する
@@ -1689,6 +1697,10 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
                     + ("FBA" if got_ch == "AMAZON_JP" else "自己発送")
                     + " / 送ったのは "
                     + ("FBA" if want_ch == "AMAZON_JP" else "自己発送") + "）")
+            if not got.get("browse_node"):
+                notes.append(
+                    "ブラウズノードが入っていません。Amazonの中で"
+                    "カテゴリに並ばないので、客から見つけてもらえません")
             if got.get("batteries_required") is None:
                 notes.append(
                     "電池の申告が入っていません。これが無いと在庫管理で"

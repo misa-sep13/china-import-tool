@@ -185,6 +185,46 @@ def fetch_catalog_one(asin: str) -> dict:
     return {"image_url": image_url, "title": title, "parent_asin": parent_asin}
 
 
+# ブラウズノードは商品ごとに変わらないので、1回引いたら覚えておく。
+# 親と子で同じASINを何度も引くことになるため
+_BROWSE_CACHE = {}
+
+
+def fetch_browse_nodes(asin: str) -> list:
+    """そのASINが置かれているブラウズノードの番号。
+
+    出品時の「推奨されるブラウズノード」に入れる。空のままだと、
+    Amazonの中でどのカテゴリにも並ばず、客から見つけてもらえない。
+    何番を入れればよいかは普通の人には分からないので、同じ商品を
+    売っているライバルと同じところに置く。
+
+    取れなければ空で返す（出品は止めない）。
+    """
+    a = (asin or "").strip().upper()
+    if not a:
+        return []
+    if a in _BROWSE_CACHE:
+        return _BROWSE_CACHE[a]
+    nodes = []
+    try:
+        params = urllib.parse.urlencode({
+            "marketplaceIds": _RESEARCH_MP,
+            "includedData": "classifications",
+        })
+        data = _call_sp_api(f"/catalog/2022-04-01/items/{a}?{params}")
+        for block in data.get("classifications") or []:
+            if block.get("marketplaceId") != _RESEARCH_MP:
+                continue
+            for c in block.get("classifications") or []:
+                cid = str(c.get("classificationId") or "").strip()
+                if cid and cid not in nodes:
+                    nodes.append(cid)
+    except Exception:
+        nodes = []
+    _BROWSE_CACHE[a] = nodes
+    return nodes
+
+
 def fetch_catalog_info(asin_list: List[str]) -> Dict[str, dict]:
     """商品画像（1枚目）とレビュー評価をASINごとに取得"""
     cache_key = "catalog_info"
@@ -1955,11 +1995,15 @@ def fetch_listing(sku: str) -> dict:
     # 送っているつもりでも入っていないことがあるので、読み戻して確かめる
     batteries = first("batteries_required")
 
+    # ブラウズノード。空だとAmazonの中でカテゴリに並ばない
+    browse = first("recommended_browse_nodes")
+
     return {
         "ok": True, "found": True, "sku": sku,
         "asin": s.get("asin"), "fnsku": s.get("fnSku"),
         "fulfillment_channel": channel,
         "batteries_required": batteries,
+        "browse_node": browse,
         "item_name": s.get("itemName"),
         "status": s.get("status") or [],
         "parent_sku": parent,                     # Amazonが組んだ親
