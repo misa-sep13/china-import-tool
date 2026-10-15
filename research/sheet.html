@@ -6071,6 +6071,7 @@ if(FIREBASE_CONFIG.databaseURL){
         research.kwSpec = specTa.value;
         research.kwLimit = Number(catSel.value);
         research.listingBullets = cTa.value;
+        research.listingHighlight = hlIn.value.trim();
         research.diffPoints = dpTa.value;
         research.persona = perTa.value;
         research.imageTone = toneTa.value;
@@ -6895,6 +6896,22 @@ if(FIREBASE_CONFIG.databaseURL){
     const cOut = el('div', 'check-out');
     body.appendChild(cOut);
 
+    // ---- ⑥ 商品のハイライト ----
+    // 完全な文ではなく、特徴を示す短いフレーズ。
+    // 商品名が75文字未満のときだけ商品ページに出る。
+    // 入れていないと、その欄が空のまま出品される
+    const hlLabel = el('label', null,
+      '⑥ 商品のハイライト（回答から自動で入ります）');
+    hlLabel.classList.add('an-sep');
+    body.appendChild(hlLabel);
+    const hlIn = document.createElement('input');
+    hlIn.type = 'text';
+    hlIn.className = 'an-kwedit';
+    hlIn.placeholder = '例：通気性素材（文ではなく、特徴やメリットを示す短いフレーズ）';
+    hlIn.value = research.listingHighlight || '';
+    body.appendChild(hlIn);
+    hlIn.addEventListener('input', () => { edSave(); });
+
     refreshers.push(() => {
       const lines = cTa.value.split('\n').map(s => s.trim()).filter(Boolean);
       cCount.textContent = lines.length ? lines.length + '行' : '';
@@ -7158,6 +7175,8 @@ if(FIREBASE_CONFIG.databaseURL){
     const RE_ALL_PER = /■\s*ターゲット顧客[^\n]*\n([\s\S]*?)(?=\n\s*■|$)/;
     const RE_ALL_TONE = /■\s*(?:商品画像の)?色合い[^\n]*\n([\s\S]*?)(?=\n\s*■|$)/;
     const RE_ALL_GUIDE = /■\s*画像作成指示書[^\n]*\n([\s\S]*?)(?=\n\s*■\s*(?:後半|仮置き|最終セルフチェック|登録前に確認)|$)/;
+    // 商品のハイライト。短い一言なので1行だけ取る
+    const RE_ALL_HL = /■\s*商品のハイライト[^\n]*\n([\s\S]*?)(?=\n\s*■|$)/;
     function applyAllPaste(txt){
       const t = String(txt || '');
       const b = t.match(RE_ALL_BUL), pe = t.match(RE_ALL_PER), co = t.match(RE_ALL_TONE), g = t.match(RE_ALL_GUIDE);
@@ -7174,6 +7193,12 @@ if(FIREBASE_CONFIG.databaseURL){
         cTa.value = b[1].split('\n').map(x => x.trim()).filter(Boolean).join('\n');
         got.push('⑤に' + cTa.value.split('\n').filter(Boolean).length + '行');
       }
+      const hl = t.match(RE_ALL_HL);
+      if(hl){
+        const hv = (hl[1].split('\n').map(x => x.trim()).filter(Boolean)[0] || '')
+          .replace(/^[・•-]\s*/, '');
+        if(hv){ hlIn.value = hv; got.push('⑥ハイライト'); }
+      } else if(step2) miss.push('■商品のハイライト');
       if(pe){ perTa.value = pe[1].trim(); got.push('ターゲット顧客'); } else if(step2) miss.push('■ターゲット顧客');
       if(co){ toneTa.value = co[1].trim(); got.push('色合い'); } else if(step2) miss.push('■商品画像の色合い');
       if(g){
@@ -9261,7 +9286,12 @@ if(FIREBASE_CONFIG.databaseURL){
         : '・競合レビューの不満点を自社商品が解決しているとは限りません。根拠のない改良・品質向上を勝手に主張しないでください。',
       '【出力形式】',
       '📋 ■商品説明',
-      '5行だけ。1行1項目で、各行の先頭は【見出し】。番号や記号は付けない。'
+      '5行だけ。1行1項目で、各行の先頭は【見出し】。番号や記号は付けない。',
+      '',
+      '■商品のハイライト',
+      '1行だけ。完全な文にせず、商品の特徴またはメリットを示す'
+        + '短いフレーズ（10～20文字程度）。例：通気性素材',
+      '商品タイトルにすでに入っている語は繰り返さない。記号や【】は付けない。'
     ];
   }
 
