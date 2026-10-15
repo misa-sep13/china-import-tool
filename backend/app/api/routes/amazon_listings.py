@@ -1318,9 +1318,41 @@ def _image_rows(db: Session, listing_id: int) -> list:
     """
     return (db.query(AmazonListingImage.id, AmazonListingImage.child_id,
                      AmazonListingImage.role, AmazonListingImage.sort_order,
-                     AmazonListingImage.public_token)
+                     AmazonListingImage.public_token,
+                     AmazonListingImage.file_name, AmazonListingImage.size)
             .filter(AmazonListingImage.listing_id == listing_id)
             .order_by(AmazonListingImage.sort_order).all())
+
+
+def _same_image(a, b) -> bool:
+    """同じ写真か。ファイル名と大きさで見る（_dedupe_images と同じ基準）。"""
+    if a is None or b is None:
+        return False
+    if not (a.file_name or "").strip() or not a.size:
+        return False
+    return ((a.file_name or "").strip().lower() == (b.file_name or "").strip().lower()
+            and a.size == b.size)
+
+
+def _dedupe_images(rows: list) -> list:
+    """同じ写真を2回送らないようにする。
+
+    共通の欄とメイン（またはバリエーション）の欄に同じ写真を入れると、
+    別の行になるのでURLも別になり、Amazonには違う画像として届く。
+    実際に商品ページで同じ写真が2枚並んでいた。
+
+    同じ中身かどうかは、ファイル名と大きさで見る。中身(base64)まで
+    読むと画像を全部メモリに載せることになるため。
+    別名で入れ直した同じ写真までは拾えない。
+    """
+    out, seen = [], set()
+    for r in rows:
+        key = ((r.file_name or "").strip().lower(), r.size)
+        if key[0] and key[1] and key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
 
 
 def _axis_attrs(row: AmazonListing, child: AmazonListingChild) -> dict:
@@ -1425,6 +1457,12 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
         # Amazonが受け取れるのはメイン1枚＋サブ8枚の計9枚。溢れるときは
         # 真ん中（共通）から落とす。メインとバリエーションは必ず残す
         # （バリエーション画像は最後尾に出したいので、ここで切られては困る）
+        # 共通とメイン・バリエーションに同じ写真が入っていることがある。
+        # 先に重複を落としてから枠に収める（落とす前に切ると、
+        # 重複のぶんだけ本当に出したい写真が溢れてしまう）
+        mid = [i for i in _dedupe_images(mid)
+               if i is not main and i is not var
+               and not _same_image(i, main) and not _same_image(i, var)]
         room = AMAZON_IMAGE_SLOTS - (1 if main else 0) - (1 if var else 0)
         mine = ([main] if main else []) + mid[:max(0, room)]             + ([var] if var else [])
         urls = [f"{base}/api/amazon-listings/public-image/{i.public_token}"
@@ -1520,9 +1558,10 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
                                if i.child_id == cid and i.role == "main"), None)
             if first_main:
                 break
-        mine = ([first_main] if first_main else []) + shared
+        mine = _dedupe_images(([first_main] if first_main else []) + shared)
         if not mine:
-            mine = imgs
+            mine = _dedupe_images(imgs)
+        mine = mine[:AMAZON_IMAGE_SLOTS]
         urls = [f"{base}/api/amazon-listings/public-image/{i.public_token}"
                 for i in mine]
         if urls:
@@ -1570,7 +1609,7 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
 
     imgs = _image_rows(db, row.id)
     # 色ごとに入れていない画像は「共通」として全SKUに使われる
-    shared = len([i for i in imgs if i.child_id is None])
+    shared_rows = [i for i in imgs if i.child_id is None]
 
     out = []
     ng = 0
@@ -1625,8 +1664,11 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
             # 画像。Amazonが持てるのはメイン1枚＋サブ8枚の計9枚なので、
             # 用意した枚数がそれを超えていても、入るのは9枚まで。
             # 用意した枚数と比べると、正常なのに「足りません」と出てしまう
-            mine = len([i for i in imgs if i.child_id == c.id])
-            want = min(mine + shared, AMAZON_IMAGE_SLOTS)
+            # 送る枚数は重複を落としたあとの数。落とす前の数で比べると、
+            # 正常なのに「画像が足りません」と出てしまう
+            own = [i for i in imgs if i.child_id == c.id]
+            want = min(len(_dedupe_images(own + shared_rows)),
+                       AMAZON_IMAGE_SLOTS)
             have = got.get("image_count") or 0
             if want and not have:
                 notes.append(f"画像が1枚も入っていません（送ったのは{want}枚）")
