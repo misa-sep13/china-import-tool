@@ -1720,6 +1720,29 @@ def fetch_raw_property(product_type: str, name: str) -> dict:
     return {"ok": True, "product_type": pt, "names": sorted(props.keys())}
 
 
+# 商品タイプごとの項目名。定義は重いので1回引いたら覚えておく
+_PT_NAMES_CACHE = {}
+
+
+def find_attr_name(product_type: str, keyword: str) -> str:
+    """商品タイプの定義から、名前にその語を含む項目を1つ探す。
+
+    同じ欄でも商品タイプによって項目名が違うことがあるので、
+    名前を決め打ちにすると送ったつもりで入らない。定義から探す。
+    見つからなければ空を返す。
+    """
+    pt = (product_type or "").strip().upper()
+    if not pt or not keyword:
+        return ""
+    if pt not in _PT_NAMES_CACHE:
+        got = fetch_raw_property(pt, "")
+        _PT_NAMES_CACHE[pt] = got.get("names") or [] if got.get("ok") else []
+    k = keyword.lower()
+    hit = [n for n in _PT_NAMES_CACHE[pt] if k in n.lower()]
+    # 短いほうが素直な名前（product_highlight < product_highlight_type など）
+    return sorted(hit, key=len)[0] if hit else ""
+
+
 def fetch_product_type_schema(product_type: str) -> dict:
     """その商品タイプの必須項目を、画面に出せる形にして返す。
 

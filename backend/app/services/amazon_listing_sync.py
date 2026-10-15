@@ -188,6 +188,8 @@ def extract(research: dict, settings: dict) -> dict:
         "title": (research.get("titleParent") or "").strip(),
         "keywords": (research.get("kwDraft") or "").strip(),
         "bullets": bullets[:5],
+        # 商品のハイライト。商品名が75文字未満のときだけ出る短い一言
+        "highlight": (research.get("listingHighlight") or "").strip(),
         "description": (research.get("listingBullets") or "").strip(),
         "diff_points": (research.get("diffPoints") or "").strip(),
         # ② 商品説明に入れる必須キーワード。プロンプトに差し込む

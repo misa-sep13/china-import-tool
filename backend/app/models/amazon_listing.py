@@ -24,6 +24,7 @@ class AmazonListing(Base):
     title       = Column(Text)             # 親の商品タイトル
     keywords    = Column(Text)             # 検索キーワード（generic_keyword）
     bullets     = Column(Text)             # 要点。JSON配列（5行まで）
+    highlight   = Column(Text)             # 商品のハイライト。短い一言
     description = Column(Text)             # 商品説明
     brand       = Column(String)
     price       = Column(Integer)

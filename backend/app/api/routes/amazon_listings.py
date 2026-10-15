@@ -51,6 +51,7 @@ class ListingIn(BaseModel):
     title: Optional[str] = None
     keywords: Optional[str] = None
     bullets: Optional[list] = None
+    highlight: Optional[str] = None
     description: Optional[str] = None
     brand: Optional[str] = None
     price: Optional[int] = None
@@ -122,6 +123,7 @@ def _out(row: AmazonListing, db: Session, src: dict = None) -> dict:
         "research_title": row.research_title,
         "title": row.title, "keywords": row.keywords,
         "bullets": _loads(row.bullets, []),
+        "highlight": row.highlight or "",
         "description": row.description, "brand": row.brand, "price": row.price,
         "len_a": row.len_a, "len_b": row.len_b, "len_c": row.len_c,
         "weight": row.weight,
@@ -345,6 +347,7 @@ def sync_one(research_id: str, overwrite: bool = False,
     put("bullets", json.dumps(src["bullets"], ensure_ascii=False)
         if src["bullets"] else None)
     put("description", src["description"])
+    put("highlight", src.get("highlight"))
     put("price", src["price"])
     put("len_a", src["len_a"])
     put("len_b", src["len_b"])
@@ -459,7 +462,7 @@ def update_listing(listing_id: int, body: ListingIn,
     # そうしないと、シートを開いたときに古い内容に戻って見える
     draft = {k: v for k, v in data.items()
              if k in ("title", "keywords", "description",
-                      "must_kw", "diff_points")}
+                      "must_kw", "diff_points", "highlight")}
     if "bullets" in data:
         draft["description"] = "\n".join(
             [str(b) for b in (data["bullets"] or []) if str(b).strip()])
@@ -1403,6 +1406,13 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
         a["bullet_point"] = [{"value": b, "marketplace_id": mp}
                              for b in bullets[:5] if str(b).strip()]
 
+    # 商品のハイライト。商品名が75文字未満のときだけ商品ページに出る短い一言。
+    # 項目名は商品タイプによって違うので、定義から探す
+    if (row.highlight or "").strip():
+        hn = amazon_api.find_attr_name(row.product_type, "highlight")
+        if hn:
+            a[hn] = one(row.highlight.strip())
+
     # 検索キーワード。これまで一度も送っていなかった
     if (row.keywords or "").strip():
         a["generic_keyword"] = one(row.keywords.strip())
@@ -1550,6 +1560,13 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
                              for b in bullets[:5] if str(b).strip()]
     if (row.keywords or "").strip():
         a["generic_keyword"] = one(row.keywords.strip())
+    # 商品のハイライト。商品名が75文字未満のときだけ商品ページに出る短い一言。
+    # 項目名は商品タイプによって違うので、定義から探す
+    if (row.highlight or "").strip():
+        hn = amazon_api.find_attr_name(row.product_type, "highlight")
+        if hn:
+            a[hn] = one(row.highlight.strip())
+
     # 親の画像。メイン写真は色ごとに持つので、共通には説明画像しか
     # 入っていない。親のメインには最初の色のメイン写真を使い、
     # 残りを共通で埋める（共通にメイン用の写真を置かなくて済むように）
@@ -2084,6 +2101,7 @@ _DRAFT_KEYS = {
     "description": "listingBullets",
     "must_kw": "kwSpec",
     "diff_points": "diffPoints",
+    "highlight": "listingHighlight",
 }
 
 
@@ -2156,6 +2174,7 @@ def _read_sheet_draft(src: dict) -> dict:
         "description": src.get("description") or "",
         "must_kw": src.get("must_kw") or "",
         "diff_points": src.get("diff_points") or "",
+        "highlight": src.get("highlight") or "",
     }
 
 
