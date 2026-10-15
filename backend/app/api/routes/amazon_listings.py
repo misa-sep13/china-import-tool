@@ -1651,8 +1651,10 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
                 notes.append(
                     "電池の申告が入っていません。これが無いと在庫管理で"
                     "「出品情報がありません」のままになります（Amazonのエラー 90220）")
-            if not got.get("fnsku"):
-                notes.append("FNSKUがまだ出ていません（FBA在庫を作ると出ます）")
+            # FNSKUはFBAの納品を作ってから出るもので、出品の時点では
+            # 出ていなくて当たり前。自己発送なら最後まで出ない。
+            # これを「違うところ」に数えていたため、全部うまくいっても
+            # 「3件おかしい」と出て、どれが本当の問題か分からなかった
             if not got.get("asin"):
                 notes.append("ASINがまだ出ていません。"
                              "必須項目が足りないと、受け付けられても商品にならない")
