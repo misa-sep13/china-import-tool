@@ -52,7 +52,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
   const [draft, setDraft] = useState({})     // 書きかけの質問
   const [ans, setAns] = useState({})         // 書きかけの答え
   const [adding, setAdding] = useState(false)
-  const [form, setForm] = useState({ sku: '', name: '', memo: '', channel: 'amazon' })
+  const [form, setForm] = useState({ sku: '', name: '', memo: '', taotaro_oid: '', channel: 'amazon' })
 
   // 共有URLで開いているときは合言葉を毎回付ける。
   // ログインしていないので、これが唯一の通行証になる
@@ -129,7 +129,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
     if (!form.sku.trim() && !form.name.trim()) return
     try {
       await api.post('/work-status', form, cfg())
-      setForm({ sku: '', name: '', memo: '', channel: 'amazon' })
+      setForm({ sku: '', name: '', memo: '', taotaro_oid: '', channel: 'amazon' })
       setAdding(false)
       load()
     } catch (e) {
@@ -150,7 +150,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
   const shown = rows.filter(r => {
     if (onlyMine && r.ball !== me) return false
     if (!q.trim()) return true
-    return matchesQuery(q, [r.sku, r.name, r.memo])
+    return matchesQuery(q, [r.sku, r.name, r.memo, r.taotaro_oid])
   })
 
   // 自分の番のものが何件あるか。まずここを見てもらう
@@ -215,6 +215,9 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
           <input value={form.name} placeholder="商品名"
             onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
             style={{ fontSize: 12, padding: '5px 8px', flex: 1 }} />
+          <input value={form.taotaro_oid || ''} placeholder="注文ID"
+            onChange={e => setForm(f => ({ ...f, taotaro_oid: e.target.value }))}
+            style={{ fontSize: 12, padding: '5px 8px', width: 110 }} />
           <input value={form.memo || ''} placeholder="メモ（在庫切れ・リンク変更など）"
             onChange={e => setForm(f => ({ ...f, memo: e.target.value }))}
             style={{ fontSize: 12, padding: '5px 8px', flex: 1 }} />
@@ -233,6 +236,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
             <th style={th}>店</th>
             <th style={th}>SKU</th>
             <th style={th}>商品名</th>
+            <th style={th}>注文ID</th>
             <th style={th}>いま誰の番</th>
             <th style={th}>工程（左の3つで完了）</th>
             <th style={th}>メモ</th>
@@ -271,6 +275,18 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
                       if (v !== (r.name || '')) patch(r.id, { name: v })
                     }}
                     style={{ width: '100%', fontSize: 12, padding: '2px 4px' }} />
+                </td>
+                {/* タオタロウの注文ID。初回発注で画像と違うものが来たり、
+                    仕入先を変えたりするので、どの注文の話かを押さえる */}
+                <td style={td}>
+                  <input defaultValue={r.taotaro_oid || ''} placeholder="注文ID"
+                    title="タオタロウの注文ID（複数あればカンマ区切り）"
+                    onBlur={e => {
+                      const v = e.target.value.trim()
+                      if (v !== (r.taotaro_oid || '')) patch(r.id, { taotaro_oid: v })
+                    }}
+                    style={{ width: 110, fontSize: 12, padding: '2px 4px',
+                      fontFamily: 'monospace' }} />
                 </td>
                 <td style={td}>
                   <select value={r.ball}
@@ -367,7 +383,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
               </tr>,
               isOpen && (
                 <tr key={`${r.id}-notes`}>
-                  <td colSpan={share ? 8 : 9}
+                  <td colSpan={share ? 9 : 10}
                     style={{ ...td, background: '#f8fafc' }}>
                     {r.notes.map(n => (
                       <div key={n.id} style={{ marginBottom: 8, paddingBottom: 8,
@@ -428,7 +444,7 @@ export default function WorkStatusPage({ share = '', me = 'owner' }) {
             ]
           })}
           {!shown.length && (
-            <tr><td colSpan={share ? 8 : 9}
+            <tr><td colSpan={share ? 9 : 10}
               style={{ ...td, color: C.sub, textAlign: 'center', padding: 24 }}>
               {rows.length ? '絞り込みに合うものがありません' : 'まだ1件もありません'}
             </td></tr>

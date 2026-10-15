@@ -28,6 +28,10 @@ class WorkStatus(Base):
     sku = Column(String, index=True)
     name = Column(String)
     memo = Column(Text)                       # 一言メモ（申し送り）
+    # タオタロウの注文ID。初回発注で画像と違うものが来たり、仕入先を
+    # 変えたりするので、どの注文の話かを押さえられるようにする。
+    # 複数書けるよう文字で持つ
+    taotaro_oid = Column(String)
 
     # 工程。3つ終わったら完了。プルダウンで1つ選ぶ形だと、
     # 発注は済んだが画像はまだ、といった途中の状態を表せなかった

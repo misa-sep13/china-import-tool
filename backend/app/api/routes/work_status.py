@@ -112,6 +112,7 @@ def _out(r: WorkStatus) -> dict:
         "sku": r.sku or "",
         "name": r.name or "",
         "memo": r.memo or "",
+        "taotaro_oid": r.taotaro_oid or "",
         "stage": r.stage or "adopted",
         "stage_label": STAGE_LABEL.get(r.stage or "adopted", r.stage or ""),
         "step_order": bool(r.step_order),
@@ -167,6 +168,7 @@ class WorkIn(BaseModel):
     sku: Optional[str] = ""
     name: Optional[str] = ""
     memo: Optional[str] = ""
+    taotaro_oid: Optional[str] = ""
     stage: Optional[str] = "adopted"
     ball: Optional[str] = "staff"
 
@@ -189,6 +191,7 @@ def create_row(data: WorkIn, request: Request,
             sku=(d.get("sku") or "").strip(),
             name=(d.get("name") or "").strip(),
             memo=(d.get("memo") or "").strip(),
+            taotaro_oid=(d.get("taotaro_oid") or "").strip(),
             ball="owner",
         )
         db.add(row)
@@ -238,6 +241,7 @@ class WorkPatch(BaseModel):
     sku: Optional[str] = None
     name: Optional[str] = None
     memo: Optional[str] = None
+    taotaro_oid: Optional[str] = None
     stage: Optional[str] = None
     ball: Optional[str] = None
     step_order: Optional[bool] = None
@@ -261,7 +265,8 @@ def update_row(row_id: int, data: WorkPatch, request: Request,
     guest = _is_share(request)
     # SKUと商品名も直せるようにしてある。新しく足した行はSKUが入らない
     # ことがあり、あとから埋められないと「どの商品の話か」が分からなくなる
-    allowed = ({"stage", "ball", "memo", "sku", "name"} | set(STEP_KEYS)
+    allowed = ({"stage", "ball", "memo", "sku", "name", "taotaro_oid"}
+               | set(STEP_KEYS)
                | set(EXTRA_STEP_KEYS)) if guest else None
 
     touched_steps = False

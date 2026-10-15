@@ -304,6 +304,10 @@ def _migrate():
         ("rakuten_ad_excluded","resume_error",
          "ALTER TABLE rakuten_ad_excluded ADD COLUMN resume_error VARCHAR"),
 
+        # 状況確認シートに、タオタロウの注文IDを残す欄
+        ("work_statuses","taotaro_oid",
+         "ALTER TABLE work_statuses ADD COLUMN taotaro_oid VARCHAR"),
+
         # 状況確認シートの「発注後の問い合わせ・確認対応」
         ("work_statuses","step_followup",
          "ALTER TABLE work_statuses ADD COLUMN step_followup BOOLEAN DEFAULT FALSE"),
