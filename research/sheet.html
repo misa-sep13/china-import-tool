@@ -8697,6 +8697,14 @@ if(FIREBASE_CONFIG.databaseURL){
       out.appendChild(d);
       return;
     }
+    // 途中で止めたときの理由。送った明細があると出していなかったので、
+    // 「親：出品しました」だけが見えて、子を送っていない理由が
+    // どこにも出ていなかった
+    if(r.error){
+      const d = el('div', 'reg-check');
+      d.appendChild(el('b', 'ng', r.error));
+      out.appendChild(d);
+    }
     (r.sent || []).forEach(x => {
       const d = el('div', 'reg-check');
       d.appendChild(el('b', x.ok ? 'ok' : 'ng',
