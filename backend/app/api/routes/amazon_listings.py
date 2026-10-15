@@ -1778,10 +1778,14 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
                 if not got.get("asin"):
                     item["ok"] = False
                     item["error"] = (
-                        "親はAmazonが受け取りましたが、まだカタログに"
-                        "できていません。親のいない子を送ると全部弾かれるので、"
-                        "子はまだ送っていません。数分おいてから、もう一度"
-                        "「④ Amazonへ出品する」を押してください")
+                        f"親 {parent_sku} はAmazonが受け取りましたが、まだ"
+                        "カタログにできていません。親のいない子を送ると"
+                        "全部弾かれるので、子はまだ送っていません。"
+                        "数分おいて、もう一度「④ Amazonへ出品する」を"
+                        "押してください。"
+                        "この親SKUを最近削除した場合は、削除したSKUは"
+                        "しばらく作り直せません（半日〜1日）。"
+                        "待てないときは、親SKUを別の名前にしてください")
                     row.status = "submitted"
                     db.commit()
                     results.append(item)
