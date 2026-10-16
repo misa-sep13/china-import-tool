@@ -8555,7 +8555,11 @@ if(FIREBASE_CONFIG.databaseURL){
         x.kind + ' ' + x.sku + '：'
         + (x.ok ? '検証OK（まだ出品していません）' : ('弾かれました：' + x.status))));
       (x.issues || []).forEach(i => {
-        d.appendChild(el('div', 'reg-issue', '・' + i.message));
+        // 項目名も出す。これが無いと「何を入れればいいのか」が
+        // 日本語の文章からしか分からない
+        const at = (i.attributes || []).length
+          ? '　[' + i.attributes.join(', ') + ']' : '';
+        d.appendChild(el('div', 'reg-issue', '・' + i.message + at));
       });
       // Amazonが400などを返したときは、理由がここにしか入っていない。
       // 出さないと「弾かれました：400」だけで何が悪いのか分からない
