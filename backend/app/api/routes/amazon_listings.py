@@ -654,6 +654,80 @@ def shrink_images(listing_id: Optional[int] = None, limit: int = 200,
     return {"縮めた枚数": done, "減った容量MB": round(saved / 1024 / 1024, 2)}
 
 
+# 登録が済んだあとに手元へ残す大きさ。どの写真を使ったか分かればよい
+ARCHIVE_IMAGE_PX = 320
+
+
+class ArchiveImagesIn(BaseModel):
+    listing_id: Optional[int] = None
+    research_id: Optional[str] = None
+
+
+@router.post("/archive-images")
+def archive_images(body: ArchiveImagesIn, db: Session = Depends(get_db)):
+    """登録が済んだ出品の画像を、見分けがつく小ささまで落とす。
+
+    画像はDBにbase64で預かっているので、1商品で数MBになる。
+    Amazonへ送り終わっていれば、手元には「どの写真を使ったか」が
+    分かるだけの大きさがあればよい。
+    消さずに縮めるのは、作り直せない写真があるため
+    （消すとAmazonが取りに来たときに404になることもある）。
+    """
+    q = db.query(AmazonListing)
+    if body.listing_id:
+        q = q.filter(AmazonListing.id == body.listing_id)
+    elif (body.research_id or "").strip():
+        q = q.filter(AmazonListing.research_id == body.research_id.strip())
+    else:
+        raise HTTPException(400, "どの出品か分かりません")
+    rows = q.all()
+    if not rows:
+        return {"枚数": 0, "減った容量MB": 0, "note": "出品がありません"}
+
+    done = saved = 0
+    for row in rows:
+        imgs = (db.query(AmazonListingImage)
+                .filter(AmazonListingImage.listing_id == row.id).all())
+        for img in imgs:
+            if not img.data:
+                continue
+            try:
+                raw = base64.b64decode(img.data)
+            except Exception:
+                continue
+            out = _to_thumb(raw)
+            if not out or len(out) >= len(raw):
+                continue
+            img.data = base64.b64encode(out).decode()
+            img.mime = "image/jpeg"
+            img.size = len(out)
+            done += 1
+            saved += len(raw) - len(out)
+    db.commit()
+    return {"枚数": done, "減った容量MB": round(saved / 1024 / 1024, 2)}
+
+
+def _to_thumb(blob: bytes) -> bytes:
+    """長辺320pxのJPEGにする。できなければ空を返す（元のまま残す）。"""
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(blob))
+        im.load()
+        if im.mode in ("RGBA", "LA", "P"):
+            bg = Image.new("RGB", im.size, (255, 255, 255))
+            im = im.convert("RGBA")
+            bg.paste(im, mask=im.split()[-1])
+            im = bg
+        else:
+            im = im.convert("RGB")
+        im.thumbnail((ARCHIVE_IMAGE_PX, ARCHIVE_IMAGE_PX), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=80, optimize=True)
+        return buf.getvalue()
+    except Exception:
+        return b""
+
+
 @router.delete("/images/{image_id:int}")
 def delete_image(image_id: int, db: Session = Depends(get_db)):
     img = db.get(AmazonListingImage, image_id)
