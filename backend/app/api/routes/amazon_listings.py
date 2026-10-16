@@ -728,6 +728,38 @@ def _to_thumb(blob: bytes) -> bytes:
         return b""
 
 
+@router.delete("/{listing_id:int}/children/{child_id:int}")
+def delete_child(listing_id: int, child_id: int,
+                 db: Session = Depends(get_db)):
+    """出品から子（色）を1つ消す。
+
+    シートから色が消えても、JANを振った子は残す作りにしている
+    （番号を宙に浮かせないため）。色の名前を付け替えたときに、
+    古い色がここに取り残され、画面からは消せなくなっていた
+    （SKUとJANの欄を空にしても、JANは外せないので残り続ける）。
+
+    使ったJANは台帳で取り消しにする。一度どこかへ出した番号を
+    別の商品で使い回すと、同じ商品として扱われてしまうため。
+    """
+    c = db.get(AmazonListingChild, child_id)
+    if not c or c.listing_id != listing_id:
+        raise HTTPException(404, "ありません")
+    if (c.status or "draft") not in ("draft", "failed"):
+        raise HTTPException(
+            400, "Amazonへ送ったSKUはここからは消せません。"
+                 "先にAmazonの在庫管理で終了させてください")
+    if c.jan:
+        j = db.query(JanCode).filter(JanCode.code == c.jan).first()
+        if j is not None:
+            j.status = "void"
+            j.sku = None
+            note = f"{c.sku or '（SKUなし）'} を出品から消したので取り消し"
+            j.note = ((j.note + " ／ ") if j.note else "") + note
+    db.delete(c)
+    db.commit()
+    return {"deleted": True}
+
+
 @router.delete("/images/{image_id:int}")
 def delete_image(image_id: int, db: Session = Depends(get_db)):
     img = db.get(AmazonListingImage, image_id)
