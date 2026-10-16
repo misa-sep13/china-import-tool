@@ -7650,6 +7650,33 @@ if(FIREBASE_CONFIG.databaseURL){
           line.appendChild(el('span', 'an-note',
             {submitted: '送信済', failed: '失敗', live: '公開中'}[c.status] || c.status));
         }
+        // 色の名前を付け替えると、古い色がここに取り残される。
+        // JANを振ったあとはSKUとJANの欄を空にしても消えないので、
+        // 消す口をここに付ける
+        if(!c.status || c.status === 'draft' || c.status === 'failed'){
+          const del = el('button', 'mini danger', '✕');
+          del.title = 'この子（色）を出品から消します';
+          del.addEventListener('click', async () => {
+            const who = (c.axis1 || c.sku || '色なし');
+            if(!ask('子「' + who + '」を出品から消します。'
+              + (c.jan ? '\nJAN ' + c.jan + ' は台帳で取り消しになり、'
+                       + '別の商品では使いません。' : '')
+              + '\nよろしいですか？')) return;
+            del.disabled = true;
+            try{
+              await regApi('/' + data.id + '/children/' + c.id,
+                           {method: 'DELETE'});
+              data.children = (data.children || []).filter(x => x.id !== c.id);
+              mergeData(await regApi('/' + data.id));
+              draw();
+            }catch(e){
+              status.textContent = String(e.message || e);
+              status.classList.add('warn');
+              del.disabled = false;
+            }
+          });
+          line.appendChild(del);
+        }
         panel.appendChild(line);
       });
 
