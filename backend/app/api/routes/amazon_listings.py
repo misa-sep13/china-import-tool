@@ -431,9 +431,20 @@ def update_listing(listing_id: int, body: ListingIn,
                 j = db.query(JanCode).filter(JanCode.code == new_jan).first()
                 if j is None:
                     raise HTTPException(400, f"{new_jan} は台帳にありません")
+                # 台帳の sku は「発番したときの名前」。親SKUや色の名前を
+                # 付け替えると、こちらの子のSKUだけが変わって台帳は
+                # 古いまま残り、同じ番号なのに「すでに使われています」と
+                # 止まってしまう（a16_beige → a013_offwhite で実際に起きた）。
+                # 本当に使われているかは、ほかの子が持っているかで見る。
                 if j.sku and j.sku != c.sku:
-                    raise HTTPException(
-                        400, f"{new_jan} はすでに {j.sku} で使われています")
+                    holder = (db.query(AmazonListingChild)
+                              .filter(AmazonListingChild.jan == new_jan,
+                                      AmazonListingChild.id != c.id)
+                              .first())
+                    if holder is not None:
+                        raise HTTPException(
+                            400, f"{new_jan} はすでに "
+                                 f"{holder.sku or j.sku} で使われています")
                 old_jan = c.jan
                 c.jan = new_jan
                 j.sku = c.sku
