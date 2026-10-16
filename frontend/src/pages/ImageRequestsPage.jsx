@@ -31,6 +31,13 @@ const STATUS_COLOR = {
 
 const SOURCE_LABEL = { amazon: 'Amazon', rakuten: '楽天', manual: '手動' }
 
+// 誰に作ってもらうか。増えたらここに足す
+const ASSIGNEES = [
+  { value: '', label: '—' },
+  { value: 'KANATAさん', label: 'KANATAさん' },
+  { value: '外注さん', label: '外注さん' },
+]
+
 const td = { padding: '6px 8px', borderTop: `1px solid ${C.line}`, fontSize: 12 }
 const th = { padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap',
   fontSize: 12, color: C.sub, background: '#f8fafc' }
@@ -184,6 +191,14 @@ export default function ImageRequestsPage({ share = '' }) {
               <input value={form.detail}
                 onChange={e => setForm(f => ({ ...f, detail: e.target.value }))} />
             </Field>
+            <Field label="担当者" w={110}>
+              <select value={form.assignee}
+                onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))}>
+                {ASSIGNEES.map(a => (
+                  <option key={a.value} value={a.value}>{a.label}</option>
+                ))}
+              </select>
+            </Field>
             <button className="btn btn-primary" onClick={add} disabled={busy}>
               足す
             </button>
@@ -196,7 +211,8 @@ export default function ImageRequestsPage({ share = '' }) {
           <thead>
             <tr>
               {[...(share ? [] : ['並び']), '依頼日', '', '写真', 'SKU', '商品名',
-                '参考画像', '納品データ', '商品補足', '進み具合', '連絡', ''].map((h, i) => (
+                '参考画像', '納品データ', '商品補足', '担当者', '進み具合',
+                '連絡', ''].map((h, i) => (
                   <th key={i} style={th}>{h}</th>
                 ))}
             </tr>
@@ -204,7 +220,7 @@ export default function ImageRequestsPage({ share = '' }) {
           <tbody>
             {shown.length === 0 && (
               <tr><td style={{ ...td, color: C.sub, padding: 20 }}
-                colSpan={share ? 11 : 12}>
+                colSpan={share ? 12 : 13}>
                 {q ? `「${q}」に当てはまる依頼はありません。`
                   : '作業中の依頼はありません。'}
               </td></tr>
@@ -301,6 +317,24 @@ export default function ImageRequestsPage({ share = '' }) {
                             patch(r.id, { detail: e.target.value })
                         }}
                         style={{ width: '100%', minWidth: 300, fontSize: 12 }} />
+                    )}
+                  </td>
+                  {/* 担当者。外注さんの画面では見るだけ（割り当てはこちらで決める） */}
+                  <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                    {share ? (
+                      <span style={{ fontSize: 12 }}>{r.assignee || '—'}</span>
+                    ) : (
+                      <select value={r.assignee || ''} disabled={busy}
+                        onChange={e => patch(r.id, { assignee: e.target.value })}
+                        style={{ fontSize: 12, padding: '3px 6px', width: 100 }}>
+                        {/* 一覧に無い名前が入っていても、消さずに出す */}
+                        {(ASSIGNEES.some(a => a.value === (r.assignee || ''))
+                          ? ASSIGNEES
+                          : [...ASSIGNEES, { value: r.assignee, label: r.assignee }]
+                        ).map(a => (
+                          <option key={a.value} value={a.value}>{a.label}</option>
+                        ))}
+                      </select>
                     )}
                   </td>
                   <td style={td}>
