@@ -1845,6 +1845,7 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
         # どうかを見るのに使う
         schema0 = amazon_api.fetch_product_type_schema(row.product_type)
         known = set(schema0.get("all_names") or [])
+        titles = schema0.get("titles") or {}
         need_theme = "variation_theme" in _required_names(schema0)
         theme = True if (need_theme and not has_variation) else None
 
@@ -1852,10 +1853,12 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
                 "product_type": row.product_type,
                 "problems": problems, "sent": [], "asked": []}
 
-        def remember(r, item=item, known=known, pt=row.product_type):
+        def remember(r, item=item, known=known, titles=titles,
+                     pt=row.product_type):
             # 弾かれたときに「何が足りないと言われたか」を覚える。
             # ここで覚えないと、④で失敗しても入力欄が増えないままになる
-            for n in _remember_asked(db, pt, r.get("issues") or [], known):
+            for n in _remember_asked(db, pt, r.get("issues") or [],
+                                     known, titles):
                 if n not in item["asked"]:
                     item["asked"].append(n)
 
@@ -2424,27 +2427,66 @@ def memo_values(db: Session, product_type: str) -> dict:
         return {}
 
 
-def _asked_from(issues: list) -> list:
-    """Amazonの指摘から、足りない属性の名前を拾う。"""
+# 指摘の文章で項目名を囲んでいる記号。Amazonは日本語の全角・半角の
+# どちらも使ってくる
+_QUOTES = "'‘’\"“”「」『』"
+
+
+def _quoted(text: str) -> list:
+    """「'商品の入数' は必須ですが…」の、囲まれている部分を取り出す。"""
+    out, buf, open_q = [], None, None
+    for ch in str(text or ""):
+        if open_q is None:
+            if ch in _QUOTES:
+                open_q, buf = ch, []
+            continue
+        if ch in _QUOTES:
+            s = "".join(buf).strip()
+            if s:
+                out.append(s)
+            open_q, buf = None, None
+            continue
+        buf.append(ch)
+    return out
+
+
+def _asked_from(issues: list, titles: dict = None) -> list:
+    """Amazonの指摘から、足りない属性の名前を拾う。
+
+    attributeNames が付いていれば、それが一番確か。
+    付いていないことがあり（ハンガーの必須4項目がこれだった）、
+    そのときは文章の中の「'商品の入数'」のような囲みを拾って、
+    日本語の表示名から項目名へ引き直す。
+    """
     out = []
+
+    def add(n):
+        n = str(n or "").strip()
+        if n and n not in out:
+            out.append(n)
+
     for i in (issues or []):
         if not isinstance(i, dict):
             continue
-        for n in (i.get("attributeNames") or []):
-            n = str(n).strip()
-            if n and n not in out:
-                out.append(n)
+        names = [str(n).strip() for n in (i.get("attributeNames") or [])]
+        names = [n for n in names if n]
+        for n in names:
+            add(n)
+        if names:
+            continue
+        for q in _quoted(i.get("message")):
+            add((titles or {}).get(q) or q)
     return out
 
 
 def _remember_asked(db: Session, product_type: str, issues: list,
-                    known: set = None) -> list:
+                    known: set = None, titles: dict = None) -> list:
     """聞かれた項目をカテゴリに貯める。次回は先回りして欄を出せる。
 
     Amazonの指摘には、属性名でないもの（SKUそのものなど）も混ざる。
     定義にある項目だけを残さないと、入力欄に妙なものが並ぶ。
     """
-    asked = _asked_from(issues)
+    asked = _asked_from(issues, titles)
     if known:
         asked = [a for a in asked if a in known]
     if not asked:
@@ -2571,6 +2613,7 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
     # 定義にある項目名。これに無いものは覚えない
     schema0 = amazon_api.fetch_product_type_schema(row.product_type)
     known = set(schema0.get("all_names") or [])
+    titles = schema0.get("titles") or {}
 
     checked = []
     asked_all = []
@@ -2583,7 +2626,7 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
         r = amazon_api.submit_listing(sku, row.product_type, attrs,
                                       validate_only=True)
         issues = r.get("issues") or []
-        added = _remember_asked(db, row.product_type, issues, known)
+        added = _remember_asked(db, row.product_type, issues, known, titles)
         asked_all.extend(a for a in added if a not in asked_all)
         checked.append({
             "kind": kind, "sku": sku, "ok": bool(r.get("ok")),

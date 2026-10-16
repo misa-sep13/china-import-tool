@@ -1845,6 +1845,11 @@ def fetch_product_type_schema(product_type: str) -> dict:
             "required_fields": fields,
             "auto_filled": sorted(set(k for k in required if k in _FILLED_BY_TOOL)),
             "all_names": sorted(props.keys()),
+            # 日本語の表示名 → 項目名。Amazonの指摘が
+            # 「'商品の入数' は必須ですが…」と表示名だけで来ることがあり、
+            # 属性名が付いていないと何を聞かれたのか分からなくなる
+            "titles": {(p.get("title") or k): k
+                       for k, p in props.items() if isinstance(p, dict)},
             "all_count": len(props)}
 
 
