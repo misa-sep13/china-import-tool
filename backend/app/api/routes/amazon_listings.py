@@ -1320,6 +1320,30 @@ def _public_base() -> str:
 VARIATION_THEME = "COLOR"
 
 
+def _required_names(schema: dict) -> set:
+    """その商品タイプで必須の項目名。定義が取れなければ空。"""
+    if not schema.get("ok"):
+        return set()
+    got = {f.get("name") for f in (schema.get("fields") or [])}
+    return {n for n in got if n} | set(schema.get("auto_filled") or [])
+
+
+def _drop_unknown(attrs: dict, known: set) -> list:
+    """その商品タイプに無い項目を落とす。落とした名前を返す。
+
+    型番や品目寸法のように「いつも入れているもの」でも、受け付けない
+    商品タイプがある。ハンガー(CLOTHES_HANGER)で model_number と
+    item_length_width_height が「商品タイプに属さない」と弾かれた。
+    定義が取れなかったときは、何も落とさない（送って確かめる）。
+    """
+    if not known:
+        return []
+    gone = [k for k in list(attrs) if k not in known]
+    for k in gone:
+        attrs.pop(k, None)
+    return gone
+
+
 def _image_rows(db: Session, listing_id: int) -> list:
     """画像の一覧。中身(base64)は読まない。
 
@@ -1374,7 +1398,8 @@ def _axis_attrs(row: AmazonListing, child: AmazonListingChild) -> dict:
 
 def _attributes(row: AmazonListing, child: AmazonListingChild,
                 db: Session, parent_sku: str = None,
-                has_variation: bool = None) -> dict:
+                has_variation: bool = None,
+                theme: bool = None) -> dict:
     """1SKUぶんの attributes を組み立てる。
 
     Amazonは項目ごとに [{"value": ..., "marketplace_id": ...}] の形を取る。
@@ -1507,8 +1532,11 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
         # 子だけがテーマを送ると、テーマを持たない親と食い違って弾かれる。
         # has_variation が渡っていない呼び出しは、これまでどおり
         # 軸の有無で判断する
-        axis = _axis_attrs(row, child) if has_variation is not False else {}
-        if axis:
+        # theme は「商品タイプがテーマを必須にしているか」。
+        # 子が1つでも必須なら送る（ハンガーで必須と言われた）
+        want = (has_variation is not False) if theme is None else theme
+        axis = _axis_attrs(row, child) if want else {}
+        if axis or theme:
             a["variation_theme"] = [{"marketplace_id": mp,
                                      "name": VARIATION_THEME}]
         for key, val in axis.items():
@@ -1523,12 +1551,13 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
 
 
 def _parent_attributes(row: AmazonListing, has_variation: bool = True,
-                       db: Session = None) -> dict:
+                       db: Session = None, theme: bool = None) -> dict:
     """親。売り物ではないので価格も在庫も付けない。
 
     Amazonは単品でも親子で作るのが推奨なので、バリエーションが無くても
     親は出す。そのときはバリエーションテーマを付けない
     （軸が無いのにテーマだけ送ると弾かれるため）。
+    ただし商品タイプがテーマを必須にしているときは theme=True で送る。
     """
     mp = amazon_api._RESEARCH_MP
     extra = dict(common_attrs(db)) if db is not None else {}
@@ -1547,7 +1576,8 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
         "parentage_level": one("parent"),
         "condition_type": one("new_new"),
     }
-    if has_variation:
+    # 子が1つでも、商品タイプがテーマを必須にしているなら送る
+    if has_variation if theme is None else theme:
         a["variation_theme"] = [{"marketplace_id": mp, "name": VARIATION_THEME}]
     brand = _brand_for(db, row) if db is not None else (row.brand or "")
     if brand:
@@ -1811,10 +1841,23 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
         # 単品でも親子で作る（Amazonの推奨）。子が1つなら
         # バリエーションテーマは持たせず、親1・子1の形で出す
         has_variation = len(kids) > 1
+        # 商品タイプの定義。送れない項目を落とすのと、テーマが必須か
+        # どうかを見るのに使う
+        schema0 = amazon_api.fetch_product_type_schema(row.product_type)
+        known = set(schema0.get("all_names") or [])
+        need_theme = "variation_theme" in _required_names(schema0)
+        theme = True if (need_theme and not has_variation) else None
 
         item = {"listing_id": lid, "title": row.title,
                 "product_type": row.product_type,
-                "problems": problems, "sent": []}
+                "problems": problems, "sent": [], "asked": []}
+
+        def remember(r, item=item, known=known, pt=row.product_type):
+            # 弾かれたときに「何が足りないと言われたか」を覚える。
+            # ここで覚えないと、④で失敗しても入力欄が増えないままになる
+            for n in _remember_asked(db, pt, r.get("issues") or [], known):
+                if n not in item["asked"]:
+                    item["asked"].append(n)
 
         blocking = _blocking(problems)
         if blocking and not body.dry_run:
@@ -1827,8 +1870,11 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
                       or (kids[0].sku or "").split("_")[0]
                       or f"a{row.id:02d}")
         # 親を先に出す。親が失敗したら子は送らない（親のいない子は弾かれる）
-        attrs = _parent_attributes(row, has_variation, db)
+        attrs = _parent_attributes(row, has_variation, db, theme=theme)
+        gone = _drop_unknown(attrs, known)
         rec = {"sku": parent_sku, "kind": "親", "attributes": attrs}
+        if gone:
+            rec["dropped"] = gone
         if body.dry_run:
             rec["dry_run"] = True
             item["sent"].append(rec)
@@ -1837,6 +1883,7 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
             rec.update(r)
             item["sent"].append(rec)
             if not r.get("ok"):
+                remember(r)
                 item["ok"] = False
                 item["error"] = "親の登録に失敗したので、子は送っていません"
                 row.status = "failed"
@@ -1867,14 +1914,19 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
         all_ok = True
         for c in kids:
             attrs = _attributes(row, c, db, parent_sku=parent_sku,
-                                has_variation=has_variation)
+                                has_variation=has_variation, theme=theme)
+            gone = _drop_unknown(attrs, known)
             rec = {"sku": c.sku, "kind": "子" if has_variation else "単品",
                    "jan": c.jan, "attributes": attrs}
+            if gone:
+                rec["dropped"] = gone
             if body.dry_run:
                 rec["dry_run"] = True
             else:
                 r = amazon_api.submit_listing(c.sku, row.product_type, attrs)
                 rec.update(r)
+                if not r.get("ok"):
+                    remember(r)
                 c.status = "submitted" if r.get("ok") else "failed"
                 c.error = None if r.get("ok") else json.dumps(
                     r.get("issues") or r.get("error"), ensure_ascii=False)[:1000]
@@ -2526,6 +2578,8 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
     def run(sku, attrs, kind):
         if not sku:
             return
+        # ④と同じものを送らないと、検証が通ったのに出品で弾かれる
+        _drop_unknown(attrs, known)
         r = amazon_api.submit_listing(sku, row.product_type, attrs,
                                       validate_only=True)
         issues = r.get("issues") or []
@@ -2540,10 +2594,14 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
                        for i in issues if isinstance(i, dict)],
         })
 
-    run(parent_sku, _parent_attributes(row, has_variation, db), "親")
+    # 子が1つでも、商品タイプがテーマを必須にしているなら送る
+    need_theme = "variation_theme" in _required_names(schema0)
+    theme = True if (need_theme and not has_variation) else None
+    run(parent_sku, _parent_attributes(row, has_variation, db,
+                                       theme=theme), "親")
     for c in kids:
         run(c.sku, _attributes(row, c, db, parent_sku=parent_sku,
-                               has_variation=has_variation),
+                               has_variation=has_variation, theme=theme),
             "子" if has_variation else "単品")
 
     db.commit()
