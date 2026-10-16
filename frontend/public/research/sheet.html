@@ -1149,7 +1149,7 @@
     <li><b>リサーチ名</b>は見出しをクリックで編集。商品が複数見つかったら<b>「＋ 候補商品を追加」</b>で行を増やします。</li>
     <li><b>1688の3列（1688 URL・1688単価・オプション代）は1行目の内容を他の行へ配れます</b>――1行目の下の<b>「↓ 下の行すべてに反映」</b>、2行目以降の<b>「⤒ 1行目をコピー」</b>。コピー先は上書きされます。</li>
     <li><b>1688 URL</b>は「＋ URLを追加」で何件でも。URLを入れると欄の下に「開く ↗」「コピー」「〇〇で発注」が出ます。「〇〇で発注」は代行業者でその1688商品のページを開きます（URLが複数のときは①②…で対応が分かります）。業者名と行き先はHTML先頭の <code>AGENT</code> で決まります。</li>
-    <li>各リサーチ枠の左上の「↑↓」で、枠ごと表示順を入れ替えられます。枠の見出しのプルダウンで工程のステータス（<b>リサーチ中→保留→採用→発注済み→画像依頼済み→Amazon商品登録済み</b>、ほかに<b>不採用</b>）を付けられ、枠の色が変わります（保留=黄／採用=青／発注済み=緑／画像依頼済み=茶／Amazon商品登録済み=紫／不採用=薄いグレー。どれも中身はそのまま読めます）。<b>保留</b>は、決めきれないので後で見直すもの置き場です。上のツールバーの同じ並びのタブで絞り込んで見られます。</li>
+    <li>各リサーチ枠の左上の「↑↓」で、枠ごと表示順を入れ替えられます。枠の見出しのプルダウンで工程のステータス（<b>リサーチ中→保留→採用→発注済み→画像依頼済み→Amazon商品登録済み</b>、ほかに<b>不採用</b>）を付けられ、枠の色が変わります（保留=黄／採用=青／発注済み=緑／画像依頼済み=茶／Amazon商品登録済み=紫／不採用=薄いグレー。どれも中身はそのまま読めます）。<b>保留</b>は、決めきれないので後で見直すもの置き場です。上のツールバーのタブ（すべて・リサーチ中・保留・採用・Amazon商品登録済み・不採用）で絞り込んで見られます。</li>
     <li><b>勝てる要素</b>は欄をクリックして当てはまるものを複数チェック（各項目の下に説明が出ます）。</li>
     <li>入力内容は<b>自動保存</b>されます。作業を終えるときは念のため<b>「CSVエクスポート」</b>で控えを保存しておくと安心です。</li>
     <li class="sp-only"><b>ASINを入れると自動で取り込みます</b>（このPC専用）。ボタンを押す必要はありません。入力が終わって少し待つと、色の付いていない欄が埋まり、ASIN欄の下に<b>✓ 取り込みました</b>と出ます。<b>すでに手で入れてある欄は勝手に書き換えません</b>。値が違うときは<b>🔄 ○項目が変わりました</b>と出るので、カーソルを合わせて「売価：2,980 → 3,455」のように中身を確認し、<b>押せば新しい値に入れ替え、✕なら今の値のまま</b>にできます（売価が動いたときの気付きに使えます）。ASINを別の商品に差し替えたときは、古い値は残さず丸ごと入れ替えます。</li>
@@ -1210,8 +1210,8 @@
     <button data-f="active">リサーチ中</button>
     <button data-f="hold">保留</button>
     <button data-f="adopted">採用</button>
-    <button data-f="ordered">発注済み</button>
-    <button data-f="imaged">画像依頼済み</button>
+    <!-- 発注済み・画像依頼済みは絞り込みでは使わないので出していない。
+         工程としては残してあるので、枠のプルダウンでは選べる -->
     <button data-f="listed">Amazon商品登録済み</button>
     <button data-f="rejected">不採用</button>
   </span>
@@ -10908,18 +10908,23 @@ if(FIREBASE_CONFIG.databaseURL){
   // ---- ステータス絞り込み ----
   // 定義（STATUS_DEFS）は normalize より前に置いてある。
   const STATUS_LABEL = Object.fromEntries(STATUS_DEFS);
+  // タブに出していない工程（発注済み・画像依頼済み）で絞り込んだまま
+  // 保存されていると、解除するボタンが無いので何も出ない画面から
+  // 戻れなくなる。タブに並んでいるものだけを受け付ける
+  const FILTER_OK = new Set([...document.querySelectorAll('#statusFilter button')]
+    .map(b => b.dataset.f));
   // 絞り込みは端末ごとの見え方なので共有stateではなくlocalStorageに持つ。
   const FILTER_KEY = 'arsStatusFilter:' + WORKSPACE;
   let statusFilter = 'all';
   try{
     const f = localStorage.getItem(FILTER_KEY);
-    if(f === 'all' || STATUS_LABEL[f]) statusFilter = f;
+    if(FILTER_OK.has(f)) statusFilter = f;
   }catch(e){}
   // 埋め込み元から絞り込みを指定できる（?filter=adopted）。
   // 商品登録のタブは「採用」だけを開きたいため
   try{
     const q = new URLSearchParams(location.search).get('filter');
-    if(q && (q === 'all' || STATUS_LABEL[q])) statusFilter = q;
+    if(q && FILTER_OK.has(q)) statusFilter = q;
   }catch(e){}
   function resStatus(r){ return STATUS_LABEL[r.status] ? r.status : 'active'; }
 
