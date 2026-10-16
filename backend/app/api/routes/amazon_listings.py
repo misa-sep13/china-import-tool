@@ -1208,18 +1208,72 @@ def read_dimensions(texts: list) -> dict:
     return got
 
 
+# 寸法の単位。mm を cm より先に見る（「m」に先に当たらないように）
+_DIM_UNITS = (("millimeters", ("mm", "ミリ")),
+              ("centimeters", ("cm", "センチ")),
+              ("inches", ("inch", "in", "インチ")),
+              ("meters", ("メートル",)))
+
+# 枝ごとの書き方。「W40」「幅40」「40」のどれでも読む
+_DIM_MARKS = {"length": ("length", "l", "長さ", "長", "奥行", "奥"),
+              "width": ("width", "w", "幅"),
+              "height": ("height", "h", "高さ", "高")}
+
+
+def _dim_unit(text) -> str:
+    t = str(text or "").lower()
+    for unit, words in _DIM_UNITS:
+        if any(w in t for w in words):
+            return unit
+    return "centimeters"
+
+
+def _dims_from_text(value, keys: list) -> dict:
+    """「W40 x H49.5cm」「40×49.5」から枝ごとの数値を読む。
+
+    枝の印（W・幅など）が付いていればそれを優先し、数字だけのときは
+    書かれた順に keys へ当てる。
+    """
+    s = str(value or "")
+    out = {}
+    for k in keys:
+        for mk in _DIM_MARKS[k]:
+            m = re.search(re.escape(mk) + r"\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)",
+                          s, re.I)
+            if m:
+                out[k] = float(m.group(1))
+                break
+    if len(out) < len(keys):
+        nums = re.findall(r"[0-9]+(?:\.[0-9]+)?", s)
+        if len(nums) >= len(keys):
+            out = {k: float(n) for k, n in zip(keys, nums[:len(keys)])}
+    return out
+
+
 def _wrap_attr(name: str, value, mp: str) -> list:
     """attributes に入れる形にする。
 
     ふつうは {"value": …} でよいが、品目寸法のように
     枝ごとに値と単位を持つものは、その形で送る。
     """
-    if name == "item_length_width_height" and isinstance(value, dict):
-        one = {"marketplace_id": mp}
-        for k in ("length", "width", "height"):
-            if value.get(k):
-                one[k] = {"value": float(value[k]), "unit": "centimeters"}
-        return [one]
+    # 寸法。枝ごとに値と単位を持つ。文字列をそのまま送ると
+    # 「フィールド width に十分な値がありません」で弾かれる
+    if name in ("item_length_width_height", "item_width_height"):
+        keys = (["width", "height"] if name == "item_width_height"
+                else ["length", "width", "height"])
+        if isinstance(value, dict):
+            unit = value.get("unit") or "centimeters"
+            got = {k: float(value[k]) for k in keys if value.get(k)}
+        else:
+            unit = _dim_unit(value)
+            got = _dims_from_text(value, keys)
+        if got:
+            one = {"marketplace_id": mp}
+            for k in keys:
+                if k in got:
+                    one[k] = {"value": got[k], "unit": unit}
+            return [one]
+        return [{"value": value, "marketplace_id": mp}]
 
     # ユニット数は「いくつ」と「何の単位で」の2つが要る。
     # value だけ送ると「フィールド type に十分な値がありません」で弾かれる。
