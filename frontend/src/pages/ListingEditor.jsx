@@ -245,6 +245,9 @@ export default function ListingEditor({ listingId, onBack }) {
         { listing_ids: [listingId], dry_run: dryRun })
       setResult(r.data.results[0])
       if (!dryRun) await load()
+      // ④で弾かれたときにAmazonが聞いてきた項目は、その場で欄を出す。
+      // 覚えるだけだと欄が増えず、何度④を押しても同じところで止まる
+      if (!dryRun && (r.data.results[0]?.asked || []).length) await validate()
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }

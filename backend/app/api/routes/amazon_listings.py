@@ -431,9 +431,20 @@ def update_listing(listing_id: int, body: ListingIn,
                 j = db.query(JanCode).filter(JanCode.code == new_jan).first()
                 if j is None:
                     raise HTTPException(400, f"{new_jan} は台帳にありません")
+                # 台帳の sku は「発番したときの名前」。親SKUや色の名前を
+                # 付け替えると、こちらの子のSKUだけが変わって台帳は
+                # 古いまま残り、同じ番号なのに「すでに使われています」と
+                # 止まってしまう（a16_beige → a013_offwhite で実際に起きた）。
+                # 本当に使われているかは、ほかの子が持っているかで見る。
                 if j.sku and j.sku != c.sku:
-                    raise HTTPException(
-                        400, f"{new_jan} はすでに {j.sku} で使われています")
+                    holder = (db.query(AmazonListingChild)
+                              .filter(AmazonListingChild.jan == new_jan,
+                                      AmazonListingChild.id != c.id)
+                              .first())
+                    if holder is not None:
+                        raise HTTPException(
+                            400, f"{new_jan} はすでに "
+                                 f"{holder.sku or j.sku} で使われています")
                 old_jan = c.jan
                 c.jan = new_jan
                 j.sku = c.sku
@@ -652,6 +663,112 @@ def shrink_images(listing_id: Optional[int] = None, limit: int = 200,
         saved += len(raw) - len(out)
     db.commit()
     return {"縮めた枚数": done, "減った容量MB": round(saved / 1024 / 1024, 2)}
+
+
+# 登録が済んだあとに手元へ残す大きさ。どの写真を使ったか分かればよい
+ARCHIVE_IMAGE_PX = 320
+
+
+class ArchiveImagesIn(BaseModel):
+    listing_id: Optional[int] = None
+    research_id: Optional[str] = None
+
+
+@router.post("/archive-images")
+def archive_images(body: ArchiveImagesIn, db: Session = Depends(get_db)):
+    """登録が済んだ出品の画像を、見分けがつく小ささまで落とす。
+
+    画像はDBにbase64で預かっているので、1商品で数MBになる。
+    Amazonへ送り終わっていれば、手元には「どの写真を使ったか」が
+    分かるだけの大きさがあればよい。
+    消さずに縮めるのは、作り直せない写真があるため
+    （消すとAmazonが取りに来たときに404になることもある）。
+    """
+    q = db.query(AmazonListing)
+    if body.listing_id:
+        q = q.filter(AmazonListing.id == body.listing_id)
+    elif (body.research_id or "").strip():
+        q = q.filter(AmazonListing.research_id == body.research_id.strip())
+    else:
+        raise HTTPException(400, "どの出品か分かりません")
+    rows = q.all()
+    if not rows:
+        return {"枚数": 0, "減った容量MB": 0, "note": "出品がありません"}
+
+    done = saved = 0
+    for row in rows:
+        imgs = (db.query(AmazonListingImage)
+                .filter(AmazonListingImage.listing_id == row.id).all())
+        for img in imgs:
+            if not img.data:
+                continue
+            try:
+                raw = base64.b64decode(img.data)
+            except Exception:
+                continue
+            out = _to_thumb(raw)
+            if not out or len(out) >= len(raw):
+                continue
+            img.data = base64.b64encode(out).decode()
+            img.mime = "image/jpeg"
+            img.size = len(out)
+            done += 1
+            saved += len(raw) - len(out)
+    db.commit()
+    return {"枚数": done, "減った容量MB": round(saved / 1024 / 1024, 2)}
+
+
+def _to_thumb(blob: bytes) -> bytes:
+    """長辺320pxのJPEGにする。できなければ空を返す（元のまま残す）。"""
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(blob))
+        im.load()
+        if im.mode in ("RGBA", "LA", "P"):
+            bg = Image.new("RGB", im.size, (255, 255, 255))
+            im = im.convert("RGBA")
+            bg.paste(im, mask=im.split()[-1])
+            im = bg
+        else:
+            im = im.convert("RGB")
+        im.thumbnail((ARCHIVE_IMAGE_PX, ARCHIVE_IMAGE_PX), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=80, optimize=True)
+        return buf.getvalue()
+    except Exception:
+        return b""
+
+
+@router.delete("/{listing_id:int}/children/{child_id:int}")
+def delete_child(listing_id: int, child_id: int,
+                 db: Session = Depends(get_db)):
+    """出品から子（色）を1つ消す。
+
+    シートから色が消えても、JANを振った子は残す作りにしている
+    （番号を宙に浮かせないため）。色の名前を付け替えたときに、
+    古い色がここに取り残され、画面からは消せなくなっていた
+    （SKUとJANの欄を空にしても、JANは外せないので残り続ける）。
+
+    使ったJANは台帳で取り消しにする。一度どこかへ出した番号を
+    別の商品で使い回すと、同じ商品として扱われてしまうため。
+    """
+    c = db.get(AmazonListingChild, child_id)
+    if not c or c.listing_id != listing_id:
+        raise HTTPException(404, "ありません")
+    if (c.status or "draft") not in ("draft", "failed"):
+        raise HTTPException(
+            400, "Amazonへ送ったSKUはここからは消せません。"
+                 "先にAmazonの在庫管理で終了させてください")
+    if c.jan:
+        j = db.query(JanCode).filter(JanCode.code == c.jan).first()
+        if j is not None:
+            j.status = "void"
+            j.sku = None
+            note = f"{c.sku or '（SKUなし）'} を出品から消したので取り消し"
+            j.note = ((j.note + " ／ ") if j.note else "") + note
+    db.delete(c)
+    db.commit()
+    return {"deleted": True}
 
 
 @router.delete("/images/{image_id:int}")
@@ -1208,18 +1325,72 @@ def read_dimensions(texts: list) -> dict:
     return got
 
 
+# 寸法の単位。mm を cm より先に見る（「m」に先に当たらないように）
+_DIM_UNITS = (("millimeters", ("mm", "ミリ")),
+              ("centimeters", ("cm", "センチ")),
+              ("inches", ("inch", "in", "インチ")),
+              ("meters", ("メートル",)))
+
+# 枝ごとの書き方。「W40」「幅40」「40」のどれでも読む
+_DIM_MARKS = {"length": ("length", "l", "長さ", "長", "奥行", "奥"),
+              "width": ("width", "w", "幅"),
+              "height": ("height", "h", "高さ", "高")}
+
+
+def _dim_unit(text) -> str:
+    t = str(text or "").lower()
+    for unit, words in _DIM_UNITS:
+        if any(w in t for w in words):
+            return unit
+    return "centimeters"
+
+
+def _dims_from_text(value, keys: list) -> dict:
+    """「W40 x H49.5cm」「40×49.5」から枝ごとの数値を読む。
+
+    枝の印（W・幅など）が付いていればそれを優先し、数字だけのときは
+    書かれた順に keys へ当てる。
+    """
+    s = str(value or "")
+    out = {}
+    for k in keys:
+        for mk in _DIM_MARKS[k]:
+            m = re.search(re.escape(mk) + r"\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)",
+                          s, re.I)
+            if m:
+                out[k] = float(m.group(1))
+                break
+    if len(out) < len(keys):
+        nums = re.findall(r"[0-9]+(?:\.[0-9]+)?", s)
+        if len(nums) >= len(keys):
+            out = {k: float(n) for k, n in zip(keys, nums[:len(keys)])}
+    return out
+
+
 def _wrap_attr(name: str, value, mp: str) -> list:
     """attributes に入れる形にする。
 
     ふつうは {"value": …} でよいが、品目寸法のように
     枝ごとに値と単位を持つものは、その形で送る。
     """
-    if name == "item_length_width_height" and isinstance(value, dict):
-        one = {"marketplace_id": mp}
-        for k in ("length", "width", "height"):
-            if value.get(k):
-                one[k] = {"value": float(value[k]), "unit": "centimeters"}
-        return [one]
+    # 寸法。枝ごとに値と単位を持つ。文字列をそのまま送ると
+    # 「フィールド width に十分な値がありません」で弾かれる
+    if name in ("item_length_width_height", "item_width_height"):
+        keys = (["width", "height"] if name == "item_width_height"
+                else ["length", "width", "height"])
+        if isinstance(value, dict):
+            unit = value.get("unit") or "centimeters"
+            got = {k: float(value[k]) for k in keys if value.get(k)}
+        else:
+            unit = _dim_unit(value)
+            got = _dims_from_text(value, keys)
+        if got:
+            one = {"marketplace_id": mp}
+            for k in keys:
+                if k in got:
+                    one[k] = {"value": got[k], "unit": unit}
+            return [one]
+        return [{"value": value, "marketplace_id": mp}]
 
     # ユニット数は「いくつ」と「何の単位で」の2つが要る。
     # value だけ送ると「フィールド type に十分な値がありません」で弾かれる。
@@ -1320,6 +1491,30 @@ def _public_base() -> str:
 VARIATION_THEME = "COLOR"
 
 
+def _required_names(schema: dict) -> set:
+    """その商品タイプで必須の項目名。定義が取れなければ空。"""
+    if not schema.get("ok"):
+        return set()
+    got = {f.get("name") for f in (schema.get("fields") or [])}
+    return {n for n in got if n} | set(schema.get("auto_filled") or [])
+
+
+def _drop_unknown(attrs: dict, known: set) -> list:
+    """その商品タイプに無い項目を落とす。落とした名前を返す。
+
+    型番や品目寸法のように「いつも入れているもの」でも、受け付けない
+    商品タイプがある。ハンガー(CLOTHES_HANGER)で model_number と
+    item_length_width_height が「商品タイプに属さない」と弾かれた。
+    定義が取れなかったときは、何も落とさない（送って確かめる）。
+    """
+    if not known:
+        return []
+    gone = [k for k in list(attrs) if k not in known]
+    for k in gone:
+        attrs.pop(k, None)
+    return gone
+
+
 def _image_rows(db: Session, listing_id: int) -> list:
     """画像の一覧。中身(base64)は読まない。
 
@@ -1374,7 +1569,8 @@ def _axis_attrs(row: AmazonListing, child: AmazonListingChild) -> dict:
 
 def _attributes(row: AmazonListing, child: AmazonListingChild,
                 db: Session, parent_sku: str = None,
-                has_variation: bool = None) -> dict:
+                has_variation: bool = None,
+                theme: bool = None) -> dict:
     """1SKUぶんの attributes を組み立てる。
 
     Amazonは項目ごとに [{"value": ..., "marketplace_id": ...}] の形を取る。
@@ -1507,8 +1703,11 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
         # 子だけがテーマを送ると、テーマを持たない親と食い違って弾かれる。
         # has_variation が渡っていない呼び出しは、これまでどおり
         # 軸の有無で判断する
-        axis = _axis_attrs(row, child) if has_variation is not False else {}
-        if axis:
+        # theme は「商品タイプがテーマを必須にしているか」。
+        # 子が1つでも必須なら送る（ハンガーで必須と言われた）
+        want = (has_variation is not False) if theme is None else theme
+        axis = _axis_attrs(row, child) if want else {}
+        if axis or theme:
             a["variation_theme"] = [{"marketplace_id": mp,
                                      "name": VARIATION_THEME}]
         for key, val in axis.items():
@@ -1523,12 +1722,13 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
 
 
 def _parent_attributes(row: AmazonListing, has_variation: bool = True,
-                       db: Session = None) -> dict:
+                       db: Session = None, theme: bool = None) -> dict:
     """親。売り物ではないので価格も在庫も付けない。
 
     Amazonは単品でも親子で作るのが推奨なので、バリエーションが無くても
     親は出す。そのときはバリエーションテーマを付けない
     （軸が無いのにテーマだけ送ると弾かれるため）。
+    ただし商品タイプがテーマを必須にしているときは theme=True で送る。
     """
     mp = amazon_api._RESEARCH_MP
     extra = dict(common_attrs(db)) if db is not None else {}
@@ -1547,7 +1747,8 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
         "parentage_level": one("parent"),
         "condition_type": one("new_new"),
     }
-    if has_variation:
+    # 子が1つでも、商品タイプがテーマを必須にしているなら送る
+    if has_variation if theme is None else theme:
         a["variation_theme"] = [{"marketplace_id": mp, "name": VARIATION_THEME}]
     brand = _brand_for(db, row) if db is not None else (row.brand or "")
     if brand:
@@ -1811,10 +2012,26 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
         # 単品でも親子で作る（Amazonの推奨）。子が1つなら
         # バリエーションテーマは持たせず、親1・子1の形で出す
         has_variation = len(kids) > 1
+        # 商品タイプの定義。送れない項目を落とすのと、テーマが必須か
+        # どうかを見るのに使う
+        schema0 = amazon_api.fetch_product_type_schema(row.product_type)
+        known = set(schema0.get("all_names") or [])
+        titles = schema0.get("titles") or {}
+        need_theme = "variation_theme" in _required_names(schema0)
+        theme = True if (need_theme and not has_variation) else None
 
         item = {"listing_id": lid, "title": row.title,
                 "product_type": row.product_type,
-                "problems": problems, "sent": []}
+                "problems": problems, "sent": [], "asked": []}
+
+        def remember(r, item=item, known=known, titles=titles,
+                     pt=row.product_type):
+            # 弾かれたときに「何が足りないと言われたか」を覚える。
+            # ここで覚えないと、④で失敗しても入力欄が増えないままになる
+            for n in _remember_asked(db, pt, r.get("issues") or [],
+                                     known, titles):
+                if n not in item["asked"]:
+                    item["asked"].append(n)
 
         blocking = _blocking(problems)
         if blocking and not body.dry_run:
@@ -1827,8 +2044,11 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
                       or (kids[0].sku or "").split("_")[0]
                       or f"a{row.id:02d}")
         # 親を先に出す。親が失敗したら子は送らない（親のいない子は弾かれる）
-        attrs = _parent_attributes(row, has_variation, db)
+        attrs = _parent_attributes(row, has_variation, db, theme=theme)
+        gone = _drop_unknown(attrs, known)
         rec = {"sku": parent_sku, "kind": "親", "attributes": attrs}
+        if gone:
+            rec["dropped"] = gone
         if body.dry_run:
             rec["dry_run"] = True
             item["sent"].append(rec)
@@ -1837,6 +2057,7 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
             rec.update(r)
             item["sent"].append(rec)
             if not r.get("ok"):
+                remember(r)
                 item["ok"] = False
                 item["error"] = "親の登録に失敗したので、子は送っていません"
                 row.status = "failed"
@@ -1867,14 +2088,19 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
         all_ok = True
         for c in kids:
             attrs = _attributes(row, c, db, parent_sku=parent_sku,
-                                has_variation=has_variation)
+                                has_variation=has_variation, theme=theme)
+            gone = _drop_unknown(attrs, known)
             rec = {"sku": c.sku, "kind": "子" if has_variation else "単品",
                    "jan": c.jan, "attributes": attrs}
+            if gone:
+                rec["dropped"] = gone
             if body.dry_run:
                 rec["dry_run"] = True
             else:
                 r = amazon_api.submit_listing(c.sku, row.product_type, attrs)
                 rec.update(r)
+                if not r.get("ok"):
+                    remember(r)
                 c.status = "submitted" if r.get("ok") else "failed"
                 c.error = None if r.get("ok") else json.dumps(
                     r.get("issues") or r.get("error"), ensure_ascii=False)[:1000]
@@ -2372,27 +2598,66 @@ def memo_values(db: Session, product_type: str) -> dict:
         return {}
 
 
-def _asked_from(issues: list) -> list:
-    """Amazonの指摘から、足りない属性の名前を拾う。"""
+# 指摘の文章で項目名を囲んでいる記号。Amazonは日本語の全角・半角の
+# どちらも使ってくる
+_QUOTES = "'‘’\"“”「」『』"
+
+
+def _quoted(text: str) -> list:
+    """「'商品の入数' は必須ですが…」の、囲まれている部分を取り出す。"""
+    out, buf, open_q = [], None, None
+    for ch in str(text or ""):
+        if open_q is None:
+            if ch in _QUOTES:
+                open_q, buf = ch, []
+            continue
+        if ch in _QUOTES:
+            s = "".join(buf).strip()
+            if s:
+                out.append(s)
+            open_q, buf = None, None
+            continue
+        buf.append(ch)
+    return out
+
+
+def _asked_from(issues: list, titles: dict = None) -> list:
+    """Amazonの指摘から、足りない属性の名前を拾う。
+
+    attributeNames が付いていれば、それが一番確か。
+    付いていないことがあり（ハンガーの必須4項目がこれだった）、
+    そのときは文章の中の「'商品の入数'」のような囲みを拾って、
+    日本語の表示名から項目名へ引き直す。
+    """
     out = []
+
+    def add(n):
+        n = str(n or "").strip()
+        if n and n not in out:
+            out.append(n)
+
     for i in (issues or []):
         if not isinstance(i, dict):
             continue
-        for n in (i.get("attributeNames") or []):
-            n = str(n).strip()
-            if n and n not in out:
-                out.append(n)
+        names = [str(n).strip() for n in (i.get("attributeNames") or [])]
+        names = [n for n in names if n]
+        for n in names:
+            add(n)
+        if names:
+            continue
+        for q in _quoted(i.get("message")):
+            add((titles or {}).get(q) or q)
     return out
 
 
 def _remember_asked(db: Session, product_type: str, issues: list,
-                    known: set = None) -> list:
+                    known: set = None, titles: dict = None) -> list:
     """聞かれた項目をカテゴリに貯める。次回は先回りして欄を出せる。
 
     Amazonの指摘には、属性名でないもの（SKUそのものなど）も混ざる。
     定義にある項目だけを残さないと、入力欄に妙なものが並ぶ。
     """
-    asked = _asked_from(issues)
+    asked = _asked_from(issues, titles)
     if known:
         asked = [a for a in asked if a in known]
     if not asked:
@@ -2519,6 +2784,7 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
     # 定義にある項目名。これに無いものは覚えない
     schema0 = amazon_api.fetch_product_type_schema(row.product_type)
     known = set(schema0.get("all_names") or [])
+    titles = schema0.get("titles") or {}
 
     checked = []
     asked_all = []
@@ -2526,10 +2792,12 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
     def run(sku, attrs, kind):
         if not sku:
             return
+        # ④と同じものを送らないと、検証が通ったのに出品で弾かれる
+        _drop_unknown(attrs, known)
         r = amazon_api.submit_listing(sku, row.product_type, attrs,
                                       validate_only=True)
         issues = r.get("issues") or []
-        added = _remember_asked(db, row.product_type, issues, known)
+        added = _remember_asked(db, row.product_type, issues, known, titles)
         asked_all.extend(a for a in added if a not in asked_all)
         checked.append({
             "kind": kind, "sku": sku, "ok": bool(r.get("ok")),
@@ -2540,10 +2808,14 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
                        for i in issues if isinstance(i, dict)],
         })
 
-    run(parent_sku, _parent_attributes(row, has_variation, db), "親")
+    # 子が1つでも、商品タイプがテーマを必須にしているなら送る
+    need_theme = "variation_theme" in _required_names(schema0)
+    theme = True if (need_theme and not has_variation) else None
+    run(parent_sku, _parent_attributes(row, has_variation, db,
+                                       theme=theme), "親")
     for c in kids:
         run(c.sku, _attributes(row, c, db, parent_sku=parent_sku,
-                               has_variation=has_variation),
+                               has_variation=has_variation, theme=theme),
             "子" if has_variation else "単品")
 
     db.commit()
