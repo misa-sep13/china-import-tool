@@ -15,6 +15,10 @@ class RakutenSettings(Base):
     super_sale_start    = Column(Date,    nullable=True)
     super_sale_end      = Column(Date,    nullable=True)
     order_qty_cap       = Column(Integer, default=3)          # 1注文あたりSKU数量上限（まとめ買い除外用）
+    # 中国の長期休暇（春節・国慶節）。工場が止まるぶんリードタイムを常に自動で延ばす
+    cny_closed_before   = Column(Integer, default=7)         # 春節の何日前から止まるか
+    cny_closed_after    = Column(Integer, default=15)        # 春節の何日後まで止まるか
+    national_closed_days = Column(Integer, default=7)        # 国慶節の停止日数（10/1から）
     commission_rate     = Column(Float,   default=0.09)      # 楽天手数料率（デフォルト9%）
     default_shipping_fee = Column(Integer, default=180)      # デフォルト送料（円）
     # 楽天RMS API

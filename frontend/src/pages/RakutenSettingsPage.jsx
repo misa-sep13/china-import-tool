@@ -25,6 +25,23 @@ export default function RakutenSettingsPage() {
 
   useEffect(() => { if (data) setForm(data) }, [data])
 
+  // 休暇の効き目は実際の発注計算と同じものをサーバーで出す（画面側で再実装するとズレるため）
+  const [preview, setPreview] = useState(null)
+  useEffect(() => {
+    if (!form) return
+    const t = setTimeout(() => {
+      api.get('/rakuten/china-holiday/preview', { params: {
+        lead_days: form.lead_days,
+        target_days: form.target_days,
+        cny_before: form.cny_closed_before,
+        cny_after: form.cny_closed_after,
+        national_days: form.national_closed_days,
+      } }).then(r => setPreview(r.data)).catch(() => setPreview(null))
+    }, 300)
+    return () => clearTimeout(t)
+  }, [form?.lead_days, form?.target_days, form?.cny_closed_before,
+      form?.cny_closed_after, form?.national_closed_days])
+
   const save = useMutation({
     mutationFn: (d) => api.put('/rakuten/settings', d),
     onSuccess: () => {
@@ -235,6 +252,72 @@ export default function RakutenSettingsPage() {
                   ✨ <strong style={{ color: '#e2e8f0' }}>{form.super_sale_start || '未設定'} 〜 {form.super_sale_end || '未設定'}</strong> の販売数を通常発注数に上乗せします<br />
                   <span style={{ fontSize: 12, marginTop: 4, display: 'block' }}>※ セール販売数は商品マスタの「スーパーセール販売数」欄から入力します</span>
                 </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 中国の長期休暇 */}
+        <div className="card" style={{ marginTop: 20 }}>
+          <h2>🏮 中国の長期休暇（春節・国慶節）</h2>
+          <p style={{ color: '#94a3b8', fontSize: 13, marginTop: -8, marginBottom: 16 }}>
+            休暇中は工場が止まるので、その期間をまたぐ発注は入荷が遅れます。
+            遅れるぶんを入荷日数に足して、休暇が近づくと自動的に発注数が増えるようにします。
+            休み明けの入荷が遅れるぶんも先に見込むので、休み前の最後の発注から数量が増えます。
+            休暇を過ぎれば自動で元に戻るので、ON/OFFの切り替えは不要です（常に有効）。
+            春節の日付は2035年まで登録済みです。
+          </p>
+          <div className="form-grid">
+            <div className="form-group">
+              <label>春節の何日前から工場が止まるか</label>
+              <input type="number" min={0} max={60} {...f('cny_closed_before', 'number')} style={{ width: 80 }} />
+              <span style={{ marginLeft: 8, color: '#64748b' }}>日前</span>
+            </div>
+            <div className="form-group">
+              <label>春節の何日後まで止まるか</label>
+              <input type="number" min={0} max={60} {...f('cny_closed_after', 'number')} style={{ width: 80 }} />
+              <span style={{ marginLeft: 8, color: '#64748b' }}>日後</span>
+            </div>
+            <div className="form-group">
+              <label>国慶節の停止日数（10/1から）</label>
+              <input type="number" min={0} max={30} {...f('national_closed_days', 'number')} style={{ width: 80 }} />
+              <span style={{ marginLeft: 8, color: '#64748b' }}>日間</span>
+            </div>
+          </div>
+
+          {preview && (
+            <div style={{
+              marginTop: 12, padding: 14, borderRadius: 8,
+              background: preview.effect.enabled ? '#1a1a2e' : '#1e293b',
+              border: `1px solid ${preview.effect.enabled ? '#f59e0b' : '#475569'}`,
+            }}>
+              {preview.effect.enabled ? (
+                <div style={{ color: '#fbbf24', fontSize: 14 }}>
+                  🏮 <strong style={{ color: '#e2e8f0' }}>{preview.effect.reason}</strong> の影響で、
+                  発注数の計算に使う日数を {preview.effect.base_lead_days}日 →{' '}
+                  <strong style={{ color: '#e2e8f0' }}>{preview.effect.plan_lead_days}日</strong>
+                  （+{preview.effect.extra_days}日）に広げています。
+                  いま発注したぶんの入荷見込みは {preview.effect.arrival_date}
+                  （{preview.effect.effective_lead_days}日後）です。
+                </div>
+              ) : (
+                <div style={{ color: '#94a3b8', fontSize: 14 }}>
+                  いまは休暇の影響はありません。入荷日数は {preview.effect.effective_lead_days}日 のままです。
+                  {preview.effect.next_name && (
+                    <> 次は <strong style={{ color: '#e2e8f0' }}>{preview.effect.next_name}</strong>（
+                    {preview.effect.next_start} 〜 {preview.effect.next_end}）です。</>
+                  )}
+                </div>
+              )}
+              {preview.upcoming?.length > 0 && (
+                <div style={{ marginTop: 10, fontSize: 12, color: '#64748b' }}>
+                  工場が止まる予定：
+                  {preview.upcoming.map(u => (
+                    <span key={u.name} style={{ marginRight: 14 }}>
+                      {u.name} {u.start}〜{u.end}（{u.days}日）
+                    </span>
+                  ))}
+                </div>
               )}
             </div>
           )}
