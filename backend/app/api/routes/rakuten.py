@@ -1497,11 +1497,11 @@ def get_recommendations(db: Session = Depends(get_db)):
         target_days=settings_row.target_days,
         safety_stock_rate=settings_row.safety_stock_rate,
         # 入荷までの日数より早い段階で発注しないと間に合わないので、
-        # リードタイムが伸びたときは発注タイミングの閾値も合わせて広げる
-        threshold_days=max(
-            settings_row.threshold_days or 0,
-            holiday.plan_lead_days + (settings_row.target_days or 0),
-        ),
+        # リードタイムが伸びたぶんだけ発注タイミングの閾値も広げる。
+        # 休暇が無い時期は extra_days が0なので、いつもの閾値のまま。
+        # （max(閾値, リードタイム+目標日数) にすると、休暇と関係ない
+        #   時期まで閾値が上がって、年中ずっと発注の出方が変わってしまう）
+        threshold_days=(settings_row.threshold_days or 0) + holiday.extra_days,
     )
 
     # 発注済み（未納品）の数量をSKU×ステージごとに集計
@@ -1672,11 +1672,11 @@ def get_all_products_order(db: Session = Depends(get_db)):
         target_days=settings_row.target_days,
         safety_stock_rate=settings_row.safety_stock_rate,
         # 入荷までの日数より早い段階で発注しないと間に合わないので、
-        # リードタイムが伸びたときは発注タイミングの閾値も合わせて広げる
-        threshold_days=max(
-            settings_row.threshold_days or 0,
-            holiday.plan_lead_days + (settings_row.target_days or 0),
-        ),
+        # リードタイムが伸びたぶんだけ発注タイミングの閾値も広げる。
+        # 休暇が無い時期は extra_days が0なので、いつもの閾値のまま。
+        # （max(閾値, リードタイム+目標日数) にすると、休暇と関係ない
+        #   時期まで閾値が上がって、年中ずっと発注の出方が変わってしまう）
+        threshold_days=(settings_row.threshold_days or 0) + holiday.extra_days,
     )
     ordered1_by_sku, ordered2_by_sku = _ordered_by_sku_stage(db)
     all_products = db.query(RakutenProduct).filter(
