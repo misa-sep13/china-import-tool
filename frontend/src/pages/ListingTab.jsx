@@ -209,9 +209,17 @@ export default function ListingTab() {
             onClick={gs1Done} disabled={busy}>
             ✅ 届け出済みにする
           </button>
-          <span style={{ fontSize: 11, color: C.sub, width: '100%' }}>
-            カナ・取扱品目コード・JICFS分類・GPC分類は商品ごとに違うので空のまま出ます。
-            入れてからGS1の画面へ上げてください
+          {/* 空のまま出る欄は商品の種類で決まるので、毎回ここで迷う。
+              どこへ渡せば埋まるかまで書いておく */}
+          <span style={{ fontSize: 11, color: C.sub, width: '100%',
+            lineHeight: 1.7 }}>
+            カナ・取扱品目コード・JICFS分類・GPC分類・内容量は商品ごとに違うので
+            空のまま出ます。<b>書き出したファイルをそのままクロコに渡せば、
+            空いている欄を埋めて返してくれます。</b>
+            埋まったファイルをGS1の画面へ上げてください。
+            <br />
+            GS1側では先に「ブランド名辞書登録」で Ａｑｕａｌｉｏｒａ（全角）が
+            登録されている必要があります。
           </span>
         </div>
       )}
