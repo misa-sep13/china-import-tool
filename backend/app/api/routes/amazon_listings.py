@@ -1367,6 +1367,22 @@ def _dims_from_text(value, keys: list) -> dict:
     return out
 
 
+def _dim_keys(name: str) -> list:
+    """項目名から、入れるべき枝（長さ・幅・高さ）を読む。
+
+    item_length_width / item_width_height / item_length_width_height
+    のように、名前そのものが枝を並べている。商品タイプによって
+    組み合わせが違う（枕は L×W、ハンガーは W×H）ので決め打ちにしない。
+    """
+    n = (name or "").lower()
+    if not n.startswith("item_"):
+        return []
+    parts = n[len("item_"):].split("_")
+    if len(parts) >= 2 and all(p in _DIM_MARKS for p in parts):
+        return parts
+    return []
+
+
 def _wrap_attr(name: str, value, mp: str) -> list:
     """attributes に入れる形にする。
 
@@ -1374,10 +1390,12 @@ def _wrap_attr(name: str, value, mp: str) -> list:
     枝ごとに値と単位を持つものは、その形で送る。
     """
     # 寸法。枝ごとに値と単位を持つ。文字列をそのまま送ると
-    # 「フィールド width に十分な値がありません」で弾かれる
-    if name in ("item_length_width_height", "item_width_height"):
-        keys = (["width", "height"] if name == "item_width_height"
-                else ["length", "width", "height"])
+    # 「フィールド width に十分な値がありません」で弾かれる。
+    # どの枝が要るかは商品タイプで違う（item_length_width /
+    # item_width_height / item_length_width_height）ので、
+    # 決め打ちにせず項目名から読む
+    keys = _dim_keys(name)
+    if keys:
         if isinstance(value, dict):
             unit = value.get("unit") or "centimeters"
             got = {k: float(value[k]) for k in keys if value.get(k)}
