@@ -74,6 +74,28 @@ export default function ListingTab() {
   }
   useEffect(() => { load() }, [load])
 
+  // ツールの外（Amazonの登録テンプレート等）で振ったJANを台帳へ入れる。
+  // 入れておかないと、次の発番が同じ番号から始まってぶつかる
+  const [bulk, setBulk] = useState('')
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const importBulk = async () => {
+    if (!bulk.trim()) return
+    setBusy(true); setErr('')
+    try {
+      const r = await api.post('/amazon-research/jan/import-bulk',
+        { text: bulk })
+      const d = r.data
+      alert(`台帳に入れました：${d['入れた']}件`
+        + `／すでにあった：${d['すでにあった']}件`
+        + (d['読めなかった'].length
+          ? `\n読めなかった行：\n${d['読めなかった'].join('\n')}` : ''))
+      setBulk('')
+      await load()
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+    } finally { setBusy(false) }
+  }
+
   const gs1Export = async () => {
     setBusy(true); setErr('')
     try {
@@ -218,6 +240,35 @@ export default function ListingTab() {
             空いている欄を埋めて返してくれます。</b>
             埋まったファイルをGS1の画面へ上げてください。
           </span>
+        </div>
+      )}
+
+      {/* ツールの外で振ったJANを台帳へ入れる口。入れておかないと、
+          次の発番が同じ番号から始まってぶつかる */}
+      {!gs1 ? null : (
+        <div className="card" style={{ marginBottom: 10 }}>
+          <button className="btn btn-sm btn-secondary" style={{ fontSize: 12 }}
+            onClick={() => setBulkOpen(v => !v)}>
+            {bulkOpen ? '閉じる' : '🔢 外で振ったJANを台帳に入れる'}
+          </button>
+          {bulkOpen && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 11, color: C.sub, marginBottom: 6,
+                lineHeight: 1.7 }}>
+                1行に「JAN（タブ）SKU（タブ）商品名」。SKUと商品名は省けます。
+                Amazonの登録テンプレートに直接書いた番号など、ツールの外で
+                使った番号をここに入れておくと、次の発番がぶつかりません。
+              </div>
+              <textarea value={bulk} onChange={e => setBulk(e.target.value)}
+                rows={6} placeholder={'4573603981268\ta01\t観葉植物パキラ'}
+                style={{ width: '100%', fontSize: 12,
+                  fontFamily: 'monospace' }} />
+              <button className="btn btn-primary" style={{ fontSize: 12,
+                marginTop: 6 }} onClick={importBulk} disabled={busy}>
+                台帳に入れる
+              </button>
+            </div>
+          )}
         </div>
       )}
 

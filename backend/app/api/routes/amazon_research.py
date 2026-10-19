@@ -718,6 +718,50 @@ def import_jan(data: JanImportIn, db: Session = Depends(get_db)):
     return _jan_out(row)
 
 
+class JanImportBulkIn(BaseModel):
+    """何件もまとめて台帳へ入れる。
+
+    Amazonの登録テンプレート（Excel）へ外で振ったJANを、あとから
+    台帳へ入れるためのもの。1件ずつだと数十件で手が止まる。
+    1行＝「JAN（タブ）SKU（タブ）商品名」。SKUと商品名は省いてよい。
+    """
+    text: str
+    status: Optional[str] = "used"
+    note: Optional[str] = None
+
+
+@router.post("/jan/import-bulk")
+def import_jan_bulk(data: JanImportBulkIn, db: Session = Depends(get_db)):
+    st = _get_settings(db)
+    prefix = (st.gs1_prefix or "").strip()
+    if not prefix:
+        raise HTTPException(400, "先にGS1事業者コードを設定してください")
+
+    added, skipped, bad = [], [], []
+    for line in (data.text or "").splitlines():
+        parts = [p.strip() for p in line.replace(",", "\t").split("\t")]
+        parts = [p for p in parts if p != ""]
+        if not parts:
+            continue
+        code = parts[0]
+        sku = parts[1] if len(parts) > 1 else None
+        name = parts[2] if len(parts) > 2 else None
+        if not code.isdigit() or len(code) != 13 or not code.startswith(prefix):
+            bad.append(line.strip()[:60])
+            continue
+        if db.query(JanCode).filter(JanCode.code == code).first():
+            skipped.append(code)
+            continue
+        db.add(JanCode(code=code, item_seq=int(code[len(prefix):12]),
+                       sku=sku, name=name,
+                       status=(data.status or "used"),
+                       note=(data.note or "Amazonの登録テンプレートで使用")))
+        added.append(code)
+    db.commit()
+    return {"入れた": len(added), "すでにあった": len(skipped),
+            "読めなかった": bad, "codes": added}
+
+
 # ---------- 出品カテゴリ（商品タイプ） ----------
 #
 # Amazonは商品タイプごとに必須項目が違う。何を入れればよいかは
