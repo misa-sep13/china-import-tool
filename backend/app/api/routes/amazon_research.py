@@ -737,7 +737,7 @@ def import_jan_bulk(data: JanImportBulkIn, db: Session = Depends(get_db)):
     if not prefix:
         raise HTTPException(400, "先にGS1事業者コードを設定してください")
 
-    added, skipped, bad = [], [], []
+    added, skipped, bad, old = [], [], [], []
     for line in (data.text or "").splitlines():
         parts = [p.strip() for p in line.replace(",", "\t").split("\t")]
         parts = [p for p in parts if p != ""]
@@ -752,6 +752,11 @@ def import_jan_bulk(data: JanImportBulkIn, db: Session = Depends(get_db)):
         if db.query(JanCode).filter(JanCode.code == code).first():
             skipped.append(code)
             continue
+        # 前のAmazonアカウントで使った番号。GS1に別商品として登録されて
+        # いるので、新しいSKUに結び付けてはいけない
+        if 0 < int(code[len(prefix):12]) <= JAN_SEQ_FLOOR:
+            old.append(code)
+            continue
         db.add(JanCode(code=code, item_seq=int(code[len(prefix):12]),
                        sku=sku, name=name,
                        status=(data.status or "used"),
@@ -759,7 +764,7 @@ def import_jan_bulk(data: JanImportBulkIn, db: Session = Depends(get_db)):
         added.append(code)
     db.commit()
     return {"入れた": len(added), "すでにあった": len(skipped),
-            "読めなかった": bad, "codes": added}
+            "読めなかった": bad, "前のアカウントの番号": old, "codes": added}
 
 
 # ---------- 出品カテゴリ（商品タイプ） ----------

@@ -428,6 +428,10 @@ def update_listing(listing_id: int, body: ListingIn,
             # 台帳にある番号だけ許し、外れた番号は取り消しにする
             new_jan = (ch.get("jan") or "").strip()
             if new_jan and new_jan != (c.jan or ""):
+                if _old_account_jan(new_jan, db):
+                    raise HTTPException(
+                        400, f"{new_jan} は前のAmazonアカウントで使った番号です。"
+                             "GS1に別商品として登録されているので使えません")
                 j = db.query(JanCode).filter(JanCode.code == new_jan).first()
                 if j is None:
                     raise HTTPException(400, f"{new_jan} は台帳にありません")
@@ -977,6 +981,30 @@ _NOT_BLOCKING = ("画像がありません", "共通の画像が", "食い違っ
                  "GS1に未登録")
 
 
+def _old_account_jan(code: str, db: Session) -> bool:
+    """前のAmazonアカウントで使い切った番号かどうか。
+
+    GS1の一覧で 1〜87 が使用済みで、多くは「GTIN使用中」のまま
+    過去のASINに紐づいている。新しい商品に使うと弾かれるか、
+    別商品として扱われる（実際、ガラスクロス 4573603980865＝086 が
+    ThreeSky Plus のまま登録されていた）。
+    発番側は JAN_SEQ_FLOOR で避けているが、手で入れた番号や
+    外から取り込んだ番号はここで止める。
+    """
+    from app.api.routes.amazon_research import JAN_SEQ_FLOOR, _get_settings
+    code = (code or "").strip()
+    if not code.isdigit() or len(code) != 13:
+        return False
+    prefix = (_get_settings(db).gs1_prefix or "").strip()
+    if not prefix or not code.startswith(prefix):
+        return False
+    try:
+        seq = int(code[len(prefix):12])
+    except ValueError:
+        return False
+    return 0 < seq <= JAN_SEQ_FLOOR
+
+
 def _blocking(problems: list) -> list:
     return [p for p in problems
             if not any(k in p for k in _NOT_BLOCKING)]
@@ -1036,6 +1064,13 @@ def _problems(row: AmazonListing, db: Session) -> list:
         if not c.jan:
             p.append(f"[{who}] JANがありません")
         else:
+            # 前のAmazonアカウントで使った番号は、GS1に別商品として
+            # 登録されていて過去のASINに紐づいている。新しい商品に使うと
+            # 弾かれるか、別商品として扱われる。絶対に出してはいけない
+            if _old_account_jan(c.jan, db):
+                p.append(f"[{who}] JAN {c.jan} は前のAmazonアカウントで"
+                         "使った番号です。GS1に別商品として登録されている"
+                         "ので、この番号では出せません。発番し直してください")
             # GS1に届け出ていないJANは、Amazonが受け付けない
             j = db.query(JanCode).filter(JanCode.code == c.jan).first()
             if j is not None and j.gs1_registered_at is None:
