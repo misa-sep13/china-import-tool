@@ -1270,6 +1270,18 @@ def import_pages(body: PagesBulkIn, workspace: str = "default",
 
 _GS1_FORM = "gjdb_product_uploadform.xlsx"
 
+
+def _gs1_zen(s: str) -> str:
+    """半角の英数字・記号を全角にする。
+
+    GS1のブランド名辞書は全角でしか登録できない（画面にも
+    「全角（英数字含む）で入力してください」と出る）。半角のまま
+    上げると、辞書に登録してあっても「辞書に登録されていない
+    ブランド名です」で全件エラーになる。
+    """
+    return "".join(chr(ord(c) + 0xFEE0) if 0x21 <= ord(c) <= 0x7E else c
+                   for c in (s or ""))
+
 # 一括登録フォームの列番号（1始まり）。様式が変わったらここを直す
 _GS1_COL = {
     "status": 1,      # GTINステータスコード。02＝新規登録
@@ -1333,12 +1345,15 @@ def gs1_export(db: Session = Depends(get_db)):
     for i, r in enumerate(rows):
         at = 4 + i
         name = (r.name or r.sku or "").strip()
+        zen_brand = _gs1_zen(brand)[:40]
         ws.cell(at, _GS1_COL["status"]).value = "02"
         ws.cell(at, _GS1_COL["gtin"]).value = r.code
         ws.cell(at, _GS1_COL["name"]).value = name[:100]
-        ws.cell(at, _GS1_COL["brand"]).value = brand[:40]
+        ws.cell(at, _GS1_COL["brand"]).value = zen_brand
+        # 商品名（詳細）はブランド名と商品名をそのまま含んでいないと
+        # 「含まれていません」で弾かれる。並べただけのものを入れる
         ws.cell(at, _GS1_COL["detail"]).value = (
-            (brand + " " + name).strip())[:400]
+            (zen_brand + " " + name).strip())[:400]
         if r.sku:
             ws.cell(at, _GS1_COL["own_code"]).value = r.sku[:20]
 
