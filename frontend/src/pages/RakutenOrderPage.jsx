@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import { normalizeSearch } from '../searchUtil'
 import TaotaroOrderModal from './TaotaroOrderModal'
+import CreateSendOrder from './CreateSendOrder'
 
 // 追跡の色。「配達完了」と「配達中」はどちらも手元へ向かっている状態なので同じ色。
 // 就労支援在庫の一覧と揃えてある
@@ -1165,7 +1166,11 @@ export default function RakutenOrderPage() {
         <button className={`btn ${tab === 'order' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('order')}>発注管理</button>
         <button className={`btn ${tab === 'history' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('history')}>発注済みリスト</button>
         <button className={`btn ${tab === 'shipment' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('shipment')}>配送依頼（在庫反映）</button>
+        <button className={`btn ${tab === 'newship' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTab('newship')}>配送依頼を出す</button>
       </div>
+
+      {/* 入庫済みの注文を選んで、タオタロウへ配送依頼を出す */}
+      {tab === 'newship' && <CreateSendOrder />}
 
       {/* ===== 発注管理（全商品 + 発注推奨フィルター統合） ===== */}
       {tab === 'order' && (
