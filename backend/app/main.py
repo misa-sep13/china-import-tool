@@ -231,6 +231,9 @@ def _migrate():
         # 出品原稿：商品のハイライト
         ("amazon_listings","highlight",
          "ALTER TABLE amazon_listings ADD COLUMN highlight TEXT"),
+        # 再梱包指示書を代行会社へ見せるURLの鍵
+        ("amazon_research_settings","repack_token",
+         "ALTER TABLE amazon_research_settings ADD COLUMN repack_token VARCHAR"),
         ("rakuten_settings","order_qty_cap", "ALTER TABLE rakuten_settings ADD COLUMN order_qty_cap INTEGER DEFAULT 3"),
         # 中国の長期休暇（春節・国慶節）でリードタイムを自動延長する設定
         ("rakuten_settings","cny_closed_before",     "ALTER TABLE rakuten_settings ADD COLUMN cny_closed_before INTEGER DEFAULT 7"),
@@ -1612,6 +1615,11 @@ async def auth_middleware(request: _StarletteRequest, call_next):
     if request.method == "GET" and (
             path.startswith("/api/product-drafts/public-image/")
             or path.startswith("/api/amazon-listings/public-image/")):
+        return await call_next(request)
+    # 再梱包指示書を代行会社が見る口。ログインを渡せない相手なので、
+    # 合言葉つきのURLだけ通す。読み取り専用で、渡してよい項目しか返さない
+    if (request.method == "GET"
+            and path.startswith("/api/amazon-research/repack/public/")):
         return await call_next(request)
     # 商品キープの共有ページ。相手（別の会社の人）がログインなしで
     # 開いて、自分のキープを登録できるようにする。合言葉つきのURLでだけ

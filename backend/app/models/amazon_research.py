@@ -102,6 +102,9 @@ class AmazonResearchSettings(Base):
     # 出品時のブランド名。ブランド登録が通ったので、これからは必ず
     # 自社ブランドで出す（ノーブランド品では登録しない）
     brand_name = Column(String, default="Aqualiora")
+    # 再梱包指示書を代行会社へ見せるURLの鍵。推測できない文字列にして、
+    # これを知っている人だけが読み取り専用のページを開ける
+    repack_token = Column(String, nullable=True)
     # 以前「ブランド登録が済むまでノーブランドで出す」ために使っていた印。
     # もう見ていないが、古いデータが入っているので列は残してある
     brand_ready = Column(Boolean, default=True)
