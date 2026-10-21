@@ -715,7 +715,16 @@ def probe_boxes(sid: int):
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
     bd = invoice_calc.parse_box_sheets(wb)
-    return {"ok": bool(bd.get("boxes")), "sheets": wb.sheetnames,
+    # 実物のシートの中身をそのまま見る（見出しが想定と違うため）
+    dump = {}
+    for name in wb.sheetnames:
+        ws = wb[name]
+        rows = []
+        for r in range(1, min(ws.max_row, 14) + 1):
+            rows.append([ws.cell(row=r, column=c).value
+                         for c in range(1, min(ws.max_column, 14) + 1)])
+        dump[name] = {"max_row": ws.max_row, "max_col": ws.max_column, "head": rows}
+    return {"ok": bool(bd.get("boxes")), "sheets": wb.sheetnames, "dump": dump,
             "box_count": len(bd.get("boxes") or {}),
             "boxes": bd.get("boxes"),
             "contents_sample": (bd.get("contents") or [])[:12],
