@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>再梱包指示書</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --sub:#5b6673;
+    --line:#dfe3e8; --accent:#1f6feb; --warn:#b54708;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#14171a; --card:#1d2125; --ink:#e8eaed; --sub:#9aa4af;
+      --line:#2d333b; --accent:#6ea8fe; --warn:#f0a868;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#14171a; --card:#1d2125; --ink:#e8eaed; --sub:#9aa4af;
+    --line:#2d333b; --accent:#6ea8fe; --warn:#f0a868;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+    line-height:1.7; font-size:15px;
+  }
+  .wrap{max-width:860px; margin:0 auto; padding:24px 16px 64px;}
+  header{margin-bottom:20px;}
+  h1{font-size:21px; margin:0 0 4px;}
+  .lead{color:var(--sub); font-size:13px; margin:0;}
+  .bar{
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+    margin:16px 0; padding:10px 12px; background:var(--card);
+    border:1px solid var(--line); border-radius:8px;
+  }
+  .bar input{
+    flex:1 1 200px; min-width:0; padding:7px 10px; font-size:14px;
+    border:1px solid var(--line); border-radius:6px;
+    background:var(--bg); color:var(--ink);
+  }
+  button{
+    padding:7px 13px; font-size:13px; cursor:pointer;
+    border:1px solid var(--line); border-radius:6px;
+    background:var(--card); color:var(--ink);
+  }
+  button:hover{border-color:var(--accent); color:var(--accent);}
+  .item{
+    background:var(--card); border:1px solid var(--line);
+    border-radius:10px; padding:16px; margin-bottom:14px;
+  }
+  .head{display:flex; gap:14px; align-items:flex-start;}
+  .thumb{
+    width:84px; height:84px; flex:0 0 84px; object-fit:contain;
+    background:var(--bg); border:1px solid var(--line); border-radius:6px;
+  }
+  .name{font-weight:600; font-size:16px; margin:0 0 4px;}
+  .meta{color:var(--sub); font-size:12.5px; margin:0;}
+  .note{
+    white-space:pre-wrap; margin:14px 0 0; padding:12px 14px;
+    background:var(--bg); border-left:3px solid var(--accent);
+    border-radius:0 6px 6px 0; font-size:14.5px;
+  }
+  table{border-collapse:collapse; width:100%; margin-top:12px; font-size:13px;}
+  th,td{border:1px solid var(--line); padding:6px 9px; text-align:left;}
+  th{background:var(--bg); color:var(--sub); font-weight:600; white-space:nowrap;}
+  td.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+  .empty,.error{
+    background:var(--card); border:1px solid var(--line);
+    border-radius:10px; padding:28px 18px; text-align:center; color:var(--sub);
+  }
+  .error{border-color:var(--warn); color:var(--warn);}
+  footer{margin-top:28px; color:var(--sub); font-size:12px; text-align:center;}
+  @media print{
+    body{background:#fff;}
+    .bar,footer{display:none;}
+    .item{break-inside:avoid; border-color:#bbb;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>再梱包指示書</h1>
+    <p class="lead">日本へ送る前の詰め直しの指示です。商品ごとに読んでください。</p>
+  </header>
+
+  <div class="bar">
+    <input id="q" type="search" placeholder="商品名・SKU・JANで絞り込み">
+    <button id="print">印刷 / PDF保存</button>
+    <span id="count" class="lead"></span>
+  </div>
+
+  <div id="out"><div class="empty">読み込んでいます…</div></div>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  // APIの場所。シート側と同じ決め方にしておく
+  var API_BASE = 'https://china-import-tool.onrender.com/api';
+
+  var out   = document.getElementById('out');
+  var count = document.getElementById('count');
+  var q     = document.getElementById('q');
+  var items = [];
+
+  function token(){
+    var m = (location.hash || '').match(/[#&]t=([^&]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  function el(tag, cls, text){
+    var e = document.createElement(tag);
+    if(cls) e.className = cls;
+    if(text !== undefined && text !== null) e.textContent = text;
+    return e;
+  }
+
+  function show(msg, isError){
+    out.innerHTML = '';
+    out.appendChild(el('div', isError ? 'error' : 'empty', msg));
+  }
+
+  function draw(){
+    var word = (q.value || '').trim().toLowerCase();
+    var list = items.filter(function(it){
+      if(!word) return true;
+      var hay = [it.product_name, it.title, it.rival_name]
+        .concat((it.children || []).map(function(c){
+          return [c.name, c.sku, c.jan].join(' ');
+        })).join(' ').toLowerCase();
+      return hay.indexOf(word) >= 0;
+    });
+
+    count.textContent = list.length + '件';
+    out.innerHTML = '';
+    if(!list.length){
+      out.appendChild(el('div', 'empty',
+        word ? '見つかりませんでした' : 'いま指示のある商品はありません'));
+      return;
+    }
+
+    list.forEach(function(it){
+      var card = el('div', 'item');
+      var head = el('div', 'head');
+
+      if(it.image){
+        var img = document.createElement('img');
+        img.className = 'thumb';
+        img.src = it.image;
+        img.alt = '';
+        img.loading = 'lazy';
+        img.addEventListener('error', function(){ img.remove(); });
+        head.appendChild(img);
+      }
+
+      var box = el('div');
+      box.appendChild(el('p', 'name', it.product_name || it.title || '(名称未入力)'));
+      var meta = [];
+      if(it.title) meta.push(it.title);
+      if(it.updated_at) meta.push('指示の更新 ' + it.updated_at);
+      box.appendChild(el('p', 'meta', meta.join('　/　')));
+      head.appendChild(box);
+      card.appendChild(head);
+
+      card.appendChild(el('div', 'note', it.note || ''));
+
+      var kids = (it.children || []).filter(function(c){ return c.sku || c.name; });
+      if(kids.length){
+        var tbl = document.createElement('table');
+        var tr = document.createElement('tr');
+        ['色・種類', 'SKU', 'JAN'].forEach(function(h){
+          tr.appendChild(el('th', null, h));
+        });
+        tbl.appendChild(tr);
+        kids.forEach(function(c){
+          var r = document.createElement('tr');
+          r.appendChild(el('td', null, c.name || ''));
+          r.appendChild(el('td', 'code', c.sku || ''));
+          r.appendChild(el('td', 'code', c.jan || ''));
+          tbl.appendChild(r);
+        });
+        card.appendChild(tbl);
+      }
+      out.appendChild(card);
+    });
+  }
+
+  q.addEventListener('input', draw);
+  document.getElementById('print').addEventListener('click', function(){
+    window.print();
+  });
+
+  var t = token();
+  if(!t){
+    show('URLが正しくありません。担当者からもらったURLをそのまま開いてください。', true);
+    return;
+  }
+
+  fetch(API_BASE + '/amazon-research/repack/public/' + encodeURIComponent(t))
+    .then(function(res){
+      if(res.status === 404){
+        throw new Error('このURLは使えなくなっています。担当者に新しいURLを聞いてください。');
+      }
+      if(!res.ok) throw new Error('読み込めませんでした（HTTP ' + res.status + '）');
+      return res.json();
+    })
+    .then(function(j){
+      items = j.items || [];
+      draw();
+      document.getElementById('foot').textContent =
+        '読み込み ' + new Date().toLocaleString('ja-JP');
+    })
+    .catch(function(e){
+      show(e.message || String(e), true);
+    });
+})();
+</script>
+</body>
+</html>
