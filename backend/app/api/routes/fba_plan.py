@@ -624,13 +624,29 @@ def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
             nm = ws.cell(row=r, column=2).value
             if nm:
                 name_of[key] = str(nm).strip()
+            u = ws.cell(row=r, column=12).value      # L列＝1688リンク
+            if u:
+                url_of[key] = str(u).strip()
 
-    # ASIN → 自社の商品（SKU・FNSKU・入数）
+    # 商品ID → 1688のURL（インボイスのL列）。
+    # ASIN列は空のことが多いので、URLでも照らせるようにする
+    url_of: dict = {}
+
+    # 自社の商品（SKU・FNSKU）を ASIN と 1688URL の両方で引けるようにする
+    def _offer(u: str) -> str:
+        """1688のURLから offer 番号だけを抜く。末尾の?以降は毎回変わる"""
+        import re
+        m = re.search(r"offer/(\d+)", str(u or ""))
+        return m.group(1) if m else ""
+
     prods = db.query(Product).all()
-    by_asin = {}
+    by_asin, by_offer = {}, {}
     for p in prods:
         if p.asin:
             by_asin.setdefault(str(p.asin).strip().upper(), p)
+        o = _offer(getattr(p, "buy_url", ""))
+        if o:
+            by_offer.setdefault(o, p)
 
     out_boxes = []
     unknown = []
@@ -643,6 +659,11 @@ def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
             gid = str(c["goods_id"])
             asin = asin_of.get(gid, "")
             p = by_asin.get(asin.upper()) if asin else None
+            if not p:
+                # ASINが空のことが多いので、1688のURLでも探す
+                p = by_offer.get(_offer(url_of.get(gid, "")))
+            if p and not asin:
+                asin = p.asin or ""
             row = {
                 "goods_id": gid,
                 "asin": asin,
