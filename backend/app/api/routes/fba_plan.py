@@ -266,7 +266,7 @@ def create_inbound_plan_api(req: PlanExportRequest, db: Session = Depends(get_db
 
     作れるのはSKUと数量まで。梱包（何箱に分けるか）や配送業者はタオタロウが
     決めるため、ここでは確定しない。作成後はセラーセントラルで商品ラベルを
-    ダウンロードしてDingtalkへ送る運用になる。
+    ダウンロードしてWeChatへ送る運用になる。
     """
     from app.core.config import settings as app_settings
     if not app_settings.SP_API_REFRESH_TOKEN:
@@ -555,6 +555,70 @@ async def import_taotaro_excel(file: UploadFile = File(...), db: Session = Depen
     finally:
         import os
         os.unlink(tmp.name)
+
+
+@router.post("/sync-arrived")
+def sync_arrived(db: Session = Depends(get_db)):
+    """タオタロウで入庫済みになった注文を、発注済みリストに反映する。
+
+    これまではタオタロウのサイトでExcelを落として、この画面へ
+    アップロードし直していた。APIで同じものが取れるので、
+    ボタン1つで済むようにする（落とす・上げるが要らない）。
+
+    state 4＝入庫済み。1688のURLで発注済みリストと突き合わせる。
+    """
+    orders = (
+        db.query(OrderHistory)
+        .filter(OrderHistory.is_deleted == False)
+        .filter(OrderHistory.status != "shipped")
+        .all()
+    )
+    by_url = {}
+    for oh in orders:
+        key = _normalize_1688_url(oh.buy_url or "")
+        if key:
+            by_url.setdefault(key, []).append(oh)
+
+    matched = 0
+    unmatched = []
+    seen = 0
+    for page in range(1, 6):
+        try:
+            d = taotaro.list_orders(page=page, limit=100)
+        except Exception as e:
+            raise HTTPException(400, f"タオタロウから取れませんでした（{e}）")
+        items = d.get("items") or []
+        for o in items:
+            # 4＝入庫済み。ここに来て初めて「届いた」と言える
+            if o.get("state") != 4:
+                continue
+            seen += 1
+            key = _normalize_1688_url(o.get("url") or "")
+            hit = None
+            for oh in by_url.get(key, []):
+                if oh.status != "arrived":
+                    hit = oh
+                    break
+            if not hit:
+                unmatched.append({
+                    "name_cn": o.get("title") or "",
+                    "color": " / ".join(
+                        str(p.get("value")) for p in (o.get("sku_props") or [])),
+                    "size": "",
+                    "qty": o.get("quantity") or 0,
+                    "buy_url": o.get("url") or "",
+                    "taotaro_order_id": str(o.get("oid") or ""),
+                })
+                continue
+            hit.status = "arrived"
+            hit.arrived_at = datetime.now(timezone.utc)
+            hit.taotaro_order_id = str(o.get("oid") or "")
+            matched += 1
+        if not d.get("has_more_pages"):
+            break
+
+    db.commit()
+    return {"matched": matched, "total_excel_rows": seen, "unmatched": unmatched}
 
 
 @router.get("/packing/{sid:int}")
