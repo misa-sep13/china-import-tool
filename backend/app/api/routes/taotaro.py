@@ -713,6 +713,13 @@ def probe_boxes(sid: int):
         wb = openpyxl.load_workbook(_io.BytesIO(taotaro.invoice_workbook(sid)))
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    from app.services import invoice_calc
+    bd = invoice_calc.parse_box_sheets(wb)
+    parsed = {"box_count": len(bd.get("boxes") or {}),
+              "contents": len(bd.get("contents") or []),
+              "available": bd.get("available"),
+              "boxes": bd.get("boxes"),
+              "sample": (bd.get("contents") or [])[:6]}
     dump = {}
     for name in wb.sheetnames:
         if "invoice" in name.lower():
@@ -723,7 +730,7 @@ def probe_boxes(sid: int):
             rows.append([ws.cell(row=r, column=c).value
                          for c in range(1, min(ws.max_column, 14) + 1)])
         dump[name] = {"max_row": ws.max_row, "max_col": ws.max_column, "rows": rows}
-    return {"ok": True, "sheets": wb.sheetnames, "dump": dump}
+    return {"ok": True, "sheets": wb.sheetnames, "parsed": parsed, "dump": dump}
 
 
 @router.get("/probe")
