@@ -3,6 +3,7 @@ import api from '../api/client'
 import ListingTab from './ListingTab'
 import KeepClaimsPage from './KeepClaimsPage'
 import ImageRequestsPage from './ImageRequestsPage'
+import RepackPage from './RepackPage'
 
 /**
  * リサーチ（競合リサーチシート ／ セラースカウト ／ 商品登録）。
@@ -83,6 +84,7 @@ export default function ResearchPage() {
           { k: 'keep', l: '🤝 商品キープ' },
           { k: 'images', l: '🎨 画像依頼' },
           { k: 'old', l: '🏷 採用商品' },
+          { k: 'repack', l: '📦 再梱包指示' },
         ].map(t => (
           <button key={t.k} onClick={() => setTab(t.k)}
             className={`btn ${tab === t.k ? 'btn-primary' : 'btn-secondary'}`}>
@@ -120,6 +122,10 @@ export default function ResearchPage() {
       ) : tab === 'images' ? (
         <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
           <ImageRequestsPage />
+        </div>
+      ) : tab === 'repack' ? (
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+          <RepackPage />
         </div>
       ) : (
         <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>

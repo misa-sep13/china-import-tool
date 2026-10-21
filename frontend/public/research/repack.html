@@ -129,7 +129,7 @@
     var word = (q.value || '').trim().toLowerCase();
     var list = items.filter(function(it){
       if(!word) return true;
-      var hay = [it.product_name, it.title, it.rival_name]
+      var hay = [it.name, it.research_title]
         .concat((it.children || []).map(function(c){
           return [c.name, c.sku, c.jan].join(' ');
         })).join(' ').toLowerCase();
@@ -159,15 +159,19 @@
       }
 
       var box = el('div');
-      box.appendChild(el('p', 'name', it.product_name || it.title || '(名称未入力)'));
+      box.appendChild(el('p', 'name', it.name || it.research_title || '(名称未入力)'));
       var meta = [];
-      if(it.title) meta.push(it.title);
       if(it.updated_at) meta.push('指示の更新 ' + it.updated_at);
       box.appendChild(el('p', 'meta', meta.join('　/　')));
       head.appendChild(box);
       card.appendChild(head);
 
-      card.appendChild(el('div', 'note', it.note || ''));
+      if(it.note) card.appendChild(el('div', 'note', it.note));
+      if(it.box_note){
+        var b = el('div', 'note');
+        b.textContent = '【外箱・入数】' + String.fromCharCode(10) + it.box_note;
+        card.appendChild(b);
+      }
 
       var kids = (it.children || []).filter(function(c){ return c.sku || c.name; });
       if(kids.length){
@@ -201,7 +205,7 @@
     return;
   }
 
-  fetch(API_BASE + '/amazon-research/repack/public/' + encodeURIComponent(t))
+  fetch(API_BASE + '/repack/public/' + encodeURIComponent(t))
     .then(function(res){
       if(res.status === 404){
         throw new Error('このURLは使えなくなっています。担当者に新しいURLを聞いてください。');

@@ -14,6 +14,7 @@ from app.api.routes import inventory_snapshots
 from app.api.routes import material_costs
 from app.api.routes import cost_histories
 from app.api.routes import amazon_research
+from app.api.routes import repack
 from app.api.routes import amazon_listings
 from app.api.routes import scout
 from app.api.routes import welfare
@@ -35,6 +36,7 @@ from app.models import daily_sales as daily_sales_models
 from app.models import keep_claim as keep_claim_models
 from app.models import image_request as image_request_models
 from app.models import price_log as price_log_models
+from app.models import repack_instruction as repack_instruction_models
 from app.models import rakuten_product as rakuten_product_models
 from app.models import rakuten_order as rakuten_order_models
 from app.models import rakuten_settings as rakuten_settings_models
@@ -1619,7 +1621,7 @@ async def auth_middleware(request: _StarletteRequest, call_next):
     # 再梱包指示書を代行会社が見る口。ログインを渡せない相手なので、
     # 合言葉つきのURLだけ通す。読み取り専用で、渡してよい項目しか返さない
     if (request.method == "GET"
-            and path.startswith("/api/amazon-research/repack/public/")):
+            and path.startswith("/api/repack/public/")):
         return await call_next(request)
     # 商品キープの共有ページ。相手（別の会社の人）がログインなしで
     # 開いて、自分のキープを登録できるようにする。合言葉つきのURLでだけ
@@ -1695,6 +1697,7 @@ app.include_router(inventory_snapshots.router, prefix="/api")
 app.include_router(material_costs.router, prefix="/api")
 app.include_router(cost_histories.router, prefix="/api")
 app.include_router(amazon_research.router, prefix="/api")
+app.include_router(repack.router, prefix="/api")
 app.include_router(amazon_listings.router, prefix="/api")
 app.include_router(scout.router, prefix="/api")
 app.include_router(taotaro.router, prefix="/api")
