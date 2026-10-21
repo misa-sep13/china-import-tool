@@ -209,6 +209,67 @@ export default function FbaPlanPage() {
     setExporting(false)
   }
 
+  // ---- 梱包情報（箱ごとの中身）----
+  //
+  // Amazonの納品プランは「何箱か」「各箱の3辺と重量」「どの箱に何が
+  // 何個入っているか」が要る。配送依頼APIには箱の項目が無いが、
+  // タオタロウのインボイスの箱シートに全部入っているので、そこから読む。
+  const [sendOrders, setSendOrders] = useState(null)
+  const [loadingSo, setLoadingSo] = useState(false)
+  const [packing, setPacking] = useState(null)
+  const [packErr, setPackErr] = useState('')
+  const [loadingPack, setLoadingPack] = useState(false)
+
+  const loadSendOrders = async () => {
+    setLoadingSo(true); setPackErr('')
+    try {
+      const { data } = await api.get('/taotaro/send-orders', { params: { limit: 30 } })
+      setSendOrders(data.items || [])
+    } catch (e) {
+      setPackErr(e.response?.data?.detail || '配送依頼を取れませんでした')
+    }
+    setLoadingSo(false)
+  }
+
+  const loadPacking = async (sid) => {
+    setLoadingPack(true); setPackErr(''); setPacking(null)
+    try {
+      const { data } = await api.get(`/fba-plan/packing/${sid}`)
+      setPacking(data)
+    } catch (e) {
+      setPackErr(e.response?.data?.detail || '梱包情報を読めませんでした')
+    }
+    setLoadingPack(false)
+  }
+
+  // Amazonの梱包情報CSV。1行＝「箱番号・SKU・個数」。
+  // 箱の寸法と重量は箱の先頭行にだけ入れる（Amazonの様式に合わせる）
+  const downloadPackingCsv = () => {
+    if (!packing) return
+    const head = ['箱番号', 'SKU', 'FNSKU', '個数', '長さcm', '幅cm', '高さcm', '重量kg', '商品名']
+    const lines = [head.join(',')]
+    packing.boxes.forEach(b => {
+      b.items.forEach((it, i) => {
+        lines.push([
+          b.box_no, it.sku || '', it.fnsku || '', it.qty,
+          i === 0 ? (b.length_cm ?? '') : '',
+          i === 0 ? (b.width_cm ?? '') : '',
+          i === 0 ? (b.height_cm ?? '') : '',
+          i === 0 ? (b.weight_kg ?? '') : '',
+          `"${String(it.name || '').replace(/"/g, '""')}"`,
+        ].join(','))
+      })
+    })
+    // Excelで開くとUTF-8が化けるのでBOMを付ける
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `packing_${packing.sid}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const SortHeader = ({ label, field, style }) => (
     <th style={{ ...thStyle, cursor: 'pointer', userSelect: 'none', ...style }}
       onClick={() => handleSort(field)}>
@@ -263,6 +324,110 @@ export default function FbaPlanPage() {
           </div>
         </div>
       </details>
+
+      {/* 梱包情報。Amazonの納品プランで「箱に何を入れたか」を入れるところに使う。
+          タオタロウのインボイスから読むので、手で数える必要がない */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 15 }}>📦 梱包情報（箱の中身）</b>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            Amazonの「輸送の詳細」で箱ごとの中身を入れるときに使います
+          </span>
+          <button className="btn btn-secondary" style={{ marginLeft: 'auto', fontSize: 13 }}
+            onClick={loadSendOrders} disabled={loadingSo}>
+            {loadingSo ? '読み込み中…' : '便を選ぶ'}
+          </button>
+        </div>
+
+        {packErr && (
+          <div style={{ marginTop: 10, padding: '8px 12px', background: '#fef2f2',
+            border: '1px solid #fecaca', borderRadius: 6, fontSize: 13, color: '#b91c1c' }}>
+            {packErr}
+          </div>
+        )}
+
+        {sendOrders && !packing && (
+          <div style={{ marginTop: 12, maxHeight: 280, overflowY: 'auto',
+            border: '1px solid #e2e8f0', borderRadius: 6 }}>
+            <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+              <thead><tr style={{ background: '#f8fafc' }}>
+                {['配送依頼No', '状態', '重量', ''].map(h => (
+                  <th key={h} style={{ padding: '6px 10px', textAlign: 'left' }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {sendOrders.map(x => (
+                  <tr key={x.sid} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '6px 10px' }}>{x.sn || x.sid}</td>
+                    <td style={{ padding: '6px 10px', color: '#64748b' }}>{x.state_label}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'right' }}>
+                      {x.count_weight ? `${x.count_weight}kg` : '—'}
+                    </td>
+                    <td style={{ padding: '6px 10px' }}>
+                      <button className="btn btn-sm btn-primary" style={{ fontSize: 12 }}
+                        onClick={() => loadPacking(x.sid)} disabled={loadingPack}>
+                        箱の中身を見る
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {packing && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center',
+              flexWrap: 'wrap', marginBottom: 10 }}>
+              <b style={{ fontSize: 14 }}>
+                配送依頼 {packing.sid}　／　{packing.box_count}箱
+              </b>
+              {packing.unknown_count > 0 && (
+                <span style={{ fontSize: 12, color: '#b45309', fontWeight: 600 }}>
+                  ⚠ 商品マスタと結びつかない行が {packing.unknown_count}件あります
+                  （SKUが空のまま出ます）
+                </span>
+              )}
+              <button className="btn btn-primary" style={{ marginLeft: 'auto', fontSize: 13 }}
+                onClick={downloadPackingCsv}>⬇ CSVで保存</button>
+              <button className="btn btn-secondary" style={{ fontSize: 13 }}
+                onClick={() => { setPacking(null); setPackErr('') }}>閉じる</button>
+            </div>
+
+            {packing.boxes.map(b => (
+              <div key={b.box_no} style={{ marginBottom: 10, border: '1px solid #e2e8f0',
+                borderRadius: 6, overflow: 'hidden' }}>
+                <div style={{ padding: '6px 12px', background: '#f8fafc',
+                  fontSize: 13, fontWeight: 600 }}>
+                  箱 {b.box_no}
+                  <span style={{ color: '#64748b', fontWeight: 400, marginLeft: 10 }}>
+                    {b.length_cm}×{b.width_cm}×{b.height_cm}cm　{b.weight_kg}kg
+                  </span>
+                </div>
+                <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+                  <tbody>
+                    {b.items.map((it, i) => (
+                      <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '5px 12px', fontWeight: 600, width: 160 }}>
+                          {it.sku || <span style={{ color: '#b45309' }}>（未登録）</span>}
+                        </td>
+                        <td style={{ padding: '5px 12px', color: '#64748b', width: 140 }}>
+                          {it.fnsku || '—'}
+                        </td>
+                        <td style={{ padding: '5px 12px', textAlign: 'right', width: 80 }}>
+                          {it.qty}個
+                        </td>
+                        <td style={{ padding: '5px 12px', color: '#94a3b8' }}>{it.name}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* タオタロウExcel取込 */}
       <div className="card" style={{ marginBottom: 16 }}>
