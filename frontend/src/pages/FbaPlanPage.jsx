@@ -319,6 +319,81 @@ export default function FbaPlanPage() {
       </div>
 
 
+      {/* ①入庫済みの取り込み。
+          もとはタオタロウのサイトでExcelを落として、ここへ上げ直していた。
+          APIで同じものが取れるので、ボタン1つにした */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            onClick={handleSyncArrived}
+            disabled={importing}
+            style={{
+              padding: '9px 18px', background: importing ? '#cbd5e1' : '#ea580c',
+              color: '#fff', border: 'none', borderRadius: 6,
+              cursor: importing ? 'default' : 'pointer', fontWeight: 700, fontSize: 14,
+            }}
+          >
+            {importing ? '取り込み中…' : '① 入庫済みを取り込む'}
+          </button>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            タオタロウで倉庫に届いた商品に「到着済み」の印を付けます（Excelは要りません）
+          </span>
+          {importResult && !importResult.error && (
+            <span style={{ fontSize: 13, marginLeft: 'auto' }}>
+              <strong style={{ color: '#16a34a' }}>{importResult.matched}件</strong> 取り込みました
+              {importResult.unmatched?.length > 0 && (
+                <span style={{ color: '#9ca3af', marginLeft: 8 }}>
+                  （{importResult.unmatched.length}件は発注済みリストに見当たらず）
+                </span>
+              )}
+            </span>
+          )}
+          {importResult?.error && (
+            <span style={{ color: '#ef4444', fontSize: 13, marginLeft: 'auto' }}>
+              {importResult.error}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* 発注済みリストに見当たらなかった行。無いときは出さない
+          （空の枠だけが残っていた） */}
+      {importResult?.unmatched?.length > 0 && (
+      <div className="card" style={{ marginBottom: 16 }}>
+        {true && (
+          <details style={{ marginTop: 8, fontSize: 12 }}>
+            <summary style={{ cursor: 'pointer', color: '#f59e0b' }}>
+              未照合 {importResult.unmatched.length}件を表示
+            </summary>
+            <div style={{ overflowX: 'auto', marginTop: 4 }}>
+              <table style={{ fontSize: 12, borderCollapse: 'collapse', width: '100%' }}>
+                <thead>
+                  <tr style={{ background: '#fef3c7' }}>
+                    <th style={thStyle}>タオタロウID</th>
+                    <th style={thStyle}>商品名</th>
+                    <th style={thStyle}>色/サイズ</th>
+                    <th style={thStyle}>数量</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {importResult.unmatched.map((u, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={tdStyle}>{u.taotaro_order_id}</td>
+                      <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {u.name_cn}
+                      </td>
+                      <td style={tdStyle}>{[u.color, u.size].filter(Boolean).join(' / ')}</td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>{u.qty}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        )}
+      </div>
+      )}
+
       {/* 梱包情報。Amazonの納品プランで「箱に何を入れたか」を入れるところに使う。
           タオタロウのインボイスから読むので、手で数える必要がない */}
       <div className="card" style={{ marginBottom: 16 }}>
@@ -420,77 +495,6 @@ export default function FbaPlanPage() {
               </div>
             ))}
           </div>
-        )}
-      </div>
-
-      {/* ①入庫済みの取り込み。
-          もとはタオタロウのサイトでExcelを落として、ここへ上げ直していた。
-          APIで同じものが取れるので、ボタン1つにした */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button
-            onClick={handleSyncArrived}
-            disabled={importing}
-            style={{
-              padding: '9px 18px', background: importing ? '#cbd5e1' : '#ea580c',
-              color: '#fff', border: 'none', borderRadius: 6,
-              cursor: importing ? 'default' : 'pointer', fontWeight: 700, fontSize: 14,
-            }}
-          >
-            {importing ? '取り込み中…' : '① 入庫済みを取り込む'}
-          </button>
-          <span style={{ fontSize: 12, color: '#64748b' }}>
-            タオタロウで倉庫に届いた商品に「到着済み」の印を付けます（Excelは要りません）
-          </span>
-          {importResult && !importResult.error && (
-            <span style={{ fontSize: 13, marginLeft: 'auto' }}>
-              <strong style={{ color: '#16a34a' }}>{importResult.matched}件</strong> 取り込みました
-              {importResult.unmatched?.length > 0 && (
-                <span style={{ color: '#9ca3af', marginLeft: 8 }}>
-                  （{importResult.unmatched.length}件は発注済みリストに見当たらず）
-                </span>
-              )}
-            </span>
-          )}
-          {importResult?.error && (
-            <span style={{ color: '#ef4444', fontSize: 13, marginLeft: 'auto' }}>
-              {importResult.error}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="card" style={{ marginBottom: 16 }}>
-        {importResult?.unmatched?.length > 0 && (
-          <details style={{ marginTop: 8, fontSize: 12 }}>
-            <summary style={{ cursor: 'pointer', color: '#f59e0b' }}>
-              未照合 {importResult.unmatched.length}件を表示
-            </summary>
-            <div style={{ overflowX: 'auto', marginTop: 4 }}>
-              <table style={{ fontSize: 12, borderCollapse: 'collapse', width: '100%' }}>
-                <thead>
-                  <tr style={{ background: '#fef3c7' }}>
-                    <th style={thStyle}>タオタロウID</th>
-                    <th style={thStyle}>商品名</th>
-                    <th style={thStyle}>色/サイズ</th>
-                    <th style={thStyle}>数量</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {importResult.unmatched.map((u, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={tdStyle}>{u.taotaro_order_id}</td>
-                      <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {u.name_cn}
-                      </td>
-                      <td style={tdStyle}>{[u.color, u.size].filter(Boolean).join(' / ')}</td>
-                      <td style={{ ...tdStyle, textAlign: 'right' }}>{u.qty}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
         )}
       </div>
 
