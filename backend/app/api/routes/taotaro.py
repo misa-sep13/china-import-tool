@@ -704,6 +704,28 @@ def refunds(folder: str = "配送依頼", days: int = 365,
     return data
 
 
+@router.get("/probe-boxes/{sid:int}")
+def probe_boxes(sid: int):
+    """【一時】便のインボイスの箱シートをそのまま見る。読むだけ。"""
+    import io as _io
+    import openpyxl
+    try:
+        wb = openpyxl.load_workbook(_io.BytesIO(taotaro.invoice_workbook(sid)))
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    dump = {}
+    for name in wb.sheetnames:
+        if "invoice" in name.lower():
+            continue
+        ws = wb[name]
+        rows = []
+        for r in range(1, min(ws.max_row, 40) + 1):
+            rows.append([ws.cell(row=r, column=c).value
+                         for c in range(1, min(ws.max_column, 14) + 1)])
+        dump[name] = {"max_row": ws.max_row, "max_col": ws.max_column, "rows": rows}
+    return {"ok": True, "sheets": wb.sheetnames, "dump": dump}
+
+
 @router.get("/probe")
 def probe(path: str):
     """【一時】タオタロウAPIの口が存在するかを確かめる。読み取りだけ。
