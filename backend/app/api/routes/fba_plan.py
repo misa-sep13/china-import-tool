@@ -688,4 +688,8 @@ def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
         "boxes": out_boxes,
         # 商品マスタに無い・ASINが空のもの。CSVには出すが印を付ける
         "unknown_count": len(unknown),
+        # つながらないときの見当を付けるための数字
+        "debug": {"asin_rows": len(asin_of), "url_rows": len(url_of),
+                  "master_offers": len(by_offer),
+                  "sample_url": list(url_of.items())[:2]},
     }
