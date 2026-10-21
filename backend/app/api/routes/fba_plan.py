@@ -17,6 +17,7 @@ from app.core.database import get_db, SessionLocal
 from app.models.product import Product
 from app.models.settings import OrderSettings
 from app.models.order_history import OrderHistory
+from app.services import taotaro
 from app.services.calc import CalcSettings, weighted_daily, growth_mult, calc_sale_extra_days
 
 logger = logging.getLogger(__name__)
@@ -554,3 +555,116 @@ async def import_taotaro_excel(file: UploadFile = File(...), db: Session = Depen
     finally:
         import os
         os.unlink(tmp.name)
+
+
+@router.get("/packing/{sid:int}")
+def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
+    """便のインボイスから、箱ごとの中身を読んで返す。
+
+    Amazonの納品プランは「何箱か」「各箱の3辺と重量」「どの箱に
+    何が何個入っているか」が要る。タオタロウの配送依頼APIには
+    箱の項目が無いが、インボイスの箱シートには全部入っている。
+
+    インボイスの明細行には商品ID（箱单と同じキー）とASINが並んでいるので、
+    箱单（箱→商品ID→数量）と突き合わせれば、箱ごとのSKUが出せる。
+    """
+    import io as _io
+    import openpyxl
+    from app.services import invoice_calc
+
+    try:
+        raw = taotaro.invoice_workbook(sid)
+    except taotaro.TaotaroError as e:
+        raise HTTPException(400, f"インボイスを取れませんでした（{e.message}）")
+    except Exception:
+        raise HTTPException(400, "インボイスを取れませんでした")
+
+    try:
+        wb = openpyxl.load_workbook(_io.BytesIO(raw))
+    except Exception:
+        raise HTTPException(400, "インボイスを開けませんでした")
+
+    bd = invoice_calc.parse_box_sheets(wb)
+    boxes = bd.get("boxes") or {}
+    contents = bd.get("contents") or []
+    if not boxes or not contents:
+        # 小さい便は「箱规重量」だけの簡単な形で、箱ごとの中身が無い
+        raise HTTPException(
+            400,
+            "この便のインボイスには箱ごとの中身がありません"
+            "（1箱だけの便などで起きます）。Amazonの画面で入れてください")
+
+    # 商品ID → ASIN。インボイスの明細行から拾う
+    asin_of: dict = {}
+    name_of: dict = {}
+    for name in wb.sheetnames:
+        if name not in ("发票", "invoice", "Invoice", "INVOICE"):
+            continue
+        ws = wb[name]
+        col_asin = None
+        for r in range(1, min(ws.max_row, 30) + 1):
+            for c in range(1, min(ws.max_column, 30) + 1):
+                v = ws.cell(row=r, column=c).value
+                if v and "ASIN" in str(v).upper():
+                    col_asin = c
+                    break
+            if col_asin:
+                break
+        for r in range(1, ws.max_row + 1):
+            gid = ws.cell(row=r, column=13).value      # M列＝商品ID
+            if not gid:
+                continue
+            key = str(gid).strip()
+            if key.replace(".", "").isdigit():
+                key = str(int(float(key)))
+            if col_asin:
+                a = ws.cell(row=r, column=col_asin).value
+                if a:
+                    asin_of[key] = str(a).strip()
+            nm = ws.cell(row=r, column=2).value
+            if nm:
+                name_of[key] = str(nm).strip()
+
+    # ASIN → 自社の商品（SKU・FNSKU・入数）
+    prods = db.query(Product).all()
+    by_asin = {}
+    for p in prods:
+        if p.asin:
+            by_asin.setdefault(str(p.asin).strip().upper(), p)
+
+    out_boxes = []
+    unknown = []
+    for bno in sorted(boxes.keys()):
+        b = boxes[bno]
+        rows = []
+        for c in contents:
+            if c["box"] != bno:
+                continue
+            gid = str(c["goods_id"])
+            asin = asin_of.get(gid, "")
+            p = by_asin.get(asin.upper()) if asin else None
+            row = {
+                "goods_id": gid,
+                "asin": asin,
+                "name": name_of.get(gid, ""),
+                "qty": int(c["qty"]),
+                "sku": p.sku if p else "",
+                "fnsku": (p.fnsku or "") if p else "",
+            }
+            if not p:
+                unknown.append(row)
+            rows.append(row)
+        out_boxes.append({
+            "box_no": bno,
+            "length_cm": b.get("l"), "width_cm": b.get("w"), "height_cm": b.get("h"),
+            "weight_kg": b.get("actual_weight"),
+            "items": rows,
+        })
+
+    return {
+        "sid": sid,
+        "box_count": len(out_boxes),
+        "boxes": out_boxes,
+        # 商品マスタに無い・ASINが空のもの。CSVには出すが印を付ける
+        "unknown_count": len(unknown),
+    }
