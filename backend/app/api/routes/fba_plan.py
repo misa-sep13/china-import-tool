@@ -17,6 +17,7 @@ from app.core.database import get_db, SessionLocal
 from app.models.product import Product
 from app.models.settings import OrderSettings
 from app.models.order_history import OrderHistory
+from app.services import taotaro
 from app.services.calc import CalcSettings, weighted_daily, growth_mult, calc_sale_extra_days
 
 logger = logging.getLogger(__name__)
@@ -265,7 +266,7 @@ def create_inbound_plan_api(req: PlanExportRequest, db: Session = Depends(get_db
 
     作れるのはSKUと数量まで。梱包（何箱に分けるか）や配送業者はタオタロウが
     決めるため、ここでは確定しない。作成後はセラーセントラルで商品ラベルを
-    ダウンロードしてDingtalkへ送る運用になる。
+    ダウンロードしてWeChatへ送る運用になる。
     """
     from app.core.config import settings as app_settings
     if not app_settings.SP_API_REFRESH_TOKEN:
@@ -554,3 +555,200 @@ async def import_taotaro_excel(file: UploadFile = File(...), db: Session = Depen
     finally:
         import os
         os.unlink(tmp.name)
+
+
+@router.post("/sync-arrived")
+def sync_arrived(db: Session = Depends(get_db)):
+    """タオタロウで入庫済みになった注文を、発注済みリストに反映する。
+
+    これまではタオタロウのサイトでExcelを落として、この画面へ
+    アップロードし直していた。APIで同じものが取れるので、
+    ボタン1つで済むようにする（落とす・上げるが要らない）。
+
+    state 4＝入庫済み。1688のURLで発注済みリストと突き合わせる。
+    """
+    orders = (
+        db.query(OrderHistory)
+        .filter(OrderHistory.is_deleted == False)
+        .filter(OrderHistory.status != "shipped")
+        .all()
+    )
+    by_url = {}
+    for oh in orders:
+        key = _normalize_1688_url(oh.buy_url or "")
+        if key:
+            by_url.setdefault(key, []).append(oh)
+
+    matched = 0
+    unmatched = []
+    seen = 0
+    for page in range(1, 6):
+        try:
+            d = taotaro.list_orders(page=page, limit=100)
+        except Exception as e:
+            raise HTTPException(400, f"タオタロウから取れませんでした（{e}）")
+        items = d.get("items") or []
+        for o in items:
+            # 4＝入庫済み。ここに来て初めて「届いた」と言える
+            if o.get("state") != 4:
+                continue
+            seen += 1
+            key = _normalize_1688_url(o.get("url") or "")
+            hit = None
+            for oh in by_url.get(key, []):
+                if oh.status != "arrived":
+                    hit = oh
+                    break
+            if not hit:
+                unmatched.append({
+                    "name_cn": o.get("title") or "",
+                    "color": " / ".join(
+                        str(p.get("value")) for p in (o.get("sku_props") or [])),
+                    "size": "",
+                    "qty": o.get("quantity") or 0,
+                    "buy_url": o.get("url") or "",
+                    "taotaro_order_id": str(o.get("oid") or ""),
+                })
+                continue
+            hit.status = "arrived"
+            hit.arrived_at = datetime.now(timezone.utc)
+            hit.taotaro_order_id = str(o.get("oid") or "")
+            matched += 1
+        if not d.get("has_more_pages"):
+            break
+
+    db.commit()
+    return {"matched": matched, "total_excel_rows": seen, "unmatched": unmatched}
+
+
+@router.get("/packing/{sid:int}")
+def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
+    """便のインボイスから、箱ごとの中身を読んで返す。
+
+    Amazonの納品プランは「何箱か」「各箱の3辺と重量」「どの箱に
+    何が何個入っているか」が要る。タオタロウの配送依頼APIには
+    箱の項目が無いが、インボイスの箱シートには全部入っている。
+
+    インボイスの明細行には商品ID（箱单と同じキー）とASINが並んでいるので、
+    箱单（箱→商品ID→数量）と突き合わせれば、箱ごとのSKUが出せる。
+    """
+    import io as _io
+    import openpyxl
+    from app.services import invoice_calc
+
+    try:
+        raw = taotaro.invoice_workbook(sid)
+    except taotaro.TaotaroError as e:
+        raise HTTPException(400, f"インボイスを取れませんでした（{e.message}）")
+    except Exception:
+        raise HTTPException(400, "インボイスを取れませんでした")
+
+    try:
+        wb = openpyxl.load_workbook(_io.BytesIO(raw))
+    except Exception:
+        raise HTTPException(400, "インボイスを開けませんでした")
+
+    bd = invoice_calc.parse_box_sheets(wb)
+    boxes = bd.get("boxes") or {}
+    contents = bd.get("contents") or []
+    if not boxes or not contents:
+        # 小さい便は「箱规重量」だけの簡単な形で、箱ごとの中身が無い
+        raise HTTPException(
+            400,
+            "この便のインボイスには箱ごとの中身がありません"
+            "（1箱だけの便などで起きます）。Amazonの画面で入れてください")
+
+    # 商品ID → ASIN。インボイスの明細行から拾う
+    asin_of: dict = {}
+    # 商品ID → 1688のURL（インボイスのL列）。
+    # ASIN列は空のことが多いので、URLでも照らせるようにする
+    url_of: dict = {}
+    name_of: dict = {}
+    for name in wb.sheetnames:
+        if name not in ("发票", "invoice", "Invoice", "INVOICE"):
+            continue
+        ws = wb[name]
+        col_asin = None
+        for r in range(1, min(ws.max_row, 30) + 1):
+            for c in range(1, min(ws.max_column, 30) + 1):
+                v = ws.cell(row=r, column=c).value
+                if v and "ASIN" in str(v).upper():
+                    col_asin = c
+                    break
+            if col_asin:
+                break
+        for r in range(1, ws.max_row + 1):
+            gid = ws.cell(row=r, column=13).value      # M列＝商品ID
+            if not gid:
+                continue
+            key = str(gid).strip()
+            if key.replace(".", "").isdigit():
+                key = str(int(float(key)))
+            if col_asin:
+                a = ws.cell(row=r, column=col_asin).value
+                if a:
+                    asin_of[key] = str(a).strip()
+            nm = ws.cell(row=r, column=2).value
+            if nm:
+                name_of[key] = str(nm).strip()
+            u = ws.cell(row=r, column=12).value      # L列＝1688リンク
+            if u:
+                url_of[key] = str(u).strip()
+
+    # 自社の商品（SKU・FNSKU）を ASIN と 1688URL の両方で引けるようにする
+    def _offer(u: str) -> str:
+        """1688のURLから offer 番号だけを抜く。末尾の?以降は毎回変わる"""
+        import re
+        m = re.search(r"offer/(\d+)", str(u or ""))
+        return m.group(1) if m else ""
+
+    prods = db.query(Product).all()
+    by_asin, by_offer = {}, {}
+    for p in prods:
+        if p.asin:
+            by_asin.setdefault(str(p.asin).strip().upper(), p)
+        o = _offer(getattr(p, "buy_url", ""))
+        if o:
+            by_offer.setdefault(o, p)
+
+    out_boxes = []
+    unknown = []
+    for bno in sorted(boxes.keys()):
+        b = boxes[bno]
+        rows = []
+        for c in contents:
+            if c["box"] != bno:
+                continue
+            gid = str(c["goods_id"])
+            asin = asin_of.get(gid, "")
+            p = by_asin.get(asin.upper()) if asin else None
+            if not p:
+                # ASINが空のことが多いので、1688のURLでも探す
+                p = by_offer.get(_offer(url_of.get(gid, "")))
+            if p and not asin:
+                asin = p.asin or ""
+            row = {
+                "goods_id": gid,
+                "asin": asin,
+                "name": name_of.get(gid, ""),
+                "qty": int(c["qty"]),
+                "sku": p.sku if p else "",
+                "fnsku": (p.fnsku or "") if p else "",
+            }
+            if not p:
+                unknown.append(row)
+            rows.append(row)
+        out_boxes.append({
+            "box_no": bno,
+            "length_cm": b.get("l"), "width_cm": b.get("w"), "height_cm": b.get("h"),
+            "weight_kg": b.get("actual_weight"),
+            "items": rows,
+        })
+
+    return {
+        "sid": sid,
+        "box_count": len(out_boxes),
+        "boxes": out_boxes,
+        # 商品マスタに無い・ASINが空のもの。CSVには出すが印を付ける
+        "unknown_count": len(unknown),
+    }

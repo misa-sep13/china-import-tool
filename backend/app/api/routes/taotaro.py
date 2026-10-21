@@ -88,6 +88,58 @@ def list_orders(page: int = 1, limit: int = Query(100, ge=1, le=100),
                  start_time=start_time)
 
 
+@router.get("/ship-options")
+def ship_options():
+    """配送依頼を出すときに選ぶもの（便・届け先・原産地シール）。
+
+    便は船便・航空便の2つに決めてあるので、16種類の一覧は出さない。
+    届け先は3つあるため（作業所・FBA・自社）、毎回選んでもらう。
+    """
+    addrs = _call(taotaro.addresses)
+    return {
+        "ways": [{"key": k, "label": v["label"],
+                  "delivery_name": v["delivery_name"], "note": v["note"]}
+                 for k, v in taotaro.SHIP_WAYS.items()],
+        "always_remark": taotaro.SHIP_REMARK_ALWAYS,
+        # type 1＝届け先 / 2＝輸入者 / 3＝送り主
+        "addresses": [{"address_id": a.get("address_id"), "type": a.get("type"),
+                       "is_default": a.get("is_default"),
+                       "consignee": a.get("consignee"),
+                       "address": a.get("address")}
+                      for a in addrs],
+    }
+
+
+class SendOrderIn(BaseModel):
+    oids: List[int]
+    way: str                       # sea / air
+    address_id: int
+    made_in_china_flag: int = 3
+    importer_address_id: Optional[int] = None
+    note: str = ""                 # 毎回の「急ぎです」に足す一言
+    client_order_id: Optional[str] = None
+
+
+@router.post("/send-orders")
+def create_send_order(data: SendOrderIn):
+    """配送依頼を作る。
+
+    client_order_id を付けて送る。通信が切れて作られたか分からない
+    ときに、同じ鍵でそのまま送り直せば二重にならない。
+    画面から来ないときは、注文の並びから毎回同じ鍵を作る。
+    """
+    key = (data.client_order_id or "").strip()
+    if not key:
+        import hashlib
+        seed = ",".join(sorted(str(x) for x in data.oids)) + "|" + data.way
+        key = "cit-" + hashlib.sha1(seed.encode()).hexdigest()[:24]
+    return _call(taotaro.create_send_order,
+                 oids=data.oids, way=data.way, address_id=data.address_id,
+                 made_in_china_flag=data.made_in_china_flag,
+                 importer_address_id=data.importer_address_id,
+                 extra_note=data.note, client_order_id=key)
+
+
 @router.get("/send-orders/{sid:int}")
 def get_send_order(sid: int):
     """配送依頼の詳細。費用の内訳と同梱注文の明細。"""
@@ -666,9 +718,18 @@ def probe(path: str):
     try:
         d = _request(p, {"page": 1, "limit": 5})
         keys = sorted(d.keys()) if isinstance(d, dict) else type(d).__name__
-        items = (d.get("items") if isinstance(d, dict) else None) or []
+        # items だけを見ていたが、methods のように別の名前で
+        # 返す口もある。最初に見つかった配列を中身として扱う
+        items = []
+        if isinstance(d, dict):
+            for k in ("items", "methods", "list", "data"):
+                v = d.get(k)
+                if isinstance(v, list) and v:
+                    items = v
+                    break
         return {"ok": True, "path": p, "keys": keys,
                 "count": len(items),
-                "first": items[0] if items else None}
+                "first": items[0] if items else None,
+                "raw": d if len(str(d)) < 2000 else None}
     except taotaro.TaotaroError as e:
         return {"ok": False, "path": p, "code": e.code, "message": e.message}

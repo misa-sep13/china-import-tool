@@ -8261,6 +8261,16 @@ if(FIREBASE_CONFIG.databaseURL){
           if(f.name === 'unit_count'){
             input.placeholder = '例: 1（単位を変えるなら「3枚」「5セット」のように）';
           }
+          // 寸法は枝の数だけ数字が要る。「約49cm」のように1つだけ入れると
+          // 「フィールド width に十分な値がありません」で弾かれる
+          const dk = (f.name || '').indexOf('item_') === 0
+            ? f.name.slice(5).split('_') : [];
+          const SH = {length: 'L', width: 'W', height: 'H'};
+          if(dk.length >= 2 && dk.every(k => SH[k])){
+            const SM = {length: '49', width: '30', height: '5'};
+            input.placeholder = '例: ' + dk.map(k => SH[k] + SM[k]).join(' x ')
+              + 'cm（' + dk.length + 'つとも数字が要ります）';
+          }
         }
         input.value = attrs[f.name] == null ? '' : attrs[f.name];
         input.addEventListener('change', () => {

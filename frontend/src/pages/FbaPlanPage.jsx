@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import api from '../api/client'
 
 const STATUS_LABELS = { ordered: '発注済', arrived: '到着済', shipped: '配送依頼済' }
@@ -12,7 +12,6 @@ export default function FbaPlanPage() {
   const [tab, setTab] = useState('all')
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
-  const fileRef = useRef(null)
 
   // FBA plan state
   const [planStatus, setPlanStatus] = useState('idle')
@@ -41,22 +40,19 @@ export default function FbaPlanPage() {
 
   useEffect(() => { fetchOrders() }, [])
 
-  const handleImport = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  // 入庫済みの取り込み。もとはタオタロウのサイトでExcelを落として
+  // ここへ上げ直していた。APIで同じものが取れるのでボタン1つにした
+  const handleSyncArrived = async () => {
     setImporting(true)
     setImportResult(null)
     try {
-      const form = new FormData()
-      form.append('file', file)
-      const { data } = await api.post('/fba-plan/import-taotaro', form)
+      const { data } = await api.post('/fba-plan/sync-arrived')
       setImportResult(data)
       fetchOrders()
     } catch (err) {
-      setImportResult({ error: 'Excel取込に失敗しました' })
+      setImportResult({ error: err.response?.data?.detail || '取り込めませんでした' })
     }
     setImporting(false)
-    if (fileRef.current) fileRef.current.value = ''
   }
 
   const handleStatusChange = async (id, newStatus) => {
@@ -209,6 +205,67 @@ export default function FbaPlanPage() {
     setExporting(false)
   }
 
+  // ---- 梱包情報（箱ごとの中身）----
+  //
+  // Amazonの納品プランは「何箱か」「各箱の3辺と重量」「どの箱に何が
+  // 何個入っているか」が要る。配送依頼APIには箱の項目が無いが、
+  // タオタロウのインボイスの箱シートに全部入っているので、そこから読む。
+  const [sendOrders, setSendOrders] = useState(null)
+  const [loadingSo, setLoadingSo] = useState(false)
+  const [packing, setPacking] = useState(null)
+  const [packErr, setPackErr] = useState('')
+  const [loadingPack, setLoadingPack] = useState(false)
+
+  const loadSendOrders = async () => {
+    setLoadingSo(true); setPackErr('')
+    try {
+      const { data } = await api.get('/taotaro/send-orders', { params: { limit: 30 } })
+      setSendOrders(data.items || [])
+    } catch (e) {
+      setPackErr(e.response?.data?.detail || '配送依頼を取れませんでした')
+    }
+    setLoadingSo(false)
+  }
+
+  const loadPacking = async (sid) => {
+    setLoadingPack(true); setPackErr(''); setPacking(null)
+    try {
+      const { data } = await api.get(`/fba-plan/packing/${sid}`)
+      setPacking(data)
+    } catch (e) {
+      setPackErr(e.response?.data?.detail || '梱包情報を読めませんでした')
+    }
+    setLoadingPack(false)
+  }
+
+  // Amazonの梱包情報CSV。1行＝「箱番号・SKU・個数」。
+  // 箱の寸法と重量は箱の先頭行にだけ入れる（Amazonの様式に合わせる）
+  const downloadPackingCsv = () => {
+    if (!packing) return
+    const head = ['箱番号', 'SKU', 'FNSKU', '個数', '長さcm', '幅cm', '高さcm', '重量kg', '商品名']
+    const lines = [head.join(',')]
+    packing.boxes.forEach(b => {
+      b.items.forEach((it, i) => {
+        lines.push([
+          b.box_no, it.sku || '', it.fnsku || '', it.qty,
+          i === 0 ? (b.length_cm ?? '') : '',
+          i === 0 ? (b.width_cm ?? '') : '',
+          i === 0 ? (b.height_cm ?? '') : '',
+          i === 0 ? (b.weight_kg ?? '') : '',
+          `"${String(it.name || '').replace(/"/g, '""')}"`,
+        ].join(','))
+      })
+    })
+    // Excelで開くとUTF-8が化けるのでBOMを付ける
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `packing_${packing.sid}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const SortHeader = ({ label, field, style }) => (
     <th style={{ ...thStyle, cursor: 'pointer', userSelect: 'none', ...style }}
       onClick={() => handleSort(field)}>
@@ -220,82 +277,90 @@ export default function FbaPlanPage() {
     <div>
       <h1>🚢 FBA納品プラン</h1>
 
-      {/* 手順メモ。普段は畳んでおき、必要なときだけ開く */}
-      <details style={{ marginBottom: 16 }}>
-        <summary style={{
-          cursor: 'pointer', padding: '8px 14px', background: '#f1f5f9',
-          border: '1px solid #e2e8f0', borderRadius: 6,
-          fontSize: 13, fontWeight: 600, color: '#334155', userSelect: 'none',
-          display: 'inline-block',
-        }}>
-          📋 タオタロウFBA直送の流れ
-        </summary>
-        <div style={{
-          marginTop: 8, padding: '14px 18px', background: '#fff',
-          border: '1px solid #e2e8f0', borderRadius: 6,
-        }}>
-          <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 2, color: '#334155' }}>
-            <li>
-              タオタロウで配送依頼をかける
-              <span style={{ color: '#d97706', fontWeight: 600 }}>（FBA送付先は未定のままでOK）</span>
-            </li>
-            <li>FBA指示書をダウンロード</li>
-            <li>
-              この画面で<b>「Amazonに納品プランを作成」</b>
-              <span style={{ color: '#64748b' }}> → 納品先FCが決まる</span>
-            </li>
-            <li>セラーセントラルで<b>商品ラベル</b>をダウンロード</li>
-            <li>指示書と商品ラベルを一緒にDingtalkに送る</li>
-            <li>インボイス作成完了のお知らせが来る</li>
-            <li>支払い</li>
-            <li>配送ラベル（納品先FCの住所）をDingtalkに送る</li>
-          </ol>
-          <div style={{
-            marginTop: 12, padding: '10px 14px', background: '#fffbeb',
-            border: '1px solid #fcd34d', borderRadius: 6,
-            fontSize: 12, color: '#92400e', lineHeight: 1.8,
-          }}>
-            <b>なぜ送付先を未定で出すか</b><br />
-            配送依頼にFBA送付先が要るが、納品先FCはAmazonで納品プランを作らないと決まらない。
-            先に送付先を知ろうとしてセラーセントラルの梱包を飛ばすと、
-            配送モードがパレット輸送（LTL）かトラック配送（FTL）に限定され、船便・航空便が選べなくなる。
-            未定のまま出して後から配送ラベルを送る方が確実。
-          </div>
+      {/* 手順。畳まずに出す。ここを見れば次に何をするか分かるようにしてある */}
+      <div className="card" style={{ marginBottom: 16, background: '#f8fafc' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a', marginBottom: 10 }}>
+          やること（上から順に）
         </div>
-      </details>
+        <ol style={{ margin: 0, paddingLeft: 22, fontSize: 13, lineHeight: 2.1, color: '#334155' }}>
+          <li>
+            <b>配送依頼を出す</b>
+            <span style={{ color: '#64748b' }}>
+              （発注管理 →「配送依頼を出す」タブ。FBA送付先は未定のままでOK）
+            </span>
+          </li>
+          <li>
+            下の<b>「①入庫済みを取り込む」</b>を押す
+            <span style={{ color: '#64748b' }}>　→ 届いた商品に印が付く</span>
+          </li>
+          <li>
+            納品する数を決めて<b>「②Amazonに納品プランを作成」</b>
+            <span style={{ color: '#64748b' }}>　→ 納品先FCが決まる</span>
+          </li>
+          <li>セラーセントラルで<b>商品ラベル</b>をダウンロード</li>
+          <li>FBA指示書と商品ラベルを一緒に<b>WeChat</b>へ送る</li>
+          <li>インボイス作成完了のお知らせ → <b>支払い</b></li>
+          <li>配送ラベル（納品先FCの住所）を<b>WeChat</b>へ送る</li>
+          <li>
+            出荷されたら<b>「③梱包情報」</b>で便を選び、<b>CSVを保存</b>
+            <span style={{ color: '#64748b' }}>　→ Amazonの「輸送の詳細」に入れる</span>
+          </li>
+        </ol>
+        <div style={{
+          marginTop: 10, padding: '8px 12px', background: '#fffbeb',
+          border: '1px solid #fcd34d', borderRadius: 6,
+          fontSize: 12, color: '#92400e', lineHeight: 1.8,
+        }}>
+          <b>なぜ送付先を未定で出すか</b>：
+          配送依頼にFBA送付先が要るが、納品先FCはAmazonで納品プランを作らないと決まらない。
+          先に知ろうとしてセラーセントラルの梱包を飛ばすと、配送モードがパレット輸送（LTL）か
+          トラック配送（FTL）に限定され、船便・航空便が選べなくなる。
+        </div>
+      </div>
 
-      {/* タオタロウExcel取込 */}
+
+      {/* ①入庫済みの取り込み。
+          もとはタオタロウのサイトでExcelを落として、ここへ上げ直していた。
+          APIで同じものが取れるので、ボタン1つにした */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <label
+          <button
+            onClick={handleSyncArrived}
+            disabled={importing}
             style={{
-              padding: '8px 16px', background: '#ea580c', color: '#fff', borderRadius: 6,
-              cursor: 'pointer', fontWeight: 600, fontSize: 13,
+              padding: '9px 18px', background: importing ? '#cbd5e1' : '#ea580c',
+              color: '#fff', border: 'none', borderRadius: 6,
+              cursor: importing ? 'default' : 'pointer', fontWeight: 700, fontSize: 14,
             }}
           >
-            📥 タオタロウExcel取込
-            <input ref={fileRef} type="file" accept=".xls,.xlsx" onChange={handleImport}
-              style={{ display: 'none' }} />
-          </label>
-          {importing && <span style={{ color: '#6b7280' }}>取込中...</span>}
+            {importing ? '取り込み中…' : '① 入庫済みを取り込む'}
+          </button>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            タオタロウで倉庫に届いた商品に「到着済み」の印を付けます（Excelは要りません）
+          </span>
           {importResult && !importResult.error && (
-            <span style={{ fontSize: 13 }}>
-              <strong style={{ color: '#16a34a' }}>{importResult.matched}件</strong> 照合成功
+            <span style={{ fontSize: 13, marginLeft: 'auto' }}>
+              <strong style={{ color: '#16a34a' }}>{importResult.matched}件</strong> 取り込みました
               {importResult.unmatched?.length > 0 && (
                 <span style={{ color: '#9ca3af', marginLeft: 8 }}>
-                  ({importResult.unmatched.length}件 未照合)
+                  （{importResult.unmatched.length}件は発注済みリストに見当たらず）
                 </span>
               )}
             </span>
           )}
           {importResult?.error && (
-            <span style={{ color: '#ef4444', fontSize: 13 }}>{importResult.error}</span>
+            <span style={{ color: '#ef4444', fontSize: 13, marginLeft: 'auto' }}>
+              {importResult.error}
+            </span>
           )}
-          <span style={{ fontSize: 12, color: '#9ca3af' }}>
-            タオタロウ「入庫済み」→ EXCELダウンロード → ここにアップロード
-          </span>
         </div>
-        {importResult?.unmatched?.length > 0 && (
+      </div>
+
+      {/* 発注済みリストに見当たらなかった行。無いときは出さない
+          （空の枠だけが残っていた） */}
+      {importResult?.unmatched?.length > 0 && (
+      <div className="card" style={{ marginBottom: 16 }}>
+        {true && (
           <details style={{ marginTop: 8, fontSize: 12 }}>
             <summary style={{ cursor: 'pointer', color: '#f59e0b' }}>
               未照合 {importResult.unmatched.length}件を表示
@@ -325,6 +390,111 @@ export default function FbaPlanPage() {
               </table>
             </div>
           </details>
+        )}
+      </div>
+      )}
+
+      {/* 梱包情報。Amazonの納品プランで「箱に何を入れたか」を入れるところに使う。
+          タオタロウのインボイスから読むので、手で数える必要がない */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 15 }}>③ 梱包情報（箱の中身）</b>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            Amazonの「輸送の詳細」で箱ごとの中身を入れるときに使います
+          </span>
+          <button className="btn btn-secondary" style={{ marginLeft: 'auto', fontSize: 13 }}
+            onClick={loadSendOrders} disabled={loadingSo}>
+            {loadingSo ? '読み込み中…' : '便を選ぶ'}
+          </button>
+        </div>
+
+        {packErr && (
+          <div style={{ marginTop: 10, padding: '8px 12px', background: '#fef2f2',
+            border: '1px solid #fecaca', borderRadius: 6, fontSize: 13, color: '#b91c1c' }}>
+            {packErr}
+          </div>
+        )}
+
+        {sendOrders && !packing && (
+          <div style={{ marginTop: 12, maxHeight: 280, overflowY: 'auto',
+            border: '1px solid #e2e8f0', borderRadius: 6 }}>
+            <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+              <thead><tr style={{ background: '#f8fafc' }}>
+                {['配送依頼No', '状態', '重量', ''].map(h => (
+                  <th key={h} style={{ padding: '6px 10px', textAlign: 'left' }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {sendOrders.map(x => (
+                  <tr key={x.sid} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '6px 10px' }}>{x.sn || x.sid}</td>
+                    <td style={{ padding: '6px 10px', color: '#64748b' }}>{x.state_label}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'right' }}>
+                      {x.count_weight ? `${x.count_weight}kg` : '—'}
+                    </td>
+                    <td style={{ padding: '6px 10px' }}>
+                      <button className="btn btn-sm btn-primary" style={{ fontSize: 12 }}
+                        onClick={() => loadPacking(x.sid)} disabled={loadingPack}>
+                        箱の中身を見る
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {packing && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center',
+              flexWrap: 'wrap', marginBottom: 10 }}>
+              <b style={{ fontSize: 14 }}>
+                配送依頼 {packing.sid}　／　{packing.box_count}箱
+              </b>
+              {packing.unknown_count > 0 && (
+                <span style={{ fontSize: 12, color: '#b45309', fontWeight: 600 }}>
+                  ⚠ 商品マスタと結びつかない行が {packing.unknown_count}件あります
+                  （SKUが空のまま出ます）
+                </span>
+              )}
+              <button className="btn btn-primary" style={{ marginLeft: 'auto', fontSize: 13 }}
+                onClick={downloadPackingCsv}>⬇ CSVで保存</button>
+              <button className="btn btn-secondary" style={{ fontSize: 13 }}
+                onClick={() => { setPacking(null); setPackErr('') }}>閉じる</button>
+            </div>
+
+            {packing.boxes.map(b => (
+              <div key={b.box_no} style={{ marginBottom: 10, border: '1px solid #e2e8f0',
+                borderRadius: 6, overflow: 'hidden' }}>
+                <div style={{ padding: '6px 12px', background: '#f8fafc',
+                  fontSize: 13, fontWeight: 600 }}>
+                  箱 {b.box_no}
+                  <span style={{ color: '#64748b', fontWeight: 400, marginLeft: 10 }}>
+                    {b.length_cm}×{b.width_cm}×{b.height_cm}cm　{b.weight_kg}kg
+                  </span>
+                </div>
+                <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+                  <tbody>
+                    {b.items.map((it, i) => (
+                      <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '5px 12px', fontWeight: 600, width: 160 }}>
+                          {it.sku || <span style={{ color: '#b45309' }}>（未登録）</span>}
+                        </td>
+                        <td style={{ padding: '5px 12px', color: '#64748b', width: 140 }}>
+                          {it.fnsku || '—'}
+                        </td>
+                        <td style={{ padding: '5px 12px', textAlign: 'right', width: 80 }}>
+                          {it.qty}個
+                        </td>
+                        <td style={{ padding: '5px 12px', color: '#94a3b8' }}>{it.name}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
@@ -447,7 +617,7 @@ export default function FbaPlanPage() {
                 <button className="btn" onClick={handleCreateInboundPlan} disabled={creatingPlan}
                   style={{ background: '#ea580c', color: '#fff', fontWeight: 700 }}
                   title="この内容でAmazonに納品プランを作成します">
-                  {creatingPlan ? '作成中...' : '🚀 Amazonに納品プランを作成'}
+                  {creatingPlan ? '作成中...' : '② Amazonに納品プランを作成'}
                 </button>
                 <button className="btn" onClick={handleExport} disabled={exporting}
                   style={{ background: '#059669', color: '#fff' }}>
@@ -480,7 +650,7 @@ export default function FbaPlanPage() {
                     次にやること:
                     <ol style={{ margin: '6px 0 0', paddingLeft: 20, lineHeight: 1.9 }}>
                       <li>セラーセントラルでこのプランを開き、<b>商品ラベルをダウンロード</b></li>
-                      <li>タオタロウのFBA指示書と一緒に<b>Dingtalkへ送る</b></li>
+                      <li>タオタロウのFBA指示書と一緒に<b>WeChatへ送る</b></li>
                       <li>（梱包・配送業者はタオタロウが決めるのでこちらでは指定しません）</li>
                     </ol>
                   </div>
