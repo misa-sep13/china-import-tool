@@ -596,6 +596,9 @@ def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
 
     # 商品ID → ASIN。インボイスの明細行から拾う
     asin_of: dict = {}
+    # 商品ID → 1688のURL（インボイスのL列）。
+    # ASIN列は空のことが多いので、URLでも照らせるようにする
+    url_of: dict = {}
     name_of: dict = {}
     for name in wb.sheetnames:
         if name not in ("发票", "invoice", "Invoice", "INVOICE"):
@@ -627,10 +630,6 @@ def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
             u = ws.cell(row=r, column=12).value      # L列＝1688リンク
             if u:
                 url_of[key] = str(u).strip()
-
-    # 商品ID → 1688のURL（インボイスのL列）。
-    # ASIN列は空のことが多いので、URLでも照らせるようにする
-    url_of: dict = {}
 
     # 自社の商品（SKU・FNSKU）を ASIN と 1688URL の両方で引けるようにする
     def _offer(u: str) -> str:
