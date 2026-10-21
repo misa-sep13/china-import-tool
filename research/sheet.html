@@ -7373,102 +7373,6 @@ if(FIREBASE_CONFIG.databaseURL){
   }
 
 
-  // ---- 再梱包指示書（代行会社へ渡す）------------------------------
-  //
-  // 採用した商品を、代行会社が日本向けにどう詰め直すか。
-  // 指示はシートの中に持つが、代行会社にはシートを見せない
-  // （原価も競合も全部見えてしまう）。読み取り専用の別ページを
-  // 合言葉つきのURLで渡し、そこへ指示だけを出す。
-  function buildRepackPanel(research){
-    const NL = String.fromCharCode(10);
-    const box = el('details', 'analyze');
-    box.appendChild(el('summary', null, '📦 再梱包指示（代行会社へ）'));
-    const body = el('div', 'an-body');
-    box.appendChild(body);
-
-    body.appendChild(el('div', 'an-note',
-      '採用した商品を、代行会社が日本向けにどう詰め直すかを書きます。'
-      + 'ここに書いた内容だけが代行会社のページに出ます'
-      + '（原価・競合・売価は出ません）。'));
-
-    const ta = document.createElement('textarea');
-    ta.className = 'an-kwedit an-bullets';
-    ta.placeholder = [
-      '例：',
-      '・元の箱は捨てて、OPP袋に入れ替える',
-      '・商品ラベル（FNSKU）を袋の表面に貼る。バーコードが読める向きで',
-      '・2個セットにして1つのOPP袋にまとめる',
-      '・取扱説明書を1枚ずつ同梱する',
-      '・色ごとに分けて、外箱に色名を書く'
-    ].join(NL);
-    ta.value = research.repackNote || '';
-    body.appendChild(ta);
-
-    const row = el('div', 'an-row');
-    const st = el('span', 'an-status');
-    const linkBtn = el('button', 'mini', '🔗 代行会社へ渡すURLをコピー');
-    const resetBtn = el('button', 'mini danger', 'URLを作り直す');
-    row.appendChild(linkBtn); row.appendChild(resetBtn); row.appendChild(st);
-    body.appendChild(row);
-
-    let tmr = null;
-    ta.addEventListener('input', () => {
-      clearTimeout(tmr);
-      tmr = setTimeout(() => {
-        research.repackNote = ta.value;
-        research.repackUpdatedAt = new Date().toISOString().slice(0, 10);
-        scheduleSave();
-        st.textContent = '保存しました';
-      }, 500);
-    });
-
-    // 代行会社が開くページのURL。合言葉はサーバーが持っている
-    function repackUrl(token){
-      const dir = location.pathname.slice(0, location.pathname.lastIndexOf('/') + 1);
-      return location.origin + dir + 'repack.html#t=' + token;
-    }
-
-    linkBtn.addEventListener('click', async () => {
-      if(!API_BASE){ st.textContent = '一元管理の画面から開いてください'; return; }
-      linkBtn.disabled = true; st.textContent = 'URLを用意しています…';
-      try{
-        const res = await fetch(API_BASE + '/amazon-research/repack/link',
-          {headers: apiHeaders()});
-        if(!res.ok) throw new Error('HTTP ' + res.status);
-        const j = await res.json();
-        const url = repackUrl(j.token);
-        await navigator.clipboard.writeText(url).catch(() => {});
-        st.textContent = 'コピーしました（いま ' + (j.count || 0) + '件 出ます）';
-        alert('代行会社へ渡すURLです。' + NL + NL + url + NL + NL
-          + 'このURLを知っている人は、指示書を読むだけできます。' + NL
-          + '原価・競合・売価は出ません。書き換えもできません。');
-      }catch(e){
-        st.textContent = 'うまくいきませんでした：' + (e.message || e);
-      }finally{ linkBtn.disabled = false; }
-    });
-
-    resetBtn.addEventListener('click', async () => {
-      if(!API_BASE){ st.textContent = '一元管理の画面から開いてください'; return; }
-      if(!ask('URLを作り直します。' + NL + NL
-        + 'いま代行会社に渡してあるURLは、その場で開けなくなります。' + NL
-        + '新しいURLを渡し直す必要があります。' + NL + NL
-        + '作り直しますか？')) return;
-      resetBtn.disabled = true; st.textContent = '作り直しています…';
-      try{
-        const res = await fetch(API_BASE + '/amazon-research/repack/reset-link',
-          {method: 'POST', headers: apiHeaders()});
-        if(!res.ok) throw new Error('HTTP ' + res.status);
-        const j = await res.json();
-        await navigator.clipboard.writeText(repackUrl(j.token)).catch(() => {});
-        st.textContent = '作り直してコピーしました。前のURLは開けません';
-      }catch(e){
-        st.textContent = 'うまくいきませんでした：' + (e.message || e);
-      }finally{ resetBtn.disabled = false; }
-    });
-
-    return box;
-  }
-
   // ---- ⑦ 商品マスタ登録＆Amazon出品（独立した段）----------------
   //
   // もとは「出品原稿をつくる」の中に入れていたが、
@@ -10514,7 +10418,6 @@ if(FIREBASE_CONFIG.databaseURL){
     box.appendChild(buildAnalyzePanel(research));
     box.appendChild(buildListingPanel(research));
     box.appendChild(buildRegisterPanel(research));
-    box.appendChild(buildRepackPanel(research));
 
     const delFoot = el('div', 'research-foot');
     delFoot.appendChild(delRes);
