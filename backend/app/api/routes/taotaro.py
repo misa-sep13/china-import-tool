@@ -690,9 +690,18 @@ def probe(path: str):
     try:
         d = _request(p, {"page": 1, "limit": 5})
         keys = sorted(d.keys()) if isinstance(d, dict) else type(d).__name__
-        items = (d.get("items") if isinstance(d, dict) else None) or []
+        # items だけを見ていたが、methods のように別の名前で
+        # 返す口もある。最初に見つかった配列を中身として扱う
+        items = []
+        if isinstance(d, dict):
+            for k in ("items", "methods", "list", "data"):
+                v = d.get(k)
+                if isinstance(v, list) and v:
+                    items = v
+                    break
         return {"ok": True, "path": p, "keys": keys,
                 "count": len(items),
-                "first": items[0] if items else None}
+                "first": items[0] if items else None,
+                "raw": d if len(str(d)) < 2000 else None}
     except taotaro.TaotaroError as e:
         return {"ok": False, "path": p, "code": e.code, "message": e.message}
