@@ -781,6 +781,94 @@ def cancel_orders(order_ids: list) -> list:
     return [str(x) for x in (d.get("order_ids") or [])]
 
 
+# ---------- 配送依頼の作成 ----------
+
+# 使う便は2つだけに決めてある。一覧には16種類あるが、毎回選ぶと
+# 押し間違いが起きるし、月額会員専用の便は選べる人が限られる。
+#  ・船便   … TW快速船便（月額会員専用）
+#  ・航空便 … 価格優先。どの便になるかは向こうが選ぶので、
+#             備考で「安い航空便で」と伝える
+SHIP_WAYS = {
+    "sea": {
+        "label": "船便（TW快速船便）",
+        "delivery_name": "TW快速船便（月額会員専用）",
+        "note": "",
+    },
+    "air": {
+        "label": "航空便（価格優先）",
+        "delivery_name": "価格優先",
+        "note": "安い航空便でお願いします。",
+    },
+}
+
+# どの便でも毎回入れる一言。急ぎで回しているため
+SHIP_REMARK_ALWAYS = "急ぎです。"
+
+
+def delivery_methods() -> dict:
+    """選べる配送方法と、原産地シールの選択肢。
+
+    delivery_name は表示名そのものを送る決まりなので、
+    こちらで文字を作らず、必ずこの一覧から取る。
+    """
+    d = _request("/api/v1/send-orders/delivery-methods")
+    return {"methods": d.get("methods") or [],
+            "origin_flags": d.get("origin_flags") or []}
+
+
+def addresses(kind: Optional[int] = None) -> list:
+    """住所録。1＝届け先・2＝輸入者・3＝送り主。"""
+    d = _request("/api/v1/addresses", {"type": kind})
+    return d.get("items") or []
+
+
+def create_send_order(oids: list, way: str, address_id: int,
+                      made_in_china_flag: int = 3,
+                      importer_address_id: Optional[int] = None,
+                      extra_note: str = "",
+                      client_order_id: Optional[str] = None) -> dict:
+    """配送依頼を作る。
+
+    client_order_id は二重に作らないための鍵。同じ鍵で送り直しても
+    新しい依頼は作られず、最初の結果が返る（duplicate が true）。
+    通信が切れて「作られたのか分からない」ときに、そのまま送り直せる。
+    """
+    way_def = SHIP_WAYS.get(way)
+    if not way_def:
+        raise TaotaroError("配送方法は sea か air を指定してください")
+    ids = [int(x) for x in oids if str(x).strip()]
+    if not ids:
+        raise TaotaroError("配送依頼に入れる注文がありません")
+
+    remark = "　".join([x for x in
+                        [SHIP_REMARK_ALWAYS, way_def["note"], (extra_note or "").strip()]
+                        if x])[:1000]
+
+    body = {
+        "oids": ids,
+        "delivery_name": way_def["delivery_name"],
+        "address_id": int(address_id),
+        "made_in_china_flag": int(made_in_china_flag),
+        "remark": remark,
+    }
+    if importer_address_id:
+        body["importer_address_id"] = int(importer_address_id)
+    if client_order_id:
+        body["client_order_id"] = str(client_order_id)[:64]
+
+    d = _request("/api/v1/send-orders", body=body, method="POST")
+    return {
+        "sid": d.get("sid"),
+        "oids": d.get("oids") or ids,
+        "state": d.get("state"),
+        "state_label": d.get("state_name") or SEND_ORDER_STATES.get(d.get("state"), ""),
+        # 同じ鍵で送り直したときに true。二重に作られていない印
+        "duplicate": bool(d.get("duplicate")),
+        "delivery_name": way_def["delivery_name"],
+        "remark": remark,
+    }
+
+
 # ---------- 残高・入出金・請求書 ----------
 
 
