@@ -652,30 +652,6 @@ def refunds(folder: str = "配送依頼", days: int = 365,
     return data
 
 
-@router.get("/probe-send-order-enabled")
-def probe_send_order_enabled():
-    """【一時】POST /send-orders が有効になっているかだけを見る。
-
-    試験提供なので、有効化されているかが叩いてみないと分からない。
-    存在しない注文IDを渡すので、配送依頼は作られない。
-      403 → まだ有効ではない
-      404/400 → 口は開いている（注文が無いと言われているだけ）
-    確かめが済んだら消す。
-    """
-    from app.services.taotaro import _request
-    try:
-        d = _request("/api/v1/send-orders",
-                     body={"oids": [999999999],
-                           "delivery_name": "__probe__",
-                           "address_id": 999999999,
-                           "client_order_id": "probe-check-does-not-exist"},
-                     method="POST")
-        return {"ok": True, "note": "応答が返った", "data": d}
-    except taotaro.TaotaroError as e:
-        return {"ok": False, "code": e.code, "status": getattr(e, "status", None),
-                "message": e.message}
-
-
 @router.get("/probe")
 def probe(path: str):
     """【一時】タオタロウAPIの口が存在するかを確かめる。読み取りだけ。
