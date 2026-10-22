@@ -273,6 +273,19 @@ export default function ProductsPage() {
   })
   const bySku = Object.fromEntries(products.map(p => [p.sku, p]))
 
+  // 本体の purchase_components にSKUが入っていない付属品もある
+  // （SKUの欄ができる前に登録したもの）。付属品の印が付いていれば、
+  // SKUの頭が一致する本体にぶら下げる（a09_1_tape → a09_1）
+  products.forEach(p => {
+    if (!p.is_component || isPart[p.sku]) return
+    const parent = products
+      .filter(x => x.sku !== p.sku && p.sku.startsWith(x.sku + '_'))
+      .sort((a, b) => b.sku.length - a.sku.length)[0]
+    if (!parent) return            // 親が分からないものは単独で出す
+    partsOf[parent.sku] = (partsOf[parent.sku] || []).concat(p.sku)
+    isPart[p.sku] = true
+  })
+
   const filteredProducts = products.filter(p => {
     if (isPart[p.sku]) return false   // 本体の下に出すので、単独では並べない
     if (supplierFilter && (p.supplier || '') !== supplierFilter) return false
