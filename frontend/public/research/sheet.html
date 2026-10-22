@@ -7708,15 +7708,15 @@ if(FIREBASE_CONFIG.databaseURL){
 
       // 買付の指示は納品の段階では終わっている。納品依頼書に残ると
       // 現場が迷うので、納品のときの指示は別に持つ
-      const dRow = el('div', 'an-row reg-line');
-      dRow.appendChild(el('span', 'reg-lead', '納品時の備考'));
+      const dnRow = el('div', 'an-row reg-line');
+      dnRow.appendChild(el('span', 'reg-lead', '納品時の備考'));
       const dnote = document.createElement('textarea');
       dnote.className = 'reg-note';
       dnote.placeholder = 'FBAへ送るときの指示（例: 5825743とセット組、2枚ずつ入れる）';
       dnote.value = data.delivery_note || '';
       dnote.addEventListener('input', () => put('delivery_note', dnote.value));
-      dRow.appendChild(dnote);
-      panel.appendChild(dRow);
+      dnRow.appendChild(dnote);
+      panel.appendChild(dnRow);
 
       panel.appendChild(el('div', 'an-note',
         '❷「📦 商品マスタに登録」で、全SKUの備考に入ります。'
