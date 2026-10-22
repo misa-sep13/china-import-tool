@@ -8703,6 +8703,10 @@ if(FIREBASE_CONFIG.databaseURL){
           + (res.updated.length ? '：' + res.updated.join('、') : '')));
         if(res.components) done.appendChild(el('div', null,
           '発注用付属品 ' + res.components + '件も入れました'));
+        // SKUを付けた付属品は、商品マスタにも部材として作る。
+        // 作っておかないと、マスタの付属品欄で選べない
+        if((res.parts || []).length) done.appendChild(el('div', null,
+          '付属品を商品マスタにも作りました：' + res.parts.join('、')));
         done.appendChild(el('div', null, '発注管理に出てくるようになりました'));
         out.appendChild(done);
         status.textContent = '';
@@ -10095,6 +10099,9 @@ if(FIREBASE_CONFIG.databaseURL){
           inp.addEventListener('input', () => { on(inp.value); scheduleSave(); });
           line.appendChild(inp);
         };
+        // SKUが無いと、タオタロウへの発注行に番号が入らず紐づけられない。
+        // 本体のSKUに用途を足した形にする（例: a09_1_tape）
+        mk('SKU（例: a09_1_tape）', a.sku, v => { research.accessories[i].sku = v.trim(); });
         mk('中国語名（例: 收纳袋）', a.name, v => { research.accessories[i].name = v; });
         mk('URL（空なら本体と同じ）', a.url, v => { research.accessories[i].url = v; });
         // 単価が無いと原価に乗らず、そのぶん利益を多く見積もる。
@@ -10127,7 +10134,7 @@ if(FIREBASE_CONFIG.databaseURL){
       });
       const add = el('button', 'mini acc-add', '＋ 付属品を追加');
       add.addEventListener('click', () => {
-        research.accessories.push({name: '', url: '', qty: 1, price: null});
+        research.accessories.push({sku: '', name: '', url: '', qty: 1, price: null});
         drawAcc(); scheduleSave();
       });
       accList.appendChild(add);

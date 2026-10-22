@@ -226,7 +226,8 @@ def extract(research: dict, settings: dict) -> dict:
         # 一緒に発注するもの（収納袋など）。在庫には連動しない。
         # URLが空なら本体と同じページから買う
         "accessories": [
-            {"name": (a.get("name") or "").strip(),
+            {"sku": (a.get("sku") or "").strip(),
+             "name": (a.get("name") or "").strip(),
              "url": (a.get("url") or "").strip(),
              "qty": int(a.get("qty") or 1) or 1,
              # 単価が無いと原価に乗らず、そのぶん利益を多く見積もる

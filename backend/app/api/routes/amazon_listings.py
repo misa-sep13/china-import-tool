@@ -3129,8 +3129,15 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
             warnings.append(
                 f"付属品「{a.get('name') or '名前なし'}」に単価が入っていません。"
                 "原価に乗らないので、そのぶん利益を多く見積もります")
+        # SKUが無いと、タオタロウへの発注行に番号が入らず紐づけられない。
+        # 画面で決めてもらうので、空なら知らせる
+        if not (a.get("sku") or "").strip():
+            warnings.append(
+                f"付属品「{a.get('name') or '名前なし'}」にSKUがありません。"
+                "タオタロウへの発注で紐づけられないので、"
+                "シートの付属品欄にSKUを入れてください（例: a09_1_tape）")
         components.append({
-            "sku": "", "qty": a.get("qty") or 1,
+            "sku": (a.get("sku") or "").strip(), "qty": a.get("qty") or 1,
             "buy_url": (a.get("url") or "").strip() or buy_url,
             "supplier_spec": a.get("name") or "",
             "name": a.get("name") or "",
@@ -3263,6 +3270,32 @@ def to_master(listing_id: int, body: ToMasterIn, db: Session = Depends(get_db)):
             p.purchase_components = comp_json
         (created if new else updated).append(sku)
 
+    # 付属品も、SKUが決まっていれば商品マスタに部材として作る。
+    # 作っておかないと、商品マスタの付属品欄（マスタから選ぶ作り）で
+    # 選べず、毎回あちらで手当てすることになる。
+    # 在庫には連動しない（purchase_components は在庫計算に入らない）
+    parts = []
+    for c in comps:
+        csku = (c.get("sku") or "").strip()
+        if not csku:
+            continue
+        cp = db.query(Product).filter(Product.sku == csku).first()
+        if cp is None:
+            max_no = db.query(sa_func.max(Product.no)).scalar() or 0
+            cp = Product(sku=csku, no=max_no + 1, supplier="タオタロウ",
+                         is_component=True)
+            db.add(cp)
+            parts.append(csku)
+        if not (cp.name or "").strip():
+            cp.name = (c.get("name") or csku)[:500]
+        if not (cp.spec or "").strip():
+            cp.spec = c.get("supplier_spec") or ""
+        if not (cp.buy_url or "").strip():
+            cp.buy_url = c.get("buy_url") or ""
+        if not cp.price and c.get("price"):
+            cp.price = c["price"]
+        cp.is_component = True
+
     db.commit()
     return {"created": created, "updated": updated,
-            "components": len(comps)}
+            "components": len(comps), "parts": parts}
