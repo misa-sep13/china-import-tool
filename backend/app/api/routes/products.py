@@ -71,6 +71,7 @@ class ProductUpdate(BaseModel):
     spec: Optional[str] = None
     customer_memo: Optional[str] = None
     note: Optional[str] = None
+    delivery_note: Optional[str] = None
     set_size: Optional[int] = None
     extra_stock: Optional[int] = None
     amazon_fee_rate: Optional[float] = None

@@ -12,6 +12,8 @@ const EMPTY = {
   // 普段はSP-APIが入れるが、取れない商品があるので手でも入れられるようにする
   selling_price: '',
   note: '',
+  // 納品（FBAへ送るとき）の指示。買付の備考とは別に持つ
+  delivery_note: '',
   set_size: 1, extra_stock: 0, amazon_fee_rate: 0.1, category: '標準',
   // 発注用付属品。本体と一緒にタオタロウへ頼むもの。在庫には連動しない
   purchase_components: '',
@@ -590,8 +592,17 @@ export default function ProductsPage() {
                   <textarea {...f('customer_memo')} rows={2} style={{ resize: 'vertical' }} />
                 </div>
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                  <label>備考</label>
+                  <label>備考（買付時。タオタロウの発注Excelに出ます）</label>
                   <textarea {...f('note')} rows={2} style={{ resize: 'vertical' }} />
+                </div>
+                {/* 買付の指示（全量検品・写真撮影）は納品の段階では
+                    終わっている。納品依頼書に残ると現場が迷うので、
+                    納品のときの指示は別に持つ */}
+                <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                  <label>納品時の備考（FBAへ送るとき。発注Excelには出ません）</label>
+                  <textarea {...f('delivery_note')} rows={2}
+                    placeholder="例: 5825743とセット組、2枚ずつ入れる"
+                    style={{ resize: 'vertical' }} />
                 </div>
                 {/* 本体と一緒に頼む付属品。楽天マスタと同じ作り。
                     在庫には連動しないが、頼まないと本体だけ届く */}

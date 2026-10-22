@@ -752,3 +752,103 @@ def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
         # 商品マスタに無い・ASINが空のもの。CSVには出すが印を付ける
         "unknown_count": len(unknown),
     }
+
+
+# ---------- タオタロウの納品依頼Excelに、納品時の備考を入れる ----------
+#
+# タオタロウから落としてくる納品依頼書の備考欄には、買付のときの指示
+# （全量開封検品・写真撮影・動画撮影など）がそのまま残っている。
+# 納品の段階ではもう終わっている作業なので、現場が迷う。
+# 商品マスタの「納品時の備考」で置き換える。
+#
+# 突き合わせはタオタロウの商品IDが最優先。FNSKUとASINは使えない。
+# 本体と付属品を同じ商品ページとして納品するため、同じ番号が2行に出る
+# （付け髭 5825743 とシール 5839353 がどちらも X001EV26HT / B0HNJHL821）。
+
+def _norm_spec(v: str) -> str:
+    """仕様の表記ゆれを吸収する。
+
+    タオタロウの「商品情報」は「颜色: 帽子盒黑色【42*22*17cm】」のように
+    項目名が前に付く。区切りも「;」「、」「,」が混ざる。
+    """
+    s = str(v or "").strip()
+    # 「颜色:」「规格型号:」などの頭を外す（全角・半角どちらのコロンも）
+    for sep in ("：", ":"):
+        if sep in s:
+            s = s.split(sep, 1)[1]
+    for a, b in (("；", ""), (";", ""), ("、", ""), (",", ""),
+                 ("　", ""), (" ", "")):
+        s = s.replace(a, b)
+    return s
+
+
+@router.post("/fill-taotaro-note")
+async def fill_taotaro_note(file: UploadFile = File(...),
+                            db: Session = Depends(get_db)):
+    """納品依頼Excelの備考を、商品マスタの「納品時の備考」で置き換える。
+
+    当たらなかった行は触らない（消すと、手で書いたものまで消えるため）。
+    """
+    import json
+    import urllib.parse
+    import openpyxl
+
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(await file.read()))
+    except Exception:
+        raise HTTPException(400, "Excelとして読めませんでした")
+    ws = wb.active
+
+    # 見出しの行を探す。「備考」と「FNSKU番号」が並ぶ行が表の先頭
+    head_row = None
+    cols = {}
+    for r in range(1, min(ws.max_row, 40) + 1):
+        row = {str(ws.cell(r, c).value or "").strip(): c
+               for c in range(1, ws.max_column + 1)}
+        if "備考" in row and any("FNSKU" in k for k in row):
+            head_row, cols = r, row
+            break
+    if head_row is None:
+        raise HTTPException(400, "「備考」の列が見つかりませんでした")
+
+    c_note = cols["備考"]
+    c_id = next((v for k, v in cols.items() if "商品ID" in k), None)
+    c_info = next((v for k, v in cols.items() if "商品情報" in k), None)
+
+    prods = db.query(Product).all()
+    by_tid = {str(p.taotaro_product_id): p for p in prods
+              if p.taotaro_product_id}
+    by_spec = {}
+    for p in prods:
+        k = _norm_spec(p.spec)
+        if k:
+            by_spec.setdefault(k, p)
+
+    filled, cleared, missed = [], [], []
+    for r in range(head_row + 1, ws.max_row + 1):
+        tid = str(ws.cell(r, c_id).value or "").strip() if c_id else ""
+        info = str(ws.cell(r, c_info).value or "").strip() if c_info else ""
+        if not tid and not info:
+            continue
+        p = by_tid.get(tid) or by_spec.get(_norm_spec(info))
+        if p is None:
+            missed.append(f"{r}行目 {tid or info[:24]}")
+            continue
+        note = (p.delivery_note or "").strip()
+        ws.cell(r, c_note).value = note or None
+        (filled if note else cleared).append(p.sku)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    report = urllib.parse.quote(json.dumps(
+        {"入れた": filled, "空にした": cleared, "当たらなかった": missed},
+        ensure_ascii=False))
+    name = (file.filename or "taotaro.xlsx").rsplit(".", 1)[0]
+    return StreamingResponse(
+        buf,
+        media_type=("application/vnd.openxmlformats-officedocument"
+                    ".spreadsheetml.sheet"),
+        headers={"Content-Disposition":
+                 f'attachment; filename="{name}_note.xlsx"',
+                 "X-Fill-Report": report})

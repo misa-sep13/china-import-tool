@@ -7700,13 +7700,28 @@ if(FIREBASE_CONFIG.databaseURL){
       nRow.appendChild(el('span', 'reg-lead', '備考'));
       const note = document.createElement('textarea');
       note.className = 'reg-note';
-      note.placeholder = '商品マスタの備考に入れたいこと（発注時の注意など）';
+      note.placeholder = '買付のときの注意（例: 全量開封検品、写真撮影）';
       note.value = data.master_note || '';
       note.addEventListener('input', () => put('master_note', note.value));
       nRow.appendChild(note);
       panel.appendChild(nRow);
+
+      // 買付の指示は納品の段階では終わっている。納品依頼書に残ると
+      // 現場が迷うので、納品のときの指示は別に持つ
+      const dRow = el('div', 'an-row reg-line');
+      dRow.appendChild(el('span', 'reg-lead', '納品時の備考'));
+      const dnote = document.createElement('textarea');
+      dnote.className = 'reg-note';
+      dnote.placeholder = 'FBAへ送るときの指示（例: 5825743とセット組、2枚ずつ入れる）';
+      dnote.value = data.delivery_note || '';
+      dnote.addEventListener('input', () => put('delivery_note', dnote.value));
+      dRow.appendChild(dnote);
+      panel.appendChild(dRow);
+
       panel.appendChild(el('div', 'an-note',
-        '❷「📦 商品マスタに登録」で、全SKUの備考に入ります'));
+        '❷「📦 商品マスタに登録」で、全SKUの備考に入ります。'
+        + '買付の備考はタオタロウの発注書に、'
+        + '納品時の備考はFBAの納品依頼書に出ます'));
 
       // --- 商品画像 ---
       panel.appendChild(el('div', 'reg-sec', '商品画像'));

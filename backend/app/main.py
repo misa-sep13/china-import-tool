@@ -80,6 +80,8 @@ def _migrate():
     migrations = [
         ("rakuten_products","orphan_ok",      "ALTER TABLE rakuten_products ADD COLUMN orphan_ok BOOLEAN DEFAULT FALSE"),
         ("import_permits","kind",                "ALTER TABLE import_permits ADD COLUMN kind VARCHAR DEFAULT 'permit'"),
+        ("products",      "delivery_note",       "ALTER TABLE products ADD COLUMN delivery_note TEXT"),
+        ("amazon_listings", "delivery_note",     "ALTER TABLE amazon_listings ADD COLUMN delivery_note TEXT"),
         ("products",      "selling_price",       "ALTER TABLE products ADD COLUMN selling_price FLOAT"),
         ("products",      "fba_fee",             "ALTER TABLE products ADD COLUMN fba_fee FLOAT"),
         ("products",      "amazon_fee_rate",     "ALTER TABLE products ADD COLUMN amazon_fee_rate FLOAT DEFAULT 0.1"),
@@ -1633,7 +1635,7 @@ app.add_middleware(
     # ZIPやExcelのファイル名は Content-Disposition に入っている。
     # 既定では JavaScript から読めないため、名前が取れず「保存」にできず、
     # 新しいタブを開こうとしてポップアップブロックで止まっていた
-    expose_headers=["Content-Disposition"],
+    expose_headers=["Content-Disposition", "X-Fill-Report"],
 )
 
 

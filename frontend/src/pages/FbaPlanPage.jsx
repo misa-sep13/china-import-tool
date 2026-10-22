@@ -216,6 +216,42 @@ export default function FbaPlanPage() {
   const [packErr, setPackErr] = useState('')
   const [loadingPack, setLoadingPack] = useState(false)
 
+  // タオタロウの納品依頼書の備考を、マスタの「納品時の備考」で置き換える
+  const [filling, setFilling] = useState(false)
+  const [fillMsg, setFillMsg] = useState('')
+  const fillNote = async (file) => {
+    if (!file) return
+    setFilling(true); setFillMsg('読み込んでいます…')
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const r = await api.post('/fba-plan/fill-taotaro-note', fd, {
+        responseType: 'blob',
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      const url = URL.createObjectURL(r.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = file.name.replace(/\.xlsx?$/i, '') + '_note.xlsx'
+      a.click()
+      URL.revokeObjectURL(url)
+      let rep = null
+      try {
+        rep = JSON.parse(decodeURIComponent(r.headers['x-fill-report'] || ''))
+      } catch (e) { rep = null }
+      setFillMsg(rep
+        ? `備考を入れた ${rep['入れた'].length}件`
+          + ` / 空にした ${rep['空にした'].length}件`
+          + (rep['当たらなかった'].length
+            ? ['', '当たらなかった行（触っていません）：']
+              .concat(rep['当たらなかった']).join('\n') : '')
+        : '書き換えたファイルを保存しました')
+    } catch (e) {
+      setFillMsg('うまくいきませんでした：'
+        + (e.response?.data?.detail || e.message))
+    } finally { setFilling(false) }
+  }
+
   const loadSendOrders = async () => {
     setLoadingSo(true); setPackErr('')
     try {
@@ -298,6 +334,12 @@ export default function FbaPlanPage() {
             <span style={{ color: '#64748b' }}>　→ 納品先FCが決まる</span>
           </li>
           <li>セラーセントラルで<b>商品ラベル</b>をダウンロード</li>
+          <li>
+            タオタロウの<b>納品依頼書</b>を落として
+            <b>「④備考を入れる」</b>に通す
+            <span style={{ color: '#64748b' }}>
+            　→ 買付のときの指示が消え、納品時の指示だけが入る</span>
+          </li>
           <li>FBA指示書と商品ラベルを一緒に<b>WeChat</b>へ送る</li>
           <li>インボイス作成完了のお知らせ → <b>支払い</b></li>
           <li>配送ラベル（納品先FCの住所）を<b>WeChat</b>へ送る</li>
@@ -393,6 +435,35 @@ export default function FbaPlanPage() {
         )}
       </div>
       )}
+
+      {/* タオタロウの納品依頼書。備考に買付のときの指示が残っていて、
+          納品の段階では終わっている作業なので現場が迷う。
+          商品マスタの「納品時の備考」で置き換える */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center',
+          flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 15 }}>④ 納品依頼書に備考を入れる</b>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            タオタロウから落とした納品依頼書を選ぶと、備考を入れ替えて返します
+          </span>
+          <input type="file" accept=".xlsx,.xlsm" disabled={filling}
+            onChange={e => { fillNote(e.target.files?.[0]); e.target.value = '' }}
+            style={{ marginLeft: 'auto', fontSize: 12 }} />
+        </div>
+        <div style={{ fontSize: 12, color: '#64748b', marginTop: 8,
+          lineHeight: 1.8 }}>
+          買付のときの指示（全量開封検品・写真撮影など）は消して、
+          商品マスタの<b>「納品時の備考」</b>だけを入れます。
+          突き合わせはタオタロウの商品IDで行い、無ければ商品情報（仕様）で当てます。
+          当たらなかった行は<b>触りません</b>。
+        </div>
+        {fillMsg && (
+          <div style={{ fontSize: 12, marginTop: 8, whiteSpace: 'pre-wrap',
+            color: fillMsg.startsWith('うまく') ? '#b91c1c' : '#334155' }}>
+            {fillMsg}
+          </div>
+        )}
+      </div>
 
       {/* 梱包情報。Amazonの納品プランで「箱に何を入れたか」を入れるところに使う。
           タオタロウのインボイスから読むので、手で数える必要がない */}
