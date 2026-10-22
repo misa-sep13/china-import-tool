@@ -86,7 +86,7 @@
   </header>
 
   <div class="bar">
-    <input id="q" type="search" placeholder="商品名・SKU・JANで絞り込み">
+    <input id="q" type="search" placeholder="商品名・SKU・JAN・ASINで絞り込み">
     <button id="print">印刷 / PDF保存</button>
     <span id="count" class="lead"></span>
   </div>
@@ -131,7 +131,7 @@
       if(!word) return true;
       var hay = [it.name, it.research_title]
         .concat((it.children || []).map(function(c){
-          return [c.name, c.sku, c.jan].join(' ');
+          return [c.name, c.sku, c.jan, c.asin, c.fnsku].join(' ');
         })).join(' ').toLowerCase();
       return hay.indexOf(word) >= 0;
     });
@@ -177,7 +177,7 @@
       if(kids.length){
         var tbl = document.createElement('table');
         var tr = document.createElement('tr');
-        ['色・種類', 'SKU', 'JAN'].forEach(function(h){
+        ['色・種類', 'SKU', 'JAN', 'ASIN', 'FNSKU'].forEach(function(h){
           tr.appendChild(el('th', null, h));
         });
         tbl.appendChild(tr);
@@ -186,6 +186,10 @@
           r.appendChild(el('td', null, c.name || ''));
           r.appendChild(el('td', 'code', c.sku || ''));
           r.appendChild(el('td', 'code', c.jan || ''));
+          // ASINは出品が通ってから、FNSKUはFBAに在庫が入ってから付く。
+          // まだ無いうちは「—」で、空欄との違いを出す
+          r.appendChild(el('td', 'code', c.asin || '—'));
+          r.appendChild(el('td', 'code', c.fnsku || '—'));
           tbl.appendChild(r);
         });
         card.appendChild(tbl);

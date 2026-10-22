@@ -58,7 +58,8 @@ export default function RepackPage() {
       if (onlyWritten && !(it.note || it.box_note)) return false
       if (!word) return true
       const hay = [it.name, it.research_title]
-        .concat((it.children || []).map(c => `${c.name} ${c.sku} ${c.jan}`))
+        .concat((it.children || []).map(
+          c => `${c.name} ${c.sku} ${c.jan} ${c.asin || ''} ${c.fnsku || ''}`))
         .join(' ').toLowerCase()
       return hay.includes(word)
     })
@@ -120,7 +121,7 @@ export default function RepackPage() {
           指示を書いたものだけ
         </label>
         <input value={q} onChange={e => setQ(e.target.value)}
-          placeholder="商品名・SKU・JANで絞り込み"
+          placeholder="商品名・SKU・JAN・ASINで絞り込み"
           style={{ padding: '6px 9px', border: `1px solid ${C.line}`,
             borderRadius: 6, fontSize: 13, width: 220 }} />
       </div>
@@ -232,7 +233,7 @@ function Row({ it, onSaved }) {
               marginBottom: 10 }}>
               <tbody>
                 <tr>
-                  {['色・種類', 'SKU', 'JAN'].map(h => (
+                  {['色・種類', 'SKU', 'JAN', 'ASIN', 'FNSKU'].map(h => (
                     <th key={h} style={{ border: `1px solid ${C.line}`,
                       padding: '4px 8px', background: C.soft, color: C.sub,
                       textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
@@ -246,6 +247,14 @@ function Row({ it, onSaved }) {
                       padding: '4px 8px', fontFamily: 'monospace' }}>{c.sku}</td>
                     <td style={{ border: `1px solid ${C.line}`,
                       padding: '4px 8px', fontFamily: 'monospace' }}>{c.jan}</td>
+                    {/* ASINは出品が通ってから、FNSKUはFBAに在庫が入ってから
+                        付く。まだ無いうちは「—」で、空欄との違いを出す */}
+                    <td style={{ border: `1px solid ${C.line}`,
+                      padding: '4px 8px', fontFamily: 'monospace' }}>
+                      {c.asin || <span style={{ color: C.line }}>—</span>}</td>
+                    <td style={{ border: `1px solid ${C.line}`,
+                      padding: '4px 8px', fontFamily: 'monospace' }}>
+                      {c.fnsku || <span style={{ color: C.line }}>—</span>}</td>
                   </tr>
                 ))}
               </tbody>
