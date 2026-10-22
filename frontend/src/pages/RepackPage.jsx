@@ -215,6 +215,26 @@ function Row({ it, onSaved }) {
               it.updated_at ? `指示の更新 ${it.updated_at}` : '']
               .filter(Boolean).join('　/　')}
           </div>
+          {/* SKU・ASIN・FNSKUは開かなくても見えるようにする。
+              現物と伝票を突き合わせるのに毎回使うため */}
+          {!!kids.length && (
+            <div style={{ fontSize: 11.5, color: C.text, marginTop: 3,
+              fontFamily: 'monospace', display: 'flex', flexWrap: 'wrap',
+              gap: '2px 10px' }}>
+              {kids.map((c, i) => (
+                <span key={i} style={{ whiteSpace: 'nowrap' }}>
+                  {c.name && (
+                    <span style={{ color: C.sub, fontFamily: 'inherit' }}>
+                      {c.name}{' '}
+                    </span>
+                  )}
+                  {c.sku || '—'}
+                  {c.asin ? ` / ${c.asin}` : ''}
+                  {c.fnsku ? ` / ${c.fnsku}` : ''}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         {(it.note || it.box_note) && (
           <span style={{ fontSize: 11, color: C.good, fontWeight: 700,
