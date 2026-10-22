@@ -852,3 +852,73 @@ async def fill_taotaro_note(file: UploadFile = File(...),
         headers={"Content-Disposition":
                  f'attachment; filename="{name}_note.xlsx"',
                  "X-Fill-Report": report})
+
+
+@router.post("/read-taotaro-note")
+async def read_taotaro_note(file: UploadFile = File(...),
+                            db: Session = Depends(get_db)):
+    """納品依頼Excelに手で書いてある備考を、商品マスタの
+    「納品時の備考」に取り込む（fill-taotaro-note の逆）。
+
+    一度マスタに入れておけば、次の便からは ④ で入れ直せる。
+    空欄の行はマスタを触らない（消すと、過去に入れたものが消えるため）。
+    商品IDで当たらず仕様で当たった行は、ついでに商品IDを覚える。
+    """
+    import openpyxl
+
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(await file.read()))
+    except Exception:
+        raise HTTPException(400, "Excelとして読めませんでした")
+    ws = wb.active
+
+    head_row = None
+    cols = {}
+    for r in range(1, min(ws.max_row, 40) + 1):
+        row = {str(ws.cell(r, c).value or "").strip(): c
+               for c in range(1, ws.max_column + 1)}
+        if "備考" in row and any("FNSKU" in k for k in row):
+            head_row, cols = r, row
+            break
+    if head_row is None:
+        raise HTTPException(400, "「備考」の列が見つかりませんでした")
+
+    c_note = cols["備考"]
+    c_id = next((v for k, v in cols.items() if "商品ID" in k), None)
+    c_info = next((v for k, v in cols.items() if "商品情報" in k), None)
+
+    prods = db.query(Product).all()
+    by_tid = {str(p.taotaro_product_id): p for p in prods
+              if p.taotaro_product_id}
+    by_spec = {}
+    for p in prods:
+        k = _norm_spec(p.spec)
+        if k:
+            by_spec.setdefault(k, p)
+
+    saved, same, missed, blank = [], [], [], 0
+    for r in range(head_row + 1, ws.max_row + 1):
+        note = str(ws.cell(r, c_note).value or "").strip()
+        if not note:
+            blank += 1
+            continue
+        tid = str(ws.cell(r, c_id).value or "").strip() if c_id else ""
+        info = str(ws.cell(r, c_info).value or "").strip() if c_info else ""
+        p = by_tid.get(tid)
+        if p is None:
+            p = by_spec.get(_norm_spec(info))
+            # 仕様で当たったなら、次は商品IDで一発で当たるようにしておく
+            if p is not None and tid and not p.taotaro_product_id:
+                p.taotaro_product_id = tid
+        if p is None:
+            missed.append(f"{r}行目 {tid or info[:24]}：{note[:40]}")
+            continue
+        if (p.delivery_note or "").strip() == note:
+            same.append(p.sku)
+            continue
+        p.delivery_note = note
+        saved.append(f"{p.sku}：{note[:40]}")
+    db.commit()
+
+    return {"入れた": saved, "元から同じ": same,
+            "当たらなかった": missed, "備考が空の行": blank}

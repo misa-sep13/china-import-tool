@@ -252,6 +252,30 @@ export default function FbaPlanPage() {
     } finally { setFilling(false) }
   }
 
+  // 逆向き。Excelに手で書いた備考を、マスタの「納品時の備考」に覚えさせる
+  const readNote = async (file) => {
+    if (!file) return
+    setFilling(true); setFillMsg('読み込んでいます…')
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const { data } = await api.post('/fba-plan/read-taotaro-note', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      setFillMsg([
+        `マスタに入れた ${data['入れた'].length}件`
+          + ` / 元から同じ ${data['元から同じ'].length}件`,
+      ].concat(data['入れた'].map(x => '　' + x))
+        .concat(data['当たらなかった'].length
+          ? ['', '当たらなかった行：'].concat(
+            data['当たらなかった'].map(x => '　' + x)) : [])
+        .join('\n'))
+    } catch (e) {
+      setFillMsg('うまくいきませんでした：'
+        + (e.response?.data?.detail || e.message))
+    } finally { setFilling(false) }
+  }
+
   const loadSendOrders = async () => {
     setLoadingSo(true); setPackErr('')
     try {
@@ -448,6 +472,17 @@ export default function FbaPlanPage() {
           </span>
           <input type="file" accept=".xlsx,.xlsm" disabled={filling}
             onChange={e => { fillNote(e.target.files?.[0]); e.target.value = '' }}
+            style={{ marginLeft: 'auto', fontSize: 12 }} />
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center',
+          flexWrap: 'wrap', marginTop: 10, paddingTop: 10,
+          borderTop: '1px solid #e2e8f0' }}>
+          <b style={{ fontSize: 13 }}>逆に、書いてある備考をマスタに覚えさせる</b>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            手で書き込んだ依頼書を選ぶと、備考を「納品時の備考」に入れます
+          </span>
+          <input type="file" accept=".xlsx,.xlsm" disabled={filling}
+            onChange={e => { readNote(e.target.files?.[0]); e.target.value = '' }}
             style={{ marginLeft: 'auto', fontSize: 12 }} />
         </div>
         <div style={{ fontSize: 12, color: '#64748b', marginTop: 8,
