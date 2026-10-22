@@ -7700,7 +7700,7 @@ if(FIREBASE_CONFIG.databaseURL){
       nRow.appendChild(el('span', 'reg-lead', '備考'));
       const note = document.createElement('textarea');
       note.className = 'reg-note';
-      note.placeholder = '買付のときの注意（例: 全量開封検品、写真撮影）';
+      note.placeholder = '買付のときの注意';
       note.value = data.master_note || '';
       note.addEventListener('input', () => put('master_note', note.value));
       nRow.appendChild(note);
@@ -7712,7 +7712,7 @@ if(FIREBASE_CONFIG.databaseURL){
       dnRow.appendChild(el('span', 'reg-lead', '納品時の備考'));
       const dnote = document.createElement('textarea');
       dnote.className = 'reg-note';
-      dnote.placeholder = 'FBAへ送るときの指示（例: 5825743とセット組、2枚ずつ入れる）';
+      dnote.placeholder = 'FBA再梱包用指示';
       dnote.value = data.delivery_note || '';
       dnote.addEventListener('input', () => put('delivery_note', dnote.value));
       dnRow.appendChild(dnote);
