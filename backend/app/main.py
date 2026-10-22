@@ -1544,6 +1544,34 @@ async def _fill_amazon_ids(limit: int = 40):
                     p.asin = asin
                 if fnsku and not (p.fnsku or "").strip():
                     p.fnsku = fnsku
+
+        # スプレッドシートで登録した商品は出品レコードが無いので、
+        # 上のループに出てこない。商品マスタ側からも拾う
+        if done < limit:
+            have = {(k.sku or "").strip() for k in kids}
+            rows = (db.query(Product)
+                    .filter(Product.is_active == True,
+                            Product.sku.isnot(None),
+                            (Product.asin.is_(None)) | (Product.asin == ""))
+                    .all())
+            for p in rows:
+                sku = (p.sku or "").strip()
+                if not sku or sku in have:
+                    continue
+                if done >= limit:
+                    break
+                try:
+                    got = await asyncio.to_thread(amazon_api.fetch_listing, sku)
+                except Exception as e:
+                    logger.warning(f"[scheduler] ASIN取得に失敗 {sku}: {e}")
+                    continue
+                done += 1
+                asin = (got.get("asin") or "").strip()
+                fnsku = (got.get("fnsku") or "").strip()
+                if asin:
+                    p.asin = asin
+                if fnsku and not (p.fnsku or "").strip():
+                    p.fnsku = fnsku
         if done:
             db.commit()
             logger.info(f"[scheduler] ASIN・FNSKUを調べた: {done}件")

@@ -16,6 +16,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response
 from pydantic import BaseModel
+from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -635,6 +636,89 @@ async def add_image(listing_id: int, child_id: Optional[int] = None,
     db.commit()
     db.refresh(img)
     return _image_out(img)
+
+
+# ---------- Amazonの登録Excelから商品マスタを更新 ----------
+#
+# スプレッドシート（Amazonの在庫ファイル）で直接登録した商品は、ツールの
+# 出品フローを通らないので商品マスタに行ができない。発注も在庫も
+# マスタを見るので、入れておかないとその商品だけ管理から外れる。
+#
+# 古い名前が残っていることがあるため、既にある行は上書きする。
+# 仕入URL・原価・入数など、こちらでしか持っていない情報は触らない。
+
+_TPL_SHEET = "テンプレート"
+_TPL_LABEL_ROW = 4
+_TPL_DATA_ROW = 7
+
+
+def _tpl_col(ws, label: str):
+    for c in range(1, ws.max_column + 1):
+        if ws.cell(_TPL_LABEL_ROW, c).value == label:
+            return c
+    return None
+
+
+@router.post("/master/import-excel")
+async def master_import_excel(files: list[UploadFile] = File(...),
+                              db: Session = Depends(get_db)):
+    """Amazonの登録Excel（.xlsm）を読んで、商品マスタを作る・直す。
+
+    1行＝1SKU。親の行は売り物ではないので飛ばす。
+    """
+    from openpyxl import load_workbook
+
+    made, fixed, skipped = [], [], []
+    for up in files:
+        try:
+            wb = load_workbook(io.BytesIO(await up.read()), data_only=True)
+        except Exception:
+            skipped.append(f"{up.filename}：Excelとして読めません")
+            continue
+        if _TPL_SHEET not in wb.sheetnames:
+            skipped.append(f"{up.filename}：「テンプレート」のシートがありません")
+            continue
+        ws = wb[_TPL_SHEET]
+        c_sku = _tpl_col(ws, "SKU")
+        c_name = _tpl_col(ws, "商品名")
+        c_lvl = _tpl_col(ws, "親子レベル")
+        c_color = _tpl_col(ws, "色")
+        c_price = _tpl_col(ws, "商品の販売価格 JPY (Amazonで販売, JP)")
+        if not c_sku:
+            skipped.append(f"{up.filename}：SKUの列が見つかりません")
+            continue
+
+        max_no = db.query(sa_func.max(Product.no)).scalar() or 0
+        for r in range(_TPL_DATA_ROW, ws.max_row + 1):
+            sku = str(ws.cell(r, c_sku).value or "").strip()
+            if not sku or sku == "ABC123":
+                continue
+            if c_lvl and str(ws.cell(r, c_lvl).value or "").strip() == "親":
+                continue
+            name = str(ws.cell(r, c_name).value or "").strip() if c_name else ""
+            color = str(ws.cell(r, c_color).value or "").strip() if c_color else ""
+            price = ws.cell(r, c_price).value if c_price else None
+
+            p = db.query(Product).filter(Product.sku == sku).first()
+            new = p is None
+            if new:
+                max_no += 1
+                p = Product(sku=sku, no=max_no, supplier="タオタロウ")
+                db.add(p)
+            # 名前・色・売価はExcelが新しい。古い名前が残るので上書きする
+            if name:
+                p.name = name[:500]
+            if color:
+                p.color = color
+            try:
+                if price not in (None, ""):
+                    p.selling_price = float(price)
+            except (TypeError, ValueError):
+                pass
+            (made if new else fixed).append(sku)
+        db.flush()
+    db.commit()
+    return {"作った": made, "直した": fixed, "読めなかった": skipped}
 
 
 @router.post("/images/shrink")
