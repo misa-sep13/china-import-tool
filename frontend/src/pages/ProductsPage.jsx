@@ -483,7 +483,7 @@ export default function ProductsPage() {
                   ),
                   // 付属品。本体にぶら下げて、SKUを字下げして出す
                   ...parts.map(c => (
-                    <tr key={`p${c.id}`} style={{ background: '#fafafa' }}>
+                    <tr key={`p${p.id}-${c.id}`} style={{ background: '#fafafa' }}>
                       <td style={{ fontFamily: 'monospace', fontSize: 12,
                         whiteSpace: 'nowrap', paddingLeft: 24, color: '#64748b' }}>
                         └ {c.sku}
