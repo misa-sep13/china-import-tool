@@ -7481,6 +7481,10 @@ if(FIREBASE_CONFIG.databaseURL){
     }
 
     async function flush(){
+      // ❶〜❹はサーバー側のシートを読む。シートの保存は2.5秒待って
+      // から送るので、直後に押されると古い内容で処理されてしまう。
+      // 先にシートの保存を済ませる
+      try{ await flushBackup(); }catch(e){}
       clearTimeout(saveTimer);
       const body = Object.assign({}, pending);
       Object.keys(pending).forEach(k => delete pending[k]);
@@ -10102,6 +10106,9 @@ if(FIREBASE_CONFIG.databaseURL){
         // SKUが無いと、タオタロウへの発注行に番号が入らず紐づけられない。
         // 本体のSKUに用途を足した形にする（例: a09_1_tape）
         mk('SKU（例: a09_1_tape）', a.sku, v => { research.accessories[i].sku = v.trim(); });
+        // 商品名は日本語。中国語名は仕入先の言い方で、人が読む名前ではない。
+        // これが無いと、商品マスタに中国語のまま並ぶ
+        mk('商品名（例: 替えシール）', a.jp_name, v => { research.accessories[i].jp_name = v; });
         mk('中国語名（例: 收纳袋）', a.name, v => { research.accessories[i].name = v; });
         mk('URL（空なら本体と同じ）', a.url, v => { research.accessories[i].url = v; });
         // 単価が無いと原価に乗らず、そのぶん利益を多く見積もる。
@@ -10134,7 +10141,8 @@ if(FIREBASE_CONFIG.databaseURL){
       });
       const add = el('button', 'mini acc-add', '＋ 付属品を追加');
       add.addEventListener('click', () => {
-        research.accessories.push({sku: '', name: '', url: '', qty: 1, price: null});
+        research.accessories.push({sku: '', jp_name: '', name: '', url: '',
+                                   qty: 1, price: null});
         drawAcc(); scheduleSave();
       });
       accList.appendChild(add);
@@ -10582,6 +10590,15 @@ if(FIREBASE_CONFIG.databaseURL){
     clearTimeout(backupTimer);
     backupTimer = setTimeout(pushBackup, BK_DEBOUNCE);
   }
+  // サーバーへの保存を今すぐ済ませる。
+  // ❶〜❹はサーバー側のシートを読むので、2.5秒の待ちの間に押されると
+  // 直したばかりの内容が反映されない（付属品のSKUと中国語名が
+  // 「名前なし」で登録されかけた）。押す前にこれを待つ
+  function flushBackup(){
+    clearTimeout(backupTimer);
+    return pushBackup() || Promise.resolve();
+  }
+
   function pushBackup(){
     backupTimer = null;
     if(!backupOk) return;
@@ -10591,7 +10608,7 @@ if(FIREBASE_CONFIG.databaseURL){
     if(pagesDirty) body.pages = pageCache();
     const json = JSON.stringify(body);
     if(json === lastBackupJSON) return;
-    fetch(bkUrl('/backup/save'), {method:'POST',
+    return fetch(bkUrl('/backup/save'), {method:'POST',
       headers:{'Content-Type':'application/json'}, body: json})
       .then(r => r.json())
       .then(j => {

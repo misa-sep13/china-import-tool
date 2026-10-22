@@ -227,6 +227,8 @@ def extract(research: dict, settings: dict) -> dict:
         # URLが空なら本体と同じページから買う
         "accessories": [
             {"sku": (a.get("sku") or "").strip(),
+             # 日本語の商品名。中国語名は仕入先の言い方なので別に持つ
+             "jp_name": (a.get("jp_name") or "").strip(),
              "name": (a.get("name") or "").strip(),
              "url": (a.get("url") or "").strip(),
              "qty": int(a.get("qty") or 1) or 1,

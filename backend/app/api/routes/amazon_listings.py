@@ -3139,8 +3139,9 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
         components.append({
             "sku": (a.get("sku") or "").strip(), "qty": a.get("qty") or 1,
             "buy_url": (a.get("url") or "").strip() or buy_url,
+            # 仕入先の言い方は中国語名。人が読む名前は日本語のほうを使う
             "supplier_spec": a.get("name") or "",
-            "name": a.get("name") or "",
+            "name": (a.get("jp_name") or "").strip() or a.get("name") or "",
             "price": a.get("price"),
         })
 
