@@ -1494,6 +1494,65 @@ def _capture_month_end_inventory():
 _last_captured_period = None
 
 
+async def _fill_amazon_ids(limit: int = 40):
+    """出品済みでASIN・FNSKUが空のSKUを、Amazonから読んで埋める。
+
+    ⑤「登録結果を確かめる」を押せば入るが、押さなければ永久に空のまま。
+    再梱包指示や商品マスタはこの2つを見るので、気づかないうちに
+    空欄が並ぶ。押し忘れても埋まるように、裏で少しずつ拾う。
+
+    ASINは出品が通ってから、FNSKUはFBAに在庫が入ってから付くので、
+    取れないものは次の回にまた試す。1回で全部やるとSP-APIの
+    呼び出し制限に当たるため、空いているものから少しずつ。
+    """
+    from app.core.database import SessionLocal
+    from app.models.amazon_listing import AmazonListingChild
+    from app.models.product import Product
+    from app.services import amazon_api
+
+    db = SessionLocal()
+    try:
+        kids = (db.query(AmazonListingChild)
+                .filter(AmazonListingChild.sku.isnot(None),
+                        AmazonListingChild.status.in_(("submitted", "live")))
+                .all())
+        done = 0
+        for c in kids:
+            sku = (c.sku or "").strip()
+            if not sku:
+                continue
+            p = db.query(Product).filter(Product.sku == sku).first()
+            need_asin = not (c.asin or "").strip() or (
+                p is not None and not (p.asin or "").strip())
+            need_fnsku = p is not None and not (p.fnsku or "").strip()
+            if not (need_asin or need_fnsku):
+                continue
+            if done >= limit:
+                break
+            try:
+                got = await asyncio.to_thread(amazon_api.fetch_listing, sku)
+            except Exception as e:
+                logger.warning(f"[scheduler] ASIN取得に失敗 {sku}: {e}")
+                continue
+            done += 1
+            asin = (got.get("asin") or "").strip()
+            fnsku = (got.get("fnsku") or "").strip()
+            if asin and not (c.asin or "").strip():
+                c.asin = asin
+            if p is not None:
+                if asin and not (p.asin or "").strip():
+                    p.asin = asin
+                if fnsku and not (p.fnsku or "").strip():
+                    p.fnsku = fnsku
+        if done:
+            db.commit()
+            logger.info(f"[scheduler] ASIN・FNSKUを調べた: {done}件")
+    except Exception as e:
+        logger.warning(f"[scheduler] ASIN・FNSKUの取り込みでエラー: {e}")
+    finally:
+        db.close()
+
+
 async def _scheduler_loop():
     """1分ごとに受注差分の在庫同期＋RMS在庫取得、30分ごとにキャンセル再チェックを実行。
 
@@ -1515,6 +1574,10 @@ async def _scheduler_loop():
             logger.warning(f"[scheduler] 期末在庫の自動確定でエラー: {e}")
         if tick % 30 == 0:
             await _check_delayed_cancellations()
+        # 6時間ごと: 出品済みでASIN・FNSKUが空のSKUをAmazonから埋める。
+        # 自己発送はFBA在庫の取り込みに出てこないので、ここが唯一の入り口
+        if tick % 360 == 0:
+            await _fill_amazon_ids()
 
 
 @asynccontextmanager

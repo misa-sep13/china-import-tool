@@ -1988,6 +1988,11 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
                     notes.append(f"Amazonからの指摘: {i.get('message')}")
         if notes:
             ng += 1
+        # 読めたASIN・FNSKUはその場で残す。出すだけだと、再梱包指示や
+        # 商品マスタからは永久に見えないままになる（自己発送はFBA在庫の
+        # 取り込みにも出てこないので、ここが唯一の入り口になる）
+        _keep_ids(db, c, got.get("asin"), got.get("fnsku"))
+
         out.append({
             "kind": "子" if has_variation else "単品", "sku": c.sku,
             "ok": not notes, "asin": got.get("asin"),
@@ -1998,11 +2003,42 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
                     if got.get("asin") else None),
         })
 
+    db.commit()
+
     return {
         "ok": ng == 0, "ng": ng, "items": out,
         "note": ("画像が正しい色のものかまでは分かりません。"
                  "商品ページを開いて目で確かめてください"),
     }
+
+
+def _keep_ids(db: Session, child: AmazonListingChild,
+              asin: str = None, fnsku: str = None) -> None:
+    """Amazonから読めたASIN・FNSKUを残す。
+
+    出品の子と、商品マスタ（再梱包指示や発注が見るところ）の両方に入れる。
+    自己発送の商品はFBA在庫の取り込みに出てこないので、Amazonから
+    読み戻すこの経路が唯一の入り口になる。
+
+    手で直した値を消さないよう、空のときだけ入れる。ASINは一度付けば
+    変わらないので、上書きの必要もない。
+    """
+    asin = (asin or "").strip()
+    fnsku = (fnsku or "").strip()
+    if not asin and not fnsku:
+        return
+    if asin and not (child.asin or "").strip():
+        child.asin = asin
+    sku = (child.sku or "").strip()
+    if not sku:
+        return
+    p = db.query(Product).filter(Product.sku == sku).first()
+    if p is None:
+        return
+    if asin and not (p.asin or "").strip():
+        p.asin = asin
+    if fnsku and not (p.fnsku or "").strip():
+        p.fnsku = fnsku
 
 
 # 親ができるまで待てる上限（1リクエスト全体で）。
