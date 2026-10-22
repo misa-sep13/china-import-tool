@@ -702,7 +702,8 @@ def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
         m = re.search(r"offer/(\d+)", str(u or ""))
         return m.group(1) if m else ""
 
-    prods = db.query(Product).all()
+    # 削除済みの行も残っているので、生きているものだけで突き合わせる
+    prods = db.query(Product).filter(Product.is_active == True).all()
     by_asin, by_offer = {}, {}
     for p in prods:
         if p.asin:
@@ -815,7 +816,9 @@ async def fill_taotaro_note(file: UploadFile = File(...),
     c_id = next((v for k, v in cols.items() if "商品ID" in k), None)
     c_info = next((v for k, v in cols.items() if "商品情報" in k), None)
 
-    prods = db.query(Product).all()
+    # 削除済みの行も残っているので、生きているものだけで突き合わせる
+    # （消した a07_grey に書いて、生きている a07_gray が空のままになる）
+    prods = db.query(Product).filter(Product.is_active == True).all()
     by_tid = {str(p.taotaro_product_id): p for p in prods
               if p.taotaro_product_id}
     by_spec = {}
@@ -887,7 +890,9 @@ async def read_taotaro_note(file: UploadFile = File(...),
     c_id = next((v for k, v in cols.items() if "商品ID" in k), None)
     c_info = next((v for k, v in cols.items() if "商品情報" in k), None)
 
-    prods = db.query(Product).all()
+    # 削除済みの行も残っているので、生きているものだけで突き合わせる
+    # （消した a07_grey に書いて、生きている a07_gray が空のままになる）
+    prods = db.query(Product).filter(Product.is_active == True).all()
     by_tid = {str(p.taotaro_product_id): p for p in prods
               if p.taotaro_product_id}
     by_spec = {}
