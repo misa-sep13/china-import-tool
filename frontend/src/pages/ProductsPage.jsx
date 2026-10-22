@@ -255,7 +255,24 @@ export default function ProductsPage() {
   }
 
   const suppliers = [...new Set(products.map(p => p.supplier).filter(Boolean))].sort()
+
+  // 発注用付属品（部材）は、本体と同じ並びに出すと商品が探しにくくなる。
+  // どの本体に付くかは本体側の purchase_components が持っているので、
+  // それを引いて、本体の行のすぐ下にぶら下げる
+  const partsOf = {}
+  const isPart = {}
+  products.forEach(p => {
+    let comps = []
+    try { comps = JSON.parse(p.purchase_components || '[]') } catch (e) { comps = [] }
+    const skus = (comps || []).map(c => (c?.sku || '').trim()).filter(Boolean)
+    if (!skus.length) return
+    partsOf[p.sku] = skus
+    skus.forEach(s => { isPart[s] = true })
+  })
+  const bySku = Object.fromEntries(products.map(p => [p.sku, p]))
+
   const filteredProducts = products.filter(p => {
+    if (isPart[p.sku]) return false   // 本体の下に出すので、単独では並べない
     if (supplierFilter && (p.supplier || '') !== supplierFilter) return false
     if (!search) return true
     const q = normalizeSearch(search)
@@ -358,9 +375,11 @@ export default function ProductsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredProducts.map(p => {
+                {filteredProducts.flatMap(p => {
                   const profit = calcProfit(p)
-                  return (
+                  const parts = (partsOf[p.sku] || [])
+                    .map(s => bySku[s]).filter(Boolean)
+                  return [(
                     <tr key={p.id}>
                       <td style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap' }}>{p.sku}</td>
                       <td style={{ maxWidth: 320, minWidth: 260 }}>
@@ -446,7 +465,27 @@ export default function ProductsPage() {
                         </div>
                       </td>
                     </tr>
-                  )
+                  ),
+                  // 付属品。本体にぶら下げて、SKUを字下げして出す
+                  ...parts.map(c => (
+                    <tr key={`p${c.id}`} style={{ background: '#fafafa' }}>
+                      <td style={{ fontFamily: 'monospace', fontSize: 12,
+                        whiteSpace: 'nowrap', paddingLeft: 24, color: '#64748b' }}>
+                        └ {c.sku}
+                      </td>
+                      <td style={{ color: '#64748b' }}>
+                        {c.name || '（名前なし）'}
+                        <span style={{ fontSize: 11, marginLeft: 6 }}>付属品</span>
+                      </td>
+                      <td colSpan={20} style={{ color: '#94a3b8', fontSize: 12 }}>
+                        {[c.spec, c.price ? `${c.price} 元` : '']
+                          .filter(Boolean).join('　/　')}
+                        <button className="btn btn-secondary btn-sm"
+                          style={{ marginLeft: 10 }}
+                          onClick={() => openEdit(c)}>編集</button>
+                      </td>
+                    </tr>
+                  ))]
                 })}
               </tbody>
             </table>
