@@ -337,38 +337,38 @@ export default function FbaPlanPage() {
     <div>
       <h1>🚢 FBA納品プラン</h1>
 
-      {/* 手順。畳まずに出す。ここを見れば次に何をするか分かるようにしてある */}
+      {/* 手順。畳まずに出す。ここを見れば次に何をするか分かるようにしてある。
+          番号は下のカードのボタンと対応させる（並びもこの順にする） */}
       <div className="card" style={{ marginBottom: 16, background: '#f8fafc' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a', marginBottom: 10 }}>
           やること（上から順に）
         </div>
         <ol style={{ margin: 0, paddingLeft: 22, fontSize: 13, lineHeight: 2.1, color: '#334155' }}>
           <li>
-            <b>配送依頼を出す</b>
-            <span style={{ color: '#64748b' }}>
-              （発注管理 →「配送依頼を出す」タブ。FBA送付先は未定のままでOK）
-            </span>
+            タオタロウで<b>配送依頼を出す</b>
+            <span style={{ color: '#64748b' }}>（FBA送付先は未定のままでOK）</span>
           </li>
           <li>
-            下の<b>「①入庫済みを取り込む」</b>を押す
-            <span style={{ color: '#64748b' }}>　→ 届いた商品に印が付く</span>
+            タオタロウから<b>FBA指示書（納品依頼書）をダウンロード</b>
           </li>
           <li>
-            納品する数を決めて<b>「②Amazonに納品プランを作成」</b>
+            <b>「① 入庫済みを取り込む」</b>
+            <span style={{ color: '#64748b' }}>　→ 届いた商品に「到着済み」の印が付く</span>
+          </li>
+          <li>
+            <b>「② 納品依頼書に備考を入れる」</b>
+            <span style={{ color: '#64748b' }}>　→ 落とした指示書を選ぶと、備考を入れ替えて返します</span>
+          </li>
+          <li>
+            下の表で納品数を決めて<b>「③ Amazonに納品プランを作成」</b>
             <span style={{ color: '#64748b' }}>　→ 納品先FCが決まる</span>
           </li>
           <li>セラーセントラルで<b>商品ラベル</b>をダウンロード</li>
-          <li>
-            タオタロウの<b>納品依頼書</b>を落として
-            <b>「④備考を入れる」</b>に通す
-            <span style={{ color: '#64748b' }}>
-            　→ 買付のときの指示が消え、納品時の指示だけが入る</span>
-          </li>
-          <li>FBA指示書と商品ラベルを一緒に<b>WeChat</b>へ送る</li>
+          <li>備考を入れた<b>指示書と商品ラベル</b>を一緒に<b>WeChat</b>へ送る</li>
           <li>インボイス作成完了のお知らせ → <b>支払い</b></li>
           <li>配送ラベル（納品先FCの住所）を<b>WeChat</b>へ送る</li>
           <li>
-            出荷されたら<b>「③梱包情報」</b>で便を選び、<b>CSVを保存</b>
+            出荷されたら<b>「④ 梱包情報」</b>で便を選び、<b>CSVを保存</b>
             <span style={{ color: '#64748b' }}>　→ Amazonの「輸送の詳細」に入れる</span>
           </li>
         </ol>
@@ -421,7 +421,6 @@ export default function FbaPlanPage() {
           )}
         </div>
       </div>
-
       {/* 発注済みリストに見当たらなかった行。無いときは出さない
           （空の枠だけが残っていた） */}
       {importResult?.unmatched?.length > 0 && (
@@ -466,7 +465,7 @@ export default function FbaPlanPage() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center',
           flexWrap: 'wrap' }}>
-          <b style={{ fontSize: 15 }}>④ 納品依頼書に備考を入れる</b>
+          <b style={{ fontSize: 15 }}>② 納品依頼書に備考を入れる</b>
           <span style={{ fontSize: 12, color: '#64748b' }}>
             タオタロウから落とした納品依頼書を選ぶと、備考を入れ替えて返します
           </span>
@@ -500,11 +499,22 @@ export default function FbaPlanPage() {
         )}
       </div>
 
+      {/* ③はこの下の表で数を決めてから押す。ボタンが離れた場所に
+          あるので、ここに行き先を書いておく */}
+      <div className="card" style={{ marginBottom: 16, background: '#eff6ff',
+        border: '1px solid #bfdbfe' }}>
+        <div style={{ fontSize: 13, color: '#1e40af' }}>
+          <b>③ Amazonに納品プランを作成</b> は、
+          この下の「到着済み商品のFBA納品プラン」で
+          納品数を決めてから押します。
+        </div>
+      </div>
+
       {/* 梱包情報。Amazonの納品プランで「箱に何を入れたか」を入れるところに使う。
           タオタロウのインボイスから読むので、手で数える必要がない */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <b style={{ fontSize: 15 }}>③ 梱包情報（箱の中身）</b>
+          <b style={{ fontSize: 15 }}>④ 梱包情報（箱の中身）</b>
           <span style={{ fontSize: 12, color: '#64748b' }}>
             Amazonの「輸送の詳細」で箱ごとの中身を入れるときに使います
           </span>
@@ -723,7 +733,7 @@ export default function FbaPlanPage() {
                 <button className="btn" onClick={handleCreateInboundPlan} disabled={creatingPlan}
                   style={{ background: '#ea580c', color: '#fff', fontWeight: 700 }}
                   title="この内容でAmazonに納品プランを作成します">
-                  {creatingPlan ? '作成中...' : '② Amazonに納品プランを作成'}
+                  {creatingPlan ? '作成中...' : '③ Amazonに納品プランを作成'}
                 </button>
                 <button className="btn" onClick={handleExport} disabled={exporting}
                   style={{ background: '#059669', color: '#fff' }}>
