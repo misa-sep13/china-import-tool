@@ -110,8 +110,10 @@ export default function FbaPlanPage() {
     setPlanQtys(q)
   }, [planSkus, allItems])
 
+  const [planErr, setPlanErr] = useState('')
   const startPlanFetch = async (force = false) => {
     setPlanStatus('loading')
+    setPlanErr('')
     setElapsed(0)
     try {
       const q = planSkus && planSkus.length
@@ -144,14 +146,27 @@ export default function FbaPlanPage() {
             setPlanStatus('done')
           } else if (st.status === 'error') {
             clearInterval(timer)
+            setPlanErr(st.error || 'Amazonから取れませんでした')
+            setPlanStatus('error')
+          } else if (st.status === 'not_found') {
+            // Renderが寝て起き直すと、動いていた処理ごと消える。
+            // これを拾わないと、終わらない取得を延々と見ることになる
+            clearInterval(timer)
+            setPlanErr('取得が途中で消えました（サーバーが再起動したようです）。もう一度押してください')
+            setPlanStatus('error')
+          } else if ((st.elapsed || 0) > 600) {
+            clearInterval(timer)
+            setPlanErr('10分たっても終わりませんでした。もう一度押してください')
             setPlanStatus('error')
           }
         } catch {
           clearInterval(timer)
+          setPlanErr('通信が切れました。もう一度押してください')
           setPlanStatus('error')
         }
       }, 1500)
-    } catch {
+    } catch (e) {
+      setPlanErr(e.response?.data?.detail || '取得を始められませんでした')
       setPlanStatus('error')
     }
   }
@@ -651,6 +666,20 @@ export default function FbaPlanPage() {
           <h2 style={{ marginBottom: 12 }}>③ Amazonに納品プランを作成</h2>
 
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+            {!planSid && (
+              <span style={{ fontSize: 12, color: '#b45309' }}>
+                上で便を選ぶと押せます
+              </span>
+            )}
+            {planStatus === 'loading' && (
+              <button className="btn btn-secondary" style={{ fontSize: 12 }}
+                onClick={() => { setPlanStatus('idle'); setPlanErr('') }}>
+                やめる
+              </button>
+            )}
+            {planErr && (
+              <span style={{ fontSize: 12, color: '#b91c1c' }}>{planErr}</span>
+            )}
             <button className="btn btn-primary" onClick={() => startPlanFetch(true)} disabled={planStatus === 'loading' || !planSid}>
               {planStatus === 'loading' ? `取得中... (${elapsed.toFixed(0)}秒)` : '🔄 SP-APIから在庫取得'}
             </button>
