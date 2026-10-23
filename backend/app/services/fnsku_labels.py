@@ -17,11 +17,13 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfgen import canvas
 
-# A4 24面（3列×8段）の実寸。エーワン28362の値に合わせてある
+# A4 24面（3列×8段）。実際のシートを刷って測った値に合わせてある。
+# 上14mm・下12mm・左右7mm・1枚65×34mmで、面と面のすきまは無い。
+# カタログ値（66×33.9mm・すきま2mm）で組むと、右と下へ行くほどずれた。
 COLS, ROWS = 3, 8
-LABEL_W, LABEL_H = 66.0 * mm, 33.9 * mm
-MARGIN_L, MARGIN_T = 6.0 * mm, 10.5 * mm
-GAP_X = 2.0 * mm
+LABEL_W, LABEL_H = 65.0 * mm, 34.0 * mm
+MARGIN_L, MARGIN_T = 7.0 * mm, 14.0 * mm
+GAP_X = 0.0 * mm
 
 _FONT = "HeiseiKakuGo-W5"
 _font_ready = False
