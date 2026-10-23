@@ -401,8 +401,10 @@ export default function FbaPlanPage() {
           <li>インボイス作成完了のお知らせ → <b>支払い</b></li>
           <li>配送ラベル（納品先FCの住所）を<b>WeChat</b>へ送る</li>
           <li>
-            出荷されたら<b>「④ 梱包情報」</b>で便を選び、<b>CSVを保存</b>
-            <span style={{ color: '#64748b' }}>　→ Amazonの「輸送の詳細」に入れる</span>
+            出荷されたら<b>「④ 梱包情報」</b>で便を選び、
+            <b>「Amazonに箱の中身を入れる」</b>
+            <span style={{ color: '#64748b' }}>
+            　→ セラーセントラルに貼る作業は要りません</span>
           </li>
         </ol>
         <div style={{
@@ -562,7 +564,7 @@ export default function FbaPlanPage() {
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <b style={{ fontSize: 15 }}>④ 梱包情報（箱の中身）</b>
           <span style={{ fontSize: 12, color: '#64748b' }}>
-            Amazonの「輸送の詳細」で箱ごとの中身を入れるときに使います
+            インボイスから箱の3辺・重量・中身を読んで、納品プランに入れます
           </span>
           <button className="btn btn-secondary" style={{ marginLeft: 'auto', fontSize: 13 }}
             onClick={loadSendOrders} disabled={loadingSo}>
