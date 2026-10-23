@@ -75,8 +75,40 @@ export default function FbaPlanPage() {
     return c
   }, [orders])
 
-  // ---- FBA Plan (到着済み商品の納品プラン) ----
+  // ---- FBA Plan (配送依頼を出した商品の納品プラン) ----
+  // 到着済はタオタロウの倉庫に届いただけで、FBAへ送るかどうかとは別。
+  // 何を送るかは配送依頼を出した時点で決まっているので、そちらで絞る
   const arrivedOrders = useMemo(() => orders.filter(o => o.status === 'arrived'), [orders])
+  const [planSid, setPlanSid] = useState(null)
+  const [planSkus, setPlanSkus] = useState(null)
+  const [skuMsg, setSkuMsg] = useState('')
+  const [allItems, setAllItems] = useState([])
+
+  const pickPlanSendOrder = async (sid) => {
+    setSkuMsg('配送依頼を読んでいます…')
+    try {
+      const { data } = await api.get(`/fba-plan/send-order/${sid}/skus`)
+      setPlanSid(data.sid)
+      setPlanSkus(data.skus)
+      setSkuMsg(`便 ${data.sn || data.sid}　${data.skus.length}商品`
+        + (data.unknown.length
+          ? `（${data.unknown.length}件はSKUが分かりませんでした）` : ''))
+    } catch (e) {
+      setSkuMsg('読めませんでした：' + (e.response?.data?.detail || e.message))
+    }
+  }
+
+  // 便を選び直したら、取得済みの在庫データをそのまま絞り直す
+  useEffect(() => {
+    if (!allItems.length) return
+    const keep = planSkus ? new Set(planSkus)
+      : new Set(arrivedOrders.map(o => o.sku))
+    const filtered = allItems.filter(it => keep.has(it.sku))
+    setPlanItems(filtered)
+    const q = {}
+    for (const it of filtered) q[it.sku] = it.plan_qty
+    setPlanQtys(q)
+  }, [planSkus, allItems])
 
   const startPlanFetch = async (force = false) => {
     setPlanStatus('loading')
@@ -90,8 +122,11 @@ export default function FbaPlanPage() {
           setElapsed(st.elapsed || 0)
           if (st.status === 'done' && st.result) {
             clearInterval(timer)
-            const arrivedSkus = new Set(arrivedOrders.map(o => o.sku))
-            const filtered = (st.result.items || []).filter(it => arrivedSkus.has(it.sku))
+            const all = st.result.items || []
+            setAllItems(all)
+            const keep = planSkus ? new Set(planSkus)
+              : new Set(arrivedOrders.map(o => o.sku))
+            const filtered = all.filter(it => keep.has(it.sku))
             setPlanItems(filtered)
             setPlanSettings(st.result.settings || null)
             setMeta({
@@ -777,10 +812,35 @@ export default function FbaPlanPage() {
         </div>
       )}
 
-      {/* 到着済み商品のFBA納品プラン */}
-      {arrivedOrders.length > 0 && (
+      {/* 配送依頼を出した商品のFBA納品プラン。
+          到着済が1件も無くても、便を選べるように常に出す */}
+      {true && (
         <div style={{ borderTop: '2px solid #e2e8f0', paddingTop: 24 }}>
-          <h2 style={{ marginBottom: 12 }}>📦 到着済み商品のFBA納品プラン</h2>
+          <h2 style={{ marginBottom: 12 }}>📦 配送依頼を出した商品のFBA納品プラン</h2>
+
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center',
+            flexWrap: 'wrap', marginBottom: 12 }}>
+            <span style={{ fontSize: 13, color: '#334155' }}>どの便を納品しますか</span>
+            <button className="btn btn-secondary" style={{ fontSize: 13 }}
+              onClick={loadSendOrders} disabled={loadingSo}>
+              {loadingSo ? '読み込み中…' : '便を選ぶ'}
+            </button>
+            {sendOrders && (
+              <select style={{ fontSize: 13, padding: '4px 8px' }}
+                value={planSid || ''}
+                onChange={e => e.target.value && pickPlanSendOrder(Number(e.target.value))}>
+                <option value="">— 便を選ぶ —</option>
+                {sendOrders.map(so => (
+                  <option key={so.sid} value={so.sid}>
+                    {so.sn || so.sid}　{so.state_label || ''}
+                  </option>
+                ))}
+              </select>
+            )}
+            {skuMsg && (
+              <span style={{ fontSize: 12, color: '#64748b' }}>{skuMsg}</span>
+            )}
+          </div>
 
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
             <button className="btn btn-primary" onClick={() => startPlanFetch(true)} disabled={planStatus === 'loading'}>
@@ -803,6 +863,17 @@ export default function FbaPlanPage() {
               </>
             )}
           </div>
+
+          {planStatus === 'done' && planItems.length === 0 && (
+            <div style={{ padding: '10px 14px', background: '#fffbeb',
+              border: '1px solid #fde68a', borderRadius: 6, fontSize: 13,
+              color: '#92400e', marginBottom: 16 }}>
+              在庫は取れましたが、表に出す商品がありません。
+              {planSkus
+                ? 'この便の商品が、Amazonの在庫（SP-API）に見つかりませんでした。SKUの表記が違う可能性があります。'
+                : '上で便を選んでください。便を選ばないときは「到着済」の印が付いた商品だけが出ます。'}
+            </div>
+          )}
 
           {/* 納品プラン作成の結果。作成後にやることを続けて示す */}
           {createResult && (

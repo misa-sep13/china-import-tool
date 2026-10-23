@@ -1038,3 +1038,48 @@ def send_packing(req: SendPackingIn, db: Session = Depends(get_db)):
 
     return {"ok": True, "sent_boxes": sum(len(gs) for gs in groups.values()),
             "groups": len(groups), "skipped_boxes": skipped}
+
+
+# ---------- 配送依頼に載っている商品を出す ----------
+#
+# 納品プランの候補を「到着済」の印で絞っていたが、到着済はタオタロウの
+# 倉庫に届いただけで、FBAへ送るかどうかとは別。何を送るかは配送依頼を
+# 出した時点で決まっているので、そちらで絞るほうが分かりやすい。
+
+@router.get("/send-order/{sid:int}/skus")
+def send_order_skus(sid: int, db: Session = Depends(get_db)):
+    """配送依頼1件に載っている商品を、自社SKUにして返す。
+
+    発注時に out_id（自社SKU）を入れてあればそれをそのまま使う。
+    入っていない古い発注は、1688のURLで発注済みリストから引く。
+    """
+    try:
+        d = taotaro.send_order_rows(sid)
+    except Exception as e:
+        raise HTTPException(400, f"配送依頼が読めませんでした（{e}）")
+
+    skus_in_master = {p.sku for p in
+                      db.query(Product).filter(Product.is_active == True).all()}
+    by_url = {}
+    for oh in db.query(OrderHistory).filter(
+            OrderHistory.is_deleted == False).all():
+        key = _normalize_1688_url(oh.buy_url or "")
+        if key and oh.sku:
+            by_url.setdefault(key, oh.sku)
+
+    found, unknown = [], []
+    for r in d.get("rows") or []:
+        sku = (r.get("customer_memo") or "").strip()
+        if sku not in skus_in_master:
+            sku = by_url.get(_normalize_1688_url(r.get("buy_url") or ""), "")
+        if sku and sku in skus_in_master:
+            if sku not in found:
+                found.append(sku)
+        else:
+            unknown.append({"name_cn": r.get("name_cn") or "",
+                            "color": r.get("supplier_spec") or "",
+                            "qty": r.get("units") or 0})
+
+    return {"sid": d.get("sid"), "sn": d.get("sn"),
+            "state_label": d.get("state_label") or "",
+            "skus": found, "unknown": unknown}
