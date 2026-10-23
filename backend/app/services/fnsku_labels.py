@@ -25,8 +25,10 @@ LABEL_W, LABEL_H = 65.0 * mm, 34.0 * mm
 MARGIN_L, MARGIN_T = 7.0 * mm, 14.0 * mm
 GAP_X = 0.0 * mm
 # 刷ってみると、中身が1枚ぶんの枠の上へわずかにはみ出していた。
-# 枠の位置はそのままに、中身だけ少し下げる
-TOP_SHIFT = 0.5 * mm
+# 枠の位置はそのままに、中身だけ少し下げる。0.5mmでは下がりすぎて
+# 今度は下がぎりぎりになったので、半分に戻してバーコードを1mm低くした
+TOP_SHIFT = 0.25 * mm
+BAR_H = 10.0 * mm
 
 _FONT = "HeiseiKakuGo-W5"
 _font_ready = False
@@ -73,17 +75,17 @@ def _draw(c: canvas.Canvas, x: float, y: float, item: dict) -> None:
     fnsku = (item.get("fnsku") or "").strip()
 
     # バーコード。高さを抑えて、下に文字を入れる場所を残す
-    bar = code128.Code128(fnsku, barHeight=11 * mm, barWidth=0.38 * mm,
+    bar = code128.Code128(fnsku, barHeight=BAR_H, barWidth=0.38 * mm,
                           humanReadable=False, quiet=False)
     bw = bar.width
     if bw > inner:        # 長いFNSKUでもはみ出さないよう細くする
-        bar = code128.Code128(fnsku, barHeight=11 * mm,
+        bar = code128.Code128(fnsku, barHeight=BAR_H,
                               barWidth=0.38 * mm * inner / bw,
                               humanReadable=False, quiet=False)
         bw = bar.width
-    bar.drawOn(c, x + (LABEL_W - bw) / 2, y + LABEL_H - pad - 11 * mm)
+    bar.drawOn(c, x + (LABEL_W - bw) / 2, y + LABEL_H - pad - BAR_H)
 
-    ty = y + LABEL_H - pad - 11 * mm - 3.2 * mm
+    ty = y + LABEL_H - pad - BAR_H - 3.2 * mm
     c.setFont(_FONT, 7.5)
     c.drawCentredString(x + LABEL_W / 2, ty, fnsku)
 
