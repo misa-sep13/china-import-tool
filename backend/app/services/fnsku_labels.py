@@ -35,12 +35,30 @@ def _ensure_font() -> None:
 
 
 def _fit(text: str, size: float, width: float) -> str:
-    """幅に収まるところまで切って、切ったら…を付ける。"""
-    if pdfmetrics.stringWidth(text, _FONT, size) <= width:
+    """幅に収まるように、真ん中を抜いて…でつなぐ。
+
+    商品名の末尾にカラーを入れているので、後ろを落とすと
+    どの色のラベルか分からなくなる。頭と末尾を残して間を省く。
+    """
+    def w(t: str) -> float:
+        return pdfmetrics.stringWidth(t, _FONT, size)
+
+    if w(text) <= width:
         return text
-    while text and pdfmetrics.stringWidth(text + "…", _FONT, size) > width:
-        text = text[:-1]
-    return text + "…"
+
+    # 末尾（カラー）を先に確保する。幅の半分までを目安にする
+    tail = ""
+    for ch in reversed(text):
+        if w(ch + tail) > width * 0.45:
+            break
+        tail = ch + tail
+
+    head = ""
+    for ch in text[:len(text) - len(tail)]:
+        if w(head + ch + "…" + tail) > width:
+            break
+        head += ch
+    return (head + "…" + tail) if head else ("…" + tail)
 
 
 def _draw(c: canvas.Canvas, x: float, y: float, item: dict) -> None:
