@@ -24,6 +24,9 @@ COLS, ROWS = 3, 8
 LABEL_W, LABEL_H = 65.0 * mm, 34.0 * mm
 MARGIN_L, MARGIN_T = 7.0 * mm, 14.0 * mm
 GAP_X = 0.0 * mm
+# 刷ってみると、中身が1枚ぶんの枠の上へわずかにはみ出していた。
+# 枠の位置はそのままに、中身だけ少し下げる
+TOP_SHIFT = 0.5 * mm
 
 _FONT = "HeiseiKakuGo-W5"
 _font_ready = False
@@ -65,8 +68,8 @@ def _fit(text: str, size: float, width: float) -> str:
 
 def _draw(c: canvas.Canvas, x: float, y: float, item: dict) -> None:
     """1枚ぶん。左下を(x, y)として描く。"""
-    pad = 2.5 * mm
-    inner = LABEL_W - pad * 2
+    pad = 2.5 * mm + TOP_SHIFT
+    inner = LABEL_W - 2.5 * mm * 2
     fnsku = (item.get("fnsku") or "").strip()
 
     # バーコード。高さを抑えて、下に文字を入れる場所を残す
