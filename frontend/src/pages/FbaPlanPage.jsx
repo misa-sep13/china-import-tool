@@ -407,6 +407,11 @@ export default function FbaPlanPage() {
           {importResult && !importResult.error && (
             <span style={{ fontSize: 13, marginLeft: 'auto' }}>
               <strong style={{ color: '#16a34a' }}>{importResult.matched}件</strong> 取り込みました
+              {importResult.already > 0 && (
+                <span style={{ color: '#9ca3af', marginLeft: 8 }}>
+                  （{importResult.already}件はもう到着済）
+                </span>
+              )}
               {importResult.unmatched?.length > 0 && (
                 <span style={{ color: '#9ca3af', marginLeft: 8 }}>
                   （{importResult.unmatched.length}件は発注済みリストに見当たらず）

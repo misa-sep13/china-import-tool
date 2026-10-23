@@ -580,6 +580,7 @@ def sync_arrived(db: Session = Depends(get_db)):
             by_url.setdefault(key, []).append(oh)
 
     matched = 0
+    already = 0
     unmatched = []
     seen = 0
     for page in range(1, 6):
@@ -599,6 +600,11 @@ def sync_arrived(db: Session = Depends(get_db)):
                 if oh.status != "arrived":
                     hit = oh
                     break
+            if not hit and by_url.get(key):
+                # URLでは見つかったが、もう全部「到着済」になっている。
+                # 「発注済みリストに見当たらず」と出すと誤解を招く
+                already += 1
+                continue
             if not hit:
                 unmatched.append({
                     "name_cn": o.get("title") or "",
@@ -618,7 +624,8 @@ def sync_arrived(db: Session = Depends(get_db)):
             break
 
     db.commit()
-    return {"matched": matched, "total_excel_rows": seen, "unmatched": unmatched}
+    return {"matched": matched, "already": already,
+            "total_excel_rows": seen, "unmatched": unmatched}
 
 
 @router.get("/packing/{sid:int}")
