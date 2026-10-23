@@ -988,9 +988,15 @@ def send_packing(req: SendPackingIn, db: Session = Depends(get_db)):
 
     groups, split, unknown = {}, [], []
     skipped = 0
+    parts = {p.sku for p in db.query(Product)
+             .filter(Product.is_component == True).all()}
     for b in boxes:
         items = [it for it in (b.get("items") or [])
-                 if it.get("sku") and (it.get("qty") or 0) > 0]
+                 if it.get("sku") and (it.get("qty") or 0) > 0
+                 and it["sku"] not in parts]   # 付属品は本体に含まれる
+        if not items:
+            skipped += 1
+            continue
         missing = [it["sku"] for it in items if not group_of.get(it["sku"])]
         if missing and len(missing) == len(items):
             # 箱まるごと今回の納品プランに入っていない。便には他の便ぶんも
@@ -1122,6 +1128,10 @@ def send_order_labels(sid: int, skip: int = 0, db: Session = Depends(get_db)):
         qty = int(r.get("units") or 0)
         if p is None:
             missing.append(f"{r.get('name_cn') or ''}（SKU不明）")
+            continue
+        if p.is_component:
+            # 付属品は本体の箱の中に入るもので、単独では出品していない。
+            # FNSKUが入っていても、それは本体のものを取り違えている
             continue
         if not (p.fnsku or "").strip():
             missing.append(f"{p.sku}（FNSKUが入っていません）")
