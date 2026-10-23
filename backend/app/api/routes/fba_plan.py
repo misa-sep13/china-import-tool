@@ -987,14 +987,22 @@ def send_packing(req: SendPackingIn, db: Session = Depends(get_db)):
                 group_of[msku] = gid
 
     groups, split, unknown = {}, [], []
+    skipped = 0
     for b in boxes:
         items = [it for it in (b.get("items") or [])
                  if it.get("sku") and (it.get("qty") or 0) > 0]
-        gids = {group_of.get(it["sku"], "") for it in items}
         missing = [it["sku"] for it in items if not group_of.get(it["sku"])]
+        if missing and len(missing) == len(items):
+            # 箱まるごと今回の納品プランに入っていない。便には他の便ぶんも
+            # 載るので、これは普通のこと。黙って飛ばす
+            skipped += 1
+            continue
         if missing:
+            # プランの商品と、そうでない商品が同じ箱に入っている。
+            # 現物の箱と納品内容が食い違うので、人が見るしかない
             unknown.append({"box_no": b.get("box_no"), "skus": missing})
             continue
+        gids = {group_of.get(it["sku"], "") for it in items}
         if len(gids) > 1:
             # 1箱に別グループのSKUが混ざっている。Amazonは受け付けない
             split.append({"box_no": b.get("box_no"),
@@ -1009,7 +1017,10 @@ def send_packing(req: SendPackingIn, db: Session = Depends(get_db)):
 
     if unknown or split:
         return {"ok": False, "unknown": unknown, "split": split,
-                "sent_boxes": 0}
+                "skipped_boxes": skipped, "sent_boxes": 0}
+    if not groups:
+        raise HTTPException(
+            400, "この便に、納品プランの商品が入った箱がありませんでした")
 
     bad = [b for gs in groups.values() for b in gs
            if not all([b["l"], b["w"], b["h"], b["weight_kg"]])]
@@ -1026,4 +1037,4 @@ def send_packing(req: SendPackingIn, db: Session = Depends(get_db)):
         raise HTTPException(400, f"Amazonへ登録できませんでした（{e}）")
 
     return {"ok": True, "sent_boxes": sum(len(gs) for gs in groups.values()),
-            "groups": len(groups)}
+            "groups": len(groups), "skipped_boxes": skipped}

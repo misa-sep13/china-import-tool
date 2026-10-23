@@ -298,7 +298,9 @@ export default function FbaPlanPage() {
       const { data } = await api.post('/fba-plan/packing/send',
         { plan_id: planId, sid: packing.sid })
       if (data.ok) {
-        setSendPackMsg(`${data.sent_boxes}箱を入れました`)
+        setSendPackMsg(`${data.sent_boxes}箱を入れました`
+          + (data.skipped_boxes
+            ? `（${data.skipped_boxes}箱は今回の納品プランに無いので飛ばしました）` : ''))
       } else {
         const lines = []
         if (data.split?.length) {
