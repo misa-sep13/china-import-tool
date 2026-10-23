@@ -800,6 +800,60 @@ def _norm_spec(v: str) -> str:
     return s
 
 
+class _NoteMatcher:
+    """FBA指示書の行を、商品マスタの商品に当てる。
+
+    上から順に試す：
+      1. タオタロウの商品ID（覚えてあれば一発）
+      2. 商品情報（仕様）の文字
+      3. FNSKU、次にASIN。ただしその番号を持つ商品が1つだけのとき
+
+    3を最後に回しているのは、本体と付属品が同じ番号を持つことがある
+    ため（付け髭とシールがどちらも X001EV26HT）。付属品はそもそも
+    候補から外し、残った中で番号が1つに決まるときだけ使う。
+
+    2か3で当たったら、商品IDを覚えて次から一発で当たるようにする。
+    """
+
+    def __init__(self, db: Session):
+        prods = (db.query(Product)
+                 .filter(Product.is_active == True)
+                 .filter(Product.is_component != True)
+                 .all())
+        self.by_tid = {str(p.taotaro_product_id): p for p in prods
+                       if p.taotaro_product_id}
+        self.by_spec = {}
+        for p in prods:
+            k = _norm_spec(p.spec)
+            if k:
+                self.by_spec.setdefault(k, p)
+        self.by_fnsku = self._unique(prods, "fnsku")
+        self.by_asin = self._unique(prods, "asin")
+
+    @staticmethod
+    def _unique(prods, field):
+        seen = {}
+        for p in prods:
+            v = (getattr(p, field, "") or "").strip().upper()
+            if v:
+                seen.setdefault(v, []).append(p)
+        return {k: v[0] for k, v in seen.items() if len(v) == 1}
+
+    def find(self, tid: str, info: str, fnsku: str = "", asin: str = ""):
+        p = self.by_tid.get(str(tid or "").strip())
+        if p is not None:
+            return p
+        for cand in (self.by_spec.get(_norm_spec(info)),
+                     self.by_fnsku.get((fnsku or "").strip().upper()),
+                     self.by_asin.get((asin or "").strip().upper())):
+            if cand is not None:
+                tid = str(tid or "").strip()
+                if tid and not cand.taotaro_product_id:
+                    cand.taotaro_product_id = tid
+                return cand
+        return None
+
+
 @router.post("/fill-taotaro-note")
 async def fill_taotaro_note(file: UploadFile = File(...),
                             db: Session = Depends(get_db)):
@@ -832,31 +886,28 @@ async def fill_taotaro_note(file: UploadFile = File(...),
     c_note = cols["備考"]
     c_id = next((v for k, v in cols.items() if "商品ID" in k), None)
     c_info = next((v for k, v in cols.items() if "商品情報" in k), None)
+    c_fnsku = next((v for k, v in cols.items() if "FNSKU" in k), None)
+    c_asin = next((v for k, v in cols.items() if "ASIN" in k), None)
 
-    # 削除済みの行も残っているので、生きているものだけで突き合わせる
-    # （消した a07_grey に書いて、生きている a07_gray が空のままになる）
-    prods = db.query(Product).filter(Product.is_active == True).all()
-    by_tid = {str(p.taotaro_product_id): p for p in prods
-              if p.taotaro_product_id}
-    by_spec = {}
-    for p in prods:
-        k = _norm_spec(p.spec)
-        if k:
-            by_spec.setdefault(k, p)
+    matcher = _NoteMatcher(db)
+
+    def _cell(r, c):
+        return str(ws.cell(r, c).value or "").strip() if c else ""
 
     filled, cleared, missed = [], [], []
     for r in range(head_row + 1, ws.max_row + 1):
-        tid = str(ws.cell(r, c_id).value or "").strip() if c_id else ""
-        info = str(ws.cell(r, c_info).value or "").strip() if c_info else ""
+        tid = _cell(r, c_id)
+        info = _cell(r, c_info)
         if not tid and not info:
             continue
-        p = by_tid.get(tid) or by_spec.get(_norm_spec(info))
+        p = matcher.find(tid, info, _cell(r, c_fnsku), _cell(r, c_asin))
         if p is None:
             missed.append(f"{r}行目 {tid or info[:24]}")
             continue
         note = (p.delivery_note or "").strip()
         ws.cell(r, c_note).value = note or None
         (filled if note else cleared).append(p.sku)
+    db.commit()          # 当たった行の商品IDを覚えておく
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -907,16 +958,12 @@ async def read_taotaro_note(file: UploadFile = File(...),
     c_id = next((v for k, v in cols.items() if "商品ID" in k), None)
     c_info = next((v for k, v in cols.items() if "商品情報" in k), None)
 
-    # 削除済みの行も残っているので、生きているものだけで突き合わせる
-    # （消した a07_grey に書いて、生きている a07_gray が空のままになる）
-    prods = db.query(Product).filter(Product.is_active == True).all()
-    by_tid = {str(p.taotaro_product_id): p for p in prods
-              if p.taotaro_product_id}
-    by_spec = {}
-    for p in prods:
-        k = _norm_spec(p.spec)
-        if k:
-            by_spec.setdefault(k, p)
+    c_fnsku = next((v for k, v in cols.items() if "FNSKU" in k), None)
+    c_asin = next((v for k, v in cols.items() if "ASIN" in k), None)
+    matcher = _NoteMatcher(db)
+
+    def _cell(r, c):
+        return str(ws.cell(r, c).value or "").strip() if c else ""
 
     saved, same, missed, blank = [], [], [], 0
     for r in range(head_row + 1, ws.max_row + 1):
@@ -924,14 +971,9 @@ async def read_taotaro_note(file: UploadFile = File(...),
         if not note:
             blank += 1
             continue
-        tid = str(ws.cell(r, c_id).value or "").strip() if c_id else ""
-        info = str(ws.cell(r, c_info).value or "").strip() if c_info else ""
-        p = by_tid.get(tid)
-        if p is None:
-            p = by_spec.get(_norm_spec(info))
-            # 仕様で当たったなら、次は商品IDで一発で当たるようにしておく
-            if p is not None and tid and not p.taotaro_product_id:
-                p.taotaro_product_id = tid
+        tid = _cell(r, c_id)
+        info = _cell(r, c_info)
+        p = matcher.find(tid, info, _cell(r, c_fnsku), _cell(r, c_asin))
         if p is None:
             missed.append(f"{r}行目 {tid or info[:24]}：{note[:40]}")
             continue
@@ -1197,29 +1239,28 @@ def _fill_notes_in_workbook(wb, db: Session) -> dict:
     c_note = cols["備考"]
     c_id = next((v for k, v in cols.items() if "商品ID" in k), None)
     c_info = next((v for k, v in cols.items() if "商品情報" in k), None)
+    c_fnsku = next((v for k, v in cols.items() if "FNSKU" in k), None)
+    c_asin = next((v for k, v in cols.items() if "ASIN" in k), None)
 
-    prods = db.query(Product).filter(Product.is_active == True).all()
-    by_tid = {str(p.taotaro_product_id): p for p in prods
-              if p.taotaro_product_id}
-    by_spec = {}
-    for p in prods:
-        k = _norm_spec(p.spec)
-        if k:
-            by_spec.setdefault(k, p)
+    matcher = _NoteMatcher(db)
+
+    def _cell(r, c):
+        return str(ws.cell(r, c).value or "").strip() if c else ""
 
     filled, cleared, missed = [], [], []
     for r in range(head_row + 1, ws.max_row + 1):
-        tid = str(ws.cell(r, c_id).value or "").strip() if c_id else ""
-        info = str(ws.cell(r, c_info).value or "").strip() if c_info else ""
+        tid = _cell(r, c_id)
+        info = _cell(r, c_info)
         if not tid and not info:
             continue
-        p = by_tid.get(tid) or by_spec.get(_norm_spec(info))
+        p = matcher.find(tid, info, _cell(r, c_fnsku), _cell(r, c_asin))
         if p is None:
             missed.append(f"{r}行目 {tid or info[:24]}")
             continue
         note = (p.delivery_note or "").strip()
         ws.cell(r, c_note).value = note or None
         (filled if note else cleared).append(p.sku)
+    db.commit()          # 当たった行の商品IDを覚えておく
     return {"入れた": filled, "空にした": cleared, "当たらなかった": missed}
 
 
