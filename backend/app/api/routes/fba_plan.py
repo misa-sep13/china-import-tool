@@ -1188,6 +1188,12 @@ def send_order_labels(sid: int, skip: int = 0, db: Session = Depends(get_db)):
         if not (p.fnsku or "").strip():
             missing.append(f"{p.sku}（FNSKUが入っていません）")
             continue
+        # 配送依頼の数は仕入単位（バラの個数）。ラベルは販売単位に1枚なので、
+        # セット数で割る（6枚組のクリップボード240枚なら40枚）。
+        # 割り切れないときは多いほうに倒す。足りないほうが現場で困る
+        n = int(getattr(p, "set_size", 1) or 1)
+        if n > 1:
+            qty = -(-qty // n)
         # 同じSKUが複数行に分かれて載ることがあるのでまとめる
         hit = next((x for x in items if x["sku"] == p.sku), None)
         if hit:
