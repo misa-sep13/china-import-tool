@@ -1083,3 +1083,73 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
     return {"sid": d.get("sid"), "sn": d.get("sn"),
             "state_label": d.get("state_label") or "",
             "skus": found, "unknown": unknown}
+
+
+# ---------- 商品ラベル（FNSKU） ----------
+#
+# これまではセラーセントラルで納品プランを作らないとラベルが落とせず、
+# 代行会社へ渡すのが遅れていた。FNSKUはSKUごとに決まっていて納品プランとは
+# 関係ないので、配送依頼に載っている商品ぶんをここで刷ってしまう。
+
+@router.get("/send-order/{sid:int}/labels")
+def send_order_labels(sid: int, skip: int = 0, db: Session = Depends(get_db)):
+    """配送依頼に載っている商品の商品ラベルPDFを返す。
+
+    skip は使いかけのラベルシートで、何枚ぶん空けてから刷るか。
+    """
+    from app.services.fnsku_labels import build_pdf
+
+    try:
+        d = taotaro.send_order_rows(sid)
+    except Exception as e:
+        raise HTTPException(400, f"配送依頼が読めませんでした（{e}）")
+
+    prods = {p.sku: p for p in
+             db.query(Product).filter(Product.is_active == True).all()}
+    by_url = {}
+    for oh in db.query(OrderHistory).filter(
+            OrderHistory.is_deleted == False).all():
+        key = _normalize_1688_url(oh.buy_url or "")
+        if key and oh.sku:
+            by_url.setdefault(key, oh.sku)
+
+    items, missing = [], []
+    for r in d.get("rows") or []:
+        sku = (r.get("customer_memo") or "").strip()
+        if sku not in prods:
+            sku = by_url.get(_normalize_1688_url(r.get("buy_url") or ""), "")
+        p = prods.get(sku)
+        qty = int(r.get("units") or 0)
+        if p is None:
+            missing.append(f"{r.get('name_cn') or ''}（SKU不明）")
+            continue
+        if not (p.fnsku or "").strip():
+            missing.append(f"{p.sku}（FNSKUが入っていません）")
+            continue
+        # 同じSKUが複数行に分かれて載ることがあるのでまとめる
+        hit = next((x for x in items if x["sku"] == p.sku), None)
+        if hit:
+            hit["qty"] += qty
+        else:
+            items.append({"fnsku": p.fnsku.strip(), "sku": p.sku,
+                          "name": p.name or "", "qty": qty})
+
+    if not items:
+        raise HTTPException(
+            400, "刷れる商品がありませんでした：" + "／".join(missing[:5]))
+
+    try:
+        pdf = build_pdf(items, skip=max(0, int(skip or 0)))
+    except Exception as e:
+        raise HTTPException(400, f"ラベルを作れませんでした（{e}）")
+
+    import json
+    import urllib.parse
+    report = urllib.parse.quote(json.dumps(
+        {"刷った": [f"{x['sku']} × {x['qty']}" for x in items],
+         "刷れなかった": missing}, ensure_ascii=False))
+    return StreamingResponse(
+        io.BytesIO(pdf), media_type="application/pdf",
+        headers={"Content-Disposition":
+                 f'attachment; filename="labels_{sid}.pdf"',
+                 "X-Fill-Report": report})

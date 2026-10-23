@@ -355,6 +355,44 @@ export default function FbaPlanPage() {
     setSendingPack(false)
   }
 
+  // 商品ラベル。納品プランが無くても刷れる（FNSKUはSKUごとに決まっている）
+  const [labelSid, setLabelSid] = useState('')
+  const [labelSkip, setLabelSkip] = useState(0)
+  const [labelMsg, setLabelMsg] = useState('')
+  const [labeling, setLabeling] = useState(false)
+  const makeLabels = async () => {
+    if (!labelSid) { setLabelMsg('便を選んでください'); return }
+    setLabeling(true); setLabelMsg('作っています…')
+    try {
+      const r = await api.get(
+        `/fba-plan/send-order/${labelSid}/labels?skip=${labelSkip || 0}`,
+        { responseType: 'blob' })
+      const url = URL.createObjectURL(r.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `labels_${labelSid}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+      let rep = null
+      try {
+        rep = JSON.parse(decodeURIComponent(r.headers['x-fill-report'] || ''))
+      } catch (e) { rep = null }
+      setLabelMsg(rep
+        ? ['刷りました：'].concat(rep['刷った'].map(x => '　' + x))
+          .concat(rep['刷れなかった'].length
+            ? ['', '刷れなかったもの：'].concat(
+              rep['刷れなかった'].map(x => '　' + x)) : []).join('\n')
+        : 'PDFを保存しました')
+    } catch (e) {
+      let detail = e.response?.data?.detail
+      if (e.response?.data instanceof Blob) {
+        try { detail = JSON.parse(await e.response.data.text()).detail } catch (x) {}
+      }
+      setLabelMsg('うまくいきませんでした：' + (detail || e.message))
+    }
+    setLabeling(false)
+  }
+
   const loadPacking = async (sid) => {
     setLoadingPack(true); setPackErr(''); setPacking(null)
     try {
@@ -591,6 +629,58 @@ export default function FbaPlanPage() {
           この下の「到着済み商品のFBA納品プラン」で
           納品数を決めてから押します。
         </div>
+      </div>
+
+      {/* 商品ラベル。セラーセントラルで納品プランを作らないと落とせなかったが、
+          FNSKUは納品プランと関係ないので、ここで刷って代行会社へ早く渡す */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center',
+          flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 15 }}>🏷 商品ラベル（FNSKU）</b>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            配送依頼に載っている商品ぶんを、数量どおり刷ります
+          </span>
+          <button className="btn btn-secondary" style={{ marginLeft: 'auto', fontSize: 13 }}
+            onClick={loadSendOrders} disabled={loadingSo}>
+            {loadingSo ? '読み込み中…' : '便を選ぶ'}
+          </button>
+        </div>
+        {sendOrders && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center',
+            flexWrap: 'wrap', marginTop: 10 }}>
+            <select style={{ fontSize: 13, padding: '4px 8px' }}
+              value={labelSid} onChange={e => setLabelSid(e.target.value)}>
+              <option value="">— 便を選ぶ —</option>
+              {sendOrders.map(so => (
+                <option key={so.sid} value={so.sid}>
+                  {so.sn || so.sid}　{so.state_label || ''}
+                </option>
+              ))}
+            </select>
+            <label style={{ fontSize: 12, color: '#64748b' }}>
+              シートの使いかけ
+              <input type="number" min="0" max="23" value={labelSkip}
+                onChange={e => setLabelSkip(Number(e.target.value))}
+                style={{ width: 56, marginLeft: 6, fontSize: 13, padding: '2px 6px' }} />
+              <span style={{ marginLeft: 4 }}>枚ぶん空ける</span>
+            </label>
+            <button className="btn btn-primary" style={{ fontSize: 13 }}
+              onClick={makeLabels} disabled={labeling}>
+              {labeling ? '作っています…' : '⬇ ラベルPDFを作る'}
+            </button>
+          </div>
+        )}
+        <div style={{ fontSize: 12, color: '#64748b', marginTop: 8, lineHeight: 1.8 }}>
+          用紙はA4 24面（66×33.9mm、エーワン28362など）。
+          1枚にFNSKUのバーコード・FNSKU・自社SKU・商品名・新品が入ります。
+          <b>納品プランを作る前に刷れます。</b>
+        </div>
+        {labelMsg && (
+          <div style={{ fontSize: 12, marginTop: 8, whiteSpace: 'pre-wrap',
+            color: labelMsg.startsWith('うまく') ? '#b91c1c' : '#334155' }}>
+            {labelMsg}
+          </div>
+        )}
       </div>
 
       {/* 梱包情報。Amazonの納品プランで「箱に何を入れたか」を入れるところに使う。
