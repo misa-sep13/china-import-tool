@@ -149,10 +149,11 @@ export default function FbaPlanPage() {
             setPlanErr(st.error || 'Amazonから取れませんでした')
             setPlanStatus('error')
           } else if (st.status === 'not_found') {
-            // Renderが寝て起き直すと、動いていた処理ごと消える。
-            // これを拾わないと、終わらない取得を延々と見ることになる
+            // 処理はサーバーのメモリに置いてあるので、デプロイで
+            // 作り直されると消える。これを拾わないと、終わらない
+            // 取得を延々と見ることになる
             clearInterval(timer)
-            setPlanErr('取得が途中で消えました（サーバーが再起動したようです）。もう一度押してください')
+            setPlanErr('取得が途中で消えました（デプロイなどでサーバーが入れ替わったとき）。もう一度押してください')
             setPlanStatus('error')
           } else if ((st.elapsed || 0) > 600) {
             clearInterval(timer)
