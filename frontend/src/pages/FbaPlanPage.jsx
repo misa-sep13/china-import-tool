@@ -356,21 +356,20 @@ export default function FbaPlanPage() {
   }
 
   // 商品ラベル。納品プランが無くても刷れる（FNSKUはSKUごとに決まっている）
-  const [labelSid, setLabelSid] = useState('')
   const [labelSkip, setLabelSkip] = useState(0)
   const [labelMsg, setLabelMsg] = useState('')
   const [labeling, setLabeling] = useState(false)
   const makeLabels = async () => {
-    if (!labelSid) { setLabelMsg('便を選んでください'); return }
+    if (!planSid) { setLabelMsg('上で便を選んでください'); return }
     setLabeling(true); setLabelMsg('作っています…')
     try {
       const r = await api.get(
-        `/fba-plan/send-order/${labelSid}/labels?skip=${labelSkip || 0}`,
+        `/fba-plan/send-order/${planSid}/labels?skip=${labelSkip || 0}`,
         { responseType: 'blob' })
       const url = URL.createObjectURL(r.data)
       const a = document.createElement('a')
       a.href = url
-      a.download = `labels_${labelSid}.pdf`
+      a.download = `labels_${planSid}.pdf`
       a.click()
       URL.revokeObjectURL(url)
       let rep = null
@@ -443,142 +442,119 @@ export default function FbaPlanPage() {
     <div>
       <h1>🚢 FBA納品プラン</h1>
 
-      {/* 手順。畳まずに出す。ここを見れば次に何をするか分かるようにしてある。
-          番号は下のカードのボタンと対応させる（並びもこの順にする） */}
+      {/* やること。番号は下のカードと合わせる。
+          タオタロウ側は手作業、Amazon側はこのツールで完結させる */}
       <div className="card" style={{ marginBottom: 16, background: '#f8fafc' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a', marginBottom: 10 }}>
           やること（上から順に）
         </div>
-        <ol style={{ margin: 0, paddingLeft: 22, fontSize: 13, lineHeight: 2.1, color: '#334155' }}>
+        <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 2 }}>
           <li>
             タオタロウで<b>配送依頼を出す</b>
-            <span style={{ color: '#64748b' }}>（FBA送付先は未定のままでOK）</span>
+            <span style={{ color: '#64748b' }}>　（FBA送付先は未定のままでOK）</span>
           </li>
+          <li>この画面の上で<b>その便を選ぶ</b>　→ 以下はすべてその便が対象</li>
+          <li><b>① 商品ラベル</b>を刷って<b>WeChat</b>へ送る</li>
           <li>
-            タオタロウから<b>FBA指示書をダウンロード</b>
+            タオタロウから<b>FBA指示書</b>を落として<b>② 備考を入れる</b>
+            <span style={{ color: '#64748b' }}>　→ 買付の指示が消え、納品の指示だけが入る</span>
           </li>
-          <li>
-            <b>「① 入庫済みを取り込む」</b>
-            <span style={{ color: '#64748b' }}>　→ 届いた商品に「到着済み」の印が付く</span>
-          </li>
-          <li>
-            <b>「② FBA指示書に備考を入れる」</b>
-            <span style={{ color: '#64748b' }}>　→ 落とした指示書を選ぶと、備考を入れ替えて返します</span>
-          </li>
-          <li>
-            下の表で納品数を決めて<b>「③ Amazonに納品プランを作成」</b>
-            <span style={{ color: '#64748b' }}>　→ 納品先FCが決まる</span>
-          </li>
-          <li>セラーセントラルで<b>商品ラベル</b>をダウンロード</li>
-          <li>備考を入れた<b>指示書と商品ラベル</b>を一緒に<b>WeChat</b>へ送る</li>
+          <li>備考を入れた<b>指示書</b>を<b>WeChat</b>へ送る</li>
+          <li>下の表で納品数を決めて<b>③ Amazonに納品プランを作成</b></li>
           <li>インボイス作成完了のお知らせ → <b>支払い</b></li>
           <li>配送ラベル（納品先FCの住所）を<b>WeChat</b>へ送る</li>
           <li>
-            出荷されたら<b>「④ 梱包情報」</b>で便を選び、
-            <b>「Amazonに箱の中身を入れる」</b>
-            <span style={{ color: '#64748b' }}>
-            　→ セラーセントラルに貼る作業は要りません</span>
+            梱包が終わったら<b>④ 箱の中身をAmazonに入れる</b>
+            <span style={{ color: '#64748b' }}>　→ セラーセントラルに貼る作業は要りません</span>
           </li>
         </ol>
-        <div style={{
-          marginTop: 10, padding: '8px 12px', background: '#fffbeb',
-          border: '1px solid #fcd34d', borderRadius: 6,
-          fontSize: 12, color: '#92400e', lineHeight: 1.8,
-        }}>
-          <b>なぜ送付先を未定で出すか</b>：
-          配送依頼にFBA送付先が要るが、納品先FCはAmazonで納品プランを作らないと決まらない。
-          先に知ろうとしてセラーセントラルの梱包を飛ばすと、配送モードがパレット輸送（LTL）か
-          トラック配送（FTL）に限定され、船便・航空便が選べなくなる。
+        <div style={{ marginTop: 10, padding: '8px 12px', background: '#fffbeb',
+          border: '1px solid #fde68a', borderRadius: 6, fontSize: 12,
+          color: '#92400e', lineHeight: 1.8 }}>
+          <b>なぜ送付先を未定で出すか：</b>
+          配送依頼にFBA送付先が要るが、納品先FCはAmazonで納品プランを作らないと
+          決まらない。先に知ろうとしてセラーセントラルの梱包を飛ばすと、
+          配送モードがパレット輸送（LTL）かトラック配送（FTL）に限定され、
+          船便・航空便が選べなくなる。
+          <br />
+          <b>④だけ後になるのは：</b>箱に詰める前は箱の中身が無いためです。
+          インボイスができるまで待ちます。
         </div>
       </div>
 
-
-      {/* ①入庫済みの取り込み。
-          もとはタオタロウのサイトでExcelを落として、ここへ上げ直していた。
-          APIで同じものが取れるので、ボタン1つにした */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button
-            onClick={handleSyncArrived}
-            disabled={importing}
-            style={{
-              padding: '9px 18px', background: importing ? '#cbd5e1' : '#ea580c',
-              color: '#fff', border: 'none', borderRadius: 6,
-              cursor: importing ? 'default' : 'pointer', fontWeight: 700, fontSize: 14,
-            }}
-          >
-            {importing ? '取り込み中…' : '① 入庫済みを取り込む'}
+      {/* 便はここで1回だけ選ぶ。以前はカードごとに選び直していた */}
+      <div className="card" style={{ marginBottom: 16, background: '#eff6ff',
+        border: '1px solid #bfdbfe' }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center',
+          flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 15, color: '#1e40af' }}>どの便を納品しますか</b>
+          <button className="btn btn-secondary" style={{ fontSize: 13 }}
+            onClick={loadSendOrders} disabled={loadingSo}>
+            {loadingSo ? '読み込み中…' : '便を読み込む'}
           </button>
-          <span style={{ fontSize: 12, color: '#64748b' }}>
-            タオタロウで倉庫に届いた商品に「到着済み」の印を付けます（Excelは要りません）
-          </span>
-          {importResult && !importResult.error && (
-            <span style={{ fontSize: 13, marginLeft: 'auto' }}>
-              <strong style={{ color: '#16a34a' }}>{importResult.matched}件</strong> 取り込みました
-              {importResult.already > 0 && (
-                <span style={{ color: '#9ca3af', marginLeft: 8 }}>
-                  （{importResult.already}件はもう到着済）
-                </span>
-              )}
-              {importResult.unmatched?.length > 0 && (
-                <span style={{ color: '#9ca3af', marginLeft: 8 }}>
-                  （{importResult.unmatched.length}件は発注済みリストに見当たらず）
-                </span>
-              )}
-            </span>
+          {sendOrders && (
+            <select style={{ fontSize: 13, padding: '4px 8px', minWidth: 220 }}
+              value={planSid || ''}
+              onChange={e => e.target.value && pickPlanSendOrder(Number(e.target.value))}>
+              <option value="">— 便を選ぶ —</option>
+              {sendOrders.map(so => (
+                <option key={so.sid} value={so.sid}>
+                  {so.sn || so.sid}　{so.state_label || ''}
+                  {so.count_weight ? `　${so.count_weight}kg` : ''}
+                </option>
+              ))}
+            </select>
           )}
-          {importResult?.error && (
-            <span style={{ color: '#ef4444', fontSize: 13, marginLeft: 'auto' }}>
-              {importResult.error}
-            </span>
+          {skuMsg && (
+            <span style={{ fontSize: 12, color: '#1e40af' }}>{skuMsg}</span>
           )}
         </div>
-      </div>
-      {/* 発注済みリストに見当たらなかった行。無いときは出さない
-          （空の枠だけが残っていた） */}
-      {importResult?.unmatched?.length > 0 && (
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.8 }}>
-          <b style={{ color: '#334155' }}>発注済みリストに無い入庫</b>
-          ：タオタロウの倉庫には届いているのに、このツールの発注済みリストに
-          同じ1688のURLの行が見つからなかったものです。
-          タオタロウで直接発注したものが、たいていここに出ます。
-          <b>見るだけの一覧</b>で、ここから配送依頼は作れません。
-          配送依頼は<b>発注管理 →「配送依頼を出す」</b>で出します。
-        </div>
-        {true && (
-          <details style={{ marginTop: 8, fontSize: 12 }}>
-            <summary style={{ cursor: 'pointer', color: '#f59e0b' }}>
-              未照合 {importResult.unmatched.length}件を表示
-            </summary>
-            <div style={{ overflowX: 'auto', marginTop: 4 }}>
-              <table style={{ fontSize: 12, borderCollapse: 'collapse', width: '100%' }}>
-                <thead>
-                  <tr style={{ background: '#fef3c7' }}>
-                    <th style={thStyle}>タオタロウID</th>
-                    <th style={thStyle}>商品名</th>
-                    <th style={thStyle}>色/サイズ</th>
-                    <th style={thStyle}>数量</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {importResult.unmatched.map((u, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={tdStyle}>{u.taotaro_order_id}</td>
-                      <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {u.name_cn}
-                      </td>
-                      <td style={tdStyle}>{[u.color, u.size].filter(Boolean).join(' / ')}</td>
-                      <td style={{ ...tdStyle, textAlign: 'right' }}>{u.qty}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
+        {!planSid && (
+          <div style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>
+            便を選ぶと、①ラベル・③納品プラン・④箱の中身が、その便の商品だけになります。
+          </div>
         )}
       </div>
-      )}
+
+      {/* 商品ラベル。セラーセントラルで納品プランを作らないと落とせなかったが、
+          FNSKUは納品プランと関係ないので、ここで刷って代行会社へ早く渡す */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center',
+          flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 15 }}>① 商品ラベル（FNSKU）</b>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            配送依頼に載っている商品ぶんを、数量どおり刷ります
+          </span>
+        </div>
+        {planSid && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center',
+            flexWrap: 'wrap', marginTop: 10 }}>
+            <label style={{ fontSize: 12, color: '#64748b' }}>
+              シートの使いかけ
+              <input type="number" min="0" max="23" value={labelSkip}
+                onChange={e => setLabelSkip(Number(e.target.value))}
+                style={{ width: 56, marginLeft: 6, fontSize: 13, padding: '2px 6px' }} />
+              <span style={{ marginLeft: 4 }}>枚ぶん空ける</span>
+            </label>
+            <button className="btn btn-primary" style={{ fontSize: 13 }}
+              onClick={makeLabels} disabled={labeling}>
+              {labeling ? '作っています…' : '⬇ ラベルPDFを作る'}
+            </button>
+          </div>
+        )}
+        <div style={{ fontSize: 12, color: '#64748b', marginTop: 8, lineHeight: 1.8 }}>
+          用紙はA4 24面（66×33.9mm、エーワン28362など）。
+          1枚にFNSKUのバーコード・FNSKU・自社SKU・商品名・新品が入ります。
+          <b>納品プランを作る前に刷れます。</b>
+        </div>
+        {labelMsg && (
+          <div style={{ fontSize: 12, marginTop: 8, whiteSpace: 'pre-wrap',
+            color: labelMsg.startsWith('うまく') ? '#b91c1c' : '#334155' }}>
+            {labelMsg}
+          </div>
+        )}
+      </div>
+
 
       {/* タオタロウのFBA指示書。備考に買付のときの指示が残っていて、
           納品の段階では終わっている作業なので現場が迷う。
@@ -620,317 +596,12 @@ export default function FbaPlanPage() {
         )}
       </div>
 
-      {/* ③はこの下の表で数を決めてから押す。ボタンが離れた場所に
-          あるので、ここに行き先を書いておく */}
-      <div className="card" style={{ marginBottom: 16, background: '#eff6ff',
-        border: '1px solid #bfdbfe' }}>
-        <div style={{ fontSize: 13, color: '#1e40af' }}>
-          <b>③ Amazonに納品プランを作成</b> は、
-          この下の「到着済み商品のFBA納品プラン」で
-          納品数を決めてから押します。
-        </div>
-      </div>
-
-      {/* 商品ラベル。セラーセントラルで納品プランを作らないと落とせなかったが、
-          FNSKUは納品プランと関係ないので、ここで刷って代行会社へ早く渡す */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center',
-          flexWrap: 'wrap' }}>
-          <b style={{ fontSize: 15 }}>🏷 商品ラベル（FNSKU）</b>
-          <span style={{ fontSize: 12, color: '#64748b' }}>
-            配送依頼に載っている商品ぶんを、数量どおり刷ります
-          </span>
-          <button className="btn btn-secondary" style={{ marginLeft: 'auto', fontSize: 13 }}
-            onClick={loadSendOrders} disabled={loadingSo}>
-            {loadingSo ? '読み込み中…' : '便を選ぶ'}
-          </button>
-        </div>
-        {sendOrders && (
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center',
-            flexWrap: 'wrap', marginTop: 10 }}>
-            <select style={{ fontSize: 13, padding: '4px 8px' }}
-              value={labelSid} onChange={e => setLabelSid(e.target.value)}>
-              <option value="">— 便を選ぶ —</option>
-              {sendOrders.map(so => (
-                <option key={so.sid} value={so.sid}>
-                  {so.sn || so.sid}　{so.state_label || ''}
-                </option>
-              ))}
-            </select>
-            <label style={{ fontSize: 12, color: '#64748b' }}>
-              シートの使いかけ
-              <input type="number" min="0" max="23" value={labelSkip}
-                onChange={e => setLabelSkip(Number(e.target.value))}
-                style={{ width: 56, marginLeft: 6, fontSize: 13, padding: '2px 6px' }} />
-              <span style={{ marginLeft: 4 }}>枚ぶん空ける</span>
-            </label>
-            <button className="btn btn-primary" style={{ fontSize: 13 }}
-              onClick={makeLabels} disabled={labeling}>
-              {labeling ? '作っています…' : '⬇ ラベルPDFを作る'}
-            </button>
-          </div>
-        )}
-        <div style={{ fontSize: 12, color: '#64748b', marginTop: 8, lineHeight: 1.8 }}>
-          用紙はA4 24面（66×33.9mm、エーワン28362など）。
-          1枚にFNSKUのバーコード・FNSKU・自社SKU・商品名・新品が入ります。
-          <b>納品プランを作る前に刷れます。</b>
-        </div>
-        {labelMsg && (
-          <div style={{ fontSize: 12, marginTop: 8, whiteSpace: 'pre-wrap',
-            color: labelMsg.startsWith('うまく') ? '#b91c1c' : '#334155' }}>
-            {labelMsg}
-          </div>
-        )}
-      </div>
-
-      {/* 梱包情報。Amazonの納品プランで「箱に何を入れたか」を入れるところに使う。
-          タオタロウのインボイスから読むので、手で数える必要がない */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <b style={{ fontSize: 15 }}>④ 梱包情報（箱の中身）</b>
-          <span style={{ fontSize: 12, color: '#64748b' }}>
-            インボイスから箱の3辺・重量・中身を読んで、納品プランに入れます
-          </span>
-          <button className="btn btn-secondary" style={{ marginLeft: 'auto', fontSize: 13 }}
-            onClick={loadSendOrders} disabled={loadingSo}>
-            {loadingSo ? '読み込み中…' : '便を選ぶ'}
-          </button>
-        </div>
-
-        {packErr && (
-          <div style={{ marginTop: 10, padding: '8px 12px', background: '#fef2f2',
-            border: '1px solid #fecaca', borderRadius: 6, fontSize: 13, color: '#b91c1c' }}>
-            {packErr}
-          </div>
-        )}
-
-        {sendOrders && !packing && (
-          <div style={{ marginTop: 12, maxHeight: 280, overflowY: 'auto',
-            border: '1px solid #e2e8f0', borderRadius: 6 }}>
-            <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
-              <thead><tr style={{ background: '#f8fafc' }}>
-                {['配送依頼No', '状態', '重量', ''].map(h => (
-                  <th key={h} style={{ padding: '6px 10px', textAlign: 'left' }}>{h}</th>
-                ))}
-              </tr></thead>
-              <tbody>
-                {sendOrders.map(x => (
-                  <tr key={x.sid} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '6px 10px' }}>{x.sn || x.sid}</td>
-                    <td style={{ padding: '6px 10px', color: '#64748b' }}>{x.state_label}</td>
-                    <td style={{ padding: '6px 10px', textAlign: 'right' }}>
-                      {x.count_weight ? `${x.count_weight}kg` : '—'}
-                    </td>
-                    <td style={{ padding: '6px 10px' }}>
-                      <button className="btn btn-sm btn-primary" style={{ fontSize: 12 }}
-                        onClick={() => loadPacking(x.sid)} disabled={loadingPack}>
-                        箱の中身を見る
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {packing && (
-          <div style={{ marginTop: 12 }}>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center',
-              flexWrap: 'wrap', marginBottom: 10 }}>
-              <b style={{ fontSize: 14 }}>
-                配送依頼 {packing.sid}　／　{packing.box_count}箱
-              </b>
-              {packing.unknown_count > 0 && (
-                <span style={{ fontSize: 12, color: '#b45309', fontWeight: 600 }}>
-                  ⚠ 商品マスタと結びつかない行が {packing.unknown_count}件あります
-                  （SKUが空のまま出ます）
-                </span>
-              )}
-              <button className="btn btn-primary" style={{ marginLeft: 'auto', fontSize: 13 }}
-                onClick={sendPacking} disabled={sendingPack}>
-                {sendingPack ? '入れています…' : '📤 Amazonに箱の中身を入れる'}
-              </button>
-              <button className="btn btn-secondary" style={{ fontSize: 13 }}
-                onClick={downloadPackingCsv}>⬇ CSVで保存</button>
-              <button className="btn btn-secondary" style={{ fontSize: 13 }}
-                onClick={() => { setPacking(null); setPackErr('') }}>閉じる</button>
-            </div>
-            {sendPackMsg && (
-              <div style={{ fontSize: 12, marginBottom: 10, whiteSpace: 'pre-wrap',
-                color: sendPackMsg.startsWith('うまく') ? '#b91c1c' : '#334155' }}>
-                {sendPackMsg}
-              </div>
-            )}
-
-            {packing.boxes.map(b => (
-              <div key={b.box_no} style={{ marginBottom: 10, border: '1px solid #e2e8f0',
-                borderRadius: 6, overflow: 'hidden' }}>
-                <div style={{ padding: '6px 12px', background: '#f8fafc',
-                  fontSize: 13, fontWeight: 600 }}>
-                  箱 {b.box_no}
-                  <span style={{ color: '#64748b', fontWeight: 400, marginLeft: 10 }}>
-                    {b.length_cm}×{b.width_cm}×{b.height_cm}cm　{b.weight_kg}kg
-                  </span>
-                </div>
-                <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
-                  <tbody>
-                    {b.items.map((it, i) => (
-                      <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
-                        <td style={{ padding: '5px 12px', fontWeight: 600, width: 160 }}>
-                          {it.sku || <span style={{ color: '#b45309' }}>（未登録）</span>}
-                        </td>
-                        <td style={{ padding: '5px 12px', color: '#64748b', width: 140 }}>
-                          {it.fnsku || '—'}
-                        </td>
-                        <td style={{ padding: '5px 12px', textAlign: 'right', width: 80 }}>
-                          {it.qty}個
-                        </td>
-                        <td style={{ padding: '5px 12px', color: '#94a3b8' }}>{it.name}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ステータスフィルタ */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap' }}>
-        <button
-          onClick={() => setTab('all')}
-          style={{
-            padding: '6px 16px', fontSize: 13, borderRadius: 4, border: '1px solid #d1d5db',
-            background: tab === 'all' ? '#1e40af' : '#fff',
-            color: tab === 'all' ? '#fff' : '#374151',
-            cursor: 'pointer', fontWeight: 600,
-          }}
-        >
-          全て ({orders.length})
-        </button>
-        {['ordered', 'arrived'].map(s => (
-          <button key={s}
-            onClick={() => setTab(s)}
-            style={{
-              padding: '6px 16px', fontSize: 13, borderRadius: 4, border: '1px solid #d1d5db',
-              background: tab === s ? STATUS_COLORS[s] : '#fff',
-              color: tab === s ? '#fff' : '#374151',
-              cursor: 'pointer', fontWeight: 600,
-            }}
-          >
-            {STATUS_LABELS[s]} ({statusCounts[s] || 0})
-          </button>
-        ))}
-      </div>
-
-      {/* 発注済みリスト */}
-      {loading ? (
-        <div className="card" style={{ textAlign: 'center', padding: 40, color: '#6b7280' }}>読込中...</div>
-      ) : orders.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}>
-          <div style={{ fontSize: 40 }}>📋</div>
-          <p>発注済みの商品がありません。<br />発注管理で商品を発注してください。</p>
-        </div>
-      ) : (
-        <div style={{ overflowX: 'auto', marginBottom: 24 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-                <th style={thStyle}>ステータス</th>
-                <th style={thStyle}>発注日</th>
-                <th style={thStyle}>SKU</th>
-                <th style={thStyle}>商品名</th>
-                <th style={thStyle}>色/サイズ</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>数量</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>単価(元)</th>
-                <th style={thStyle}>仕入URL</th>
-                <th style={thStyle}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredOrders.map(o => (
-                <tr key={o.id} style={{
-                  borderBottom: '1px solid #f1f5f9',
-                  background: o.status === 'arrived' ? '#f0fdf4' : 'transparent',
-                }}>
-                  <td style={tdStyle}>
-                    <span style={{
-                      display: 'inline-block', padding: '2px 8px', borderRadius: 4, fontSize: 11,
-                      fontWeight: 700, color: '#fff',
-                      background: STATUS_COLORS[o.status] || '#9ca3af',
-                    }}>
-                      {STATUS_LABELS[o.status] || o.status}
-                    </span>
-                  </td>
-                  <td style={{ ...tdStyle, fontSize: 12, whiteSpace: 'nowrap', color: '#666' }}>
-                    {o.ordered_at ? new Date(o.ordered_at).toLocaleDateString('ja-JP', { month: '2-digit', day: '2-digit' }) : '-'}
-                  </td>
-                  <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 12 }}>{o.sku}</td>
-                  <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {o.name}
-                  </td>
-                  <td style={{ ...tdStyle, fontSize: 12, color: '#666' }}>
-                    {[o.color, o.size].filter(Boolean).join(' / ')}
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600 }}>{o.qty}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{o.price}</td>
-                  <td style={tdStyle}>
-                    {o.buy_url && (
-                      <a href={o.buy_url} target="_blank" rel="noreferrer" style={{ color: '#e94560', fontSize: 12 }}>リンク</a>
-                    )}
-                  </td>
-                  <td style={{ ...tdStyle, whiteSpace: 'nowrap' }}>
-                    {o.status === 'ordered' && (
-                      <button className="btn btn-sm"
-                        style={{ background: '#dcfce7', color: '#166534', fontSize: 11 }}
-                        onClick={() => handleStatusChange(o.id, 'arrived')}
-                      >到着済みにする</button>
-                    )}
-                    {o.status === 'arrived' && (
-                      <button className="btn btn-sm"
-                        style={{ background: '#e0e7ff', color: '#3730a3', fontSize: 11 }}
-                        onClick={() => handleStatusChange(o.id, 'shipped')}
-                      >配送依頼済み</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
 
       {/* 配送依頼を出した商品のFBA納品プラン。
           到着済が1件も無くても、便を選べるように常に出す */}
       {true && (
         <div style={{ borderTop: '2px solid #e2e8f0', paddingTop: 24 }}>
-          <h2 style={{ marginBottom: 12 }}>📦 配送依頼を出した商品のFBA納品プラン</h2>
-
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center',
-            flexWrap: 'wrap', marginBottom: 12 }}>
-            <span style={{ fontSize: 13, color: '#334155' }}>どの便を納品しますか</span>
-            <button className="btn btn-secondary" style={{ fontSize: 13 }}
-              onClick={loadSendOrders} disabled={loadingSo}>
-              {loadingSo ? '読み込み中…' : '便を選ぶ'}
-            </button>
-            {sendOrders && (
-              <select style={{ fontSize: 13, padding: '4px 8px' }}
-                value={planSid || ''}
-                onChange={e => e.target.value && pickPlanSendOrder(Number(e.target.value))}>
-                <option value="">— 便を選ぶ —</option>
-                {sendOrders.map(so => (
-                  <option key={so.sid} value={so.sid}>
-                    {so.sn || so.sid}　{so.state_label || ''}
-                  </option>
-                ))}
-              </select>
-            )}
-            {skuMsg && (
-              <span style={{ fontSize: 12, color: '#64748b' }}>{skuMsg}</span>
-            )}
-          </div>
+          <h2 style={{ marginBottom: 12 }}>③ Amazonに納品プランを作成</h2>
 
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
             <button className="btn btn-primary" onClick={() => startPlanFetch(true)} disabled={planStatus === 'loading'}>
@@ -1118,6 +789,297 @@ export default function FbaPlanPage() {
           )}
         </div>
       )}
+
+      {/* 梱包情報。Amazonの納品プランで「箱に何を入れたか」を入れるところに使う。
+          タオタロウのインボイスから読むので、手で数える必要がない */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 15 }}>④ 梱包情報（箱の中身）</b>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            インボイスから箱の3辺・重量・中身を読んで、納品プランに入れます
+          </span>
+          <button className="btn btn-secondary" style={{ marginLeft: 'auto', fontSize: 13 }}
+            onClick={() => loadPacking(planSid)} disabled={loadingPack || !planSid}>
+            {loadingPack ? '読み込み中…' : '箱の中身を読む'}
+          </button>
+        </div>
+
+        {packErr && (
+          <div style={{ marginTop: 10, padding: '8px 12px', background: '#fef2f2',
+            border: '1px solid #fecaca', borderRadius: 6, fontSize: 13, color: '#b91c1c' }}>
+            {packErr}
+          </div>
+        )}
+
+        {packing && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center',
+              flexWrap: 'wrap', marginBottom: 10 }}>
+              <b style={{ fontSize: 14 }}>
+                配送依頼 {packing.sid}　／　{packing.box_count}箱
+              </b>
+              {packing.unknown_count > 0 && (
+                <span style={{ fontSize: 12, color: '#b45309', fontWeight: 600 }}>
+                  ⚠ 商品マスタと結びつかない行が {packing.unknown_count}件あります
+                  （SKUが空のまま出ます）
+                </span>
+              )}
+              <button className="btn btn-primary" style={{ marginLeft: 'auto', fontSize: 13 }}
+                onClick={sendPacking} disabled={sendingPack}>
+                {sendingPack ? '入れています…' : '📤 Amazonに箱の中身を入れる'}
+              </button>
+              <button className="btn btn-secondary" style={{ fontSize: 13 }}
+                onClick={downloadPackingCsv}>⬇ CSVで保存</button>
+              <button className="btn btn-secondary" style={{ fontSize: 13 }}
+                onClick={() => { setPacking(null); setPackErr('') }}>閉じる</button>
+            </div>
+            {sendPackMsg && (
+              <div style={{ fontSize: 12, marginBottom: 10, whiteSpace: 'pre-wrap',
+                color: sendPackMsg.startsWith('うまく') ? '#b91c1c' : '#334155' }}>
+                {sendPackMsg}
+              </div>
+            )}
+
+            {packing.boxes.map(b => (
+              <div key={b.box_no} style={{ marginBottom: 10, border: '1px solid #e2e8f0',
+                borderRadius: 6, overflow: 'hidden' }}>
+                <div style={{ padding: '6px 12px', background: '#f8fafc',
+                  fontSize: 13, fontWeight: 600 }}>
+                  箱 {b.box_no}
+                  <span style={{ color: '#64748b', fontWeight: 400, marginLeft: 10 }}>
+                    {b.length_cm}×{b.width_cm}×{b.height_cm}cm　{b.weight_kg}kg
+                  </span>
+                </div>
+                <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+                  <tbody>
+                    {b.items.map((it, i) => (
+                      <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '5px 12px', fontWeight: 600, width: 160 }}>
+                          {it.sku || <span style={{ color: '#b45309' }}>（未登録）</span>}
+                        </td>
+                        <td style={{ padding: '5px 12px', color: '#64748b', width: 140 }}>
+                          {it.fnsku || '—'}
+                        </td>
+                        <td style={{ padding: '5px 12px', textAlign: 'right', width: 80 }}>
+                          {it.qty}個
+                        </td>
+                        <td style={{ padding: '5px 12px', color: '#94a3b8' }}>{it.name}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+
+      {/* 普段は使わないもの。画面を短くするために畳んでおく */}
+      <details className="card" style={{ marginBottom: 16 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 700 }}>
+          その他（入庫の取り込み・発注済みリスト）
+        </summary>
+        <div style={{ marginTop: 12 }}>
+
+      {/* ①入庫済みの取り込み。
+          もとはタオタロウのサイトでExcelを落として、ここへ上げ直していた。
+          APIで同じものが取れるので、ボタン1つにした */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            onClick={handleSyncArrived}
+            disabled={importing}
+            style={{
+              padding: '9px 18px', background: importing ? '#cbd5e1' : '#ea580c',
+              color: '#fff', border: 'none', borderRadius: 6,
+              cursor: importing ? 'default' : 'pointer', fontWeight: 700, fontSize: 14,
+            }}
+          >
+            {importing ? '取り込み中…' : '① 入庫済みを取り込む'}
+          </button>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            タオタロウで倉庫に届いた商品に「到着済み」の印を付けます（Excelは要りません）
+          </span>
+          {importResult && !importResult.error && (
+            <span style={{ fontSize: 13, marginLeft: 'auto' }}>
+              <strong style={{ color: '#16a34a' }}>{importResult.matched}件</strong> 取り込みました
+              {importResult.already > 0 && (
+                <span style={{ color: '#9ca3af', marginLeft: 8 }}>
+                  （{importResult.already}件はもう到着済）
+                </span>
+              )}
+              {importResult.unmatched?.length > 0 && (
+                <span style={{ color: '#9ca3af', marginLeft: 8 }}>
+                  （{importResult.unmatched.length}件は発注済みリストに見当たらず）
+                </span>
+              )}
+            </span>
+          )}
+          {importResult?.error && (
+            <span style={{ color: '#ef4444', fontSize: 13, marginLeft: 'auto' }}>
+              {importResult.error}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* 発注済みリストに見当たらなかった行。無いときは出さない
+          （空の枠だけが残っていた） */}
+      {importResult?.unmatched?.length > 0 && (
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.8 }}>
+          <b style={{ color: '#334155' }}>発注済みリストに無い入庫</b>
+          ：タオタロウの倉庫には届いているのに、このツールの発注済みリストに
+          同じ1688のURLの行が見つからなかったものです。
+          タオタロウで直接発注したものが、たいていここに出ます。
+          <b>見るだけの一覧</b>で、ここから配送依頼は作れません。
+          配送依頼は<b>発注管理 →「配送依頼を出す」</b>で出します。
+        </div>
+        {true && (
+          <details style={{ marginTop: 8, fontSize: 12 }}>
+            <summary style={{ cursor: 'pointer', color: '#f59e0b' }}>
+              未照合 {importResult.unmatched.length}件を表示
+            </summary>
+            <div style={{ overflowX: 'auto', marginTop: 4 }}>
+              <table style={{ fontSize: 12, borderCollapse: 'collapse', width: '100%' }}>
+                <thead>
+                  <tr style={{ background: '#fef3c7' }}>
+                    <th style={thStyle}>タオタロウID</th>
+                    <th style={thStyle}>商品名</th>
+                    <th style={thStyle}>色/サイズ</th>
+                    <th style={thStyle}>数量</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {importResult.unmatched.map((u, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={tdStyle}>{u.taotaro_order_id}</td>
+                      <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {u.name_cn}
+                      </td>
+                      <td style={tdStyle}>{[u.color, u.size].filter(Boolean).join(' / ')}</td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>{u.qty}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        )}
+      </div>
+      )}
+
+
+      {/* ステータスフィルタ */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap' }}>
+        <button
+          onClick={() => setTab('all')}
+          style={{
+            padding: '6px 16px', fontSize: 13, borderRadius: 4, border: '1px solid #d1d5db',
+            background: tab === 'all' ? '#1e40af' : '#fff',
+            color: tab === 'all' ? '#fff' : '#374151',
+            cursor: 'pointer', fontWeight: 600,
+          }}
+        >
+          全て ({orders.length})
+        </button>
+        {['ordered', 'arrived'].map(s => (
+          <button key={s}
+            onClick={() => setTab(s)}
+            style={{
+              padding: '6px 16px', fontSize: 13, borderRadius: 4, border: '1px solid #d1d5db',
+              background: tab === s ? STATUS_COLORS[s] : '#fff',
+              color: tab === s ? '#fff' : '#374151',
+              cursor: 'pointer', fontWeight: 600,
+            }}
+          >
+            {STATUS_LABELS[s]} ({statusCounts[s] || 0})
+          </button>
+        ))}
+      </div>
+
+
+      {/* 発注済みリスト */}
+      {loading ? (
+        <div className="card" style={{ textAlign: 'center', padding: 40, color: '#6b7280' }}>読込中...</div>
+      ) : orders.length === 0 ? (
+        <div className="card" style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}>
+          <div style={{ fontSize: 40 }}>📋</div>
+          <p>発注済みの商品がありません。<br />発注管理で商品を発注してください。</p>
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto', marginBottom: 24 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                <th style={thStyle}>ステータス</th>
+                <th style={thStyle}>発注日</th>
+                <th style={thStyle}>SKU</th>
+                <th style={thStyle}>商品名</th>
+                <th style={thStyle}>色/サイズ</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>数量</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>単価(元)</th>
+                <th style={thStyle}>仕入URL</th>
+                <th style={thStyle}>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredOrders.map(o => (
+                <tr key={o.id} style={{
+                  borderBottom: '1px solid #f1f5f9',
+                  background: o.status === 'arrived' ? '#f0fdf4' : 'transparent',
+                }}>
+                  <td style={tdStyle}>
+                    <span style={{
+                      display: 'inline-block', padding: '2px 8px', borderRadius: 4, fontSize: 11,
+                      fontWeight: 700, color: '#fff',
+                      background: STATUS_COLORS[o.status] || '#9ca3af',
+                    }}>
+                      {STATUS_LABELS[o.status] || o.status}
+                    </span>
+                  </td>
+                  <td style={{ ...tdStyle, fontSize: 12, whiteSpace: 'nowrap', color: '#666' }}>
+                    {o.ordered_at ? new Date(o.ordered_at).toLocaleDateString('ja-JP', { month: '2-digit', day: '2-digit' }) : '-'}
+                  </td>
+                  <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 12 }}>{o.sku}</td>
+                  <td style={{ ...tdStyle, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {o.name}
+                  </td>
+                  <td style={{ ...tdStyle, fontSize: 12, color: '#666' }}>
+                    {[o.color, o.size].filter(Boolean).join(' / ')}
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600 }}>{o.qty}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{o.price}</td>
+                  <td style={tdStyle}>
+                    {o.buy_url && (
+                      <a href={o.buy_url} target="_blank" rel="noreferrer" style={{ color: '#e94560', fontSize: 12 }}>リンク</a>
+                    )}
+                  </td>
+                  <td style={{ ...tdStyle, whiteSpace: 'nowrap' }}>
+                    {o.status === 'ordered' && (
+                      <button className="btn btn-sm"
+                        style={{ background: '#dcfce7', color: '#166534', fontSize: 11 }}
+                        onClick={() => handleStatusChange(o.id, 'arrived')}
+                      >到着済みにする</button>
+                    )}
+                    {o.status === 'arrived' && (
+                      <button className="btn btn-sm"
+                        style={{ background: '#e0e7ff', color: '#3730a3', fontSize: 11 }}
+                        onClick={() => handleStatusChange(o.id, 'shipped')}
+                      >配送依頼済み</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+        </div>
+      </details>
+
     </div>
   )
 }
