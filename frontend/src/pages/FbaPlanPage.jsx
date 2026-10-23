@@ -430,6 +430,14 @@ export default function FbaPlanPage() {
           （空の枠だけが残っていた） */}
       {importResult?.unmatched?.length > 0 && (
       <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.8 }}>
+          <b style={{ color: '#334155' }}>発注済みリストに無い入庫</b>
+          ：タオタロウの倉庫には届いているのに、このツールの発注済みリストに
+          同じ1688のURLの行が見つからなかったものです。
+          タオタロウで直接発注したものが、たいていここに出ます。
+          <b>見るだけの一覧</b>で、ここから配送依頼は作れません。
+          配送依頼は<b>発注管理 →「配送依頼を出す」</b>で出します。
+        </div>
         {true && (
           <details style={{ marginTop: 8, fontSize: 12 }}>
             <summary style={{ cursor: 'pointer', color: '#f59e0b' }}>
