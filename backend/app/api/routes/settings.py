@@ -42,6 +42,8 @@ class SettingsSchema(BaseModel):
     free_storage_days: int = 90
     air_threshold_days: int = 18
     hold_daily_threshold: float = 0.1
+    # タオタロウのサイトにログインした状態のクッキー（FBA指示書の取得用）
+    taotaro_web_cookie: Optional[str] = None
 
     class Config:
         from_attributes = True

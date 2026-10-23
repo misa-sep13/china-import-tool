@@ -216,6 +216,25 @@ export default function SettingsPage() {
         </div>
 
         <div className="card">
+          <h2>タオタロウのログイン情報</h2>
+          <p style={{ fontSize: 13, color: '#555', marginTop: 0, lineHeight: 1.9 }}>
+            FBA指示書は公式APIに無いので、タオタロウの画面と同じ入口から取ります。
+            そのためにログインした状態が要ります。<b>画像認証があるので自動ではログインできません。</b>
+            <br />
+            Chromeで <b>www.yiwutaro.com</b> にログインした状態で F12 →
+            <b>Network</b> → 何か操作して出てきた行をクリック →
+            <b>Request Headers</b> の <b>Cookie:</b> の中身をまるごとコピーして貼ってください。
+            1か月ほどで切れます。切れたら貼り直してください。
+          </p>
+          <div className="form-group">
+            <label>Cookie</label>
+            <textarea rows={3} {...f('taotaro_web_cookie')}
+              placeholder="XSRF-TOKEN=...; laravel_session=..."
+              style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }} />
+          </div>
+        </div>
+
+        <div className="card">
           <h2>成長・下落判定</h2>
           <div className="form-grid">
             <div className="form-group">

@@ -1173,3 +1173,92 @@ def send_order_labels(sid: int, skip: int = 0, db: Session = Depends(get_db)):
         headers={"Content-Disposition":
                  f'attachment; filename="labels_{sid}.pdf"',
                  "X-Fill-Report": report})
+
+
+# ---------- FBA指示書を便から直接取ってくる ----------
+#
+# 公式APIにFBA指示書は無いが、タオタロウの画面が使っているGraphQLには
+# exportFBA がある。そちらから落として、そのまま備考を差し替えて返す。
+# 手で落として選ぶ手間が消える。
+
+def _fill_notes_in_workbook(wb, db: Session) -> dict:
+    """開いてあるExcelの備考を、商品マスタの納品時の備考で置き換える。"""
+    ws = wb.active
+    head_row, cols = None, {}
+    for r in range(1, min(ws.max_row, 40) + 1):
+        row = {str(ws.cell(r, c).value or "").strip(): c
+               for c in range(1, ws.max_column + 1)}
+        if "備考" in row and any("FNSKU" in k for k in row):
+            head_row, cols = r, row
+            break
+    if head_row is None:
+        raise HTTPException(400, "「備考」の列が見つかりませんでした")
+
+    c_note = cols["備考"]
+    c_id = next((v for k, v in cols.items() if "商品ID" in k), None)
+    c_info = next((v for k, v in cols.items() if "商品情報" in k), None)
+
+    prods = db.query(Product).filter(Product.is_active == True).all()
+    by_tid = {str(p.taotaro_product_id): p for p in prods
+              if p.taotaro_product_id}
+    by_spec = {}
+    for p in prods:
+        k = _norm_spec(p.spec)
+        if k:
+            by_spec.setdefault(k, p)
+
+    filled, cleared, missed = [], [], []
+    for r in range(head_row + 1, ws.max_row + 1):
+        tid = str(ws.cell(r, c_id).value or "").strip() if c_id else ""
+        info = str(ws.cell(r, c_info).value or "").strip() if c_info else ""
+        if not tid and not info:
+            continue
+        p = by_tid.get(tid) or by_spec.get(_norm_spec(info))
+        if p is None:
+            missed.append(f"{r}行目 {tid or info[:24]}")
+            continue
+        note = (p.delivery_note or "").strip()
+        ws.cell(r, c_note).value = note or None
+        (filled if note else cleared).append(p.sku)
+    return {"入れた": filled, "空にした": cleared, "当たらなかった": missed}
+
+
+@router.get("/send-order/{sid:int}/instruction")
+def fetch_instruction(sid: int, fill: bool = True,
+                      db: Session = Depends(get_db)):
+    """FBA指示書をタオタロウから落とし、備考を入れ替えて返す。"""
+    import json
+    import urllib.parse
+    import openpyxl
+    from app.services import taotaro_web
+
+    row = db.query(OrderSettings).first()
+    cookie = (getattr(row, "taotaro_web_cookie", "") or "").strip()
+    if not cookie:
+        raise HTTPException(
+            400, "タオタロウのログイン情報が入っていません（Amazon設定で貼ってください）")
+
+    try:
+        name, raw = taotaro_web.fba_instruction_file(cookie, sid)
+    except taotaro_web.WebError as e:
+        raise HTTPException(400, str(e))
+
+    report = {}
+    if fill:
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(raw))
+        except Exception:
+            raise HTTPException(400, "落とした指示書を開けませんでした")
+        report = _fill_notes_in_workbook(wb, db)
+        buf = io.BytesIO()
+        wb.save(buf)
+        raw = buf.getvalue()
+        name = name.rsplit(".", 1)[0] + "_note.xlsx"
+
+    return StreamingResponse(
+        io.BytesIO(raw),
+        media_type=("application/vnd.openxmlformats-officedocument"
+                    ".spreadsheetml.sheet"),
+        headers={"Content-Disposition": f'attachment; filename="{name}"',
+                 "X-Fill-Report": urllib.parse.quote(
+                     json.dumps(report, ensure_ascii=False))})

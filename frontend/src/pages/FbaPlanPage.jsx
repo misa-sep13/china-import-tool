@@ -289,6 +289,41 @@ export default function FbaPlanPage() {
     } finally { setFilling(false) }
   }
 
+  // 便から指示書を取ってきて、そのまま備考を入れ替える。
+  // 手で落として選ぶ手間が消える（タオタロウの画面と同じ入口を使う）
+  const fetchInstruction = async () => {
+    if (!planSid) { setFillMsg('上で便を選んでください'); return }
+    setFilling(true); setFillMsg('タオタロウから取ってきています…')
+    try {
+      const r = await api.get(`/fba-plan/send-order/${planSid}/instruction`,
+        { responseType: 'blob' })
+      const url = URL.createObjectURL(r.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `FBA_${planSid}_note.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+      let rep = null
+      try {
+        rep = JSON.parse(decodeURIComponent(r.headers['x-fill-report'] || ''))
+      } catch (e) { rep = null }
+      setFillMsg(rep && rep['入れた']
+        ? `備考を入れた ${rep['入れた'].length}件`
+          + ` / 空にした ${rep['空にした'].length}件`
+          + (rep['当たらなかった'].length
+            ? ['', '当たらなかった行（触っていません）：']
+              .concat(rep['当たらなかった']).join('\n') : '')
+        : '指示書を保存しました')
+    } catch (e) {
+      let detail = e.response?.data?.detail
+      if (e.response?.data instanceof Blob) {
+        try { detail = JSON.parse(await e.response.data.text()).detail } catch (x) {}
+      }
+      setFillMsg('うまくいきませんでした：' + (detail || e.message))
+    }
+    setFilling(false)
+  }
+
   // 逆向き。Excelに手で書いた備考を、マスタの「納品時の備考」に覚えさせる
   const readNote = async (file) => {
     if (!file) return
@@ -566,7 +601,17 @@ export default function FbaPlanPage() {
           flexWrap: 'wrap' }}>
           <b style={{ fontSize: 15 }}>② FBA指示書に備考を入れる</b>
           <span style={{ fontSize: 12, color: '#64748b' }}>
-            タオタロウから落としたFBA指示書を選ぶと、備考を入れ替えて返します
+            選んだ便の指示書をタオタロウから取ってきて、備考を入れ替えて返します
+          </span>
+          <button className="btn btn-primary" style={{ marginLeft: 'auto', fontSize: 13 }}
+            onClick={fetchInstruction} disabled={filling || !planSid}>
+            {filling ? '取得中…' : '📄 便から指示書を取ってくる'}
+          </button>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center',
+          flexWrap: 'wrap', marginTop: 10 }}>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            取ってこれないときは、手で落とした指示書を選んでください
           </span>
           <input type="file" accept=".xlsx,.xlsm" disabled={filling}
             onChange={e => { fillNote(e.target.files?.[0]); e.target.value = '' }}
