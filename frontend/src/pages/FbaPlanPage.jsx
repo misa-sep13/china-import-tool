@@ -454,12 +454,12 @@ export default function FbaPlanPage() {
             <span style={{ color: '#64748b' }}>　（FBA送付先は未定のままでOK）</span>
           </li>
           <li>この画面の上で<b>その便を選ぶ</b>　→ 以下はすべてその便が対象</li>
-          <li><b>① 商品ラベル</b>を刷って<b>WeChat</b>へ送る</li>
+          <li><b>① 商品ラベル</b>を刷る</li>
           <li>
             タオタロウから<b>FBA指示書</b>を落として<b>② 備考を入れる</b>
             <span style={{ color: '#64748b' }}>　→ 買付の指示が消え、納品の指示だけが入る</span>
           </li>
-          <li>備考を入れた<b>指示書</b>を<b>WeChat</b>へ送る</li>
+          <li><b>ラベルと指示書を一緒に</b><b>WeChat</b>へ送る</li>
           <li>下の表で納品数を決めて<b>③ Amazonに納品プランを作成</b></li>
           <li>インボイス作成完了のお知らせ → <b>支払い</b></li>
           <li>配送ラベル（納品先FCの住所）を<b>WeChat</b>へ送る</li>
