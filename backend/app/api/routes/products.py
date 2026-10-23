@@ -40,7 +40,7 @@ class ProductCreate(BaseModel):
     # タオタロウ発注の検品オプション（JSON文字列）。
     # 発注画面で選んで覚えさせるほか、マスタから直接登録できるようにしてある
     taotaro_inspect: Optional[str] = None
-    # 納品時の備考。買付の備考（note）とは別で、FBAの納品依頼書に出す
+    # 納品時の備考。買付の備考（note）とは別で、FBA指示書に出す
     delivery_note: Optional[str] = ""
 
 def _restore_deleted_product(existing: Product, data: ProductCreate, db: Session) -> Product:

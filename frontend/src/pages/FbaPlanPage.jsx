@@ -216,7 +216,7 @@ export default function FbaPlanPage() {
   const [packErr, setPackErr] = useState('')
   const [loadingPack, setLoadingPack] = useState(false)
 
-  // タオタロウの納品依頼書の備考を、マスタの「納品時の備考」で置き換える
+  // タオタロウのFBA指示書の備考を、マスタの「納品時の備考」で置き換える
   const [filling, setFilling] = useState(false)
   const [fillMsg, setFillMsg] = useState('')
   const fillNote = async (file) => {
@@ -382,14 +382,14 @@ export default function FbaPlanPage() {
             <span style={{ color: '#64748b' }}>（FBA送付先は未定のままでOK）</span>
           </li>
           <li>
-            タオタロウから<b>FBA指示書（納品依頼書）をダウンロード</b>
+            タオタロウから<b>FBA指示書をダウンロード</b>
           </li>
           <li>
             <b>「① 入庫済みを取り込む」</b>
             <span style={{ color: '#64748b' }}>　→ 届いた商品に「到着済み」の印が付く</span>
           </li>
           <li>
-            <b>「② 納品依頼書に備考を入れる」</b>
+            <b>「② FBA指示書に備考を入れる」</b>
             <span style={{ color: '#64748b' }}>　→ 落とした指示書を選ぶと、備考を入れ替えて返します</span>
           </li>
           <li>
@@ -507,15 +507,15 @@ export default function FbaPlanPage() {
       </div>
       )}
 
-      {/* タオタロウの納品依頼書。備考に買付のときの指示が残っていて、
+      {/* タオタロウのFBA指示書。備考に買付のときの指示が残っていて、
           納品の段階では終わっている作業なので現場が迷う。
           商品マスタの「納品時の備考」で置き換える */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center',
           flexWrap: 'wrap' }}>
-          <b style={{ fontSize: 15 }}>② 納品依頼書に備考を入れる</b>
+          <b style={{ fontSize: 15 }}>② FBA指示書に備考を入れる</b>
           <span style={{ fontSize: 12, color: '#64748b' }}>
-            タオタロウから落とした納品依頼書を選ぶと、備考を入れ替えて返します
+            タオタロウから落としたFBA指示書を選ぶと、備考を入れ替えて返します
           </span>
           <input type="file" accept=".xlsx,.xlsm" disabled={filling}
             onChange={e => { fillNote(e.target.files?.[0]); e.target.value = '' }}

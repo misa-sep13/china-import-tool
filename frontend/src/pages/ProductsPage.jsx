@@ -609,7 +609,7 @@ export default function ProductsPage() {
                   <textarea {...f('note')} rows={2} style={{ resize: 'vertical' }} />
                 </div>
                 {/* 買付の指示（全量検品・写真撮影）は納品の段階では
-                    終わっている。納品依頼書に残ると現場が迷うので、
+                    終わっている。FBA指示書に残ると現場が迷うので、
                     納品のときの指示は別に持つ */}
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
                   <label>納品時の備考（FBAへ送るとき。発注Excelには出ません）</label>

@@ -65,7 +65,7 @@ class AmazonListing(Base):
     # ここに書いておき、「商品マスタに登録」で一緒に持っていく
     master_note = Column(Text)
     # 納品（FBAへ送るとき）の指示。買付の備考とは分けて持つ。
-    # 全量検品・写真撮影は買付で終わるので、納品依頼書には出さない
+    # 全量検品・写真撮影は買付で終わるので、FBA指示書には出さない
     delivery_note = Column(Text, nullable=True)
 
     # 動作確認のための出品。JANを本番ぶんとして数えず、

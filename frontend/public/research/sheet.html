@@ -7706,7 +7706,7 @@ if(FIREBASE_CONFIG.databaseURL){
       nRow.appendChild(note);
       panel.appendChild(nRow);
 
-      // 買付の指示は納品の段階では終わっている。納品依頼書に残ると
+      // 買付の指示は納品の段階では終わっている。FBA指示書に残ると
       // 現場が迷うので、納品のときの指示は別に持つ
       const dnRow = el('div', 'an-row reg-line');
       dnRow.appendChild(el('span', 'reg-lead', '納品時の備考'));
@@ -7721,7 +7721,7 @@ if(FIREBASE_CONFIG.databaseURL){
       panel.appendChild(el('div', 'an-note',
         '❷「📦 商品マスタに登録」で、全SKUの備考に入ります。'
         + '買付の備考はタオタロウの発注書に、'
-        + '納品時の備考はFBAの納品依頼書に出ます'));
+        + '納品時の備考はFBA指示書に出ます'));
 
       // --- 商品画像 ---
       panel.appendChild(el('div', 'reg-sec', '商品画像'));

@@ -24,7 +24,7 @@ class Product(Base):
     customer_memo = Column(Text)            # お客様専用メモ（Excel出力用）
     note = Column(Text)
     # 納品（FBAへ送るとき）の指示。買付のときの指示とは別に持つ。
-    # 「全量検品」「写真撮影」は買付で終わっているので、納品依頼書に
+    # 「全量検品」「写真撮影」は買付で終わっているので、FBA指示書に
     # 残っていると現場が混乱する。セット組・同梱などをここに書く
     delivery_note = Column(Text, nullable=True)
     set_size = Column(Integer, default=1)   # 1セットあたりのピース数
