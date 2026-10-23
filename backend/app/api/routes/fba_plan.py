@@ -934,3 +934,96 @@ async def read_taotaro_note(file: UploadFile = File(...),
 
     return {"入れた": saved, "元から同じ": same,
             "当たらなかった": missed, "備考が空の行": blank}
+
+
+# ---------- 箱の中身をAmazonへ直接入れる ----------
+#
+# これまでは箱の中身をCSVに落として、セラーセントラルの「輸送の詳細」に
+# 手で貼っていた。同じことがSP-APIでできるので、画面を行き来せずに済ませる。
+# 箱の3辺・重量・中身はタオタロウのインボイスから読む（手入力はしない）。
+
+class SendPackingIn(BaseModel):
+    plan_id: str
+    sid: int
+
+
+@router.post("/packing/send")
+def send_packing(req: SendPackingIn, db: Session = Depends(get_db)):
+    """インボイスの箱情報を、そのまま納品プランへ登録する。"""
+    from app.services import amazon_api
+
+    packed = packing_from_invoice(req.sid, db)
+    boxes = packed.get("boxes") or []
+    if not boxes:
+        raise HTTPException(400, "インボイスから箱が読めませんでした")
+
+    try:
+        options = amazon_api.list_packing_options(req.plan_id)
+    except Exception as e:
+        raise HTTPException(400, f"梱包オプションが取れませんでした（{e}）")
+    if not options:
+        raise HTTPException(400, "Amazon側に梱包オプションがありません")
+
+    # 確定済みがあればそれを使う。無ければ最初のものを確定する
+    chosen = next((o for o in options
+                   if (o.get("status") or "").upper() == "ACCEPTED"), None)
+    if chosen is None:
+        chosen = options[0]
+        try:
+            amazon_api.confirm_packing_option(
+                req.plan_id, chosen.get("packingOptionId") or "")
+        except Exception as e:
+            raise HTTPException(400, f"梱包オプションを確定できませんでした（{e}）")
+
+    # どのSKUがどのグループかはAmazonが決める。箱はグループをまたげない
+    group_of = {}
+    for g in (chosen.get("packingGroups") or []):
+        gid = g if isinstance(g, str) else (g.get("packingGroupId") or "")
+        if not gid:
+            continue
+        for it in amazon_api.list_packing_group_items(req.plan_id, gid):
+            msku = it.get("msku") or ""
+            if msku:
+                group_of[msku] = gid
+
+    groups, split, unknown = {}, [], []
+    for b in boxes:
+        items = [it for it in (b.get("items") or [])
+                 if it.get("sku") and (it.get("qty") or 0) > 0]
+        gids = {group_of.get(it["sku"], "") for it in items}
+        missing = [it["sku"] for it in items if not group_of.get(it["sku"])]
+        if missing:
+            unknown.append({"box_no": b.get("box_no"), "skus": missing})
+            continue
+        if len(gids) > 1:
+            # 1箱に別グループのSKUが混ざっている。Amazonは受け付けない
+            split.append({"box_no": b.get("box_no"),
+                          "skus": [it["sku"] for it in items]})
+            continue
+        gid = gids.pop()
+        groups.setdefault(gid, []).append({
+            "l": b.get("length_cm"), "w": b.get("width_cm"),
+            "h": b.get("height_cm"), "weight_kg": b.get("weight_kg"),
+            "items": [{"sku": it["sku"], "qty": it["qty"]} for it in items],
+        })
+
+    if unknown or split:
+        return {"ok": False, "unknown": unknown, "split": split,
+                "sent_boxes": 0}
+
+    bad = [b for gs in groups.values() for b in gs
+           if not all([b["l"], b["w"], b["h"], b["weight_kg"]])]
+    if bad:
+        raise HTTPException(
+            400, "3辺か重量が入っていない箱があります（インボイスを確認してください）")
+
+    try:
+        amazon_api.set_packing_information(
+            req.plan_id,
+            [{"packing_group_id": gid, "boxes": gs}
+             for gid, gs in groups.items()])
+    except Exception as e:
+        raise HTTPException(400, f"Amazonへ登録できませんでした（{e}）")
+
+    return {"ok": True, "sent_boxes": sum(len(gs) for gs in groups.values()),
+            "groups": len(groups)}

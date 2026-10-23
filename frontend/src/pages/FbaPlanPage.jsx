@@ -287,6 +287,37 @@ export default function FbaPlanPage() {
     setLoadingSo(false)
   }
 
+  // 箱の中身をAmazonへ直接入れる。CSVをセラーセントラルに貼る代わり
+  const [sendingPack, setSendingPack] = useState(false)
+  const [sendPackMsg, setSendPackMsg] = useState('')
+  const sendPacking = async () => {
+    const planId = createResult?.inbound_plan_id
+    if (!planId) { setSendPackMsg('先に納品プランを作ってください'); return }
+    setSendingPack(true); setSendPackMsg('Amazonへ入れています…')
+    try {
+      const { data } = await api.post('/fba-plan/packing/send',
+        { plan_id: planId, sid: packing.sid })
+      if (data.ok) {
+        setSendPackMsg(`${data.sent_boxes}箱を入れました`)
+      } else {
+        const lines = []
+        if (data.split?.length) {
+          lines.push('1箱に別グループの商品が混ざっています（Amazonが受け付けません）：')
+          data.split.forEach(x => lines.push(`　${x.box_no}番 ${x.skus.join('、')}`))
+        }
+        if (data.unknown?.length) {
+          lines.push('納品プランに無い商品が入っています：')
+          data.unknown.forEach(x => lines.push(`　${x.box_no}番 ${x.skus.join('、')}`))
+        }
+        setSendPackMsg(lines.join('\n'))
+      }
+    } catch (e) {
+      setSendPackMsg('うまくいきませんでした：'
+        + (e.response?.data?.detail || e.message))
+    }
+    setSendingPack(false)
+  }
+
   const loadPacking = async (sid) => {
     setLoadingPack(true); setPackErr(''); setPacking(null)
     try {
@@ -588,10 +619,20 @@ export default function FbaPlanPage() {
                 </span>
               )}
               <button className="btn btn-primary" style={{ marginLeft: 'auto', fontSize: 13 }}
+                onClick={sendPacking} disabled={sendingPack}>
+                {sendingPack ? '入れています…' : '📤 Amazonに箱の中身を入れる'}
+              </button>
+              <button className="btn btn-secondary" style={{ fontSize: 13 }}
                 onClick={downloadPackingCsv}>⬇ CSVで保存</button>
               <button className="btn btn-secondary" style={{ fontSize: 13 }}
                 onClick={() => { setPacking(null); setPackErr('') }}>閉じる</button>
             </div>
+            {sendPackMsg && (
+              <div style={{ fontSize: 12, marginBottom: 10, whiteSpace: 'pre-wrap',
+                color: sendPackMsg.startsWith('うまく') ? '#b91c1c' : '#334155' }}>
+                {sendPackMsg}
+              </div>
+            )}
 
             {packing.boxes.map(b => (
               <div key={b.box_no} style={{ marginBottom: 10, border: '1px solid #e2e8f0',

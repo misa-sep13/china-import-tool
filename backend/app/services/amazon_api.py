@@ -2127,3 +2127,135 @@ def fetch_attr_definition(product_type: str, name: str) -> dict:
     if prop is None:
         return {"ok": False, "error": "その項目は定義にありません"}
     return {"ok": True, "name": name, "definition": prop}
+
+
+# ---------- 納品プランの梱包（2024-03-20） ----------
+#
+# createInboundPlan のあと、セラーセントラルで「梱包」「配送」を進めていたが、
+# 同じことがAPIで全部できる。画面を行き来せずに済むよう、ここに揃える。
+#
+# Amazonの決まった順番：
+#   generatePackingOptions → listPackingOptions → confirmPackingOption
+#   → setPackingInformation（箱の3辺・重量・中身）
+# どれも非同期なので operationId の完了待ちが要る。
+
+def _put_sp_api(path: str, body: dict) -> dict:
+    """SP-APIへのPUT。setPackingInformation などで使う。"""
+    token = _get_access_token()
+    req = urllib.request.Request(
+        "https://sellingpartnerapi-fe.amazon.com" + path,
+        data=json.dumps(body).encode(),
+        method="PUT",
+        headers={"x-amz-access-token": token, "Content-Type": "application/json"},
+    )
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as res:
+                return json.loads(res.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                time.sleep(2 ** (attempt + 1))
+                continue
+            raise Exception(f"HTTP {e.code}: {e.read().decode()[:500]}")
+    raise Exception("SP-API rate limited after retries: " + path)
+
+
+def wait_inbound_operation(operation_id: str, timeout_sec: int = 90) -> dict:
+    """operationId が終わるまで待つ。
+
+    SUCCESS になれば {}、失敗なら中身の理由を添えて例外にする。
+    待たずに次を叩くと「まだ用意できていない」で弾かれるため、
+    呼ぶ側で毎回これを通す。
+    """
+    waited = 0
+    while waited < timeout_sec:
+        st = get_inbound_operation_status(operation_id)
+        status = (st.get("operationStatus") or "").upper()
+        if status == "SUCCESS":
+            return st
+        if status == "FAILED":
+            problems = st.get("operationProblems") or []
+            msg = "／".join(
+                str(p.get("message") or p.get("details") or "") for p in problems)
+            raise Exception(msg or "Amazon側で処理に失敗しました")
+        time.sleep(3)
+        waited += 3
+    raise Exception("Amazonの処理が終わりませんでした（時間切れ）")
+
+
+def list_packing_options(plan_id: str) -> List[dict]:
+    """梱包オプションを出す。無ければ作らせてから取り直す。"""
+    path = f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}/packingOptions"
+    data = _call_sp_api(path)
+    options = data.get("packingOptions") or []
+    if options:
+        return options
+    op = _post_sp_api(path, {})
+    wait_inbound_operation(op.get("operationId") or "")
+    return (_call_sp_api(path).get("packingOptions") or [])
+
+
+def confirm_packing_option(plan_id: str, packing_option_id: str) -> None:
+    op = _post_sp_api(
+        f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+        f"/packingOptions/{packing_option_id}/confirmation", {})
+    wait_inbound_operation(op.get("operationId") or "")
+
+
+def list_packing_group_items(plan_id: str, packing_group_id: str) -> List[dict]:
+    """梱包グループに入っているSKUと数を返す。
+
+    どのSKUがどのグループかはAmazonが決めるので、箱の中身を送るときは
+    グループごとに分けて渡す必要がある。
+    """
+    rows, token = [], None
+    while True:
+        params = {"pageSize": 100}
+        if token:
+            params["paginationToken"] = token
+        data = _call_sp_api(
+            f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+            f"/packingGroups/{packing_group_id}/items"
+            f"?{urllib.parse.urlencode(params)}")
+        rows.extend(data.get("items") or [])
+        token = (data.get("pagination") or {}).get("nextToken")
+        if not token:
+            break
+    return rows
+
+
+def set_packing_information(plan_id: str, groups: List[dict]) -> None:
+    """箱の3辺・重量・中身をまとめて登録する。
+
+    groups: [{"packing_group_id": ..., "boxes": [
+        {"l": 40, "w": 30, "h": 20, "weight_kg": 8.5,
+         "items": [{"sku": ..., "qty": 10}, ...]}, ...]}, ...]
+    """
+    payload_groups = []
+    for g in groups:
+        boxes = []
+        for b in g.get("boxes") or []:
+            items = [{"msku": it["sku"], "quantity": int(it["qty"]),
+                      "labelOwner": "SELLER", "prepOwner": "SELLER"}
+                     for it in (b.get("items") or [])
+                     if it.get("sku") and int(it.get("qty") or 0) > 0]
+            if not items:
+                continue
+            boxes.append({
+                "dimensions": {"length": float(b["l"]), "width": float(b["w"]),
+                               "height": float(b["h"]), "unitOfMeasurement": "CM"},
+                "weight": {"value": float(b["weight_kg"]), "unit": "KG"},
+                "quantity": 1,
+                "contentInformationSource": "BOX_CONTENT_PROVIDED",
+                "items": items,
+            })
+        if boxes:
+            payload_groups.append({"packingGroupId": g["packing_group_id"],
+                                   "boxes": boxes})
+    if not payload_groups:
+        raise ValueError("送る箱がありません")
+
+    op = _put_sp_api(
+        f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}/packingInformation",
+        {"packageGroupings": payload_groups})
+    wait_inbound_operation(op.get("operationId") or "")
