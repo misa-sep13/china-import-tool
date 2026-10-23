@@ -1116,8 +1116,8 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(400, f"配送依頼が読めませんでした（{e}）")
 
-    skus_in_master = {p.sku for p in
-                      db.query(Product).filter(Product.is_active == True).all()}
+    prods = {p.sku: p for p in
+             db.query(Product).filter(Product.is_active == True).all()}
     by_url = {}
     for oh in db.query(OrderHistory).filter(
             OrderHistory.is_deleted == False).all():
@@ -1125,14 +1125,21 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
         if key and oh.sku:
             by_url.setdefault(key, oh.sku)
 
-    found, unknown = [], []
+    found, qty_of, unknown = [], {}, []
     for r in d.get("rows") or []:
         sku = (r.get("customer_memo") or "").strip()
-        if sku not in skus_in_master:
+        if sku not in prods:
             sku = by_url.get(_normalize_1688_url(r.get("buy_url") or ""), "")
-        if sku and sku in skus_in_master:
+        p = prods.get(sku)
+        if p is not None and not p.is_component:
             if sku not in found:
                 found.append(sku)
+            # 配送依頼の数は仕入単位。画面は販売単位（セット）で扱う
+            n = int(getattr(p, "set_size", 1) or 1)
+            units = int(r.get("units") or 0)
+            qty_of[sku] = qty_of.get(sku, 0) + (-(-units // n) if n > 1 else units)
+        elif p is not None:
+            pass                      # 付属品は本体に含まれるので数えない
         else:
             unknown.append({"name_cn": r.get("name_cn") or "",
                             "color": r.get("supplier_spec") or "",
@@ -1140,7 +1147,7 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
 
     return {"sid": d.get("sid"), "sn": d.get("sn"),
             "state_label": d.get("state_label") or "",
-            "skus": found, "unknown": unknown}
+            "skus": found, "qty": qty_of, "unknown": unknown}
 
 
 # ---------- 商品ラベル（FNSKU） ----------

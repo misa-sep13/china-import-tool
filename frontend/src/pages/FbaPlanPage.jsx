@@ -81,6 +81,7 @@ export default function FbaPlanPage() {
   const arrivedOrders = useMemo(() => orders.filter(o => o.status === 'arrived'), [orders])
   const [planSid, setPlanSid] = useState(null)
   const [planSkus, setPlanSkus] = useState(null)
+  const [sendQty, setSendQty] = useState({})
   const [skuMsg, setSkuMsg] = useState('')
   const [allItems, setAllItems] = useState([])
 
@@ -90,6 +91,7 @@ export default function FbaPlanPage() {
       const { data } = await api.get(`/fba-plan/send-order/${sid}/skus`)
       setPlanSid(data.sid)
       setPlanSkus(data.skus)
+      setSendQty(data.qty || {})
       setSkuMsg(`便 ${data.sn || data.sid}　${data.skus.length}商品`
         + (data.unknown.length
           ? `（${data.unknown.length}件はSKUが分かりませんでした）` : ''))
@@ -106,7 +108,9 @@ export default function FbaPlanPage() {
     const filtered = allItems.filter(it => keep.has(it.sku))
     setPlanItems(filtered)
     const q = {}
-    for (const it of filtered) q[it.sku] = it.plan_qty
+    // 何を何個送るかは配送依頼を出した時点で決まっている。
+    // 推奨ではなく、その数を最初から入れておく
+    for (const it of filtered) q[it.sku] = sendQty[it.sku] ?? it.plan_qty
     setPlanQtys(q)
   }, [planSkus, allItems])
 
@@ -140,7 +144,7 @@ export default function FbaPlanPage() {
               lt_air_total: st.result.lt_air_total,
             })
             const initQtys = {}
-            for (const it of filtered) initQtys[it.sku] = it.plan_qty
+            for (const it of filtered) initQtys[it.sku] = sendQty[it.sku] ?? it.plan_qty
             setPlanQtys(initQtys)
             setExcludes({})
             setPlanStatus('done')
@@ -799,6 +803,7 @@ export default function FbaPlanPage() {
                       <SortHeader label="全体残日数" field="pipeline_days" style={{ textAlign: 'right' }} />
                       <th style={{ ...thStyle, textAlign: 'center' }}>判定</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>推奨(セット)</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>配送依頼(セット)</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>納品数(セット)</th>
                       <th style={{ ...thStyle, textAlign: 'center' }}>除外</th>
                     </tr>
@@ -835,6 +840,9 @@ export default function FbaPlanPage() {
                           </td>
                           <td style={{ ...tdStyle, textAlign: 'right', color: '#6b7280' }}>
                             {it.recommended_sets}
+                          </td>
+                          <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600 }}>
+                            {sendQty[it.sku] ?? '-'}
                           </td>
                           <td style={{ ...tdStyle, textAlign: 'right' }}>
                             <input type="number" min={0}
