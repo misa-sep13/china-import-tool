@@ -303,55 +303,54 @@ def _fetch_sales_one(asin: str, days: int, end_dt, order_qty_cap: int = 0) -> tu
 
 
 def fetch_all_sales(asin_list: List[str], order_qty_cap: int = 0) -> tuple:
-    """7/15/30/60/90日の売上を全ASIN×全期間で並列一括取得。now()を1回固定して集計期間のブレをなくす"""
+    """7/15/30/60/90日の売上を取得する。now()を1回固定して集計期間のブレをなくす。
+
+    キャッシュはASINと期間の組ごとに持つ。以前は「期間ごとに全ASINの辞書」で
+    持っていたので、一部のASINだけ欲しいときでも全件取り直しになり、
+    そのうえ少ない件数で上書きすると他の画面が0件に見えていた。
+    """
     from datetime import datetime, timezone
     periods = [7, 15, 30, 60, 90]
+    suffix = f"_cap{order_qty_cap}" if order_qty_cap else ""
 
-    cache_suffix = f"_cap{order_qty_cap}" if order_qty_cap else ""
+    results = {d: {} for d in periods}
+    todo = []
+    for a in asin_list:
+        for d in periods:
+            v = _cache_get(f"sale1_{a}_{d}{suffix}")
+            if v is None:
+                todo.append((a, d))
+            else:
+                results[d][a] = v
 
-    # キャッシュチェック
-    cached_results = {}
-    missing_periods = set()
-    for d in periods:
-        cached = _cache_get(f"sales_{d}{cache_suffix}")
-        if cached is not None:
-            cached_results[d] = cached
-        else:
-            missing_periods.add(d)
+    if todo:
+        # now()を1回だけ取得して全タスクで共有（期間のブレをなくす）
+        end_dt = datetime.now(timezone.utc)
+        got = {}
+        # 並列数を抑えてレート制限(429)自体を減らす（10だと429多発で欠損が出ていた）
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futures = {ex.submit(_fetch_sales_one, a, d, end_dt, order_qty_cap): (a, d)
+                       for a, d in todo}
+            for f in as_completed(futures):
+                _, val = f.result()
+                got[futures[f]] = val
 
-    if not missing_periods:
-        return (cached_results[7], cached_results[15], cached_results[30], cached_results[60], cached_results[90])
+        # 失敗(None)分は間隔を空けて順次リトライ。それでも失敗したものだけ0にする
+        import logging
+        for a, d in [k for k, v in got.items() if v is None]:
+            time.sleep(1)
+            _, v = _fetch_sales_one(a, d, end_dt, order_qty_cap)
+            if v is None:
+                logging.getLogger("amazon").warning(
+                    f"売上取得失敗(0扱い): asin={a} period={d}d")
+                v = 0.0
+            got[(a, d)] = v
 
-    # now()を1回だけ取得して全タスクで共有（期間のブレをなくす）
-    end_dt = datetime.now(timezone.utc)
+        for (a, d), v in got.items():
+            _cache_set(f"sale1_{a}_{d}{suffix}", v)
+            results[d][a] = v
 
-    period_results = {d: {a: None for a in asin_list} for d in missing_periods}
-    tasks = [(a, d) for a in asin_list for d in missing_periods]
-
-    # 並列数を抑えてレート制限(429)自体を減らす（10だと429多発で欠損が出ていた）
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        futures = {ex.submit(_fetch_sales_one, a, d, end_dt, order_qty_cap): (a, d) for a, d in tasks}
-        for f in as_completed(futures):
-            asin, val = f.result()
-            a, d = futures[f]
-            period_results[d][a] = val
-
-    # 失敗(None)分は間隔を空けて順次リトライ。それでも失敗したものだけ0にする
-    import logging
-    failed = [(d, a) for d in missing_periods for a, v in period_results[d].items() if v is None]
-    for d, a in failed:
-        time.sleep(1)
-        _, v = _fetch_sales_one(a, d, end_dt, order_qty_cap)
-        if v is None:
-            logging.getLogger("amazon").warning(f"売上取得失敗(0扱い): asin={a} period={d}d")
-            v = 0.0
-        period_results[d][a] = v
-
-    for d in missing_periods:
-        _cache_set(f"sales_{d}{cache_suffix}", period_results[d])
-        cached_results[d] = period_results[d]
-
-    return (cached_results[7], cached_results[15], cached_results[30], cached_results[60], cached_results[90])
+    return (results[7], results[15], results[30], results[60], results[90])
 
 
 def fetch_sales_detail(asin_list: List[str], days: int = 30) -> Dict[str, dict]:

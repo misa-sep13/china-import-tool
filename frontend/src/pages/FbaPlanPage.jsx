@@ -114,7 +114,9 @@ export default function FbaPlanPage() {
     setPlanStatus('loading')
     setElapsed(0)
     try {
-      const { data } = await api.post(`/fba-plan/start?force=${force}`)
+      const q = planSkus && planSkus.length
+        ? `&skus=${encodeURIComponent(planSkus.join(','))}` : ''
+      const { data } = await api.post(`/fba-plan/start?force=${force}${q}`)
       const jobId = data.job_id
       const timer = setInterval(async () => {
         try {
@@ -604,7 +606,7 @@ export default function FbaPlanPage() {
           <h2 style={{ marginBottom: 12 }}>③ Amazonに納品プランを作成</h2>
 
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
-            <button className="btn btn-primary" onClick={() => startPlanFetch(true)} disabled={planStatus === 'loading'}>
+            <button className="btn btn-primary" onClick={() => startPlanFetch(true)} disabled={planStatus === 'loading' || !planSid}>
               {planStatus === 'loading' ? `取得中... (${elapsed.toFixed(0)}秒)` : '🔄 SP-APIから在庫取得'}
             </button>
             {planStatus === 'done' && (

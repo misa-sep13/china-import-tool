@@ -82,13 +82,18 @@ def _build_calc_settings(row: Optional[OrderSettings]) -> CalcSettings:
     )
 
 
-def _run_plan_job(job_id: str):
+def _run_plan_job(job_id: str, only_skus: Optional[list] = None):
     with _jobs_lock:
         _jobs[job_id] = {"status": "running", "result": None, "error": None, "started_at": time.time()}
 
     db = SessionLocal()
     try:
         products = db.query(Product).filter(Product.is_active == True).all()
+        if only_skus:
+            # 便の商品だけに絞る。売上はASIN1件ずつ取りに行くので、
+            # 76件ぶん待たされていたのが十数件で済む
+            keep = set(only_skus)
+            products = [p for p in products if p.sku in keep]
         if not products:
             with _jobs_lock:
                 _jobs[job_id]["status"] = "done"
@@ -225,13 +230,18 @@ def _run_plan_job(job_id: str):
 
 
 @router.post("/start")
-def start_plan(background_tasks: BackgroundTasks, force: bool = False):
+def start_plan(background_tasks: BackgroundTasks, force: bool = False,
+               skus: str = ""):
+    """skus を渡すと、その商品だけ在庫と売上を取りに行く（便で絞ったとき）。"""
     _prune_jobs()
     if force:
         from app.services.amazon_api import _cache
-        _cache.clear()
+        # 在庫は消す。売上はASINごとに持っていて、消すと取り直しに
+        # 何分もかかるので残す
+        _cache.pop("inventory", None)
     job_id = str(uuid.uuid4())
-    background_tasks.add_task(_run_plan_job, job_id)
+    only = [x for x in (skus or "").split(",") if x.strip()]
+    background_tasks.add_task(_run_plan_job, job_id, only)
     return {"job_id": job_id}
 
 
