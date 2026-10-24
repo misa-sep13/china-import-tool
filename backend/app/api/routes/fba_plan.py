@@ -638,27 +638,6 @@ def sync_arrived(db: Session = Depends(get_db)):
             "total_excel_rows": seen, "unmatched": unmatched}
 
 
-@router.get("/send-order/{sid:int}/labels-05mm")
-def send_order_labels_05mm(sid: int, skip: int = 0, db: Session = Depends(get_db)):
-    """【一時】0.5mm下げの古い設定で商品ラベルを刷る。
-
-    いまの既定は0.25mm（下がぎりぎりだったので戻したもの）。
-    0.5mmのものと見比べたいという依頼のための口で、確認が済んだら消す。
-    既定の刷り方には触れない。
-    """
-    from app.services import fnsku_labels as L
-    from reportlab.lib.units import mm as _mm
-
-    # 当時の値に一時的に戻す。終わったら必ず戻す
-    old_shift, old_bar = L.TOP_SHIFT, L.BAR_H
-    L.TOP_SHIFT = 0.5 * _mm
-    L.BAR_H = 11.0 * _mm
-    try:
-        return send_order_labels(sid=sid, skip=skip, db=db)
-    finally:
-        L.TOP_SHIFT, L.BAR_H = old_shift, old_bar
-
-
 @router.get("/packing/{sid:int}")
 def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
     """便のインボイスから、箱ごとの中身を読んで返す。
