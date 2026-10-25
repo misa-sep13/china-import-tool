@@ -158,7 +158,14 @@ def _run_plan_job(job_id: str, only_skus: Optional[list] = None):
             pipeline_days = int(pipeline_stock / daily) if daily > 0 else 9999
 
             # 配送方法判定
-            if daily < hold_threshold:
+            #
+            # 「日販が少ない→保留」は売れている商品の話。
+            # 新商品はまだ売っていないので日販0だが、
+            # これから売るために仕入れたものなので止めてはいけない。
+            # FBA在庫も実績も無い＝初回納品とみて、保留から外す
+            # （15件すべてが保留になり、合計出荷数が0個になっていた）
+            is_new = (available == 0 and (s90 or 0) == 0)
+            if daily < hold_threshold and not is_new:
                 ship_method = "hold"
             elif pipeline_days <= air_threshold:
                 ship_method = "air"
