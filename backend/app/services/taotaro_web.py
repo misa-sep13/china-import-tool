@@ -41,7 +41,16 @@ def _xsrf(cookie: str) -> str:
 def _graphql(cookie: str, query: str, variables: dict) -> dict:
     token = _xsrf(cookie)
     if not token:
-        raise WebError("クッキーに XSRF-TOKEN がありません。貼り直してください")
+        # 長いので途中までしか貼られていないことが多い。
+        # 何が入っていて何が足りないかまで言う
+        got = [p.strip().split("=")[0] for p in (cookie or "").split(";")
+               if p.strip()]
+        raise WebError(
+            "クッキーに XSRF-TOKEN が入っていません"
+            f"（入っていたのは {len(got)}個："
+            f"{'、'.join(got[:4])}…）。"
+            "途中で切れている可能性があります。"
+            "Cookie の中身を最後まで丸ごと貼り直してください")
 
     req = urllib.request.Request(
         f"{SITE}/graphql/member",
@@ -63,6 +72,14 @@ def _graphql(cookie: str, query: str, variables: dict) -> dict:
         with urllib.request.urlopen(req, timeout=30) as res:
             body = res.read()
     except urllib.error.HTTPError as e:
+        if e.code == 419:
+            # Laravel の CSRF 切れ。クッキーが古いか、
+            # 貼り付けが途中で切れて XSRF-TOKEN が合っていない
+            raise WebError(
+                "クッキーが切れています（419）。"
+                "Chromeでタオタロウを開き直して、"
+                "Cookieを最後まで丸ごと貼り直してください"
+                "（途中で切れているとこのエラーになります）")
         raise WebError(f"タオタロウが HTTP {e.code} を返しました")
     except Exception as e:
         raise WebError(f"タオタロウに繋がりませんでした（{e}）")
