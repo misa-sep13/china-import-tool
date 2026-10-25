@@ -1132,26 +1132,29 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
         if key and oh.sku:
             by_url.setdefault(key, oh.sku)
 
-    # 1688のURL → 自社のSKU。発注時の管理番号よりこちらを優先する。
-    # 付属品を本体のSKUで発注してしまうことがあり（a09_1のテープを
-    # a09_1 で発注）、そのままだと本体に足されて数が合わなくなる。
-    # 商品ごとに1688のURLは違うので、URLで見分ける
-    sku_by_offer = {}
+    # 付属品の1688 URL。付属品を本体のSKUで発注してしまうことがあり
+    # （a09_1のテープを a09_1 で発注）、そのままだと本体に足される。
+    #
+    # ただし「URLでSKUを引く」のは間違い。色違いは同じURLを共有して
+    # いるので（a05_black / a05_black_meisai / a05_black_stripe など）、
+    # 全部が1つの色にまとめられて消える。
+    # そこでURLは「付属品かどうか」の判定にだけ使う。
+    component_offers = set()
     for pp in prods.values():
-        k = _normalize_1688_url(getattr(pp, "buy_url", "") or "")
-        if k:
-            sku_by_offer.setdefault(k, pp.sku)
+        if getattr(pp, "is_component", False):
+            k = _normalize_1688_url(getattr(pp, "buy_url", "") or "")
+            if k:
+                component_offers.add(k)
 
     found, qty_of, unknown = [], {}, []
     for r in d.get("rows") or []:
         sku = (r.get("customer_memo") or "").strip()
-        url_sku = (sku_by_offer.get(_normalize_1688_url(r.get("buy_url") or ""))
-                   or by_url.get(_normalize_1688_url(r.get("buy_url") or "")) or "")
-        # URL から引けたものがあればそちらを信じる
-        if url_sku:
-            sku = url_sku
-        elif sku not in prods:
-            sku = ""
+        offer = _normalize_1688_url(r.get("buy_url") or "")
+        # 付属品のURLなら、管理番号が本体になっていても数えない
+        if offer and offer in component_offers:
+            continue
+        if sku not in prods:
+            sku = by_url.get(offer, "")
         p = prods.get(sku)
         if p is not None and not p.is_component:
             if sku not in found:
