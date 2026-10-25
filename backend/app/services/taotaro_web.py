@@ -76,10 +76,10 @@ def _graphql(cookie: str, query: str, variables: dict) -> dict:
             # Laravel の CSRF 切れ。クッキーが古いか、
             # 貼り付けが途中で切れて XSRF-TOKEN が合っていない
             raise WebError(
-                "クッキーが切れています（419）。"
-                "Chromeでタオタロウを開き直して、"
-                "Cookieを最後まで丸ごと貼り直してください"
-                "（途中で切れているとこのエラーになります）")
+                "タオタロウのログインが切れています（419）。"
+                "Chromeで www.yiwutaro.com を開いてログインし直し、"
+                "Cookie を貼り直してください。"
+                "（クッキーは1か月ほどで切れます）")
         raise WebError(f"タオタロウが HTTP {e.code} を返しました")
     except Exception as e:
         raise WebError(f"タオタロウに繋がりませんでした（{e}）")

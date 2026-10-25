@@ -638,17 +638,6 @@ def sync_arrived(db: Session = Depends(get_db)):
             "total_excel_rows": seen, "unmatched": unmatched}
 
 
-@router.get("/probe-cookie")
-def probe_cookie(db: Session = Depends(get_db)):
-    """【一時】クッキーが生きているかだけ見る。読むだけ。"""
-    from app.services import taotaro_web
-    row = db.query(OrderSettings).first()
-    cookie = (getattr(row, "taotaro_web_cookie", "") or "").strip()
-    keys = [p.strip().split("=")[0] for p in cookie.split(";") if p.strip()]
-    err = taotaro_web.check(cookie) if cookie else "未設定"
-    return {"len": len(cookie), "keys": keys, "alive": err is None, "error": err}
-
-
 @router.get("/packing/{sid:int}")
 def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
     """便のインボイスから、箱ごとの中身を読んで返す。
