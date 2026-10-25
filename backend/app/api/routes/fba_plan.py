@@ -1132,11 +1132,26 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
         if key and oh.sku:
             by_url.setdefault(key, oh.sku)
 
+    # 1688のURL → 自社のSKU。発注時の管理番号よりこちらを優先する。
+    # 付属品を本体のSKUで発注してしまうことがあり（a09_1のテープを
+    # a09_1 で発注）、そのままだと本体に足されて数が合わなくなる。
+    # 商品ごとに1688のURLは違うので、URLで見分ける
+    sku_by_offer = {}
+    for pp in prods.values():
+        k = _normalize_1688_url(getattr(pp, "buy_url", "") or "")
+        if k:
+            sku_by_offer.setdefault(k, pp.sku)
+
     found, qty_of, unknown = [], {}, []
     for r in d.get("rows") or []:
         sku = (r.get("customer_memo") or "").strip()
-        if sku not in prods:
-            sku = by_url.get(_normalize_1688_url(r.get("buy_url") or ""), "")
+        url_sku = (sku_by_offer.get(_normalize_1688_url(r.get("buy_url") or ""))
+                   or by_url.get(_normalize_1688_url(r.get("buy_url") or "")) or "")
+        # URL から引けたものがあればそちらを信じる
+        if url_sku:
+            sku = url_sku
+        elif sku not in prods:
+            sku = ""
         p = prods.get(sku)
         if p is not None and not p.is_component:
             if sku not in found:
