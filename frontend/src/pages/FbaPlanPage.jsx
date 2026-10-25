@@ -86,6 +86,8 @@ export default function FbaPlanPage() {
   const [sendQty, setSendQty] = useState({})
   const [skuMsg, setSkuMsg] = useState('')
   const [allItems, setAllItems] = useState([])
+  // 入数で割り切れなかった行。切り上げているので注意を促す
+  const [oddQty, setOddQty] = useState([])
 
   const pickPlanSendOrder = async (sid) => {
     setSkuMsg('配送依頼を読んでいます…')
@@ -94,6 +96,7 @@ export default function FbaPlanPage() {
       setPlanSid(data.sid)
       setPlanSkus(data.skus)
       setSendQty(data.qty || {})
+      setOddQty(data.odd || [])
       setSkuMsg(`便 ${data.sn || data.sid}　${data.skus.length}商品`
         + (data.unknown.length
           ? `（${data.unknown.length}件はSKUが分かりませんでした）` : ''))
@@ -714,6 +717,25 @@ export default function FbaPlanPage() {
               </>
             )}
           </div>
+
+          {oddQty.length > 0 && (
+            <div style={{ marginTop: 10, padding: '10px 14px', background: '#fffbeb',
+              border: '1px solid #fcd34d', borderRadius: 6, fontSize: 13,
+              color: '#92400e', lineHeight: 1.9 }}>
+              <b>⚠ 入数で割り切れないものがあります</b>
+              <span style={{ marginLeft: 8, fontSize: 12 }}>
+                切り上げているので、そのままだと届く数より多く出ます
+              </span>
+              {oddQty.map(o => (
+                <div key={o.sku} style={{ fontSize: 12, marginTop: 3 }}>
+                  <b>{o.sku}</b>：{o.units}個 ÷ {o.set_size}個1セット
+                  → <b>{o.sets}セット</b>と出ていますが、
+                  実際に作れるのは {o.sets - 1}セットです
+                  （あと{o.short}個足りません）
+                </div>
+              ))}
+            </div>
+          )}
 
           {planStatus === 'done' && planItems.length === 0 && (
             <div style={{ padding: '10px 14px', background: '#fffbeb',
