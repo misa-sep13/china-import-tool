@@ -24,7 +24,9 @@ export default function FbaPlanPage() {
   const [creatingPlan, setCreatingPlan] = useState(false)
   const [createResult, setCreateResult] = useState(null)
   const [elapsed, setElapsed] = useState(0)
-  const [sortKey, setSortKey] = useState('pipeline_days')
+  // SKU順を既定にする。残日数順だと同じ商品の色違いが
+  // 離れた行に出て、a07_black が見つからないということが起きた
+  const [sortKey, setSortKey] = useState('sku')
   const [sortAsc, setSortAsc] = useState(true)
 
   const fetchOrders = async () => {
@@ -185,6 +187,13 @@ export default function FbaPlanPage() {
     const list = planItems.filter(it => !excludes[it.sku])
     list.sort((a, b) => {
       let va = a[sortKey], vb = b[sortKey]
+      if (sortKey === 'sku') {
+        // a05 → a07 → a010 の順になるよう、数字は数字として比べる。
+        // 文字だけで並べると a010 が a05 の前に来てしまう
+        const r = String(va || '').localeCompare(String(vb || ''), 'ja',
+          { numeric: true, sensitivity: 'base' })
+        return sortAsc ? r : -r
+      }
       if (typeof va === 'string') va = va.toLowerCase()
       if (typeof vb === 'string') vb = vb.toLowerCase()
       if (va < vb) return sortAsc ? -1 : 1

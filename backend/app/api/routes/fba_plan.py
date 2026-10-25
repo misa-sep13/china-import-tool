@@ -1146,7 +1146,7 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
             if k:
                 component_offers.add(k)
 
-    found, qty_of, unknown = [], {}, []
+    found, qty_of, unknown, odd = [], {}, [], []
     for r in d.get("rows") or []:
         sku = (r.get("customer_memo") or "").strip()
         offer = _normalize_1688_url(r.get("buy_url") or "")
@@ -1163,6 +1163,12 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
             n = int(getattr(p, "set_size", 1) or 1)
             units = int(r.get("units") or 0)
             qty_of[sku] = qty_of.get(sku, 0) + (-(-units // n) if n > 1 else units)
+            # 割り切れないときは切り上げている。そのまま出すと
+            # 実際に届く数より多い納品プランになるので、画面で知らせる
+            # （59個・2個1セットで 30セットと出ていた）
+            if n > 1 and units % n:
+                odd.append({"sku": sku, "units": units, "set_size": n,
+                            "sets": -(-units // n), "short": n - (units % n)})
         elif p is not None:
             pass                      # 付属品は本体に含まれるので数えない
         else:
@@ -1172,7 +1178,9 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
 
     return {"sid": d.get("sid"), "sn": d.get("sn"),
             "state_label": d.get("state_label") or "",
-            "skus": found, "qty": qty_of, "unknown": unknown}
+            "skus": found, "qty": qty_of, "unknown": unknown,
+            # 入数で割り切れなかったもの
+            "odd": odd}
 
 
 # ---------- 商品ラベル（FNSKU） ----------
