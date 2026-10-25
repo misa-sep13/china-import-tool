@@ -1159,16 +1159,16 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
         if p is not None and not p.is_component:
             if sku not in found:
                 found.append(sku)
-            # 配送依頼の数は仕入単位。画面は販売単位（セット）で扱う
+            # 配送依頼の数は仕入単位。画面は販売単位（セット）で扱う。
+            # 割り切れないときは切り捨てる。切り上げると、実際に
+            # 作れない数をAmazonに伝えてしまい、受領差異になる
+            # （59個・2個1セットなっ29セット。余る1個は次の便へ）
             n = int(getattr(p, "set_size", 1) or 1)
             units = int(r.get("units") or 0)
-            qty_of[sku] = qty_of.get(sku, 0) + (-(-units // n) if n > 1 else units)
-            # 割り切れないときは切り上げている。そのまま出すと
-            # 実際に届く数より多い納品プランになるので、画面で知らせる
-            # （59個・2個1セットで 30セットと出ていた）
+            qty_of[sku] = qty_of.get(sku, 0) + (units // n if n > 1 else units)
             if n > 1 and units % n:
                 odd.append({"sku": sku, "units": units, "set_size": n,
-                            "sets": -(-units // n), "short": n - (units % n)})
+                            "sets": units // n, "left": units % n})
         elif p is not None:
             pass                      # 付属品は本体に含まれるので数えない
         else:

@@ -724,14 +724,12 @@ export default function FbaPlanPage() {
               color: '#92400e', lineHeight: 1.9 }}>
               <b>⚠ 入数で割り切れないものがあります</b>
               <span style={{ marginLeft: 8, fontSize: 12 }}>
-                切り上げているので、そのままだと届く数より多く出ます
+                実際に作れるセット数を入れてあります。余りは次の便へ
               </span>
               {oddQty.map(o => (
                 <div key={o.sku} style={{ fontSize: 12, marginTop: 3 }}>
                   <b>{o.sku}</b>：{o.units}個 ÷ {o.set_size}個1セット
-                  → <b>{o.sets}セット</b>と出ていますが、
-                  実際に作れるのは {o.sets - 1}セットです
-                  （あと{o.short}個足りません）
+                  → <b>{o.sets}セット</b>（{o.left}個余ります）
                 </div>
               ))}
             </div>
