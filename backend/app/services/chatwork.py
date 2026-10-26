@@ -197,6 +197,31 @@ def work_room() -> Optional[str]:
     return default_room()
 
 
+def my_room() -> Optional[str]:
+    """自分のマイチャット。自分あての知らせはここが邪魔にならない。"""
+    try:
+        r = httpx.get(f"{settings.CHATWORK_API_BASE}/rooms",
+                      headers=_headers(), timeout=TIMEOUT)
+        for x in (_check(r) or []):
+            if x.get("type") == "my":
+                return str(x.get("room_id"))
+    except Exception:
+        pass
+    return None
+
+
+def alert_room() -> Optional[str]:
+    """運用の知らせ（タオタロウの出荷待ちなど）を送る部屋。
+
+    外注さんの部屋に流すものではないので、既定は自分のマイチャット。
+    CHATWORK_ALERT_ROOM があればそれを使う。
+    """
+    rid = os.environ.get("CHATWORK_ALERT_ROOM", "").strip()
+    if rid:
+        return rid
+    return my_room() or default_room() or work_room()
+
+
 def work_sheet_url() -> str:
     """外注さんが開くシートのURL。"""
     url = os.environ.get("WORK_SHARE_URL", "").strip()

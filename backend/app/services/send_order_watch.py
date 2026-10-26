@@ -92,7 +92,7 @@ def _send(n: dict) -> None:
     if not chatwork.is_configured():
         return
     try:
-        room = chatwork.work_room()
+        room = chatwork.alert_room()
         if not room:
             return
         lines = [f"配送依頼 {n['sn']}　が「{n['label']}」になりました"]
