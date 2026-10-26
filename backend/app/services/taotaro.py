@@ -764,7 +764,23 @@ def _name_goods_list(message: str, chunk: list) -> str:
         # 返ってくる番号は0から数えたもの。人には1から数えて見せる
         return f"{n + 1}番目（{name}）" if name else f"{n + 1}番目"
 
-    return re.sub(r"goods_list\.(\d+)", _sub, str(message or ""))
+    out = re.sub(r"goods_list\.(\d+)", _sub, str(message or ""))
+
+    # 番号で数えるのは当てにならない（送る前に外した行があると
+    # 位置がずれる）。商品番号が書いてあれば、そこから直接引く
+    for m in re.finditer(r"(\d{8,})", out):
+        pid = m.group(1)
+        for g in chunk:
+            if str(g.get("product_id") or "") == pid or str(
+                    g.get("sku_id") or "") == pid:
+                sku = str(g.get("out_id") or "").strip()
+                if sku and sku not in out:
+                    out += f"　→ {sku}"
+                break
+        else:
+            continue
+        break
+    return out
 
 
 def _pick_oids(data) -> list:
