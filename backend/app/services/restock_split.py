@@ -57,6 +57,11 @@ def warehouse_stock(db, pages: int = 5) -> dict:
             p = prods.get(sku)
             if p is None or p.is_component:
                 continue
+            # FNSKUもASINも無い＝Amazonに出していない。同じSKUで
+            # 商品マスタにも載っているが、楽天ぶんとして発注したもの。
+            # Amazonの画面に出す意味がない
+            if not ((p.fnsku or "").strip() or (p.asin or "").strip()):
+                continue
             qty = int(o.get("quantity") or 0)
             if qty <= 0:
                 continue
@@ -64,10 +69,6 @@ def warehouse_stock(db, pages: int = 5) -> dict:
             r = rows.setdefault(sku, {
                 "sku": sku, "name": p.name or "", "pieces": 0,
                 "set_size": max(1, p.set_size or 1),
-                # Amazonに出していない商品は、FNSKUもASINも入っていない。
-                # 楽天専用の商品が商品マスタにも載っているので、ここで分ける
-                "on_amazon": bool((p.fnsku or "").strip()
-                                  or (p.asin or "").strip()),
                 "oldest_days": age, "orders": [],
             })
             r["pieces"] += qty
@@ -131,12 +132,7 @@ def split(stock: dict, plan_items: list, lt_sea: int, lt_air: int,
         reserve = min(int(rk["reserve"]) if rk else 0, china_all)
         china = china_all - reserve
 
-        if not s.get("on_amazon"):
-            # Amazonに出していない（FNSKUもASINも無い）。楽天専用の商品が
-            # 同じSKUで商品マスタにも載っているため、ここで止める。
-            # 送ってもFBAで受け取れない
-            air = sea = 0
-        elif daily <= 0:
+        if daily <= 0:
             # 売れ行きが無い。新商品は初回を送りたいので全部船便、
             # 既に在庫がある商品は送らない（寝かせても仕方がない）
             air = 0
@@ -155,7 +151,6 @@ def split(stock: dict, plan_items: list, lt_sea: int, lt_air: int,
             "sku": sku,
             "name": s["name"],
             "set_size": s["set_size"],
-            "on_amazon": bool(s.get("on_amazon")),
             "china_pieces": china_all,
             "rakuten_reserve": reserve,
             "rakuten_daily": rk["daily"] if rk else None,
