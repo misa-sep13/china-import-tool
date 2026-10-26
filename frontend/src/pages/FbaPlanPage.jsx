@@ -585,6 +585,8 @@ export default function FbaPlanPage() {
           <b>航空便</b>は船便が届く日までに欠品する分だけ、
           <b>船便</b>は目標在庫日数に足りない残り、
           のこりは<b>倉庫に残します</b>。
+          同じSKUで<b>楽天にも出している商品</b>は、中国の在庫が1つの山なので、
+          先に楽天ぶんを取り置いてから残りを振り分けます。
           無料保管は入庫から90日なので、期限が近いものには印を付けます。
           <b>配送依頼を出す前</b>に使ってください。
         </div>
@@ -605,7 +607,8 @@ export default function FbaPlanPage() {
               <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
                 <thead><tr style={{ background: '#f8fafc' }}>
                   {['SKU', '商品名', '日販', 'FBA', '残日数', '中国在庫',
-                    '航空便', '船便', '倉庫に残す', '入庫から'].map(h => (
+                    '楽天に取り置き', '航空便', '船便', '倉庫に残す',
+                    '入庫から'].map(h => (
                     <th key={h} style={{ ...thStyle, textAlign: 'left' }}>{h}</th>
                   ))}
                 </tr></thead>
@@ -624,6 +627,14 @@ export default function FbaPlanPage() {
                         {x.fba_days === null ? '—' : `${x.fba_days}日`}
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right' }}>{x.china_pieces}</td>
+                      <td style={{ ...tdStyle, textAlign: 'right',
+                        color: x.rakuten_reserve ? '#9d174d' : '#cbd5e1' }}
+                        title={x.rakuten_daily !== null && x.rakuten_daily !== undefined
+                          ? `楽天 日販${x.rakuten_daily} / 在庫${x.rakuten_stock}`
+                          : '楽天には出していません'}>
+                        {x.rakuten_daily === null || x.rakuten_daily === undefined
+                          ? '—' : x.rakuten_reserve}
+                      </td>
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700,
                         color: x.air_pieces ? '#b91c1c' : '#cbd5e1' }}>{x.air_pieces}</td>
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700,

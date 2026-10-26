@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from app.models.product import Product
+from app.models.rakuten_product import RakutenProduct
 from app.services import taotaro
 
 # 入庫から何日で無料保管が切れるか。残り日数がこれ以下なら印を付ける
@@ -76,14 +77,41 @@ def warehouse_stock(db, pages: int = 5) -> dict:
     return rows
 
 
+def rakuten_need(db, skus: set, lt_sea: int) -> dict:
+    """楽天でも売っている商品の、取り置きが要る数。
+
+    同じSKUで両方に出しているので、中国の在庫は1つの山になる。
+    先に楽天ぶんを取り置かないと、楽天の在庫が切れる。
+    次の船便が届くまで持たせる数だけ残す。
+    """
+    out = {}
+    rows = (db.query(RakutenProduct)
+            .filter(RakutenProduct.sku.in_(list(skus)))
+            .filter(RakutenProduct.is_active == True).all())
+    for r in rows:
+        if r.is_promo or r.is_material:
+            continue
+        # 楽天の販売数は63日ぶん（APIの上限）。在庫切れの日は除いて日販にする
+        days = max(1, 63 - int(r.stockout_days_90 or 0))
+        daily = float(r.sales_90 or 0) / days
+        have = int(r.stock or 0) + int(r.inbound or 0) + int(r.standard_stock or 0)
+        need = max(0, round(daily * lt_sea) - have)
+        out[r.sku] = {"daily": round(daily, 2), "stock": have,
+                      "days": int(have / daily) if daily > 0 else None,
+                      "reserve": need}
+    return out
+
+
 def split(stock: dict, plan_items: list, lt_sea: int, lt_air: int,
-          target_days: int) -> list:
+          target_days: int, rakuten: Optional[dict] = None) -> list:
     """倉庫の在庫を航空便・船便・倉庫に振り分ける。
 
     stock: warehouse_stock() の戻り値
     plan_items: 納品プランの計算結果（日販・FBA在庫を持っている）
+    rakuten: 楽天でも売っている商品の取り置き数
     """
     by_sku = {it["sku"]: it for it in plan_items}
+    rakuten = rakuten or {}
     out = []
     for sku, s in stock.items():
         it = by_sku.get(sku) or {}
@@ -91,7 +119,13 @@ def split(stock: dict, plan_items: list, lt_sea: int, lt_air: int,
         fba = int(it.get("fba_available") or 0)
         inbound = int(it.get("fba_inbound") or 0) + int(it.get("fba_processing") or 0)
         have = fba + inbound
-        china = int(s["pieces"])
+        china_all = int(s["pieces"])
+
+        # 楽天でも売っている商品は、先に楽天ぶんを取り置く。
+        # 残りをAmazonに振り分ける（同じSKU＝同じ商品のため）
+        rk = rakuten.get(sku)
+        reserve = min(int(rk["reserve"]) if rk else 0, china_all)
+        china = china_all - reserve
 
         if daily <= 0:
             # 売れ行きが無い。新商品は初回を送りたいので全部船便、
@@ -112,7 +146,12 @@ def split(stock: dict, plan_items: list, lt_sea: int, lt_air: int,
             "sku": sku,
             "name": s["name"],
             "set_size": s["set_size"],
-            "china_pieces": china,
+            "china_pieces": china_all,
+            "rakuten_reserve": reserve,
+            "rakuten_daily": rk["daily"] if rk else None,
+            "rakuten_stock": rk["stock"] if rk else None,
+            "rakuten_days": rk["days"] if rk else None,
+            "amazon_pool": china,
             "daily": round(daily, 2),
             "fba_available": fba,
             "fba_inbound": inbound,

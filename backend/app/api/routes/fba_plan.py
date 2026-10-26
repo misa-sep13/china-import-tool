@@ -1433,7 +1433,12 @@ def restock_split(db: Session = Depends(get_db)):
              .filter(Product.is_active == True).all() if p.sku in skus]
     items = _plan_rows(db, prods, ps, cs)
 
+    # 同じSKUで楽天にも出している商品は、中国の在庫が1つの山になる。
+    # 先に楽天ぶんを取り置かないと、楽天の在庫が切れる
+    rk = rs.rakuten_need(db, set(stock.keys()), lt_sea)
+
     return {
-        "items": rs.split(stock, items, lt_sea, lt_air, target),
+        "items": rs.split(stock, items, lt_sea, lt_air, target, rk),
         "lt_sea": lt_sea, "lt_air": lt_air, "target_days": target,
+        "rakuten_count": len(rk),
     }
