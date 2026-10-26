@@ -111,6 +111,18 @@ def _send(n: dict) -> None:
         body = "\n".join([f"[info][title]タオタロウ {n['label']}[/title]"]
                          + lines + ["[/info]"])
         chatwork.send_message(room, body)
+
+        # メッセージは自分の発言なので自分には通知が出ない。
+        # 動く必要がある知らせはタスクにする（自分あてでも通知される）
+        if n["state"] == 8:
+            try:
+                chatwork.create_task(
+                    room,
+                    f"配送依頼 {n['sn']} 出荷待ち。"
+                    f"インボイスができているので、"
+                    f"納品プランの④（箱の中身）まで進める")
+            except Exception as e:
+                logger.warning(f"[send-order-watch] タスクを作れません: {e}")
     except Exception as e:
         # 知らせはおまけ。落ちても巡回そのものは止めない
         logger.warning(f"[send-order-watch] 送れませんでした: {e}")
