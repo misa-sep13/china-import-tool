@@ -744,42 +744,42 @@ def create_orders(goods_list: list) -> dict:
 
 
 def _name_goods_list(message: str, chunk: list) -> str:
-    """「goods_list.4」を「4番目：y136_beige」のように書き直す。
+    """「goods_list.4」をSKU名に書き直す。
 
     どの商品で止まったかが分からないと、一覧を上から数える作業になる。
+    しかも、送る前に外した行があると位置がずれて別の商品を指す。
+    なのでエラーに書いてある商品IDで引くことを優先し、
+    引けなかったときだけ並び順で当てる。
     """
     import re
 
-    def _label(idx: int) -> str:
-        if idx < 0 or idx >= len(chunk):
-            return ""
-        g = chunk[idx] or {}
-        sku = str(g.get("out_id") or "").strip()
-        url = str(g.get("url") or g.get("goods_url") or "").strip()
-        return sku or url[:60] or ""
+    text = str(message or "")
+
+    # 商品IDで引く。これが当たれば位置に関係なく正しい
+    by_id = ""
+    for m in re.finditer(r"\d{8,}", text):
+        pid = m.group(0)
+        for g in chunk:
+            if (str(g.get("product_id") or "") == pid
+                    or str(g.get("sku_id") or "") == pid):
+                by_id = str(g.get("out_id") or "").strip()
+                break
+        if by_id:
+            break
 
     def _sub(m):
         n = int(m.group(1))
-        name = _label(n)
+        name = by_id
+        if not name and 0 <= n < len(chunk):
+            g = chunk[n] or {}
+            name = (str(g.get("out_id") or "").strip()
+                    or str(g.get("url") or "")[:60])
         # 返ってくる番号は0から数えたもの。人には1から数えて見せる
         return f"{n + 1}番目（{name}）" if name else f"{n + 1}番目"
 
-    out = re.sub(r"goods_list\.(\d+)", _sub, str(message or ""))
-
-    # 番号で数えるのは当てにならない（送る前に外した行があると
-    # 位置がずれる）。商品番号が書いてあれば、そこから直接引く
-    for m in re.finditer(r"(\d{8,})", out):
-        pid = m.group(1)
-        for g in chunk:
-            if str(g.get("product_id") or "") == pid or str(
-                    g.get("sku_id") or "") == pid:
-                sku = str(g.get("out_id") or "").strip()
-                if sku and sku not in out:
-                    out += f"　→ {sku}"
-                break
-        else:
-            continue
-        break
+    out = re.sub(r"goods_list\.(\d+)", _sub, text)
+    if by_id and by_id not in out:
+        out = f"{by_id}：{out}"
     return out
 
 
