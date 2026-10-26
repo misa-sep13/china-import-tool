@@ -275,6 +275,44 @@ def _to_tags(room_id: str) -> str:
         return ""
 
 
+def _room_member_ids(room_id: str) -> list:
+    try:
+        if room_id not in _members_cache:
+            r = httpx.get(
+                f"{settings.CHATWORK_API_BASE}/rooms/{room_id}/members",
+                headers=_headers(), timeout=TIMEOUT)
+            _members_cache[room_id] = _check(r) or []
+        return [m.get("account_id") for m in _members_cache[room_id]
+                if m.get("account_id")]
+    except Exception:
+        return []
+
+
+def create_task(room_id: str, body: str, to_ids: Optional[list] = None,
+                limit_at: Optional[int] = None) -> dict:
+    """タスクを作る。
+
+    メッセージと違い、自分あてのタスクは自分にも通知が出る。
+    トークンが自分のアカウントのものだと、自分の発言は自分に
+    通知されないため、気づいてほしい知らせはタスクにする。
+    """
+    ids = to_ids if to_ids else _room_member_ids(room_id)
+    if not ids:
+        raise ChatworkError("タスクの宛先が取れませんでした")
+    data = {"body": body, "to_ids": ",".join(str(i) for i in ids)}
+    if limit_at:
+        data["limit"] = str(limit_at)
+        data["limit_type"] = "date"
+    try:
+        r = httpx.post(f"{settings.CHATWORK_API_BASE}/rooms/{room_id}/tasks",
+                       headers=_headers(), data=data, timeout=TIMEOUT)
+    except ChatworkError:
+        raise
+    except Exception as e:
+        raise ChatworkError(f"Chatworkに繋がりませんでした（{type(e).__name__}）")
+    return _check(r) or {}
+
+
 def notify_work(title: str, lines: list) -> None:
     """状況確認シートの動きを知らせる。
 
