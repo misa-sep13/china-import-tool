@@ -16,8 +16,11 @@ from app.services import chatwork, taotaro
 
 logger = logging.getLogger(__name__)
 
-# 知らせる状態。全部流すと「梱包作業中」まで毎回来て埋もれる
+# 知らせる状態。全部流すと「梱包作業中」まで毎回来て埋もれる。
+# 支払いを自動にしてあるので、7（お支払い待ち）には止まらず
+# 8（出荷待ち）に飛ぶ。インボイスができるのもこのとき
 NOTIFY_STATES = {
+    8: "出荷待ち",
     7: "お支払い待ち",
     2: "出荷済み",
 }
@@ -93,11 +96,15 @@ def _send(n: dict) -> None:
         if not room:
             return
         lines = [f"配送依頼 {n['sn']}　が「{n['label']}」になりました"]
-        if n["state"] == 7:
+        if n["state"] in (7, 8):
             if n.get("total"):
                 lines.append(f"金額: {n['total']} 元")
             if n.get("weight"):
                 lines.append(f"重量: {n['weight']} kg")
+        if n["state"] == 8:
+            lines.append("インボイスができています。"
+                         "納品プランの④（箱の中身）まで進められます。")
+        elif n["state"] == 7:
             lines.append("支払うとインボイスができます。"
                          "そのあと納品プランの④（箱の中身）まで進めます。")
         lines.append(SITE_URL)
