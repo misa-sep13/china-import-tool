@@ -329,20 +329,47 @@ def download_zip(year: Optional[int] = None, month: Optional[int] = None,
         raise HTTPException(status_code=404, detail="対象の許可書がありません")
     rows.sort(key=_sort_date)
 
+    # 一覧はPDF本体を読まない作りなので、ここで必要なぶんだけ引き直す。
+    # 1件ずつの遅延読み込みに任せると、どこで転んだのか分からなくなる
+    ids = [p.id for p in rows]
+    try:
+        blobs = dict(
+            db.query(ImportPermit.id, ImportPermit.pdf)
+            .filter(ImportPermit.id.in_(ids)).all())
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"PDFを読めませんでした（{type(e).__name__}: {e}）")
+
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        used = set()
-        for p in rows:
-            name = _drive_name(p)
-            # 同じ日に2便あると名前がぶつかる。上書きすると片方が消える
-            i = 2
-            while name in used:
-                base = _drive_name(p)
-                stem, dot, ext = base.rpartition(".")
-                name = f"{stem}_{i}.{ext}" if dot else f"{base}_{i}"
-                i += 1
-            used.add(name)
-            z.writestr(name, p.pdf or b"")
+    missing = []
+    try:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            used = set()
+            for p in rows:
+                data = blobs.get(p.id)
+                if not data:
+                    # 本体が入っていない行。黙って空ファイルを入れると
+                    # 税理士の手元で開けないものが混ざる
+                    missing.append(p.permit_no or str(p.id))
+                    continue
+                name = _drive_name(p)
+                # 同じ日に2便あると名前がぶつかる。上書きすると片方が消える
+                i = 2
+                while name in used:
+                    base = _drive_name(p)
+                    stem, dot, ext = base.rpartition(".")
+                    name = f"{stem}_{i}.{ext}" if dot else f"{base}_{i}"
+                    i += 1
+                used.add(name)
+                z.writestr(name, data)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"ZIPを作れませんでした（{type(e).__name__}: {e}）")
+    if not used:
+        raise HTTPException(
+            status_code=404,
+            detail="PDFの本体が入っている許可書がありませんでした"
+                   + (f"（本体なし: {'、'.join(missing)}）" if missing else ""))
     buf.seek(0)
 
     span = f"{year}" if year else "全期間"
