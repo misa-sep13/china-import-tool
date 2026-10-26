@@ -733,3 +733,14 @@ def probe(path: str):
                 "raw": d if len(str(d)) < 2000 else None}
     except taotaro.TaotaroError as e:
         return {"ok": False, "path": p, "code": e.code, "message": e.message}
+
+
+@router.post("/watch/check")
+def watch_check(db: Session = Depends(get_db)):
+    """配送依頼の状態を今すぐ見に行く（普段は10分ごとに自動で動く）。
+
+    初めて押したときは今の状態を覚えるだけで、知らせは飛ばない。
+    そうしないと、過去ぶん全部の通知が一度に来る。
+    """
+    from app.services.send_order_watch import check_once
+    return check_once(db)

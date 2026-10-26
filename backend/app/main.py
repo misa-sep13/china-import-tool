@@ -92,6 +92,7 @@ def _migrate():
         ("products",      "customer_memo",       "ALTER TABLE products ADD COLUMN customer_memo TEXT"),
         ("products",      "supplier",            "ALTER TABLE products ADD COLUMN supplier VARCHAR DEFAULT 'タオタロウ'"),
         ("order_settings","taotaro_web_cookie",  "ALTER TABLE order_settings ADD COLUMN taotaro_web_cookie TEXT"),
+        ("order_settings","send_order_states",  "ALTER TABLE order_settings ADD COLUMN send_order_states TEXT"),
         ("order_settings","exchange_rate",        "ALTER TABLE order_settings ADD COLUMN exchange_rate FLOAT DEFAULT 21.0"),
         ("order_settings","price_adjust_enabled", "ALTER TABLE order_settings ADD COLUMN price_adjust_enabled BOOLEAN DEFAULT FALSE"),
         ("order_settings","price_drop_threshold", "ALTER TABLE order_settings ADD COLUMN price_drop_threshold FLOAT DEFAULT 0.20"),
@@ -1584,6 +1585,22 @@ async def _fill_amazon_ids(limit: int = 40):
         db.close()
 
 
+async def _watch_send_orders():
+    """配送依頼の状態を見に行き、変わっていたら知らせる。"""
+    def _run():
+        from app.core.database import SessionLocal
+        from app.services.send_order_watch import check_once
+        db = SessionLocal()
+        try:
+            return check_once(db)
+        finally:
+            db.close()
+    try:
+        await asyncio.to_thread(_run)
+    except Exception as e:
+        logger.warning(f"[scheduler] 配送依頼の見回りでエラー: {e}")
+
+
 async def _scheduler_loop():
     """1分ごとに受注差分の在庫同期＋RMS在庫取得、30分ごとにキャンセル再チェックを実行。
 
@@ -1609,6 +1626,10 @@ async def _scheduler_loop():
         # 自己発送はFBA在庫の取り込みに出てこないので、ここが唯一の入り口
         if tick % 360 == 0:
             await _fill_amazon_ids()
+        # 10分ごと: 配送依頼が「お支払い待ち」になったらChatworkへ。
+        # 支払いのお願いはメールで来るので、気づくのが遅れて出荷が遅れていた
+        if tick % 10 == 0:
+            await _watch_send_orders()
 
 
 @asynccontextmanager

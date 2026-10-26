@@ -42,3 +42,6 @@ class OrderSettings(Base):
     # 取れない。画像認証があるので自動ログインはできず、ブラウザで
     # ログインしたときの値を貼ってもらう。1か月ほどで切れる
     taotaro_web_cookie = Column(Text, nullable=True)
+    # 配送依頼ごとに前回見た状態（JSON）。支払い待ちになった瞬間を
+    # 知らせるために持つ。消えても次の巡回で入り直る
+    send_order_states = Column(Text, nullable=True)
