@@ -922,7 +922,10 @@ async def fill_taotaro_note(file: UploadFile = File(...),
     report = urllib.parse.quote(json.dumps(
         {"入れた": filled, "空にした": cleared, "当たらなかった": missed},
         ensure_ascii=False))
+    # HTTPヘッダーはASCIIしか通らない。日本語のファイル名を選ばれると
+    # ここで落ちるので、通らない字は落として既定の名前にする
     name = (file.filename or "taotaro.xlsx").rsplit(".", 1)[0]
+    name = name.encode("ascii", "ignore").decode().strip() or "taotaro"
     return StreamingResponse(
         buf,
         media_type=("application/vnd.openxmlformats-officedocument"
@@ -1341,6 +1344,8 @@ def fetch_instruction(sid: int, fill: bool = True,
         wb.save(buf)
         raw = buf.getvalue()
         name = name.rsplit(".", 1)[0] + "_note.xlsx"
+    # ヘッダーはASCIIしか通らない。通らない字は落とす
+    name = name.encode("ascii", "ignore").decode().strip() or f"FBA_{sid}.xlsx"
 
     return StreamingResponse(
         io.BytesIO(raw),

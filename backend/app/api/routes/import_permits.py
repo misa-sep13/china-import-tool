@@ -372,13 +372,15 @@ def download_zip(year: Optional[int] = None, month: Optional[int] = None,
                    + (f"（本体なし: {'、'.join(missing)}）" if missing else ""))
     buf.seek(0)
 
-    span = f"{year}" if year else "全期間"
-    if year and month:
-        span = f"{year}-{month:02d}"
+    # HTTPヘッダーはASCIIしか通らない。「全期間」を入れて落ちていた
+    span = f"{year}" if year else "all"
+    if month:
+        span = f"{span}-{month:02d}"
+    name = f"import-permits-{span}.zip"
     return StreamingResponse(
         buf, media_type="application/zip",
         headers={"Content-Disposition":
-                 f'attachment; filename="import-permits-{span}.zip"'})
+                 f'attachment; filename="{name}"'})
 
 
 class NoteIn(BaseModel):
