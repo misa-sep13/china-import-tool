@@ -45,3 +45,6 @@ class OrderSettings(Base):
     # 配送依頼ごとに前回見た状態（JSON）。支払い待ちになった瞬間を
     # 知らせるために持つ。消えても次の巡回で入り直る
     send_order_states = Column(Text, nullable=True)
+    # FBAに何日分の在庫を持たせるか。0なら無料保管日数から自動で出す
+    # （90−7＝83日）。船便の間隔に合わせて決め直したいことがある
+    fba_target_days = Column(Integer, default=0)

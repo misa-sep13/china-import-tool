@@ -48,6 +48,7 @@ def _build_settings(row: Optional[OrderSettings]):
             "free_storage_days": 90,
             "air_threshold_days": 18,
             "hold_daily_threshold": 0.1,
+            "fba_target_days": 0,
         }
     return {
         "lt_order_to_warehouse": getattr(row, "lt_order_to_warehouse", 7) or 7,
@@ -57,6 +58,7 @@ def _build_settings(row: Optional[OrderSettings]):
         "free_storage_days": getattr(row, "free_storage_days", 90) or 90,
         "air_threshold_days": getattr(row, "air_threshold_days", 18) or 18,
         "hold_daily_threshold": getattr(row, "hold_daily_threshold", 0.1) or 0.1,
+        "fba_target_days": getattr(row, "fba_target_days", 0) or 0,
     }
 
 
@@ -131,7 +133,11 @@ def _run_plan_job(job_id: str, only_skus: Optional[list] = None):
         lt_air_total = plan_settings["lt_order_to_warehouse"] + plan_settings["lt_shipping_request"] + plan_settings["lt_air_to_fba"]
         air_threshold = plan_settings["air_threshold_days"]
         hold_threshold = plan_settings["hold_daily_threshold"]
-        target_stock_days = free_days - plan_settings["lt_order_to_warehouse"]
+        # 既定は無料保管日数から出すが、船便の間隔に合わせて
+        # 決め直したいことがあるので、設定があればそちらを使う
+        target_stock_days = ((plan_settings.get("fba_target_days") or 0)
+                             or (free_days
+                                 - plan_settings["lt_order_to_warehouse"]))
         sale_extra = calc_sale_extra_days(cs)
 
         result = []
