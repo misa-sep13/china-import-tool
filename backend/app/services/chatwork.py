@@ -213,13 +213,14 @@ def my_room() -> Optional[str]:
 def alert_room() -> Optional[str]:
     """運用の知らせ（タオタロウの出荷待ちなど）を送る部屋。
 
-    外注さんの部屋に流すものではないので、既定は自分のマイチャット。
-    CHATWORK_ALERT_ROOM があればそれを使う。
+    既定は状況確認シートの知らせと同じ部屋（北田しずくさん）。
+    二人で見るので、どちらが先に気づいても動ける。
+    別の部屋にしたいときは CHATWORK_ALERT_ROOM で変えられる。
     """
     rid = os.environ.get("CHATWORK_ALERT_ROOM", "").strip()
     if rid:
         return rid
-    return my_room() or default_room() or work_room()
+    return work_room() or my_room() or default_room()
 
 
 def work_sheet_url() -> str:
