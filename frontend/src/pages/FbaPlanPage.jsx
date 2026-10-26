@@ -587,6 +587,7 @@ export default function FbaPlanPage() {
           のこりは<b>倉庫に残します</b>。
           同じSKUで<b>楽天にも出している商品</b>は、中国の在庫が1つの山なので、
           先に楽天ぶんを取り置いてから残りを振り分けます。
+          FNSKUもASINも無い商品は<b>Amazonに出していない</b>とみて、FBAへは送りません。
           無料保管は入庫から90日なので、期限が近いものには印を付けます。
           <b>配送依頼を出す前</b>に使ってください。
         </div>
@@ -616,7 +617,17 @@ export default function FbaPlanPage() {
                   {split.items.map(x => (
                     <tr key={x.sku} style={{ borderBottom: '1px solid #f1f5f9',
                       background: x.warn_storage ? '#fffbeb' : 'transparent' }}>
-                      <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 12 }}>{x.sku}</td>
+                      <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 12 }}>
+                        {x.sku}
+                        {!x.on_amazon && (
+                          <span style={{ marginLeft: 6, fontSize: 10, padding: '1px 5px',
+                            borderRadius: 3, background: '#fce7f3', color: '#9d174d',
+                            fontFamily: 'sans-serif' }}
+                            title="FNSKUもASINも入っていません。Amazonに出していない商品とみて、FBAへは送りません">
+                            楽天のみ
+                          </span>
+                        )}
+                      </td>
                       <td style={{ ...tdStyle, maxWidth: 240, overflow: 'hidden',
                         textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={x.name}>
                         {x.name}
