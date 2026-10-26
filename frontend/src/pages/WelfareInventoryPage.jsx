@@ -61,7 +61,14 @@ const workDateSortValue = (date) => {
 
 const workRemainingQty = (row) => row.remaining_qty ?? 0
 
-const WORK_INSTRUCTION_OPTIONS = ['作業保管', '保管', '戻し']
+const WORK_INSTRUCTION_OPTIONS = ['作業保管', '保管', '戻し', '一部戻し']
+
+// 「⑨個戻し」の⑨を読む。数字が入っていれば一部戻し
+const returnQtyOf = (v) => {
+  const m = String(v || '').match(/(\d+)\s*個?\s*戻し/)
+  return m ? Number(m[1]) : null
+}
+const isPartialReturn = (v) => returnQtyOf(v) != null
 
 // 「全量こちらに戻す」指示か。戻しの行も残には返す個数を入れたままにするため、
 // 在庫へ入れるかどうかは残ではなく指示で判定する（backendの_is_full_returnと同じ規則）。
@@ -1095,7 +1102,17 @@ export default function WelfareInventoryPage() {
                           min="0"
                           value={remaining}
                             onChange={e => updateWorkDraft(row, { remaining_qty: Number(e.target.value) })}
-                            style={{ width: 58, textAlign: 'right', fontWeight: 700 }}
+                            title={isPartialReturn(instruction)
+                              && (returnQtyOf(instruction) ?? 0) + Number(remaining) !== row.units
+                              ? `戻し${returnQtyOf(instruction)}個＋残${remaining}個が、入荷の${row.units}個と合いません`
+                              : ''}
+                            style={{ width: 58, textAlign: 'right', fontWeight: 700,
+                              // 戻しの数と残の合計が入荷数と合わないと在庫がずれる。
+                              // そのときだけ赤くして気づけるようにする
+                              ...(isPartialReturn(instruction)
+                                && (returnQtyOf(instruction) ?? 0) + Number(remaining) !== row.units
+                                ? { background: '#fee2e2', border: '2px solid #dc2626' }
+                                : {}) }}
                           />
                         </td>
                         <td>
@@ -1124,9 +1141,39 @@ export default function WelfareInventoryPage() {
                               if (prev && !e.target.value) updateWorkDraft(row, { instruction: prev })
                               delete e.target.dataset.prev
                             }}
-                            onChange={e => updateWorkDraft(row, { instruction: e.target.value })}
+                            onChange={e => {
+                              const v = e.target.value
+                              // 「一部戻し」を選んだだけでは数が決まらない。
+                              // とりあえず全量を戻す形にして、数を直せるようにする
+                              if (v === '一部戻し') {
+                                updateWorkDraft(row, {
+                                  instruction: `${row.units}個戻し`, remaining_qty: 0 })
+                                return
+                              }
+                              updateWorkDraft(row, { instruction: v })
+                            }}
                             style={{ width: 112, minWidth: 0, background: 'transparent', border: '1px solid #cbd5e1', borderRadius: 6 }}
                           />
+                          {/* 一部戻しのときだけ、何個戻すかをここで直せる。
+                              戻す数を変えたら残（施設に置く数）もそれに合わせる。
+                              手で両方入れると合計が合わなくなる */}
+                          {isPartialReturn(instruction) && (
+                            <div style={{ display: 'flex', alignItems: 'center',
+                              gap: 4, marginTop: 4 }}>
+                              <input type="number" min="0" max={row.units}
+                                value={returnQtyOf(instruction) ?? 0}
+                                onChange={e => {
+                                  const n = Math.max(0, Math.min(Number(e.target.value) || 0, row.units))
+                                  updateWorkDraft(row, {
+                                    instruction: `${n}個戻し`,
+                                    remaining_qty: row.units - n })
+                                }}
+                                style={{ width: 52, textAlign: 'right', fontWeight: 700 }} />
+                              <span style={{ fontSize: 11, color: '#92400e' }}>
+                                個戻し／残{row.units - (returnQtyOf(instruction) ?? 0)}
+                              </span>
+                            </div>
+                          )}
                         </td>
                         <td>
                           <input
