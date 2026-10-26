@@ -726,6 +726,9 @@ def create_orders(goods_list: list) -> dict:
             data = _request("/api/v1/orders", body={"goods_list": chunk},
                             method="POST")
         except TaotaroError as e:
+            # タオタロウは「goods_list.4」としか返さないので、どの商品か
+            # 分からない。送った並びからSKUを引いて書き足す
+            e.message = _name_goods_list(e.message, chunk)
             if i == 0:
                 raise
             raise TaotaroError(
@@ -738,6 +741,30 @@ def create_orders(goods_list: list) -> dict:
             if oid not in oids:
                 oids.append(oid)
     return {"oids": oids, "raw": raws[0] if len(raws) == 1 else raws}
+
+
+def _name_goods_list(message: str, chunk: list) -> str:
+    """「goods_list.4」を「4番目：y136_beige」のように書き直す。
+
+    どの商品で止まったかが分からないと、一覧を上から数える作業になる。
+    """
+    import re
+
+    def _label(idx: int) -> str:
+        if idx < 0 or idx >= len(chunk):
+            return ""
+        g = chunk[idx] or {}
+        sku = str(g.get("out_id") or "").strip()
+        url = str(g.get("url") or g.get("goods_url") or "").strip()
+        return sku or url[:60] or ""
+
+    def _sub(m):
+        n = int(m.group(1))
+        name = _label(n)
+        # 返ってくる番号は0から数えたもの。人には1から数えて見せる
+        return f"{n + 1}番目（{name}）" if name else f"{n + 1}番目"
+
+    return re.sub(r"goods_list\.(\d+)", _sub, str(message or ""))
 
 
 def _pick_oids(data) -> list:
