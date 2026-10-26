@@ -1360,3 +1360,80 @@ def fetch_instruction(sid: int, fill: bool = True,
         headers={"Content-Disposition": f'attachment; filename="{name}"',
                  "X-Fill-Report": urllib.parse.quote(
                      json.dumps(report, ensure_ascii=False))})
+
+
+# ---------- 配送依頼をかける前の計算し直し ----------
+#
+# 発注した時点で必要だった数と、いま必要な数は違う。売れ行きが落ちれば
+# 送りすぎになり、FBAで保管料を払って寝かせることになる。
+# 倉庫にある在庫を、いまの売れ行きで航空便・船便・倉庫に振り分ける。
+
+def _plan_rows(db: Session, products: list, ps: dict, cs) -> list:
+    """振り分けに要るぶんだけ、日販とFBA在庫を出す。
+
+    納品プランの計算をそのまま呼べると楽だが、あちらは全商品ぶんを
+    取りに行く重い処理なので、ここでは必要な商品だけに絞る。
+    """
+    from app.core.config import settings as app_settings
+    if not app_settings.SP_API_REFRESH_TOKEN:
+        return []
+    from app.services.amazon_api import fetch_inventory, fetch_all_sales
+
+    inventory = fetch_inventory()
+    asins = [p.asin for p in products if p.asin]
+    cap = getattr(db.query(OrderSettings).first(), "order_qty_cap", 0) or 0
+    s7, s15, s30, s60, s90 = fetch_all_sales(asins, cap)
+
+    rows = []
+    for p in products:
+        inv = inventory.get(p.fnsku, {})
+        a7 = s7.get(p.asin, 0)
+        a15 = s15.get(p.asin, 0)
+        a30 = s30.get(p.asin, 0)
+        a60 = s60.get(p.asin, 0)
+        a90 = s90.get(p.asin, 0)
+        rows.append({
+            "sku": p.sku or "",
+            "daily": weighted_daily(a7, a15, a30, a60, a90, cs),
+            "growth": growth_mult(a7, a15, a90, cs),
+            "fba_available": inv.get("available", 0),
+            "fba_inbound": inv.get("inbound", 0),
+            "fba_processing": inv.get("processing", 0),
+        })
+    return rows
+
+
+@router.get("/restock-split")
+def restock_split(db: Session = Depends(get_db)):
+    """倉庫の在庫を航空便・船便・倉庫に振り分けて返す。"""
+    from app.services import restock_split as rs
+
+    if not taotaro.is_configured():
+        raise HTTPException(400, "タオタロウのトークンが未設定です")
+
+    try:
+        stock = rs.warehouse_stock(db)
+    except Exception as e:
+        raise HTTPException(400, f"倉庫の在庫が取れませんでした（{e}）")
+    if not stock:
+        return {"items": [], "note": "倉庫に、まだ便に入っていない在庫がありません"}
+
+    settings_row = db.query(OrderSettings).first()
+    ps = _build_settings(settings_row)
+    cs = _build_calc_settings(settings_row)
+    lt_sea = (ps["lt_shipping_request"] + ps["lt_sea_to_fba"])
+    lt_air = (ps["lt_shipping_request"] + ps["lt_air_to_fba"])
+    target = ((ps.get("fba_target_days") or 0)
+              or (ps["free_storage_days"] - ps["lt_order_to_warehouse"]))
+    target += calc_sale_extra_days(cs)
+
+    # 日販とFBA在庫は、納品プランと同じ計算をそのまま使う（二重に持たない）
+    skus = set(stock.keys())
+    prods = [p for p in db.query(Product)
+             .filter(Product.is_active == True).all() if p.sku in skus]
+    items = _plan_rows(db, prods, ps, cs)
+
+    return {
+        "items": rs.split(stock, items, lt_sea, lt_air, target),
+        "lt_sea": lt_sea, "lt_air": lt_air, "target_days": target,
+    }

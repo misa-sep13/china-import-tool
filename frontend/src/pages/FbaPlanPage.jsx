@@ -424,6 +424,22 @@ export default function FbaPlanPage() {
     setSendingPack(false)
   }
 
+  // 配送依頼をかける前の計算し直し。発注時に必要だった数と、
+  // いま必要な数は違う。倉庫の在庫を航空便・船便・倉庫に振り分ける
+  const [split, setSplit] = useState(null)
+  const [splitting, setSplitting] = useState(false)
+  const [splitErr, setSplitErr] = useState('')
+  const loadSplit = async () => {
+    setSplitting(true); setSplitErr(''); setSplit(null)
+    try {
+      const { data } = await api.get('/fba-plan/restock-split')
+      setSplit(data)
+    } catch (e) {
+      setSplitErr(e.response?.data?.detail || e.message)
+    }
+    setSplitting(false)
+  }
+
   // 商品ラベル。納品プランが無くても刷れる（FNSKUはSKUごとに決まっている）
   const [labelSkip, setLabelSkip] = useState(0)
   const [labelMsg, setLabelMsg] = useState('')
@@ -549,6 +565,87 @@ export default function FbaPlanPage() {
           <b>④だけ後になるのは：</b>箱に詰める前は箱の中身が無いためです。
           インボイスができるまで待ちます。
         </div>
+      </div>
+
+      {/* 配送依頼をかける前に、いまの売れ行きで計算し直す。
+          発注時に必要だった数より減っていることがある */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center',
+          flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 15 }}>⓪ 何を何個送るか計算し直す</b>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            タオタロウの倉庫にある在庫を、いまの売れ行きで振り分けます
+          </span>
+          <button className="btn btn-primary" style={{ marginLeft: 'auto', fontSize: 13 }}
+            onClick={loadSplit} disabled={splitting}>
+            {splitting ? '計算中…' : '🧮 計算する'}
+          </button>
+        </div>
+        <div style={{ fontSize: 12, color: '#64748b', marginTop: 8, lineHeight: 1.8 }}>
+          <b>航空便</b>は船便が届く日までに欠品する分だけ、
+          <b>船便</b>は目標在庫日数に足りない残り、
+          のこりは<b>倉庫に残します</b>。
+          無料保管は入庫から90日なので、期限が近いものには印を付けます。
+          <b>配送依頼を出す前</b>に使ってください。
+        </div>
+        {splitErr && (
+          <div style={{ fontSize: 12, color: '#b91c1c', marginTop: 8 }}>{splitErr}</div>
+        )}
+        {split && split.items?.length === 0 && (
+          <div style={{ fontSize: 13, color: '#92400e', marginTop: 10 }}>
+            {split.note || '振り分ける在庫がありません'}
+          </div>
+        )}
+        {split && split.items?.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>
+              目標 {split.target_days}日分　／　船便 {split.lt_sea}日　航空便 {split.lt_air}日
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+                <thead><tr style={{ background: '#f8fafc' }}>
+                  {['SKU', '商品名', '日販', 'FBA', '残日数', '中国在庫',
+                    '航空便', '船便', '倉庫に残す', '入庫から'].map(h => (
+                    <th key={h} style={{ ...thStyle, textAlign: 'left' }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {split.items.map(x => (
+                    <tr key={x.sku} style={{ borderBottom: '1px solid #f1f5f9',
+                      background: x.warn_storage ? '#fffbeb' : 'transparent' }}>
+                      <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 12 }}>{x.sku}</td>
+                      <td style={{ ...tdStyle, maxWidth: 240, overflow: 'hidden',
+                        textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={x.name}>
+                        {x.name}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>{x.daily}</td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>{x.fba_available}</td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>
+                        {x.fba_days === null ? '—' : `${x.fba_days}日`}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>{x.china_pieces}</td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700,
+                        color: x.air_pieces ? '#b91c1c' : '#cbd5e1' }}>{x.air_pieces}</td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700,
+                        color: x.sea_pieces ? '#1d4ed8' : '#cbd5e1' }}>{x.sea_pieces}</td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700,
+                        color: x.keep_pieces ? '#334155' : '#cbd5e1' }}>{x.keep_pieces}</td>
+                      <td style={{ ...tdStyle, textAlign: 'right',
+                        color: x.warn_storage ? '#b45309' : '#64748b' }}>
+                        {x.oldest_days === null ? '—' : `${x.oldest_days}日`}
+                        {x.warn_storage && (
+                          <span title="無料保管が切れます。残すなら保管料がかかります">
+                            　⚠ 残り{x.free_days_left}日
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 便はここで1回だけ選ぶ。以前はカードごとに選び直していた */}
