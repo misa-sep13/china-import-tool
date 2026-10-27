@@ -62,12 +62,26 @@ def check_once(db) -> dict:
         if not sid:
             continue
         state = int(x.get("state") or 0)
-        now[sid] = state
+        label = NOTIFY_STATES.get(state)
+
+        # インボイスができたか。これが true なら箱の中身まで取れるので、
+        # そのまま④へ進める。状態から推測せず、直接確かめる。
+        # 出荷待ちになった後でインボイスができることがあるので、
+        # 状態だけでなく、できたかどうかも覚えて見分ける
+        ready = None
+        if label and state in (7, 8):
+            try:
+                ready = bool(taotaro.send_order_boxes(int(sid)).get(
+                    "boxes_ready"))
+            except Exception as e:
+                logger.warning(f"[send-order-watch] 箱の確認に失敗 {sid}: {e}")
+
+        key = f"{state}R" if ready else str(state)
+        now[sid] = key
         if first_time:
             continue                      # 初回は今の状態を覚えるだけ
-        if before.get(sid) == state:
+        if str(before.get(sid)) == key:
             continue
-        label = NOTIFY_STATES.get(state)
         if not label:
             continue
         notices.append({
@@ -77,6 +91,7 @@ def check_once(db) -> dict:
             "label": label,
             "weight": x.get("count_weight"),
             "total": x.get("total_send_fee"),
+            "boxes_ready": ready,
         })
 
     for n in notices:
@@ -101,9 +116,12 @@ def _send(n: dict) -> None:
                 lines.append(f"金額: {n['total']} 元")
             if n.get("weight"):
                 lines.append(f"重量: {n['weight']} kg")
-        if n["state"] == 8:
+        if n.get("boxes_ready"):
             lines.append("インボイスができています。"
                          "納品プランの④（箱の中身）まで進められます。")
+        elif n["state"] == 8:
+            lines.append("インボイスはまだできていません。"
+                         "できたら④（箱の中身）に進めます。")
         elif n["state"] == 7:
             lines.append("支払うとインボイスができます。"
                          "そのあと納品プランの④（箱の中身）まで進めます。")
@@ -114,7 +132,7 @@ def _send(n: dict) -> None:
 
         # メッセージは自分の発言なので自分には通知が出ない。
         # 動く必要がある知らせはタスクにする（自分あてでも通知される）
-        if n["state"] == 8:
+        if n.get("boxes_ready"):
             try:
                 chatwork.create_task(
                     room,
