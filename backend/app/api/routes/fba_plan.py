@@ -325,6 +325,24 @@ def create_inbound_plan_api(req: PlanExportRequest, db: Session = Depends(get_db
     if not items:
         raise HTTPException(status_code=400, detail="納品数が1以上の商品がありません")
 
+    # 梱包カテゴリーが未設定の商品があると、できたプランが
+    # 読み取り専用になって先へ進めない。新商品を出すたび
+    # 手で入れていたが、忘れるとここで詰まるので自動で入れる。
+    # 勝手に決めるのは未設定のものだけ。入れたSKUは必ず画面に出す
+    prep_set = []
+    try:
+        from app.services import amazon_api as _amz
+        mp = "A1VC38T7YXB528"
+        known = _amz.fetch_prep_owners([it["sku"] for it in items], mp)
+        prep_set = [it["sku"] for it in items
+                    if (known.get(it["sku"]) or {}).get("category", "")
+                    in ("", "UNKNOWN", "NONE_REQUIRED_UNKNOWN")]
+        if prep_set:
+            _amz.set_prep_details(prep_set, mp, "NONE")
+    except Exception as e:
+        logger.warning(f"[create-inbound-plan] 梱包設定を入れられず: {e}")
+        prep_set = []
+
     try:
         result = create_inbound_plan(
             items,
@@ -340,6 +358,9 @@ def create_inbound_plan_api(req: PlanExportRequest, db: Session = Depends(get_db
         "operation_id": result["operation_id"],
         "total_pieces": sum(i["qty"] for i in items),
         "sku_count": len(items),
+        # 自動で「梱包不要」を入れたSKU。繊維製品などで
+        # 困るものがあれば、ここで気づいて直せるように出す
+        "prep_set": prep_set,
         # セラーセントラルの納品管理画面（ここで商品ラベルをDLする）
         "seller_central_url": "https://sellercentral.amazon.co.jp/fba/sendtoamazon",
     }

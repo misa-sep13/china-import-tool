@@ -325,6 +325,23 @@ export default function FbaPlanPage() {
   // 先に「どのFCに分けて送るか」を決めないと先へ進めない
   // 追跡番号。配送依頼の sn がそのまま番号なので、
   // タオタロウに毎回聞かなくてもAPIから取れる
+  // 梱包カテゴリーの一括設定。普段は③が自動で入れるので使わない
+  const [prepMsg, setPrepMsg] = useState('')
+  const [prepBusy, setPrepBusy] = useState(false)
+
+  const applyPrep = async () => {
+    if (!confirm('Amazonに出している商品のうち、未設定のものに「梱包不要」を入れます。')) return
+    setPrepBusy(true); setPrepMsg('')
+    try {
+      const { data } = await api.post('/fba-plan/prep-details', {})
+      setPrepMsg(`${data.done}/${data.total}件に入れました`
+        + (data.errors?.length ? `（エラー: ${data.errors[0]}）` : ''))
+    } catch (e) {
+      setPrepMsg(e.response?.data?.detail || '入れられませんでした')
+    }
+    setPrepBusy(false)
+  }
+
   const [track, setTrack] = useState(null)
   const [trackFba, setTrackFba] = useState('')
   const [trackMsg, setTrackMsg] = useState('')
@@ -989,6 +1006,19 @@ export default function FbaPlanPage() {
                   <div style={{ fontSize: 12, color: '#475569', marginBottom: 10 }}>
                     プランID: <span style={{ fontFamily: 'monospace' }}>{createResult.inbound_plan_id}</span>
                   </div>
+                  {createResult.prep_set?.length > 0 && (
+                    <div style={{ fontSize: 12, color: '#b45309', marginBottom: 10,
+                      background: '#fffbeb', border: '1px solid #fde68a',
+                      borderRadius: 6, padding: '6px 10px' }}>
+                      梱包カテゴリーが未設定だった{createResult.prep_set.length}件に
+                      <b>「梱包不要」</b>を入れました：
+                      {createResult.prep_set.join('、')}
+                      <div style={{ color: '#92400e', marginTop: 4 }}>
+                        繊維製品などで「梱包不要」では困るものがあれば、
+                        セラーセントラルで直してください。
+                      </div>
+                    </div>
+                  )}
                   <div style={{ fontSize: 13, color: '#334155', marginBottom: 10 }}>
                     この段階ではまだ納品（FBA番号）はできていません。
                     次の<b>納品先を決める</b>を済ませると納品ができ、
@@ -1325,6 +1355,20 @@ export default function FbaPlanPage() {
           その他（入庫の取り込み・発注済みリスト）
         </summary>
         <div style={{ marginTop: 12 }}>
+
+      {/* 梱包カテゴリーの一括設定。③が自動で入れるので通常は不要 */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-secondary" onClick={applyPrep} disabled={prepBusy}>
+            {prepBusy ? '入れています…' : '梱包カテゴリーをまとめて設定'}
+          </button>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            未設定の商品に「梱包不要」を入れます。
+            ③で自動に入るので、通常は使いません
+          </span>
+          {prepMsg && <span style={{ fontSize: 12, color: '#166534' }}>{prepMsg}</span>}
+        </div>
+      </div>
 
       {/* ①入庫済みの取り込み。
           もとはタオタロウのサイトでExcelを落として、ここへ上げ直していた。

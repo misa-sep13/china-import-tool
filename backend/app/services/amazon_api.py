@@ -809,6 +809,9 @@ def fetch_prep_owners(mskus: List[str], marketplace: str,
             out[msku] = {
                 "prep": want.get(c.get("prepOwnerConstraint") or "", ""),
                 "label": want.get(c.get("labelOwnerConstraint") or "", ""),
+                # 未設定は UNKNOWN か空で返る。そのままだと
+                # 納品プランが読み取り専用になる
+                "category": (d.get("prepCategory") or "").upper(),
             }
     return out
 
