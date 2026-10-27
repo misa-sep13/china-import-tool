@@ -2418,7 +2418,7 @@ def list_placement_options(plan_id: str) -> List[dict]:
     path = f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}/placementOptions"
     options = _call_sp_api(path).get("placementOptions") or []
     if options:
-        return options
+        return options      # 確定済みもここで返るので、作り直さない
     op = _post_sp_api(path, {})
     wait_inbound_operation(op.get("operationId") or "")
     return _call_sp_api(path).get("placementOptions") or []
@@ -2432,9 +2432,28 @@ def confirm_placement_option(plan_id: str, placement_option_id: str) -> None:
 
 
 def list_plan_shipments(plan_id: str) -> List[dict]:
-    """納品先を確定したあとにできる納品を返す。"""
-    path = f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}/shipments"
-    return _call_sp_api(path).get("shipments") or []
+    """納品先を確定したあとにできる納品を返す。
+
+    納品を一覧で取る口は無い（叩くと403）。確定済みの
+    納品先の候補が納品IDを持っているので、それを1つずつ引く。
+    """
+    ids: List[str] = []
+    try:
+        for o in list_placement_options(plan_id):
+            if (o.get("status") or "").upper() in ("ACCEPTED", "CONFIRMED"):
+                ids = list(o.get("shipmentIds") or [])
+                break
+    except Exception:
+        return []
+    out = []
+    for sid in ids:
+        try:
+            out.append(_call_sp_api(
+                f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+                f"/shipments/{sid}"))
+        except Exception:
+            continue
+    return out
 
 
 def get_plan_shipment(plan_id: str, shipment_id: str) -> dict:
