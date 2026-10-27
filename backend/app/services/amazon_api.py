@@ -771,6 +771,44 @@ def fetch_default_source_address() -> Optional[dict]:
     return None
 
 
+def fetch_prep_owners(mskus: List[str], marketplace: str) -> dict:
+    """SKUごとに、準備作業とラベルの担当を誰にできるかを調べる。
+
+    商品によっては「準備は要らない（NONE）」と決まっていて、そこへ
+    SELLER を入れると納品プランの作成がまるごと弾かれる。
+    逆に準備が要る商品に NONE を入れても弾かれるので、SKUごとに
+    Amazonの言うとおりに合わせる。
+
+    戻り値: {msku: {"prep": "SELLER"|"NONE"|..., "label": ...}}
+    """
+    want = {"NONE_ONLY": "NONE", "SELLER_ONLY": "SELLER",
+            "AMAZON_ONLY": "AMAZON"}
+    out: dict = {}
+    uniq = [m for m in dict.fromkeys(mskus) if m]
+    for i in range(0, len(uniq), 50):          # 1回に問い合わせられる数に合わせる
+        chunk = uniq[i:i + 50]
+        try:
+            data = _call_sp_api(
+                "/inbound/fba/2024-03-20/items/prepDetails?"
+                + urllib.parse.urlencode({"marketplaceId": marketplace,
+                                          "mskus": ",".join(chunk)})
+            )
+        except Exception:
+            # 調べられなければ既定（SELLER）のまま。作成でエラーになれば
+            # その理由が画面に出る
+            continue
+        for d in data.get("mskuPrepDetails") or []:
+            msku = d.get("msku") or ""
+            if not msku:
+                continue
+            c = d.get("allOwnersConstraint") or {}
+            out[msku] = {
+                "prep": want.get(c.get("prepOwnerConstraint") or "", ""),
+                "label": want.get(c.get("labelOwnerConstraint") or "", ""),
+            }
+    return out
+
+
 def create_inbound_plan(items: List[dict], source_address: dict, name: str = "") -> dict:
     """FBA納品プランを作成する。
 
@@ -781,17 +819,20 @@ def create_inbound_plan(items: List[dict], source_address: dict, name: str = "")
     こちらで確定できるのはSKUと数量までになる。
     """
     mp = "A1VC38T7YXB528"
-    payload_items = [
-        {
+    rows = [it for it in items
+            if it.get("sku") and int(it.get("qty") or 0) > 0]
+    # 商品ラベルの貼付・準備はこちら（出品者）で行うが、
+    # 準備が要らないと決まっている商品は NONE しか受け付けない
+    owners = fetch_prep_owners([it["sku"] for it in rows], mp)
+    payload_items = []
+    for it in rows:
+        o = owners.get(it["sku"]) or {}
+        payload_items.append({
             "msku": it["sku"],
             "quantity": int(it["qty"]),
-            # 商品ラベルの貼付・準備はこちら（出品者）で行う
-            "labelOwner": "SELLER",
-            "prepOwner": "SELLER",
-        }
-        for it in items
-        if it.get("sku") and int(it.get("qty") or 0) > 0
-    ]
+            "labelOwner": o.get("label") or "SELLER",
+            "prepOwner": o.get("prep") or "SELLER",
+        })
     if not payload_items:
         raise ValueError("納品数が1以上の商品がありません")
 
