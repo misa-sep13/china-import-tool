@@ -228,10 +228,17 @@ export default function FbaPlanPage() {
       return
     }
     const pieces = targets.reduce((s, t) => s + t.plan_qty * t.set_size, 0)
-    const detail = targets.map(t => `  ${t.sku}: ${t.plan_qty * t.set_size}個`).join('\n')
+    const sets = targets.reduce((s, t) => s + t.plan_qty, 0)
+    // 画面はセット数で扱うので、確認もセット数で出す。
+    // バラの数と違う商品だけ、何個になるかをそえる
+    const detail = targets.map(t => (
+      t.set_size > 1
+        ? `  ${t.sku}: ${t.plan_qty}セット（${t.plan_qty * t.set_size}個）`
+        : `  ${t.sku}: ${t.plan_qty}セット`
+    )).join('\n')
     if (!confirm(
       `Amazonに納品プランを作成します。\n\n${detail}\n\n` +
-      `計 ${targets.length}SKU / ${pieces}個\n\n` +
+      `計 ${targets.length}SKU / ${sets}セット（${pieces}個）\n\n` +
       `作成後はセラーセントラルで商品ラベルをダウンロードしてください。`
     )) return
 
