@@ -361,8 +361,9 @@ def create_inbound_plan_api(req: PlanExportRequest, db: Session = Depends(get_db
         # 自動で「梱包不要」を入れたSKU。繊維製品などで
         # 困るものがあれば、ここで気づいて直せるように出す
         "prep_set": prep_set,
-        # セラーセントラルの納品管理画面（ここで商品ラベルをDLする）
-        "seller_central_url": "https://sellercentral.amazon.co.jp/fba/sendtoamazon",
+        # 「納品を管理」。作業台のトップを開くと過去のSKUが全部並んで
+        # この納品がどれか分からないので、納品の一覧を指す
+        "seller_central_url": "https://sellercentral.amazon.co.jp/manage/shipments",
     }
 
 
