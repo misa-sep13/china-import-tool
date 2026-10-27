@@ -2309,6 +2309,28 @@ def confirm_packing_option(plan_id: str, packing_option_id: str) -> None:
     wait_inbound_operation(op.get("operationId") or "")
 
 
+def set_prep_details(mskus: List[str], marketplace: str,
+                     category: str = "NONE",
+                     prep_owner: str = "SELLER",
+                     label_owner: str = "SELLER") -> dict:
+    """SKUの梱包カテゴリーを決める。
+
+    これが未設定だと、納品プランが「読み取り専用」になって
+    先へ進めない（セラーセントラルでも数量欄がグレーのまま）。
+    新しい商品を出すたびに設定が要るので、こちらから入れる。
+    """
+    details = [{"msku": m,
+                "prepCategory": category,
+                "prepOwner": prep_owner,
+                "labelOwner": label_owner}
+               for m in dict.fromkeys(mskus) if m]
+    if not details:
+        return {}
+    return _post_sp_api(
+        "/inbound/fba/2024-03-20/items/prepDetails",
+        {"marketplaceId": marketplace, "mskuPrepDetails": details})
+
+
 def list_inbound_plans(limit: int = 20) -> List[dict]:
     """納品プランを新しい順に返す。
 

@@ -437,6 +437,41 @@ def confirm_placement(req: ConfirmPlacementIn):
     return {"ok": True, "shipments": shipments}
 
 
+class PrepDetailsIn(BaseModel):
+    skus: list[str] = []
+    category: str = "NONE"
+
+
+@router.post("/prep-details")
+def set_prep_details(req: PrepDetailsIn, db: Session = Depends(get_db)):
+    """SKUの梱包カテゴリーをまとめて設定する。
+
+    未設定だと納品プランが読み取り専用になり、③から先へ進めない。
+    skus を省くと、Amazonに出している生きている商品を全部対象にする。
+    """
+    from app.services import amazon_api
+
+    skus = [s.strip() for s in (req.skus or []) if s and s.strip()]
+    if not skus:
+        skus = [p.sku for p in db.query(Product)
+                .filter(Product.is_active == True).all()
+                if p.sku and ((p.fnsku or "").strip() or (p.asin or "").strip())
+                and not p.is_component]
+    if not skus:
+        raise HTTPException(400, "対象のSKUがありません")
+
+    done, errors = 0, []
+    for i in range(0, len(skus), 20):          # 1回に送れる数に合わせる
+        chunk = skus[i:i + 20]
+        try:
+            amazon_api.set_prep_details(chunk, "A1VC38T7YXB528", req.category)
+            done += len(chunk)
+        except Exception as e:
+            errors.append(f"{chunk[0]}ほか{len(chunk)}件: {e}")
+    return {"ok": not errors, "done": done, "total": len(skus),
+            "errors": errors[:3]}
+
+
 # ---------- 追跡番号をAmazonに入れる ----------
 #
 # 配送依頼が出荷済みになると、タオタロウの sn がそのまま
