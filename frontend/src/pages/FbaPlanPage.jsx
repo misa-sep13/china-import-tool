@@ -238,7 +238,8 @@ export default function FbaPlanPage() {
     )).join('\n')
     if (!confirm(
       `Amazonに納品プランを作成します。\n\n${detail}\n\n` +
-      `計 ${targets.length}SKU / ${sets}セット（${pieces}個）\n\n` +
+      `計 ${targets.length}SKU / ${sets}セットをAmazonに登録します\n` +
+      `（中国から来るバラの数は ${pieces}個）\n\n` +
       `作成後はセラーセントラルで商品ラベルをダウンロードしてください。`
     )) return
 
@@ -1188,7 +1189,9 @@ export default function FbaPlanPage() {
                           {it.fnsku || '—'}
                         </td>
                         <td style={{ padding: '5px 12px', textAlign: 'right', width: 80 }}>
-                          {it.qty}個
+                          {it.units != null && it.set_size > 1
+                            ? `${it.units}セット（${it.qty}個）`
+                            : `${it.qty}個`}
                         </td>
                         <td style={{ padding: '5px 12px', color: '#94a3b8' }}>{it.name}</td>
                       </tr>

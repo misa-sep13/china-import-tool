@@ -314,9 +314,10 @@ def create_inbound_plan_api(req: PlanExportRequest, db: Session = Depends(get_db
             detail="発送元住所を持った納品プランがありません。セラーセントラルで一度納品プランを作ると、その住所を引き継げます",
         )
 
-    # plan_qtyはセット数なのでピース数に直して送る
+    # Amazonの1個＝1セット。商品ラベル（FNSKU）をセットに
+    # 1枚貼って出品しているので、バラの数を送ると水増しする
     items = [
-        {"sku": it.sku, "qty": it.plan_qty * max(1, it.set_size)}
+        {"sku": it.sku, "qty": it.plan_qty}
         for it in req.items
         if it.plan_qty > 0
     ]
@@ -774,8 +775,13 @@ def _packing_from_api(sid: int, db: Session) -> Optional[dict]:
                 # 自社SKUを入れずに発注した古い注文。URLで引く
                 sku = by_url.get(_normalize_1688_url(it["buy_url"]), "")
             p = prods.get(sku)
+            # qtyはバラの数（仕入単位）。Amazonに入れるのは
+            # セット数なので、入数で割った数も持たせる
+            size = max(1, (p.set_size if p else 1) or 1)
             row = {
                 "sku": sku, "qty": it["qty"],
+                "set_size": size,
+                "units": int(it["qty"]) // size,
                 "name": (p.name if p else "") or it["name_cn"],
                 "asin": (p.asin if p else "") or it["asin"],
                 "fnsku": (p.fnsku if p else "") or it["fnsku"],
@@ -907,11 +913,14 @@ def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
                 p = by_offer.get(_offer(url_of.get(gid, "")))
             if p and not asin:
                 asin = p.asin or ""
+            size = max(1, (p.set_size if p else 1) or 1)
             row = {
                 "goods_id": gid,
                 "asin": asin,
                 "name": name_of.get(gid, ""),
                 "qty": int(c["qty"]),
+                "set_size": size,
+                "units": int(c["qty"]) // size,
                 "sku": p.sku if p else "",
                 "fnsku": (p.fnsku or "") if p else "",
             }
@@ -1209,7 +1218,7 @@ def send_packing(req: SendPackingIn, db: Session = Depends(get_db)):
              .filter(Product.is_component == True).all()}
     for b in boxes:
         items = [it for it in (b.get("items") or [])
-                 if it.get("sku") and (it.get("qty") or 0) > 0
+                 if it.get("sku") and (it.get("units", it.get("qty")) or 0) > 0
                  and it["sku"] not in parts]   # 付属品は本体に含まれる
         if not items:
             skipped += 1
@@ -1235,7 +1244,9 @@ def send_packing(req: SendPackingIn, db: Session = Depends(get_db)):
         groups.setdefault(gid, []).append({
             "l": b.get("length_cm"), "w": b.get("width_cm"),
             "h": b.get("height_cm"), "weight_kg": b.get("weight_kg"),
-            "items": [{"sku": it["sku"], "qty": it["qty"]} for it in items],
+            # Amazonの数はセット単位
+            "items": [{"sku": it["sku"],
+                       "qty": it.get("units", it["qty"])} for it in items],
         })
 
     if unknown or split:
