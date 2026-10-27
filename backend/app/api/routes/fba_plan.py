@@ -458,6 +458,22 @@ def confirm_placement(req: ConfirmPlacementIn):
     return {"ok": True, "shipments": shipments}
 
 
+@router.get("/debug/shipments/{plan_id}")
+def debug_shipments(plan_id: str):
+    """納品先を確定したあとの納品をそのまま返す（確かめ用）。"""
+    from app.services import amazon_api
+    out = {"plan_id": plan_id}
+    try:
+        out["shipments"] = amazon_api.list_plan_shipments(plan_id)
+    except Exception as e:
+        out["shipments_error"] = str(e)[:500]
+    try:
+        out["placement"] = amazon_api.list_placement_options(plan_id)
+    except Exception as e:
+        out["placement_error"] = str(e)[:500]
+    return out
+
+
 class PrepDetailsIn(BaseModel):
     skus: list[str] = []
     category: str = "NONE"
