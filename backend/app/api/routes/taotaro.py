@@ -480,14 +480,16 @@ def order_submit(req: SubmitRequest, db: Session = Depends(get_db)):
         }
         if it.remark:
             g["remark"] = it.remark
-        # FBA納品の指定。仕様書（2026-09-28版）に正式に載った項目で、
-        # 文字列の "1" を送る。それまでは備考に「そちらでFBAに変更を」と
-        # 書いてお願いしていた
-        if it.fba and it.asin:
+        # FBA納品の指定。文字列の "1" を送る。
+        # ASIN・FNSKUはこれとは別物で、あれば一緒に送る。
+        # 以前はASINが無いとFBAの印ごと送っていなかったが、まだASINが
+        # 決まっていない新商品もFBAへ送るので、分けて扱う
+        if it.fba:
             g["fba"] = "1"
+        if it.asin:
             g["asin"] = it.asin
-            if it.fnsku:
-                g["fnsku"] = it.fnsku
+        if it.fnsku:
+            g["fnsku"] = it.fnsku
         g.update(taotaro.inspect_options(it.inspect))
         goods_list.append(g)
 

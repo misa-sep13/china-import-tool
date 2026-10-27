@@ -40,12 +40,6 @@ const INSPECT = [
 // そのまま使える品質のものが欲しい、という用途なのでそこまで書く
 const VIDEO_REQ = '動画撮影をお願いします。開封・全体・動作等が分かるもので商品紹介動画として使えるレベルのもの'
 
-// FBA納品は仕様書（2026-09-28版）に正式に載り、APIの fba 項目で指定できる
-// ようになった。こちらは前から送っているが、実際に反映されるかをまだ
-// 確かめていないので、当面は備考でも念を押しておく。
-// 確認できたらこの行と、下の remark への差し込みを外す
-const FBA_NOTE = 'FBA納品で指定しています（APIのfba項目）。反映されていない場合はFBAへの変更をお願いします。'
-
 export default function TaotaroOrderModal({
   items, onClose, onDone,
   // 叩く先。楽天とAmazonで置き場所が違うだけで、中身も画面も同じ
@@ -91,9 +85,12 @@ export default function TaotaroOrderModal({
           fba: !!x.asin,
           // 便が分かれている行は、どちらの便かを備考の先頭に入れる。
           // 入れないと現場でまとめて同じ便に載せられてしまう
+          // FBAの指定はAPIの fba 項目で送り、注文に記録される
+          // （仕様書2026-10-27版で確認）。備考で念を押す必要はなくなった。
+          // 毎回入れていると、本当に伝えたい指示が埋もれる
           remark: [
             x.shipping === 'air' ? '航空便用' : x.shipping === 'sea' ? '船便用' : '',
-            x.note || '', x.asin ? FBA_NOTE : '',
+            x.note || '',
           ].filter(Boolean).join(' / '),
           inspect: x.inspect || {},
           // 「その他」は、タオタロウの画面と同じくチェックを入れてから書く形。
@@ -397,26 +394,18 @@ function Row({ r, i, patch, pickSku }) {
                     {labelText}
                   </label>
                 ))}
-                {/* FBA納品。仕様書（2026-09-28版）に載った fba 項目で送る。
-                    ASINが無い商品には付けられない（送り先が決まらない） */}
+                {/* FBA納品。APIの fba 項目で送る。ASIN・FNSKUは別物で、
+                    あれば一緒に送る（仕様書2026-10-27版で指定できると確認）。
+                    まだASINが決まっていない新商品でもFBAには送るので、
+                    ASINが無くてもチェックできる */}
                 <label style={{ fontSize: 12, display: 'flex',
-                  alignItems: 'center', gap: 4,
-                  color: r.asin ? C.text : C.sub }}
+                  alignItems: 'center', gap: 4 }}
                   title={r.asin
-                    ? 'タオタロウにFBA納品として扱ってもらいます'
-                    : 'ASINが無い商品にはFBA納品を付けられません'}>
+                    ? 'タオタロウにFBA納品として扱ってもらいます（ASIN・FNSKUも送ります）'
+                    : 'タオタロウにFBA納品として扱ってもらいます（ASINはまだ無いので送りません）'}>
                   <input type="checkbox" style={check}
-                    checked={!!r.fba} disabled={!r.asin}
-                    onChange={e => {
-                      const on = e.target.checked
-                      // 備考のお願い文も、チェックに合わせて出し入れする
-                      const rest = (r.remark || '')
-                        .split(' / ').filter(x => x && x !== FBA_NOTE)
-                      patch(i, {
-                        fba: on,
-                        remark: (on ? [...rest, FBA_NOTE] : rest).join(' / '),
-                      })
-                    }} />
+                    checked={!!r.fba}
+                    onChange={e => patch(i, { fba: e.target.checked })} />
                   📦 FBA納品
                 </label>
                 {/* 仕様書に無いので、その他のご要望に定型文を入れて頼む。
