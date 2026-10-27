@@ -17,6 +17,7 @@ from app.core.database import get_db, SessionLocal
 from app.models.product import Product
 from app.models.settings import OrderSettings
 from app.models.order_history import OrderHistory
+from app.models.rakuten_product import RakutenProduct
 from app.services import taotaro
 from app.services.calc import CalcSettings, weighted_daily, growth_mult, calc_sale_extra_days
 
@@ -662,6 +663,88 @@ async def import_taotaro_excel(file: UploadFile = File(...), db: Session = Depen
         os.unlink(tmp.name)
 
 
+def _sku_candidates(db: Session, url: str) -> list:
+    """1688のURLから、同じ商品ページの自社SKUを集める。
+
+    色違いは同じoffer番号を持つので、URLだけでは決められない。
+    候補を並べて画面で選んでもらう。
+    """
+    key = _normalize_1688_url(url)
+    if not key:
+        return []
+    out = []
+    for p in db.query(Product).filter(Product.is_active == True).all():
+        if _normalize_1688_url(p.buy_url or "") == key:
+            out.append({"sku": p.sku, "name": p.name or "",
+                        "spec": p.spec or "", "where": "Amazon"})
+    for r in db.query(RakutenProduct).filter(
+            RakutenProduct.is_active == True).all():
+        if _normalize_1688_url(r.buy_url or "") == key:
+            out.append({"sku": r.sku, "name": r.name or "",
+                        "spec": (r.supplier_spec or ""),
+                        "where": "楽天"})
+    out.sort(key=lambda x: x["sku"])
+    return out
+
+
+class AdoptArrivedItem(BaseModel):
+    taotaro_order_id: str
+    sku: str
+    qty: int = 0
+    name: str = ""
+    color: str = ""
+    size: str = ""
+    buy_url: str = ""
+    price: float = 0
+
+
+class AdoptArrivedIn(BaseModel):
+    items: list[AdoptArrivedItem]
+
+
+@router.post("/adopt-arrived")
+def adopt_arrived(req: AdoptArrivedIn, db: Session = Depends(get_db)):
+    """発注済みリストに無い入庫を、SKUを指定して取り込む。
+
+    タオタロウのサイトで直接発注すると自社SKUが付かず、
+    「入庫済みを取り込む」では更新する行が無い。
+    ここで行を作って「到着済」にする。
+    """
+    made, skipped = 0, []
+    for it in req.items:
+        sku = (it.sku or "").strip()
+        if not sku:
+            continue
+        oid = (it.taotaro_order_id or "").strip()
+        if oid:
+            dup = (db.query(OrderHistory)
+                   .filter(OrderHistory.is_deleted == False)
+                   .filter(OrderHistory.taotaro_order_id == oid).first())
+            if dup:
+                skipped.append(oid)      # 二重で入れない
+                continue
+        p = db.query(Product).filter(Product.sku == sku).first()
+        row = OrderHistory(
+            sku=sku,
+            name=it.name or (p.name if p else ""),
+            color=it.color or "",
+            size=it.size or "",
+            qty=int(it.qty or 0),
+            price=float(it.price or 0),
+            buy_url=it.buy_url or (p.buy_url if p else ""),
+            asin=(p.asin if p else ""),
+            fnsku=(p.fnsku if p else ""),
+            note="タオタロウで直接発注したものを取り込み",
+            status="arrived",
+            arrived_at=datetime.now(timezone.utc),
+            taotaro_order_id=oid or None,
+        )
+        db.add(row)
+        made += 1
+    db.commit()
+    return {"made": made, "skipped": skipped}
+
+
 @router.post("/sync-arrived")
 def sync_arrived(db: Session = Depends(get_db)):
     """タオタロウで入庫済みになった注文を、発注済みリストに反映する。
@@ -719,6 +802,10 @@ def sync_arrived(db: Session = Depends(get_db)):
                     "qty": o.get("quantity") or 0,
                     "buy_url": o.get("url") or "",
                     "taotaro_order_id": str(o.get("oid") or ""),
+                    "price": o.get("price") or 0,
+                    # 同じ商品ページの自社SKU。色違いが同じURLに
+                    # なっていることが多いので、最後は人が選ぶ
+                    "candidates": _sku_candidates(db, o.get("url") or ""),
                 })
                 continue
             hit.status = "arrived"

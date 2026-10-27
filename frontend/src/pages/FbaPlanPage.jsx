@@ -12,6 +12,37 @@ export default function FbaPlanPage() {
   const [tab, setTab] = useState('all')
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
+  // 発注済みリストに無い入庫を、SKUを選んで取り込む。
+  // タオタロウで直接発注すると自社SKUが付かず、
+  // 色違いは1688のURLが同じなので機械的には決められない
+  const [adoptSku, setAdoptSku] = useState({})
+  const [adopting, setAdopting] = useState(false)
+  const [adoptMsg, setAdoptMsg] = useState('')
+
+  const handleAdopt = async () => {
+    const rows = (importResult?.unmatched || [])
+      .map((u, i) => ({ u, sku: adoptSku[i] }))
+      .filter(r => r.sku)
+    if (!rows.length) { setAdoptMsg('SKUを選んでください'); return }
+    setAdopting(true)
+    setAdoptMsg('')
+    try {
+      const { data } = await api.post('/fba-plan/adopt-arrived', {
+        items: rows.map(r => ({
+          taotaro_order_id: r.u.taotaro_order_id, sku: r.sku,
+          qty: r.u.qty, name: r.u.name_cn, color: r.u.color,
+          size: r.u.size, buy_url: r.u.buy_url, price: r.u.price || 0,
+        })),
+      })
+      setAdoptMsg(`${data.made}件を到着済として取り込みました`
+        + (data.skipped?.length ? `（${data.skipped.length}件は取り込み済み）` : ''))
+      setAdoptSku({})
+      fetchOrders()
+    } catch (e) {
+      setAdoptMsg(e.response?.data?.detail || '取り込めませんでした')
+    }
+    setAdopting(false)
+  }
 
   // FBA plan state
   const [planStatus, setPlanStatus] = useState('idle')
@@ -1263,7 +1294,8 @@ export default function FbaPlanPage() {
           ：タオタロウの倉庫には届いているのに、このツールの発注済みリストに
           同じ1688のURLの行が見つからなかったものです。
           タオタロウで直接発注したものが、たいていここに出ます。
-          <b>見るだけの一覧</b>で、ここから配送依頼は作れません。
+          SKUを選んで<b>取り込む</b>と、発注済みリストに「到着済」で入ります。
+          色違いは1688のURLが同じなので、どの色かは機械的には決められません。
           配送依頼は<b>発注管理 →「配送依頼を出す」</b>で出します。
         </div>
         {true && (
@@ -1279,6 +1311,7 @@ export default function FbaPlanPage() {
                     <th style={thStyle}>商品名</th>
                     <th style={thStyle}>色/サイズ</th>
                     <th style={thStyle}>数量</th>
+                    <th style={thStyle}>取り込むSKU</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1290,10 +1323,31 @@ export default function FbaPlanPage() {
                       </td>
                       <td style={tdStyle}>{[u.color, u.size].filter(Boolean).join(' / ')}</td>
                       <td style={{ ...tdStyle, textAlign: 'right' }}>{u.qty}</td>
+                      <td style={tdStyle}>
+                        {u.candidates?.length ? (
+                          <select value={adoptSku[i] || ''} style={{ fontSize: 12 }}
+                            onChange={e => setAdoptSku({ ...adoptSku, [i]: e.target.value })}>
+                            <option value="">—</option>
+                            {u.candidates.map(c => (
+                              <option key={c.sku} value={c.sku}>
+                                {c.sku}{c.spec ? ` / ${c.spec}` : ''}（{c.where}）
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span style={{ color: '#94a3b8' }}>マスタに同じURLが無し</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <button className="btn btn-primary" onClick={handleAdopt} disabled={adopting}>
+                {adopting ? '取り込んでいます…' : '選んだぶんを取り込む'}
+              </button>
+              {adoptMsg && <span style={{ fontSize: 12, color: '#166534' }}>{adoptMsg}</span>}
             </div>
           </details>
         )}
