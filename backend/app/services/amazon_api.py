@@ -771,7 +771,8 @@ def fetch_default_source_address() -> Optional[dict]:
     return None
 
 
-def fetch_prep_owners(mskus: List[str], marketplace: str) -> dict:
+def fetch_prep_owners(mskus: List[str], marketplace: str,
+                      errors: Optional[list] = None) -> dict:
     """SKUごとに、準備作業とラベルの担当を誰にできるかを調べる。
 
     商品によっては「準備は要らない（NONE）」と決まっていて、そこへ
@@ -793,9 +794,11 @@ def fetch_prep_owners(mskus: List[str], marketplace: str) -> dict:
                 + urllib.parse.urlencode({"marketplaceId": marketplace,
                                           "mskus": ",".join(chunk)})
             )
-        except Exception:
-            # 調べられなければ既定（SELLER）のまま。作成でエラーになれば
-            # その理由が画面に出る
+        except Exception as e:
+            # 調べられなければ既定（SELLER）のまま。ただし理由は
+            # 覚えておいて、作成が失敗したときに一緒に出す
+            if errors is not None:
+                errors.append(str(e))
             continue
         for d in data.get("mskuPrepDetails") or []:
             msku = d.get("msku") or ""
@@ -823,7 +826,8 @@ def create_inbound_plan(items: List[dict], source_address: dict, name: str = "")
             if it.get("sku") and int(it.get("qty") or 0) > 0]
     # 商品ラベルの貼付・準備はこちら（出品者）で行うが、
     # 準備が要らないと決まっている商品は NONE しか受け付けない
-    owners = fetch_prep_owners([it["sku"] for it in rows], mp)
+    prep_errors: list = []
+    owners = fetch_prep_owners([it["sku"] for it in rows], mp, prep_errors)
     payload_items = []
     for it in rows:
         o = owners.get(it["sku"]) or {}
@@ -844,7 +848,14 @@ def create_inbound_plan(items: List[dict], source_address: dict, name: str = "")
     if name:
         body["name"] = name
 
-    data = _post_sp_api("/inbound/fba/2024-03-20/inboundPlans", body)
+    try:
+        data = _post_sp_api("/inbound/fba/2024-03-20/inboundPlans", body)
+    except Exception as e:
+        if prep_errors:
+            raise Exception(
+                f"{e} ｜ 準備作業の確認ができませんでした: "
+                f"{prep_errors[0][:300]}")
+        raise
     return {
         "inbound_plan_id": data.get("inboundPlanId") or "",
         "operation_id": data.get("operationId") or "",
