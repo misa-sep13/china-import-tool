@@ -1126,3 +1126,93 @@ def tools_freight(payload: dict) -> dict:
     理由つきで入る（送れないルートの値段は出さない）。
     """
     return _request("/api/v1/tools/freight", body=payload, method="POST")
+
+
+def _box_ref_parts(ref, total: int) -> list:
+    """box_ref を [(箱番号, 数量), ...] にほどく。
+
+    1箱に収まるときは箱番号だけ（"11"）、分かれるときは
+    「箱/数#箱/数」（"1/80#11/20"）で入ってくる。
+    """
+    s = str(ref or "").strip()
+    if not s:
+        return []
+    out = []
+    for part in s.split("#"):
+        part = part.strip()
+        if not part:
+            continue
+        if "/" in part:
+            no, _, qty = part.partition("/")
+            try:
+                out.append((int(no), int(qty)))
+            except ValueError:
+                continue
+        else:
+            try:
+                out.append((int(part), int(total)))
+            except ValueError:
+                continue
+    return out
+
+
+def send_order_boxes(sid: int) -> dict:
+    """配送依頼の箱と、その中身を返す。
+
+    インボイスができると箱ごとの情報が入る（2026-10-27版）。
+    これが取れればインボイスのExcelを読む必要がない。
+    """
+    x = get_send_order(sid, raw=True)
+    boxes = {}
+    for b in (x.get("boxes") or []):
+        try:
+            no = int(b.get("box_no"))
+        except (TypeError, ValueError):
+            continue
+        boxes[no] = {
+            "box_no": no,
+            "express_no": b.get("express_no"),
+            "length_cm": b.get("length_cm"),
+            "width_cm": b.get("width_cm"),
+            "height_cm": b.get("height_cm"),
+            "weight_kg": b.get("weight_kg"),
+            "items": [],
+        }
+
+    unknown = []
+    for o in (x.get("orders") or []):
+        qty = int(o.get("goods_num") or 0)
+        parts = _box_ref_parts(o.get("box_ref"), qty)
+        if not parts:
+            unknown.append({"oid": o.get("oid"), "out_id": o.get("out_id") or "",
+                            "name_cn": o.get("goods_name") or "", "qty": qty})
+            continue
+        for no, n in parts:
+            box = boxes.get(no)
+            if box is None:
+                # 箱の一覧に無い番号。倉庫の書き間違いもあるので拾っておく
+                box = boxes.setdefault(no, {
+                    "box_no": no, "express_no": None, "length_cm": None,
+                    "width_cm": None, "height_cm": None, "weight_kg": None,
+                    "items": [],
+                })
+            box["items"].append({
+                "oid": o.get("oid"),
+                "sku": str(o.get("out_id") or "").strip(),
+                "buy_url": (o.get("goods_url") or "").strip(),
+                "name_cn": o.get("goods_name") or "",
+                "asin": (o.get("asin") or "").strip(),
+                "fnsku": (o.get("fnsku") or "").strip(),
+                "qty": n,
+            })
+
+    return {
+        "sid": x.get("sid"),
+        "sn": x.get("sn"),
+        "state": x.get("state"),
+        "boxes_ready": bool(x.get("boxes_ready")),
+        "box_count": x.get("box_count"),
+        "boxes": [boxes[k] for k in sorted(boxes)],
+        # 箱が決まっていない注文。インボイス作成前はここに全部入る
+        "unassigned": unknown,
+    }

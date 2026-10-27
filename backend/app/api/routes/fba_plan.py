@@ -652,6 +652,74 @@ def sync_arrived(db: Session = Depends(get_db)):
 
 
 @router.get("/packing/{sid:int}")
+def packing(sid: int, source: str = "auto", db: Session = Depends(get_db)):
+    """箱ごとの中身を返す。APIで取れるならAPIから、だめならインボイスから。
+
+    2026-10-27版から、インボイスができると配送依頼APIに箱の情報が入る
+    （箱の3辺・重量・どの箱に何が何個）。Excelを読むより確実で速い。
+    取れないとき（古い便など）はインボイスから読む。
+    """
+    if source != "invoice":
+        try:
+            out = _packing_from_api(sid, db)
+            if out:
+                return out
+        except Exception as e:
+            logger.warning(f"[packing] APIから取れず、インボイスに切り替え: {e}")
+    return packing_from_invoice(sid, db)
+
+
+def _packing_from_api(sid: int, db: Session) -> Optional[dict]:
+    """配送依頼APIの箱の情報から、箱ごとの中身を組み立てる。"""
+    d = taotaro.send_order_boxes(sid)
+    if not d.get("boxes_ready") or not d.get("boxes"):
+        return None
+
+    prods = {p.sku: p for p in
+             db.query(Product).filter(Product.is_active == True).all()}
+    by_url = {}
+    for oh in db.query(OrderHistory).filter(
+            OrderHistory.is_deleted == False).all():
+        key = _normalize_1688_url(oh.buy_url or "")
+        if key and oh.sku:
+            by_url.setdefault(key, oh.sku)
+
+    out_boxes, unknown = [], []
+    for b in d["boxes"]:
+        rows = []
+        for it in b["items"]:
+            sku = it["sku"]
+            if sku not in prods:
+                # 自社SKUを入れずに発注した古い注文。URLで引く
+                sku = by_url.get(_normalize_1688_url(it["buy_url"]), "")
+            p = prods.get(sku)
+            row = {
+                "sku": sku, "qty": it["qty"],
+                "name": (p.name if p else "") or it["name_cn"],
+                "asin": (p.asin if p else "") or it["asin"],
+                "fnsku": (p.fnsku if p else "") or it["fnsku"],
+            }
+            if not p:
+                unknown.append(row)
+            rows.append(row)
+        out_boxes.append({
+            "box_no": b["box_no"],
+            "length_cm": b["length_cm"], "width_cm": b["width_cm"],
+            "height_cm": b["height_cm"], "weight_kg": b["weight_kg"],
+            "items": rows,
+        })
+
+    return {
+        "sid": d["sid"],
+        "box_count": len(out_boxes),
+        "boxes": out_boxes,
+        "unknown_count": len(unknown),
+        "source": "api",
+        # 箱が決まっていない注文。あるとAmazonに入れる数が足りなくなる
+        "unassigned": d.get("unassigned") or [],
+    }
+
+
 def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
     """便のインボイスから、箱ごとの中身を読んで返す。
 
@@ -1020,7 +1088,7 @@ def send_packing(req: SendPackingIn, db: Session = Depends(get_db)):
     """インボイスの箱情報を、そのまま納品プランへ登録する。"""
     from app.services import amazon_api
 
-    packed = packing_from_invoice(req.sid, db)
+    packed = packing(req.sid, "auto", db)
     boxes = packed.get("boxes") or []
     if not boxes:
         raise HTTPException(400, "インボイスから箱が読めませんでした")
