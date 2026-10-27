@@ -928,13 +928,15 @@ export default function FbaPlanPage() {
                   </div>
 
                   <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 12 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                      <b style={{ fontSize: 14 }}>③-2 納品先を決める</b>
-                      <span style={{ fontSize: 12, color: '#64748b' }}>
-                        どのFCに、いくつの納品に分けて送るか
-                      </span>
-                      <button className="btn" onClick={loadPlacement} disabled={loadingPlace}
-                        style={{ marginLeft: 'auto' }}>
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <b style={{ fontSize: 14 }}>③-2 納品先を決める</b>
+                        <span style={{ fontSize: 12, color: '#64748b' }}>
+                          どのFCに、いくつの納品に分けて送るか
+                        </span>
+                      </div>
+                      <button className="btn btn-primary" onClick={loadPlacement}
+                        disabled={loadingPlace} style={{ marginTop: 8 }}>
                         {loadingPlace ? '処理中…' : '候補を出す'}
                       </button>
                     </div>
