@@ -23,3 +23,5 @@ python-amazon-sp-api==2.1.23
 psycopg2-binary==2.9.13
 beautifulsoup4==4.15.0
 google-auth==2.58.1
+# 商品ラベル（FNSKUのバーコード）のPDF。日本語はHeiseiKakuGo-W5が同梱されている
+reportlab==4.4.4

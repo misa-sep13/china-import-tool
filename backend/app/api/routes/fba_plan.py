@@ -17,6 +17,7 @@ from app.core.database import get_db, SessionLocal
 from app.models.product import Product
 from app.models.settings import OrderSettings
 from app.models.order_history import OrderHistory
+from app.models.rakuten_product import RakutenProduct
 from app.services import taotaro
 from app.services.calc import CalcSettings, weighted_daily, growth_mult, calc_sale_extra_days
 
@@ -48,6 +49,7 @@ def _build_settings(row: Optional[OrderSettings]):
             "free_storage_days": 90,
             "air_threshold_days": 18,
             "hold_daily_threshold": 0.1,
+            "fba_target_days": 0,
         }
     return {
         "lt_order_to_warehouse": getattr(row, "lt_order_to_warehouse", 7) or 7,
@@ -57,6 +59,7 @@ def _build_settings(row: Optional[OrderSettings]):
         "free_storage_days": getattr(row, "free_storage_days", 90) or 90,
         "air_threshold_days": getattr(row, "air_threshold_days", 18) or 18,
         "hold_daily_threshold": getattr(row, "hold_daily_threshold", 0.1) or 0.1,
+        "fba_target_days": getattr(row, "fba_target_days", 0) or 0,
     }
 
 
@@ -82,13 +85,18 @@ def _build_calc_settings(row: Optional[OrderSettings]) -> CalcSettings:
     )
 
 
-def _run_plan_job(job_id: str):
+def _run_plan_job(job_id: str, only_skus: Optional[list] = None):
     with _jobs_lock:
         _jobs[job_id] = {"status": "running", "result": None, "error": None, "started_at": time.time()}
 
     db = SessionLocal()
     try:
         products = db.query(Product).filter(Product.is_active == True).all()
+        if only_skus:
+            # 便の商品だけに絞る。売上はASIN1件ずつ取りに行くので、
+            # 76件ぶん待たされていたのが十数件で済む
+            keep = set(only_skus)
+            products = [p for p in products if p.sku in keep]
         if not products:
             with _jobs_lock:
                 _jobs[job_id]["status"] = "done"
@@ -126,7 +134,11 @@ def _run_plan_job(job_id: str):
         lt_air_total = plan_settings["lt_order_to_warehouse"] + plan_settings["lt_shipping_request"] + plan_settings["lt_air_to_fba"]
         air_threshold = plan_settings["air_threshold_days"]
         hold_threshold = plan_settings["hold_daily_threshold"]
-        target_stock_days = free_days - plan_settings["lt_order_to_warehouse"]
+        # 既定は無料保管日数から出すが、船便の間隔に合わせて
+        # 決め直したいことがあるので、設定があればそちらを使う
+        target_stock_days = ((plan_settings.get("fba_target_days") or 0)
+                             or (free_days
+                                 - plan_settings["lt_order_to_warehouse"]))
         sale_extra = calc_sale_extra_days(cs)
 
         result = []
@@ -153,7 +165,14 @@ def _run_plan_job(job_id: str):
             pipeline_days = int(pipeline_stock / daily) if daily > 0 else 9999
 
             # 配送方法判定
-            if daily < hold_threshold:
+            #
+            # 「日販が少ない→保留」は売れている商品の話。
+            # 新商品はまだ売っていないので日販0だが、
+            # これから売るために仕入れたものなので止めてはいけない。
+            # FBA在庫も実績も無い＝初回納品とみて、保留から外す
+            # （15件すべてが保留になり、合計出荷数が0個になっていた）
+            is_new = (available == 0 and (s90 or 0) == 0)
+            if daily < hold_threshold and not is_new:
                 ship_method = "hold"
             elif pipeline_days <= air_threshold:
                 ship_method = "air"
@@ -225,13 +244,18 @@ def _run_plan_job(job_id: str):
 
 
 @router.post("/start")
-def start_plan(background_tasks: BackgroundTasks, force: bool = False):
+def start_plan(background_tasks: BackgroundTasks, force: bool = False,
+               skus: str = ""):
+    """skus を渡すと、その商品だけ在庫と売上を取りに行く（便で絞ったとき）。"""
     _prune_jobs()
     if force:
         from app.services.amazon_api import _cache
-        _cache.clear()
+        # 在庫は消す。売上はASINごとに持っていて、消すと取り直しに
+        # 何分もかかるので残す
+        _cache.pop("inventory", None)
     job_id = str(uuid.uuid4())
-    background_tasks.add_task(_run_plan_job, job_id)
+    only = [x for x in (skus or "").split(",") if x.strip()]
+    background_tasks.add_task(_run_plan_job, job_id, only)
     return {"job_id": job_id}
 
 
@@ -278,21 +302,46 @@ def create_inbound_plan_api(req: PlanExportRequest, db: Session = Depends(get_db
         create_inbound_plan, fetch_default_source_address,
     )
 
-    source = fetch_default_source_address()
+    try:
+        source = fetch_default_source_address()
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"発送元住所を読めませんでした（{e}）",
+        )
     if not source:
         raise HTTPException(
             status_code=400,
-            detail="発送元住所を取得できませんでした。セラーセントラルで一度納品プランを作ると、その住所を引き継げます",
+            detail="発送元住所を持った納品プランがありません。セラーセントラルで一度納品プランを作ると、その住所を引き継げます",
         )
 
-    # plan_qtyはセット数なのでピース数に直して送る
+    # Amazonの1個＝1セット。商品ラベル（FNSKU）をセットに
+    # 1枚貼って出品しているので、バラの数を送ると水増しする
     items = [
-        {"sku": it.sku, "qty": it.plan_qty * max(1, it.set_size)}
+        {"sku": it.sku, "qty": it.plan_qty}
         for it in req.items
         if it.plan_qty > 0
     ]
     if not items:
         raise HTTPException(status_code=400, detail="納品数が1以上の商品がありません")
+
+    # 梱包カテゴリーが未設定の商品があると、できたプランが
+    # 読み取り専用になって先へ進めない。新商品を出すたび
+    # 手で入れていたが、忘れるとここで詰まるので自動で入れる。
+    # 勝手に決めるのは未設定のものだけ。入れたSKUは必ず画面に出す
+    prep_set = []
+    try:
+        from app.services import amazon_api as _amz
+        mp = "A1VC38T7YXB528"
+        known = _amz.fetch_prep_owners([it["sku"] for it in items], mp)
+        prep_set = [it["sku"] for it in items
+                    if (known.get(it["sku"]) or {}).get("category", "")
+                    in ("", "UNKNOWN", "NONE_REQUIRED_UNKNOWN")]
+        if prep_set:
+            _amz.set_prep_details(prep_set, mp, "NONE")
+    except Exception as e:
+        logger.warning(f"[create-inbound-plan] 梱包設定を入れられず: {e}")
+        prep_set = []
 
     try:
         result = create_inbound_plan(
@@ -309,8 +358,12 @@ def create_inbound_plan_api(req: PlanExportRequest, db: Session = Depends(get_db
         "operation_id": result["operation_id"],
         "total_pieces": sum(i["qty"] for i in items),
         "sku_count": len(items),
-        # セラーセントラルの納品管理画面（ここで商品ラベルをDLする）
-        "seller_central_url": "https://sellercentral.amazon.co.jp/fba/sendtoamazon",
+        # 自動で「梱包不要」を入れたSKU。繊維製品などで
+        # 困るものがあれば、ここで気づいて直せるように出す
+        "prep_set": prep_set,
+        # 「納品を管理」。作業台のトップを開くと過去のSKUが全部並んで
+        # この納品がどれか分からないので、納品の一覧を指す
+        "seller_central_url": "https://sellercentral.amazon.co.jp/manage/shipments",
     }
 
 
@@ -329,6 +382,206 @@ def get_inbound_operation(operation_id: str):
         "status": d.get("operationStatus") or "",
         "errors": d.get("operationProblems") or [],
     }
+
+
+# ---------- 納品先を決める（placement） ----------
+#
+# Amazonの新しい流れでは、納品プランを作ったあとすぐに
+# 「どのFCに、いくつの納品に分けて送るか」を決める。
+# これを確定しないと納品（FBA番号）ができず、セラセンにも
+# 出てこないし、箱の中身も入れられない。
+
+def _fee_total(option: dict) -> tuple:
+    total, cur = 0.0, ""
+    for f in option.get("fees") or []:
+        v = f.get("value") or {}
+        try:
+            total += float(v.get("amount") or 0)
+        except Exception:
+            pass
+        cur = v.get("code") or cur
+    return round(total, 2), cur
+
+
+@router.get("/placement/{plan_id}")
+def placement_options(plan_id: str):
+    """納品先の候補を出す。安い順に並べる。"""
+    from app.services import amazon_api
+    try:
+        options = amazon_api.list_placement_options(plan_id)
+    except Exception as e:
+        raise HTTPException(400, f"納品先の候補が取れませんでした（{e}）")
+
+    out = []
+    for o in options:
+        fee, cur = _fee_total(o)
+        out.append({
+            "placement_option_id": o.get("placementOptionId") or "",
+            "shipment_ids": o.get("shipmentIds") or [],
+            "shipment_count": len(o.get("shipmentIds") or []),
+            "fee": fee,
+            "currency": cur,
+            "status": o.get("status") or "",
+            "expires_at": o.get("expiration") or "",
+        })
+    out.sort(key=lambda x: (x["fee"], x["shipment_count"]))
+    return {"plan_id": plan_id, "options": out}
+
+
+class ConfirmPlacementIn(BaseModel):
+    plan_id: str
+    placement_option_id: str
+
+
+@router.post("/placement/confirm")
+def confirm_placement(req: ConfirmPlacementIn):
+    """納品先を確定して、できた納品を返す。"""
+    from app.services import amazon_api
+    try:
+        amazon_api.confirm_placement_option(
+            req.plan_id, req.placement_option_id)
+    except Exception as e:
+        raise HTTPException(400, f"納品先を確定できませんでした（{e}）")
+
+    shipments = []
+    try:
+        for sh in amazon_api.list_plan_shipments(req.plan_id):
+            shipments.append({
+                "shipment_id": sh.get("shipmentId") or "",
+                # FBAで始まる番号。セラセンで探すときはこれ
+                "confirmation_id": sh.get("shipmentConfirmationId") or "",
+                "destination": ((sh.get("destination") or {})
+                                .get("warehouseId") or ""),
+                "name": sh.get("name") or "",
+            })
+    except Exception:
+        pass
+    return {"ok": True, "shipments": shipments}
+
+
+@router.get("/debug/shipments/{plan_id}")
+def debug_shipments(plan_id: str):
+    """納品先を確定したあとの納品をそのまま返す（確かめ用）。"""
+    from app.services import amazon_api
+    out = {"plan_id": plan_id}
+    try:
+        out["shipments"] = amazon_api.list_plan_shipments(plan_id)
+    except Exception as e:
+        out["shipments_error"] = str(e)[:500]
+    try:
+        out["placement"] = amazon_api.list_placement_options(plan_id)
+    except Exception as e:
+        out["placement_error"] = str(e)[:500]
+    return out
+
+
+class PrepDetailsIn(BaseModel):
+    skus: list[str] = []
+    category: str = "NONE"
+
+
+@router.post("/prep-details")
+def set_prep_details(req: PrepDetailsIn, db: Session = Depends(get_db)):
+    """SKUの梱包カテゴリーをまとめて設定する。
+
+    未設定だと納品プランが読み取り専用になり、③から先へ進めない。
+    skus を省くと、Amazonに出している生きている商品を全部対象にする。
+    """
+    from app.services import amazon_api
+
+    skus = [s.strip() for s in (req.skus or []) if s and s.strip()]
+    if not skus:
+        skus = [p.sku for p in db.query(Product)
+                .filter(Product.is_active == True).all()
+                if p.sku and ((p.fnsku or "").strip() or (p.asin or "").strip())
+                and not p.is_component]
+    if not skus:
+        raise HTTPException(400, "対象のSKUがありません")
+
+    done, errors = 0, []
+    for i in range(0, len(skus), 20):          # 1回に送れる数に合わせる
+        chunk = skus[i:i + 20]
+        try:
+            amazon_api.set_prep_details(chunk, "A1VC38T7YXB528", req.category)
+            done += len(chunk)
+        except Exception as e:
+            errors.append(f"{chunk[0]}ほか{len(chunk)}件: {e}")
+    return {"ok": not errors, "done": done, "total": len(skus),
+            "errors": errors[:3]}
+
+
+# ---------- 追跡番号をAmazonに入れる ----------
+#
+# 配送依頼が出荷済みになると、タオタロウの sn がそのまま
+# 追跡番号になる。業者に毎回聞かなくても、APIから取れる。
+# 番号は便ごとに1つ。Amazonは箱ごとに欲しがるので、
+# 全部の箱に同じ番号を入れる（1便でまとめて送っているため）。
+
+@router.get("/tracking/{sid:int}")
+def tracking_info(sid: int):
+    """配送依頼の追跡番号と業者を返す。"""
+    try:
+        d = taotaro.get_send_order(sid)
+    except Exception as e:
+        raise HTTPException(400, f"配送依頼が読めませんでした（{e}）")
+    return {
+        "sid": sid,
+        "tracking_id": d.get("sn") or "",
+        "carrier": d.get("delivery_name") or "",
+        "tracking_url": d.get("tracking_url") or "",
+        "state": d.get("state"),
+        "state_label": d.get("state_label") or "",
+        "shipped": d.get("state") in (2, 3),
+    }
+
+
+class TrackingIn(BaseModel):
+    sid: int
+    shipment_confirmation_id: str
+    tracking_id: str = ""
+
+
+@router.post("/tracking")
+def send_tracking(req: TrackingIn):
+    """配送依頼の追跡番号を、FBA納品の全部の箱に入れる。"""
+    from app.services import amazon_api
+
+    num = (req.tracking_id or "").strip()
+    if not num:
+        try:
+            num = (taotaro.get_send_order(req.sid).get("sn") or "").strip()
+        except Exception as e:
+            raise HTTPException(400, f"配送依頼が読めませんでした（{e}）")
+    if not num:
+        raise HTTPException(400, "追跡番号がまだありません（出荷前です）")
+
+    try:
+        found = amazon_api.find_shipment(req.shipment_confirmation_id)
+    except Exception as e:
+        raise HTTPException(400, f"納品を探せませんでした（{e}）")
+    if not found:
+        raise HTTPException(
+            400, f"{req.shipment_confirmation_id} の納品が見つかりません")
+
+    try:
+        boxes = amazon_api.list_shipment_boxes(
+            found["inbound_plan_id"], found["shipment_id"])
+    except Exception as e:
+        raise HTTPException(400, f"箱が読めませんでした（{e}）")
+    items = [{"boxId": b.get("boxId"), "trackingId": num}
+             for b in boxes if b.get("boxId")]
+    if not items:
+        raise HTTPException(400, "箱が1つもありませんでした")
+
+    try:
+        amazon_api.set_shipment_tracking(
+            found["inbound_plan_id"], found["shipment_id"], items)
+    except Exception as e:
+        raise HTTPException(400, f"追跡番号を入れられませんでした（{e}）")
+
+    return {"ok": True, "tracking_id": num, "boxes": len(items),
+            "shipment": req.shipment_confirmation_id,
+            "destination": found.get("destination") or ""}
 
 
 @router.post("/export-excel")
@@ -557,6 +810,88 @@ async def import_taotaro_excel(file: UploadFile = File(...), db: Session = Depen
         os.unlink(tmp.name)
 
 
+def _sku_candidates(db: Session, url: str) -> list:
+    """1688のURLから、同じ商品ページの自社SKUを集める。
+
+    色違いは同じoffer番号を持つので、URLだけでは決められない。
+    候補を並べて画面で選んでもらう。
+    """
+    key = _normalize_1688_url(url)
+    if not key:
+        return []
+    out = []
+    for p in db.query(Product).filter(Product.is_active == True).all():
+        if _normalize_1688_url(p.buy_url or "") == key:
+            out.append({"sku": p.sku, "name": p.name or "",
+                        "spec": p.spec or "", "where": "Amazon"})
+    for r in db.query(RakutenProduct).filter(
+            RakutenProduct.is_active == True).all():
+        if _normalize_1688_url(r.buy_url or "") == key:
+            out.append({"sku": r.sku, "name": r.name or "",
+                        "spec": (r.supplier_spec or ""),
+                        "where": "楽天"})
+    out.sort(key=lambda x: x["sku"])
+    return out
+
+
+class AdoptArrivedItem(BaseModel):
+    taotaro_order_id: str
+    sku: str
+    qty: int = 0
+    name: str = ""
+    color: str = ""
+    size: str = ""
+    buy_url: str = ""
+    price: float = 0
+
+
+class AdoptArrivedIn(BaseModel):
+    items: list[AdoptArrivedItem]
+
+
+@router.post("/adopt-arrived")
+def adopt_arrived(req: AdoptArrivedIn, db: Session = Depends(get_db)):
+    """発注済みリストに無い入庫を、SKUを指定して取り込む。
+
+    タオタロウのサイトで直接発注すると自社SKUが付かず、
+    「入庫済みを取り込む」では更新する行が無い。
+    ここで行を作って「到着済」にする。
+    """
+    made, skipped = 0, []
+    for it in req.items:
+        sku = (it.sku or "").strip()
+        if not sku:
+            continue
+        oid = (it.taotaro_order_id or "").strip()
+        if oid:
+            dup = (db.query(OrderHistory)
+                   .filter(OrderHistory.is_deleted == False)
+                   .filter(OrderHistory.taotaro_order_id == oid).first())
+            if dup:
+                skipped.append(oid)      # 二重で入れない
+                continue
+        p = db.query(Product).filter(Product.sku == sku).first()
+        row = OrderHistory(
+            sku=sku,
+            name=it.name or (p.name if p else ""),
+            color=it.color or "",
+            size=it.size or "",
+            qty=int(it.qty or 0),
+            price=float(it.price or 0),
+            buy_url=it.buy_url or (p.buy_url if p else ""),
+            asin=(p.asin if p else ""),
+            fnsku=(p.fnsku if p else ""),
+            note="タオタロウで直接発注したものを取り込み",
+            status="arrived",
+            arrived_at=datetime.now(timezone.utc),
+            taotaro_order_id=oid or None,
+        )
+        db.add(row)
+        made += 1
+    db.commit()
+    return {"made": made, "skipped": skipped}
+
+
 @router.post("/sync-arrived")
 def sync_arrived(db: Session = Depends(get_db)):
     """タオタロウで入庫済みになった注文を、発注済みリストに反映する。
@@ -580,6 +915,7 @@ def sync_arrived(db: Session = Depends(get_db)):
             by_url.setdefault(key, []).append(oh)
 
     matched = 0
+    already = 0
     unmatched = []
     seen = 0
     for page in range(1, 6):
@@ -599,6 +935,11 @@ def sync_arrived(db: Session = Depends(get_db)):
                 if oh.status != "arrived":
                     hit = oh
                     break
+            if not hit and by_url.get(key):
+                # URLでは見つかったが、もう全部「到着済」になっている。
+                # 「発注済みリストに見当たらず」と出すと誤解を招く
+                already += 1
+                continue
             if not hit:
                 unmatched.append({
                     "name_cn": o.get("title") or "",
@@ -608,6 +949,10 @@ def sync_arrived(db: Session = Depends(get_db)):
                     "qty": o.get("quantity") or 0,
                     "buy_url": o.get("url") or "",
                     "taotaro_order_id": str(o.get("oid") or ""),
+                    "price": o.get("price") or 0,
+                    # 同じ商品ページの自社SKU。色違いが同じURLに
+                    # なっていることが多いので、最後は人が選ぶ
+                    "candidates": _sku_candidates(db, o.get("url") or ""),
                 })
                 continue
             hit.status = "arrived"
@@ -618,10 +963,84 @@ def sync_arrived(db: Session = Depends(get_db)):
             break
 
     db.commit()
-    return {"matched": matched, "total_excel_rows": seen, "unmatched": unmatched}
+    return {"matched": matched, "already": already,
+            "total_excel_rows": seen, "unmatched": unmatched}
 
 
 @router.get("/packing/{sid:int}")
+def packing(sid: int, source: str = "auto", db: Session = Depends(get_db)):
+    """箱ごとの中身を返す。APIで取れるならAPIから、だめならインボイスから。
+
+    2026-10-27版から、インボイスができると配送依頼APIに箱の情報が入る
+    （箱の3辺・重量・どの箱に何が何個）。Excelを読むより確実で速い。
+    取れないとき（古い便など）はインボイスから読む。
+    """
+    if source != "invoice":
+        try:
+            out = _packing_from_api(sid, db)
+            if out:
+                return out
+        except Exception as e:
+            logger.warning(f"[packing] APIから取れず、インボイスに切り替え: {e}")
+    return packing_from_invoice(sid, db)
+
+
+def _packing_from_api(sid: int, db: Session) -> Optional[dict]:
+    """配送依頼APIの箱の情報から、箱ごとの中身を組み立てる。"""
+    d = taotaro.send_order_boxes(sid)
+    if not d.get("boxes_ready") or not d.get("boxes"):
+        return None
+
+    prods = {p.sku: p for p in
+             db.query(Product).filter(Product.is_active == True).all()}
+    by_url = {}
+    for oh in db.query(OrderHistory).filter(
+            OrderHistory.is_deleted == False).all():
+        key = _normalize_1688_url(oh.buy_url or "")
+        if key and oh.sku:
+            by_url.setdefault(key, oh.sku)
+
+    out_boxes, unknown = [], []
+    for b in d["boxes"]:
+        rows = []
+        for it in b["items"]:
+            sku = it["sku"]
+            if sku not in prods:
+                # 自社SKUを入れずに発注した古い注文。URLで引く
+                sku = by_url.get(_normalize_1688_url(it["buy_url"]), "")
+            p = prods.get(sku)
+            # qtyはバラの数（仕入単位）。Amazonに入れるのは
+            # セット数なので、入数で割った数も持たせる
+            size = max(1, (p.set_size if p else 1) or 1)
+            row = {
+                "sku": sku, "qty": it["qty"],
+                "set_size": size,
+                "units": int(it["qty"]) // size,
+                "name": (p.name if p else "") or it["name_cn"],
+                "asin": (p.asin if p else "") or it["asin"],
+                "fnsku": (p.fnsku if p else "") or it["fnsku"],
+            }
+            if not p:
+                unknown.append(row)
+            rows.append(row)
+        out_boxes.append({
+            "box_no": b["box_no"],
+            "length_cm": b["length_cm"], "width_cm": b["width_cm"],
+            "height_cm": b["height_cm"], "weight_kg": b["weight_kg"],
+            "items": rows,
+        })
+
+    return {
+        "sid": d["sid"],
+        "box_count": len(out_boxes),
+        "boxes": out_boxes,
+        "unknown_count": len(unknown),
+        "source": "api",
+        # 箱が決まっていない注文。あるとAmazonに入れる数が足りなくなる
+        "unassigned": d.get("unassigned") or [],
+    }
+
+
 def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
     """便のインボイスから、箱ごとの中身を読んで返す。
 
@@ -702,7 +1121,8 @@ def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
         m = re.search(r"offer/(\d+)", str(u or ""))
         return m.group(1) if m else ""
 
-    prods = db.query(Product).all()
+    # 削除済みの行も残っているので、生きているものだけで突き合わせる
+    prods = db.query(Product).filter(Product.is_active == True).all()
     by_asin, by_offer = {}, {}
     for p in prods:
         if p.asin:
@@ -727,11 +1147,14 @@ def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
                 p = by_offer.get(_offer(url_of.get(gid, "")))
             if p and not asin:
                 asin = p.asin or ""
+            size = max(1, (p.set_size if p else 1) or 1)
             row = {
                 "goods_id": gid,
                 "asin": asin,
                 "name": name_of.get(gid, ""),
                 "qty": int(c["qty"]),
+                "set_size": size,
+                "units": int(c["qty"]) // size,
                 "sku": p.sku if p else "",
                 "fnsku": (p.fnsku or "") if p else "",
             }
@@ -751,4 +1174,665 @@ def packing_from_invoice(sid: int, db: Session = Depends(get_db)):
         "boxes": out_boxes,
         # 商品マスタに無い・ASINが空のもの。CSVには出すが印を付ける
         "unknown_count": len(unknown),
+    }
+
+
+# ---------- タオタロウの納品依頼Excelに、納品時の備考を入れる ----------
+#
+# タオタロウから落としてくるFBA指示書の備考欄には、買付のときの指示
+# （全量開封検品・写真撮影・動画撮影など）がそのまま残っている。
+# 納品の段階ではもう終わっている作業なので、現場が迷う。
+# 商品マスタの「納品時の備考」で置き換える。
+#
+# 突き合わせはタオタロウの商品IDが最優先。FNSKUとASINは使えない。
+# 本体と付属品を同じ商品ページとして納品するため、同じ番号が2行に出る
+# （付け髭 5825743 とシール 5839353 がどちらも X001EV26HT / B0HNJHL821）。
+
+def _norm_spec(v: str) -> str:
+    """仕様の表記ゆれを吸収する。
+
+    タオタロウの「商品情報」は「颜色: 帽子盒黑色【42*22*17cm】」のように
+    項目名が前に付く。区切りも「;」「、」「,」が混ざる。
+    """
+    s = str(v or "").strip()
+    # 「颜色:」「规格型号:」などの頭を外す（全角・半角どちらのコロンも）
+    for sep in ("：", ":"):
+        if sep in s:
+            s = s.split(sep, 1)[1]
+    for a, b in (("；", ""), (";", ""), ("、", ""), (",", ""),
+                 ("　", ""), (" ", "")):
+        s = s.replace(a, b)
+    return s
+
+
+class _NoteMatcher:
+    """FBA指示書の行を、商品マスタの商品に当てる。
+
+    上から順に試す：
+      1. タオタロウの商品ID（覚えてあれば一発）
+      2. 商品情報（仕様）の文字
+      3. FNSKU、次にASIN。ただしその番号を持つ商品が1つだけのとき
+
+    3を最後に回しているのは、本体と付属品が同じ番号を持つことがある
+    ため（付け髭とシールがどちらも X001EV26HT）。付属品はそもそも
+    候補から外し、残った中で番号が1つに決まるときだけ使う。
+
+    2か3で当たったら、商品IDを覚えて次から一発で当たるようにする。
+    """
+
+    def __init__(self, db: Session):
+        prods = (db.query(Product)
+                 .filter(Product.is_active == True)
+                 .filter(Product.is_component != True)
+                 .all())
+        self.by_tid = {str(p.taotaro_product_id): p for p in prods
+                       if p.taotaro_product_id}
+        self.by_spec = {}
+        for p in prods:
+            k = _norm_spec(p.spec)
+            if k:
+                self.by_spec.setdefault(k, p)
+        self.by_fnsku = self._unique(prods, "fnsku")
+        self.by_asin = self._unique(prods, "asin")
+
+    @staticmethod
+    def _unique(prods, field):
+        seen = {}
+        for p in prods:
+            v = (getattr(p, field, "") or "").strip().upper()
+            if v:
+                seen.setdefault(v, []).append(p)
+        return {k: v[0] for k, v in seen.items() if len(v) == 1}
+
+    def find(self, tid: str, info: str, fnsku: str = "", asin: str = ""):
+        p = self.by_tid.get(str(tid or "").strip())
+        if p is not None:
+            return p
+        for cand in (self.by_spec.get(_norm_spec(info)),
+                     self.by_fnsku.get((fnsku or "").strip().upper()),
+                     self.by_asin.get((asin or "").strip().upper())):
+            if cand is not None:
+                tid = str(tid or "").strip()
+                if tid and not cand.taotaro_product_id:
+                    cand.taotaro_product_id = tid
+                return cand
+        return None
+
+
+@router.post("/fill-taotaro-note")
+async def fill_taotaro_note(file: UploadFile = File(...),
+                            db: Session = Depends(get_db)):
+    """納品依頼Excelの備考を、商品マスタの「納品時の備考」で置き換える。
+
+    当たらなかった行は触らない（消すと、手で書いたものまで消えるため）。
+    """
+    import json
+    import urllib.parse
+    import openpyxl
+
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(await file.read()))
+    except Exception:
+        raise HTTPException(400, "Excelとして読めませんでした")
+    ws = wb.active
+
+    # 見出しの行を探す。「備考」と「FNSKU番号」が並ぶ行が表の先頭
+    head_row = None
+    cols = {}
+    for r in range(1, min(ws.max_row, 40) + 1):
+        row = {str(ws.cell(r, c).value or "").strip(): c
+               for c in range(1, ws.max_column + 1)}
+        if "備考" in row and any("FNSKU" in k for k in row):
+            head_row, cols = r, row
+            break
+    if head_row is None:
+        raise HTTPException(400, "「備考」の列が見つかりませんでした")
+
+    c_note = cols["備考"]
+    c_id = next((v for k, v in cols.items() if "商品ID" in k), None)
+    c_info = next((v for k, v in cols.items() if "商品情報" in k), None)
+    c_fnsku = next((v for k, v in cols.items() if "FNSKU" in k), None)
+    c_asin = next((v for k, v in cols.items() if "ASIN" in k), None)
+
+    matcher = _NoteMatcher(db)
+
+    def _cell(r, c):
+        return str(ws.cell(r, c).value or "").strip() if c else ""
+
+    filled, cleared, missed = [], [], []
+    for r in range(head_row + 1, ws.max_row + 1):
+        tid = _cell(r, c_id)
+        info = _cell(r, c_info)
+        if not tid and not info:
+            continue
+        p = matcher.find(tid, info, _cell(r, c_fnsku), _cell(r, c_asin))
+        if p is None:
+            missed.append(f"{r}行目 {tid or info[:24]}")
+            continue
+        note = (p.delivery_note or "").strip()
+        ws.cell(r, c_note).value = note or None
+        (filled if note else cleared).append(p.sku)
+    db.commit()          # 当たった行の商品IDを覚えておく
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    report = urllib.parse.quote(json.dumps(
+        {"入れた": filled, "空にした": cleared, "当たらなかった": missed},
+        ensure_ascii=False))
+    # HTTPヘッダーはASCIIしか通らない。日本語のファイル名を選ばれると
+    # ここで落ちるので、通らない字は落として既定の名前にする
+    name = (file.filename or "taotaro.xlsx").rsplit(".", 1)[0]
+    name = name.encode("ascii", "ignore").decode().strip() or "taotaro"
+    return StreamingResponse(
+        buf,
+        media_type=("application/vnd.openxmlformats-officedocument"
+                    ".spreadsheetml.sheet"),
+        headers={"Content-Disposition":
+                 f'attachment; filename="{name}_note.xlsx"',
+                 "X-Fill-Report": report})
+
+
+@router.post("/read-taotaro-note")
+async def read_taotaro_note(file: UploadFile = File(...),
+                            db: Session = Depends(get_db)):
+    """納品依頼Excelに手で書いてある備考を、商品マスタの
+    「納品時の備考」に取り込む（fill-taotaro-note の逆）。
+
+    一度マスタに入れておけば、次の便からは ④ で入れ直せる。
+    空欄の行はマスタを触らない（消すと、過去に入れたものが消えるため）。
+    商品IDで当たらず仕様で当たった行は、ついでに商品IDを覚える。
+    """
+    import openpyxl
+
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(await file.read()))
+    except Exception:
+        raise HTTPException(400, "Excelとして読めませんでした")
+    ws = wb.active
+
+    head_row = None
+    cols = {}
+    for r in range(1, min(ws.max_row, 40) + 1):
+        row = {str(ws.cell(r, c).value or "").strip(): c
+               for c in range(1, ws.max_column + 1)}
+        if "備考" in row and any("FNSKU" in k for k in row):
+            head_row, cols = r, row
+            break
+    if head_row is None:
+        raise HTTPException(400, "「備考」の列が見つかりませんでした")
+
+    c_note = cols["備考"]
+    c_id = next((v for k, v in cols.items() if "商品ID" in k), None)
+    c_info = next((v for k, v in cols.items() if "商品情報" in k), None)
+
+    c_fnsku = next((v for k, v in cols.items() if "FNSKU" in k), None)
+    c_asin = next((v for k, v in cols.items() if "ASIN" in k), None)
+    matcher = _NoteMatcher(db)
+
+    def _cell(r, c):
+        return str(ws.cell(r, c).value or "").strip() if c else ""
+
+    saved, same, missed, blank = [], [], [], 0
+    for r in range(head_row + 1, ws.max_row + 1):
+        note = str(ws.cell(r, c_note).value or "").strip()
+        if not note:
+            blank += 1
+            continue
+        tid = _cell(r, c_id)
+        info = _cell(r, c_info)
+        p = matcher.find(tid, info, _cell(r, c_fnsku), _cell(r, c_asin))
+        if p is None:
+            missed.append(f"{r}行目 {tid or info[:24]}：{note[:40]}")
+            continue
+        if (p.delivery_note or "").strip() == note:
+            same.append(p.sku)
+            continue
+        p.delivery_note = note
+        saved.append(f"{p.sku}：{note[:40]}")
+    db.commit()
+
+    return {"入れた": saved, "元から同じ": same,
+            "当たらなかった": missed, "備考が空の行": blank}
+
+
+# ---------- 箱の中身をAmazonへ直接入れる ----------
+#
+# これまでは箱の中身をCSVに落として、セラーセントラルの「輸送の詳細」に
+# 手で貼っていた。同じことがSP-APIでできるので、画面を行き来せずに済ませる。
+# 箱の3辺・重量・中身はタオタロウのインボイスから読む（手入力はしない）。
+
+class SendPackingIn(BaseModel):
+    plan_id: str
+    sid: int
+
+
+@router.post("/packing/send")
+def send_packing(req: SendPackingIn, db: Session = Depends(get_db)):
+    """インボイスの箱情報を、そのまま納品プランへ登録する。"""
+    from app.services import amazon_api
+
+    packed = packing(req.sid, "auto", db)
+    boxes = packed.get("boxes") or []
+    if not boxes:
+        raise HTTPException(400, "インボイスから箱が読めませんでした")
+
+    try:
+        options = amazon_api.list_packing_options(req.plan_id)
+    except Exception as e:
+        raise HTTPException(400, f"梱包オプションが取れませんでした（{e}）")
+    if not options:
+        raise HTTPException(400, "Amazon側に梱包オプションがありません")
+
+    # 確定済みがあればそれを使う。無ければ最初のものを確定する
+    chosen = next((o for o in options
+                   if (o.get("status") or "").upper() == "ACCEPTED"), None)
+    if chosen is None:
+        chosen = options[0]
+        try:
+            amazon_api.confirm_packing_option(
+                req.plan_id, chosen.get("packingOptionId") or "")
+        except Exception as e:
+            raise HTTPException(400, f"梱包オプションを確定できませんでした（{e}）")
+
+    # どのSKUがどのグループかはAmazonが決める。箱はグループをまたげない
+    group_of = {}
+    for g in (chosen.get("packingGroups") or []):
+        gid = g if isinstance(g, str) else (g.get("packingGroupId") or "")
+        if not gid:
+            continue
+        for it in amazon_api.list_packing_group_items(req.plan_id, gid):
+            msku = it.get("msku") or ""
+            if msku:
+                group_of[msku] = gid
+
+    groups, split, unknown = {}, [], []
+    skipped = 0
+    parts = {p.sku for p in db.query(Product)
+             .filter(Product.is_component == True).all()}
+    for b in boxes:
+        items = [it for it in (b.get("items") or [])
+                 if it.get("sku") and (it.get("units", it.get("qty")) or 0) > 0
+                 and it["sku"] not in parts]   # 付属品は本体に含まれる
+        if not items:
+            skipped += 1
+            continue
+        missing = [it["sku"] for it in items if not group_of.get(it["sku"])]
+        if missing and len(missing) == len(items):
+            # 箱まるごと今回の納品プランに入っていない。便には他の便ぶんも
+            # 載るので、これは普通のこと。黙って飛ばす
+            skipped += 1
+            continue
+        if missing:
+            # プランの商品と、そうでない商品が同じ箱に入っている。
+            # 現物の箱と納品内容が食い違うので、人が見るしかない
+            unknown.append({"box_no": b.get("box_no"), "skus": missing})
+            continue
+        gids = {group_of.get(it["sku"], "") for it in items}
+        if len(gids) > 1:
+            # 1箱に別グループのSKUが混ざっている。Amazonは受け付けない
+            split.append({"box_no": b.get("box_no"),
+                          "skus": [it["sku"] for it in items]})
+            continue
+        gid = gids.pop()
+        groups.setdefault(gid, []).append({
+            "l": b.get("length_cm"), "w": b.get("width_cm"),
+            "h": b.get("height_cm"), "weight_kg": b.get("weight_kg"),
+            # Amazonの数はセット単位
+            "items": [{"sku": it["sku"],
+                       "qty": it.get("units", it["qty"])} for it in items],
+        })
+
+    if unknown or split:
+        return {"ok": False, "unknown": unknown, "split": split,
+                "skipped_boxes": skipped, "sent_boxes": 0}
+    if not groups:
+        raise HTTPException(
+            400, "この便に、納品プランの商品が入った箱がありませんでした")
+
+    bad = [b for gs in groups.values() for b in gs
+           if not all([b["l"], b["w"], b["h"], b["weight_kg"]])]
+    if bad:
+        raise HTTPException(
+            400, "3辺か重量が入っていない箱があります（インボイスを確認してください）")
+
+    try:
+        amazon_api.set_packing_information(
+            req.plan_id,
+            [{"packing_group_id": gid, "boxes": gs}
+             for gid, gs in groups.items()])
+    except Exception as e:
+        raise HTTPException(400, f"Amazonへ登録できませんでした（{e}）")
+
+    return {"ok": True, "sent_boxes": sum(len(gs) for gs in groups.values()),
+            "groups": len(groups), "skipped_boxes": skipped}
+
+
+# ---------- 配送依頼に載っている商品を出す ----------
+#
+# 納品プランの候補を「到着済」の印で絞っていたが、到着済はタオタロウの
+# 倉庫に届いただけで、FBAへ送るかどうかとは別。何を送るかは配送依頼を
+# 出した時点で決まっているので、そちらで絞るほうが分かりやすい。
+
+@router.get("/send-order/{sid:int}/skus")
+def send_order_skus(sid: int, db: Session = Depends(get_db)):
+    """配送依頼1件に載っている商品を、自社SKUにして返す。
+
+    発注時に out_id（自社SKU）を入れてあればそれをそのまま使う。
+    入っていない古い発注は、1688のURLで発注済みリストから引く。
+    """
+    try:
+        d = taotaro.send_order_rows(sid)
+    except Exception as e:
+        raise HTTPException(400, f"配送依頼が読めませんでした（{e}）")
+
+    prods = {p.sku: p for p in
+             db.query(Product).filter(Product.is_active == True).all()}
+    by_url = {}
+    for oh in db.query(OrderHistory).filter(
+            OrderHistory.is_deleted == False).all():
+        key = _normalize_1688_url(oh.buy_url or "")
+        if key and oh.sku:
+            by_url.setdefault(key, oh.sku)
+
+    # 付属品の1688 URL。付属品を本体のSKUで発注してしまうことがあり
+    # （a09_1のテープを a09_1 で発注）、そのままだと本体に足される。
+    #
+    # ただし「URLでSKUを引く」のは間違い。色違いは同じURLを共有して
+    # いるので（a05_black / a05_black_meisai / a05_black_stripe など）、
+    # 全部が1つの色にまとめられて消える。
+    # そこでURLは「付属品かどうか」の判定にだけ使う。
+    component_offers = set()
+    for pp in prods.values():
+        if getattr(pp, "is_component", False):
+            k = _normalize_1688_url(getattr(pp, "buy_url", "") or "")
+            if k:
+                component_offers.add(k)
+
+    found, qty_of, unknown, odd = [], {}, [], []
+    for r in d.get("rows") or []:
+        sku = (r.get("customer_memo") or "").strip()
+        offer = _normalize_1688_url(r.get("buy_url") or "")
+        # 付属品のURLなら、管理番号が本体になっていても数えない
+        if offer and offer in component_offers:
+            continue
+        if sku not in prods:
+            sku = by_url.get(offer, "")
+        p = prods.get(sku)
+        if p is not None and not p.is_component:
+            if sku not in found:
+                found.append(sku)
+            # 配送依頼の数は仕入単位。画面は販売単位（セット）で扱う。
+            # 割り切れないときは切り捨てる。切り上げると、実際に
+            # 作れない数をAmazonに伝えてしまい、受領差異になる
+            # （59個・2個1セットなっ29セット。余る1個は次の便へ）
+            n = int(getattr(p, "set_size", 1) or 1)
+            units = int(r.get("units") or 0)
+            qty_of[sku] = qty_of.get(sku, 0) + (units // n if n > 1 else units)
+            if n > 1 and units % n:
+                odd.append({"sku": sku, "units": units, "set_size": n,
+                            "sets": units // n, "left": units % n})
+        elif p is not None:
+            pass                      # 付属品は本体に含まれるので数えない
+        else:
+            unknown.append({"name_cn": r.get("name_cn") or "",
+                            "color": r.get("supplier_spec") or "",
+                            "qty": r.get("units") or 0})
+
+    return {"sid": d.get("sid"), "sn": d.get("sn"),
+            "state_label": d.get("state_label") or "",
+            "skus": found, "qty": qty_of, "unknown": unknown,
+            # 入数で割り切れなかったもの
+            "odd": odd}
+
+
+# ---------- 商品ラベル（FNSKU） ----------
+#
+# これまではセラーセントラルで納品プランを作らないとラベルが落とせず、
+# 代行会社へ渡すのが遅れていた。FNSKUはSKUごとに決まっていて納品プランとは
+# 関係ないので、配送依頼に載っている商品ぶんをここで刷ってしまう。
+
+@router.get("/send-order/{sid:int}/labels")
+def send_order_labels(sid: int, skip: int = 0, db: Session = Depends(get_db)):
+    """配送依頼に載っている商品の商品ラベルPDFを返す。
+
+    skip は使いかけのラベルシートで、何枚ぶん空けてから刷るか。
+    """
+    from app.services.fnsku_labels import build_pdf
+
+    try:
+        d = taotaro.send_order_rows(sid)
+    except Exception as e:
+        raise HTTPException(400, f"配送依頼が読めませんでした（{e}）")
+
+    prods = {p.sku: p for p in
+             db.query(Product).filter(Product.is_active == True).all()}
+    by_url = {}
+    for oh in db.query(OrderHistory).filter(
+            OrderHistory.is_deleted == False).all():
+        key = _normalize_1688_url(oh.buy_url or "")
+        if key and oh.sku:
+            by_url.setdefault(key, oh.sku)
+
+    items, missing = [], []
+    for r in d.get("rows") or []:
+        sku = (r.get("customer_memo") or "").strip()
+        if sku not in prods:
+            sku = by_url.get(_normalize_1688_url(r.get("buy_url") or ""), "")
+        p = prods.get(sku)
+        qty = int(r.get("units") or 0)
+        if p is None:
+            missing.append(f"{r.get('name_cn') or ''}（SKU不明）")
+            continue
+        if p.is_component:
+            # 付属品は本体の箱の中に入るもので、単独では出品していない。
+            # FNSKUが入っていても、それは本体のものを取り違えている
+            continue
+        if not (p.fnsku or "").strip():
+            missing.append(f"{p.sku}（FNSKUが入っていません）")
+            continue
+        # 配送依頼の数は仕入単位（バラの個数）。ラベルは販売単位に1枚なので、
+        # セット数で割る（6枚組のクリップボード240枚なら40枚）。
+        # 割り切れないときは多いほうに倒す。足りないほうが現場で困る
+        n = int(getattr(p, "set_size", 1) or 1)
+        if n > 1:
+            qty = -(-qty // n)
+        # 同じSKUが複数行に分かれて載ることがあるのでまとめる
+        hit = next((x for x in items if x["sku"] == p.sku), None)
+        if hit:
+            hit["qty"] += qty
+        else:
+            items.append({"fnsku": p.fnsku.strip(), "sku": p.sku,
+                          "name": p.name or "", "qty": qty})
+
+    if not items:
+        raise HTTPException(
+            400, "刷れる商品がありませんでした：" + "／".join(missing[:5]))
+
+    try:
+        pdf = build_pdf(items, skip=max(0, int(skip or 0)))
+    except Exception as e:
+        raise HTTPException(400, f"ラベルを作れませんでした（{e}）")
+
+    import json
+    import urllib.parse
+    report = urllib.parse.quote(json.dumps(
+        {"刷った": [f"{x['sku']} × {x['qty']}" for x in items],
+         "刷れなかった": missing}, ensure_ascii=False))
+    return StreamingResponse(
+        io.BytesIO(pdf), media_type="application/pdf",
+        headers={"Content-Disposition":
+                 f'attachment; filename="labels_{sid}.pdf"',
+                 "X-Fill-Report": report})
+
+
+# ---------- FBA指示書を便から直接取ってくる ----------
+#
+# 公式APIにFBA指示書は無いが、タオタロウの画面が使っているGraphQLには
+# exportFBA がある。そちらから落として、そのまま備考を差し替えて返す。
+# 手で落として選ぶ手間が消える。
+
+def _fill_notes_in_workbook(wb, db: Session) -> dict:
+    """開いてあるExcelの備考を、商品マスタの納品時の備考で置き換える。"""
+    ws = wb.active
+    head_row, cols = None, {}
+    for r in range(1, min(ws.max_row, 40) + 1):
+        row = {str(ws.cell(r, c).value or "").strip(): c
+               for c in range(1, ws.max_column + 1)}
+        if "備考" in row and any("FNSKU" in k for k in row):
+            head_row, cols = r, row
+            break
+    if head_row is None:
+        raise HTTPException(400, "「備考」の列が見つかりませんでした")
+
+    c_note = cols["備考"]
+    c_id = next((v for k, v in cols.items() if "商品ID" in k), None)
+    c_info = next((v for k, v in cols.items() if "商品情報" in k), None)
+    c_fnsku = next((v for k, v in cols.items() if "FNSKU" in k), None)
+    c_asin = next((v for k, v in cols.items() if "ASIN" in k), None)
+
+    matcher = _NoteMatcher(db)
+
+    def _cell(r, c):
+        return str(ws.cell(r, c).value or "").strip() if c else ""
+
+    filled, cleared, missed = [], [], []
+    for r in range(head_row + 1, ws.max_row + 1):
+        tid = _cell(r, c_id)
+        info = _cell(r, c_info)
+        if not tid and not info:
+            continue
+        p = matcher.find(tid, info, _cell(r, c_fnsku), _cell(r, c_asin))
+        if p is None:
+            missed.append(f"{r}行目 {tid or info[:24]}")
+            continue
+        note = (p.delivery_note or "").strip()
+        ws.cell(r, c_note).value = note or None
+        (filled if note else cleared).append(p.sku)
+    db.commit()          # 当たった行の商品IDを覚えておく
+    return {"入れた": filled, "空にした": cleared, "当たらなかった": missed}
+
+
+@router.get("/send-order/{sid:int}/instruction")
+def fetch_instruction(sid: int, fill: bool = True,
+                      db: Session = Depends(get_db)):
+    """FBA指示書をタオタロウから落とし、備考を入れ替えて返す。"""
+    import json
+    import urllib.parse
+    import openpyxl
+    from app.services import taotaro_web
+
+    row = db.query(OrderSettings).first()
+    cookie = (getattr(row, "taotaro_web_cookie", "") or "").strip()
+    if not cookie:
+        raise HTTPException(
+            400, "タオタロウのログイン情報が入っていません（Amazon設定で貼ってください）")
+
+    try:
+        name, raw = taotaro_web.fba_instruction_file(cookie, sid)
+    except taotaro_web.WebError as e:
+        raise HTTPException(400, str(e))
+
+    report = {}
+    if fill:
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(raw))
+        except Exception:
+            raise HTTPException(400, "落とした指示書を開けませんでした")
+        report = _fill_notes_in_workbook(wb, db)
+        buf = io.BytesIO()
+        wb.save(buf)
+        raw = buf.getvalue()
+        name = name.rsplit(".", 1)[0] + "_note.xlsx"
+    # ヘッダーはASCIIしか通らない。通らない字は落とす
+    name = name.encode("ascii", "ignore").decode().strip() or f"FBA_{sid}.xlsx"
+
+    return StreamingResponse(
+        io.BytesIO(raw),
+        media_type=("application/vnd.openxmlformats-officedocument"
+                    ".spreadsheetml.sheet"),
+        headers={"Content-Disposition": f'attachment; filename="{name}"',
+                 "X-Fill-Report": urllib.parse.quote(
+                     json.dumps(report, ensure_ascii=False))})
+
+
+# ---------- 配送依頼をかける前の計算し直し ----------
+#
+# 発注した時点で必要だった数と、いま必要な数は違う。売れ行きが落ちれば
+# 送りすぎになり、FBAで保管料を払って寝かせることになる。
+# 倉庫にある在庫を、いまの売れ行きで航空便・船便・倉庫に振り分ける。
+
+def _plan_rows(db: Session, products: list, ps: dict, cs) -> list:
+    """振り分けに要るぶんだけ、日販とFBA在庫を出す。
+
+    納品プランの計算をそのまま呼べると楽だが、あちらは全商品ぶんを
+    取りに行く重い処理なので、ここでは必要な商品だけに絞る。
+    """
+    from app.core.config import settings as app_settings
+    if not app_settings.SP_API_REFRESH_TOKEN:
+        return []
+    from app.services.amazon_api import fetch_inventory, fetch_all_sales
+
+    inventory = fetch_inventory()
+    asins = [p.asin for p in products if p.asin]
+    cap = getattr(db.query(OrderSettings).first(), "order_qty_cap", 0) or 0
+    s7, s15, s30, s60, s90 = fetch_all_sales(asins, cap)
+
+    rows = []
+    for p in products:
+        inv = inventory.get(p.fnsku, {})
+        a7 = s7.get(p.asin, 0)
+        a15 = s15.get(p.asin, 0)
+        a30 = s30.get(p.asin, 0)
+        a60 = s60.get(p.asin, 0)
+        a90 = s90.get(p.asin, 0)
+        rows.append({
+            "sku": p.sku or "",
+            "daily": weighted_daily(a7, a15, a30, a60, a90, cs),
+            "growth": growth_mult(a7, a15, a90, cs),
+            "fba_available": inv.get("available", 0),
+            "fba_inbound": inv.get("inbound", 0),
+            "fba_processing": inv.get("processing", 0),
+        })
+    return rows
+
+
+@router.get("/restock-split")
+def restock_split(db: Session = Depends(get_db)):
+    """倉庫の在庫を航空便・船便・倉庫に振り分けて返す。"""
+    from app.services import restock_split as rs
+
+    if not taotaro.is_configured():
+        raise HTTPException(400, "タオタロウのトークンが未設定です")
+
+    try:
+        stock = rs.warehouse_stock(db)
+    except Exception as e:
+        raise HTTPException(400, f"倉庫の在庫が取れませんでした（{e}）")
+    if not stock:
+        return {"items": [], "note": "倉庫に、まだ便に入っていない在庫がありません"}
+
+    settings_row = db.query(OrderSettings).first()
+    ps = _build_settings(settings_row)
+    cs = _build_calc_settings(settings_row)
+    lt_sea = (ps["lt_shipping_request"] + ps["lt_sea_to_fba"])
+    lt_air = (ps["lt_shipping_request"] + ps["lt_air_to_fba"])
+    target = ((ps.get("fba_target_days") or 0)
+              or (ps["free_storage_days"] - ps["lt_order_to_warehouse"]))
+    target += calc_sale_extra_days(cs)
+
+    # 日販とFBA在庫は、納品プランと同じ計算をそのまま使う（二重に持たない）
+    skus = set(stock.keys())
+    prods = [p for p in db.query(Product)
+             .filter(Product.is_active == True).all() if p.sku in skus]
+    items = _plan_rows(db, prods, ps, cs)
+
+    # 同じSKUで楽天にも出している商品は、中国の在庫が1つの山になる。
+    # 先に楽天ぶんを取り置かないと、楽天の在庫が切れる
+    rk = rs.rakuten_need(db, set(stock.keys()), lt_sea)
+
+    return {
+        "items": rs.split(stock, items, lt_sea, lt_air, target, rk),
+        "lt_sea": lt_sea, "lt_air": lt_air, "target_days": target,
+        "rakuten_count": len(rk),
     }

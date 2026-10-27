@@ -26,7 +26,21 @@ const SPANS = [
  * window.open に回ってポップアップブロックで止まっていた。
  */
 async function openBlob(url, params, saveAs) {
-  const res = await api.get(url, { params, responseType: 'blob' })
+  let res
+  try {
+    res = await api.get(url, { params, responseType: 'blob' })
+  } catch (e) {
+    // responseType が blob だと、エラーの本文まで Blob で返る。
+    // そのままだと detail が読めず「status code 500」しか出なかった
+    const b = e.response?.data
+    if (b instanceof Blob) {
+      try {
+        const j = JSON.parse(await b.text())
+        if (j.detail) { e.message = j.detail; e.detail = j.detail }
+      } catch (x) { /* JSONでなければそのまま */ }
+    }
+    throw e
+  }
   const href = URL.createObjectURL(res.data)
   const cd = res.headers['content-disposition'] || ''
   const fromHeader = /filename="([^"]+)"/.exec(cd)?.[1]
@@ -416,7 +430,7 @@ ${notReady.join(`
                 await openBlob('/import-permits/zip', params,
                   `輸入許可書_${new Date().toISOString().slice(0, 10)}.zip`)
               } catch (e) {
-                setZipErr(e.response?.data?.detail || e.message)
+                setZipErr(e.detail || e.message)
               } finally { setZipping(false) }
             }}>
             {zipping ? 'まとめています…' : 'まとめてZIPで書き出す'}

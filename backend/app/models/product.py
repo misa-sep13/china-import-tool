@@ -23,6 +23,10 @@ class Product(Base):
     spec = Column(String)                   # 仕様（Excel用・色/サイズをまとめた表示用）
     customer_memo = Column(Text)            # お客様専用メモ（Excel出力用）
     note = Column(Text)
+    # 納品（FBAへ送るとき）の指示。買付のときの指示とは別に持つ。
+    # 「全量検品」「写真撮影」は買付で終わっているので、FBA指示書に
+    # 残っていると現場が混乱する。セット組・同梱などをここに書く
+    delivery_note = Column(Text, nullable=True)
     set_size = Column(Integer, default=1)   # 1セットあたりのピース数
     extra_stock = Column(Integer, default=0)  # 別個数在庫
     order_qty = Column(Integer, default=0)  # 手動発注数

@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.amazon_research import AmazonResearchSettings, AmazonResearchSheet
 from app.models.amazon_listing import AmazonListing, AmazonListingChild
+from app.models.product import Product
 from app.models.repack_instruction import RepackInstruction
 from app.services import amazon_listing_sync as sync
 
@@ -49,20 +50,38 @@ def _sheet(db: Session, workspace: str = "default") -> dict:
 
 
 def _skus_by_research(db: Session) -> dict:
-    """SKUとJANは出品側に持っている。現物と伝票を突き合わせるのに要る。
+    """SKU・JAN・ASIN・FNSKUは出品側に持っている。現物と伝票を突き合わせるのに要る。
 
     1件ずつ引くと商品数ぶん問い合わせることになるので、まとめて集める。
+
+    FNSKUはFBAの在庫から商品マスタへ同期しているので、SKUで引く。
+    納品ラベルを貼るのは代行会社なので、ここに出しておかないと
+    毎回こちらが調べて伝えることになる。
+    FBAに在庫が入るまでは発行されないので、空のことがある。
     """
     out = {}
     rows = (db.query(AmazonListing.research_id, AmazonListingChild.sku,
-                     AmazonListingChild.jan, AmazonListingChild.axis1)
+                     AmazonListingChild.jan, AmazonListingChild.axis1,
+                     AmazonListingChild.asin)
             .join(AmazonListingChild,
                   AmazonListingChild.listing_id == AmazonListing.id)
             .order_by(AmazonListingChild.sort_order).all())
-    for rid, sku, jan, axis1 in rows:
+
+    skus = [(s or "").strip() for _, s, _, _, _ in rows]
+    master = {}
+    if skus:
+        for p in db.query(Product).filter(Product.sku.in_(skus)).all():
+            master[p.sku] = p
+
+    for rid, sku, jan, axis1, asin in rows:
+        sku = (sku or "").strip()
+        p = master.get(sku)
         out.setdefault(rid, []).append(
-            {"name": (axis1 or "").strip(), "sku": (sku or "").strip(),
-             "jan": (jan or "").strip()})
+            {"name": (axis1 or "").strip(), "sku": sku,
+             "jan": (jan or "").strip(),
+             # 出品の結果が入っていないうちは、商品マスタのほうを使う
+             "asin": (asin or "").strip() or ((p.asin or "").strip() if p else ""),
+             "fnsku": (p.fnsku or "").strip() if p else ""})
     return out
 
 
@@ -87,7 +106,8 @@ def _items(db: Session, only_written: bool = False) -> list:
         ch = kids.get(rid) or []
         if not ch:
             # まだ出品側を作っていないものは、シートの子の名前だけ出す
-            ch = [{"name": (k.get("axis1") or "").strip(), "sku": "", "jan": ""}
+            ch = [{"name": (k.get("axis1") or "").strip(), "sku": "",
+                   "jan": "", "asin": "", "fnsku": ""}
                   for k in (c.get("children") or [])]
         out.append({
             "research_id": rid,

@@ -27,11 +27,21 @@ def import_from_fba(db: Session = Depends(get_db)):
             skipped += 1
             continue
 
-        # SKUで既存商品を検索し、FNSKUが違う場合は修正
+        # SKUで既存商品を検索し、FNSKU・ASINを埋める。
+        # ASINを入れていなかったため、マスタに元からある商品は
+        # 取り込みを押しても空のままだった（再梱包指示にも出ない）
         by_sku = db.query(Product).filter(Product.sku == sku).first()
         if by_sku:
-            if by_sku.fnsku != fnsku:
+            changed = False
+            if fnsku and by_sku.fnsku != fnsku:
                 by_sku.fnsku = fnsku
+                changed = True
+            if asin and not (by_sku.asin or "").strip():
+                by_sku.asin = asin
+                if not (by_sku.amazon_url or "").strip():
+                    by_sku.amazon_url = f"https://www.amazon.co.jp/dp/{asin}"
+                changed = True
+            if changed:
                 fixed += 1
             else:
                 skipped += 1

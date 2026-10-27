@@ -196,9 +196,15 @@ def _send_order_brief(x: dict) -> dict:
     }
 
 
-def get_send_order(sid: int) -> dict:
-    """配送依頼の詳細。費用の内訳と、同梱されている注文の明細。"""
+def get_send_order(sid: int, raw: bool = False) -> dict:
+    """配送依頼の詳細。費用の内訳と、同梱されている注文の明細。
+
+    2026-10-27版から、インボイスができると箱ごとの情報が返る
+    （box_count・boxes_ready・boxes[]・orders[].box_ref）。
+    """
     x = _request(f"/api/v1/send-orders/{int(sid)}")
+    if raw:
+        return x
     orders = x.get("orders") or []
     return {
         "sid": x.get("sid"),
@@ -208,6 +214,9 @@ def get_send_order(sid: int) -> dict:
         "consignee": x.get("consignee"),
         "address": x.get("address"),
         "delivery_name": x.get("delivery_name"),
+        # 追跡番号は sn そのもの。業者に毎回聞かなくてもここから取れる
+        "tracking_url": x.get("tracking_url"),
+        "latest_trace": x.get("latest_trace"),
         "count_weight": x.get("count_weight"),
         # 費用は荷物がたどる順。単位はすべて人民元
         "send_price": x.get("send_price"),        # 中国国内運賃
@@ -222,6 +231,10 @@ def get_send_order(sid: int) -> dict:
         "created_at": _ts(x.get("created_at")),
         "updated_at": _ts(x.get("updated_at")),
         "orders": [_order_brief(o) for o in orders],
+        # インボイス作成後に入る。これが true なら箱の中身まで分かる
+        "boxes_ready": x.get("boxes_ready"),
+        "box_count": x.get("box_count"),
+        "boxes": x.get("boxes") or [],
     }
 
 
@@ -249,6 +262,8 @@ def _order_brief(o: dict) -> dict:
         "remark": o.get("goods_remark"),
         "created_at": _ts(o.get("created_at")),
         "arrived_at": _ts(o.get("arrived_at")),
+        # どの箱に入っているか（倉庫が書いた箱番号のまま）
+        "box_ref": o.get("box_ref"),
     }
 
 
@@ -726,6 +741,9 @@ def create_orders(goods_list: list) -> dict:
             data = _request("/api/v1/orders", body={"goods_list": chunk},
                             method="POST")
         except TaotaroError as e:
+            # タオタロウは「goods_list.4」としか返さないので、どの商品か
+            # 分からない。送った並びからSKUを引いて書き足す
+            e.message = _name_goods_list(e.message, chunk)
             if i == 0:
                 raise
             raise TaotaroError(
@@ -738,6 +756,46 @@ def create_orders(goods_list: list) -> dict:
             if oid not in oids:
                 oids.append(oid)
     return {"oids": oids, "raw": raws[0] if len(raws) == 1 else raws}
+
+
+def _name_goods_list(message: str, chunk: list) -> str:
+    """「goods_list.4」をSKU名に書き直す。
+
+    どの商品で止まったかが分からないと、一覧を上から数える作業になる。
+    しかも、送る前に外した行があると位置がずれて別の商品を指す。
+    なのでエラーに書いてある商品IDで引くことを優先し、
+    引けなかったときだけ並び順で当てる。
+    """
+    import re
+
+    text = str(message or "")
+
+    # 商品IDで引く。これが当たれば位置に関係なく正しい
+    by_id = ""
+    for m in re.finditer(r"\d{8,}", text):
+        pid = m.group(0)
+        for g in chunk:
+            if (str(g.get("product_id") or "") == pid
+                    or str(g.get("sku_id") or "") == pid):
+                by_id = str(g.get("out_id") or "").strip()
+                break
+        if by_id:
+            break
+
+    def _sub(m):
+        n = int(m.group(1))
+        name = by_id
+        if not name and 0 <= n < len(chunk):
+            g = chunk[n] or {}
+            name = (str(g.get("out_id") or "").strip()
+                    or str(g.get("url") or "")[:60])
+        # 返ってくる番号は0から数えたもの。人には1から数えて見せる
+        return f"{n + 1}番目（{name}）" if name else f"{n + 1}番目"
+
+    out = re.sub(r"goods_list\.(\d+)", _sub, text)
+    if by_id and by_id not in out:
+        out = f"{by_id}：{out}"
+    return out
 
 
 def _pick_oids(data) -> list:
@@ -1071,3 +1129,93 @@ def tools_freight(payload: dict) -> dict:
     理由つきで入る（送れないルートの値段は出さない）。
     """
     return _request("/api/v1/tools/freight", body=payload, method="POST")
+
+
+def _box_ref_parts(ref, total: int) -> list:
+    """box_ref を [(箱番号, 数量), ...] にほどく。
+
+    1箱に収まるときは箱番号だけ（"11"）、分かれるときは
+    「箱/数#箱/数」（"1/80#11/20"）で入ってくる。
+    """
+    s = str(ref or "").strip()
+    if not s:
+        return []
+    out = []
+    for part in s.split("#"):
+        part = part.strip()
+        if not part:
+            continue
+        if "/" in part:
+            no, _, qty = part.partition("/")
+            try:
+                out.append((int(no), int(qty)))
+            except ValueError:
+                continue
+        else:
+            try:
+                out.append((int(part), int(total)))
+            except ValueError:
+                continue
+    return out
+
+
+def send_order_boxes(sid: int) -> dict:
+    """配送依頼の箱と、その中身を返す。
+
+    インボイスができると箱ごとの情報が入る（2026-10-27版）。
+    これが取れればインボイスのExcelを読む必要がない。
+    """
+    x = get_send_order(sid, raw=True)
+    boxes = {}
+    for b in (x.get("boxes") or []):
+        try:
+            no = int(b.get("box_no"))
+        except (TypeError, ValueError):
+            continue
+        boxes[no] = {
+            "box_no": no,
+            "express_no": b.get("express_no"),
+            "length_cm": b.get("length_cm"),
+            "width_cm": b.get("width_cm"),
+            "height_cm": b.get("height_cm"),
+            "weight_kg": b.get("weight_kg"),
+            "items": [],
+        }
+
+    unknown = []
+    for o in (x.get("orders") or []):
+        qty = int(o.get("goods_num") or 0)
+        parts = _box_ref_parts(o.get("box_ref"), qty)
+        if not parts:
+            unknown.append({"oid": o.get("oid"), "out_id": o.get("out_id") or "",
+                            "name_cn": o.get("goods_name") or "", "qty": qty})
+            continue
+        for no, n in parts:
+            box = boxes.get(no)
+            if box is None:
+                # 箱の一覧に無い番号。倉庫の書き間違いもあるので拾っておく
+                box = boxes.setdefault(no, {
+                    "box_no": no, "express_no": None, "length_cm": None,
+                    "width_cm": None, "height_cm": None, "weight_kg": None,
+                    "items": [],
+                })
+            box["items"].append({
+                "oid": o.get("oid"),
+                "sku": str(o.get("out_id") or "").strip(),
+                "buy_url": (o.get("goods_url") or "").strip(),
+                "name_cn": o.get("goods_name") or "",
+                "asin": (o.get("asin") or "").strip(),
+                "fnsku": (o.get("fnsku") or "").strip(),
+                "qty": n,
+            })
+
+    return {
+        "sid": x.get("sid"),
+        "sn": x.get("sn"),
+        "state": x.get("state"),
+        "boxes_ready": bool(x.get("boxes_ready")),
+        "box_count": x.get("box_count"),
+        "boxes": [boxes[k] for k in sorted(boxes)],
+        # 箱が決まっていない注文。インボイス作成前はここに全部入る
+        "unassigned": unknown,
+    }

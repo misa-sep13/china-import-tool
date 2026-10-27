@@ -480,14 +480,16 @@ def order_submit(req: SubmitRequest, db: Session = Depends(get_db)):
         }
         if it.remark:
             g["remark"] = it.remark
-        # FBA納品の指定。仕様書（2026-09-28版）に正式に載った項目で、
-        # 文字列の "1" を送る。それまでは備考に「そちらでFBAに変更を」と
-        # 書いてお願いしていた
-        if it.fba and it.asin:
+        # FBA納品の指定。文字列の "1" を送る。
+        # ASIN・FNSKUはこれとは別物で、あれば一緒に送る。
+        # 以前はASINが無いとFBAの印ごと送っていなかったが、まだASINが
+        # 決まっていない新商品もFBAへ送るので、分けて扱う
+        if it.fba:
             g["fba"] = "1"
+        if it.asin:
             g["asin"] = it.asin
-            if it.fnsku:
-                g["fnsku"] = it.fnsku
+        if it.fnsku:
+            g["fnsku"] = it.fnsku
         g.update(taotaro.inspect_options(it.inspect))
         goods_list.append(g)
 
@@ -733,3 +735,24 @@ def probe(path: str):
                 "raw": d if len(str(d)) < 2000 else None}
     except taotaro.TaotaroError as e:
         return {"ok": False, "path": p, "code": e.code, "message": e.message}
+
+
+@router.post("/watch/check")
+def watch_check(db: Session = Depends(get_db)):
+    """配送依頼の状態を今すぐ見に行く（普段は10分ごとに自動で動く）。
+
+    初めて押したときは今の状態を覚えるだけで、知らせは飛ばない。
+    そうしないと、過去ぶん全部の通知が一度に来る。
+    """
+    from app.services.send_order_watch import check_once
+    return check_once(db)
+
+
+@router.get("/send-orders/{sid:int}/raw")
+def send_order_raw(sid: int):
+    """配送依頼の詳細を、タオタロウから返ってきたまま返す。
+
+    新しい項目（箱の情報など）が本番でどう入るのかを確かめるために使う。
+    仕様書と実物が食い違うことがあるので、加工前を見られるようにしておく。
+    """
+    return _call(taotaro.get_send_order, sid, True)

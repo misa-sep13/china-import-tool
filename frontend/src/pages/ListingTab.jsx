@@ -100,6 +100,29 @@ export default function ListingTab() {
     } finally { setBusy(false) }
   }
 
+  // スプレッドシートで直接登録した商品は、出品フローを通らないので
+  // 商品マスタに行ができない。Excelから作る・直す
+  const [impMsg, setImpMsg] = useState('')
+  const importMaster = async (fileList) => {
+    const files = [...(fileList || [])]
+    if (!files.length) return
+    setBusy(true); setErr(''); setImpMsg('読み込んでいます…')
+    try {
+      const fd = new FormData()
+      files.forEach(f => fd.append('files', f))
+      const r = await api.post('/amazon-listings/master/import-excel', fd,
+        { headers: { 'Content-Type': 'multipart/form-data' } })
+      const d = r.data
+      setImpMsg(`商品マスタに作った ${d['作った'].length}件`
+        + ` / 直した ${d['直した'].length}件`
+        + (d['読めなかった'].length
+          ? `\n読めなかった：${d['読めなかった'].join(' / ')}` : ''))
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message)
+      setImpMsg('')
+    } finally { setBusy(false) }
+  }
+
   const gs1Export = async () => {
     setBusy(true); setErr('')
     try {
@@ -246,6 +269,32 @@ export default function ListingTab() {
           </span>
         </div>
       )}
+
+      {/* スプレッドシートで直接登録した商品を商品マスタへ入れる口。
+          入れておかないと、その商品だけ発注・在庫から外れる */}
+      <div className="card" style={{ marginBottom: 10 }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center',
+          flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13 }}>
+            📥 Amazonの登録Excelから商品マスタを作る・直す
+          </span>
+          <input type="file" accept=".xlsm,.xlsx" multiple disabled={busy}
+            onChange={e => { importMaster(e.target.files); e.target.value = '' }}
+            style={{ fontSize: 12 }} />
+        </div>
+        <div style={{ fontSize: 11, color: C.sub, marginTop: 6,
+          lineHeight: 1.7 }}>
+          スプレッドシートで直接登録した商品は、ツールの出品フローを
+          通らないので商品マスタに入りません。そのExcelをそのまま選べば、
+          SKU・商品名・色・販売価格を入れます。
+          <b>すでにある商品は、古い名前を上書きします。</b>
+          仕入URL・原価・入数など、こちらでしか持っていない情報は触りません。
+        </div>
+        {impMsg && (
+          <div style={{ fontSize: 12, color: C.text, marginTop: 6,
+            whiteSpace: 'pre-wrap' }}>{impMsg}</div>
+        )}
+      </div>
 
       {/* ツールの外で振ったJANを台帳へ入れる口。入れておかないと、
           次の発番が同じ番号から始まってぶつかる */}

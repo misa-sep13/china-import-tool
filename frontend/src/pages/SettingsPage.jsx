@@ -216,6 +216,45 @@ export default function SettingsPage() {
         </div>
 
         <div className="card">
+          <h2>FBAの目標在庫</h2>
+          <div className="form-grid">
+            <div className="form-group">
+              <label>目標在庫日数</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" min={0} {...f('fba_target_days', 'number')}
+                  style={{ width: 90 }} />
+                <span style={{ color: '#888', fontSize: 13 }}>日</span>
+              </div>
+              <p style={{ fontSize: 12, color: '#888', marginTop: 4, lineHeight: 1.8 }}>
+                FBAに何日分の在庫を持たせるか。納品プランの推奨数の基準です。
+                <b>0にすると自動</b>で、タオタロウ無料保管日数（90）−
+                発注〜倉庫着（7）＝83日になります。
+                船便の間隔に合わせたいときは、ここに直接入れてください。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <h2>タオタロウのログイン情報</h2>
+          <p style={{ fontSize: 13, color: '#555', marginTop: 0, lineHeight: 1.9 }}>
+            FBA指示書は公式APIに無いので、タオタロウの画面と同じ入口から取ります。
+            そのためにログインした状態が要ります。<b>画像認証があるので自動ではログインできません。</b>
+            <br />
+            Chromeで <b>www.yiwutaro.com</b> にログインした状態で F12 →
+            <b>Network</b> → 何か操作して出てきた行をクリック →
+            <b>Request Headers</b> の <b>Cookie:</b> の中身をまるごとコピーして貼ってください。
+            1か月ほどで切れます。切れたら貼り直してください。
+          </p>
+          <div className="form-group">
+            <label>Cookie</label>
+            <textarea rows={3} {...f('taotaro_web_cookie')}
+              placeholder="XSRF-TOKEN=...; laravel_session=..."
+              style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }} />
+          </div>
+        </div>
+
+        <div className="card">
           <h2>成長・下落判定</h2>
           <div className="form-grid">
             <div className="form-group">

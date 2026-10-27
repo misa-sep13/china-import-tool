@@ -2,6 +2,7 @@ from typing import Dict, List, Optional
 import urllib.parse
 import urllib.request
 import json
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.core.config import settings
@@ -303,55 +304,54 @@ def _fetch_sales_one(asin: str, days: int, end_dt, order_qty_cap: int = 0) -> tu
 
 
 def fetch_all_sales(asin_list: List[str], order_qty_cap: int = 0) -> tuple:
-    """7/15/30/60/90日の売上を全ASIN×全期間で並列一括取得。now()を1回固定して集計期間のブレをなくす"""
+    """7/15/30/60/90日の売上を取得する。now()を1回固定して集計期間のブレをなくす。
+
+    キャッシュはASINと期間の組ごとに持つ。以前は「期間ごとに全ASINの辞書」で
+    持っていたので、一部のASINだけ欲しいときでも全件取り直しになり、
+    そのうえ少ない件数で上書きすると他の画面が0件に見えていた。
+    """
     from datetime import datetime, timezone
     periods = [7, 15, 30, 60, 90]
+    suffix = f"_cap{order_qty_cap}" if order_qty_cap else ""
 
-    cache_suffix = f"_cap{order_qty_cap}" if order_qty_cap else ""
+    results = {d: {} for d in periods}
+    todo = []
+    for a in asin_list:
+        for d in periods:
+            v = _cache_get(f"sale1_{a}_{d}{suffix}")
+            if v is None:
+                todo.append((a, d))
+            else:
+                results[d][a] = v
 
-    # キャッシュチェック
-    cached_results = {}
-    missing_periods = set()
-    for d in periods:
-        cached = _cache_get(f"sales_{d}{cache_suffix}")
-        if cached is not None:
-            cached_results[d] = cached
-        else:
-            missing_periods.add(d)
+    if todo:
+        # now()を1回だけ取得して全タスクで共有（期間のブレをなくす）
+        end_dt = datetime.now(timezone.utc)
+        got = {}
+        # 並列数を抑えてレート制限(429)自体を減らす（10だと429多発で欠損が出ていた）
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futures = {ex.submit(_fetch_sales_one, a, d, end_dt, order_qty_cap): (a, d)
+                       for a, d in todo}
+            for f in as_completed(futures):
+                _, val = f.result()
+                got[futures[f]] = val
 
-    if not missing_periods:
-        return (cached_results[7], cached_results[15], cached_results[30], cached_results[60], cached_results[90])
+        # 失敗(None)分は間隔を空けて順次リトライ。それでも失敗したものだけ0にする
+        import logging
+        for a, d in [k for k, v in got.items() if v is None]:
+            time.sleep(1)
+            _, v = _fetch_sales_one(a, d, end_dt, order_qty_cap)
+            if v is None:
+                logging.getLogger("amazon").warning(
+                    f"売上取得失敗(0扱い): asin={a} period={d}d")
+                v = 0.0
+            got[(a, d)] = v
 
-    # now()を1回だけ取得して全タスクで共有（期間のブレをなくす）
-    end_dt = datetime.now(timezone.utc)
+        for (a, d), v in got.items():
+            _cache_set(f"sale1_{a}_{d}{suffix}", v)
+            results[d][a] = v
 
-    period_results = {d: {a: None for a in asin_list} for d in missing_periods}
-    tasks = [(a, d) for a in asin_list for d in missing_periods]
-
-    # 並列数を抑えてレート制限(429)自体を減らす（10だと429多発で欠損が出ていた）
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        futures = {ex.submit(_fetch_sales_one, a, d, end_dt, order_qty_cap): (a, d) for a, d in tasks}
-        for f in as_completed(futures):
-            asin, val = f.result()
-            a, d = futures[f]
-            period_results[d][a] = val
-
-    # 失敗(None)分は間隔を空けて順次リトライ。それでも失敗したものだけ0にする
-    import logging
-    failed = [(d, a) for d in missing_periods for a, v in period_results[d].items() if v is None]
-    for d, a in failed:
-        time.sleep(1)
-        _, v = _fetch_sales_one(a, d, end_dt, order_qty_cap)
-        if v is None:
-            logging.getLogger("amazon").warning(f"売上取得失敗(0扱い): asin={a} period={d}d")
-            v = 0.0
-        period_results[d][a] = v
-
-    for d in missing_periods:
-        _cache_set(f"sales_{d}{cache_suffix}", period_results[d])
-        cached_results[d] = period_results[d]
-
-    return (cached_results[7], cached_results[15], cached_results[30], cached_results[60], cached_results[90])
+    return (results[7], results[15], results[30], results[60], results[90])
 
 
 def fetch_sales_detail(asin_list: List[str], days: int = 30) -> Dict[str, dict]:
@@ -735,7 +735,7 @@ def _post_sp_api(path: str, body: dict) -> dict:
             if e.code == 429:
                 time.sleep(2 ** (attempt + 1))
                 continue
-            raise Exception(f"HTTP {e.code}: {e.read().decode()[:500]}")
+            raise Exception(f"HTTP {e.code}: {e.read().decode()[:4000]}")
     raise Exception("SP-API rate limited after retries: " + path)
 
 
@@ -745,17 +745,99 @@ def fetch_default_source_address() -> Optional[dict]:
     住所をコードや設定に持たせるとセラーセントラル側で変更したときにずれるため、
     実際に使われた住所をそのまま再利用する。
     """
-    try:
-        data = _call_sp_api(
-            "/inbound/fba/2024-03-20/inboundPlans?"
-            + urllib.parse.urlencode({"pageSize": 1})
-        )
-    except Exception:
-        return None
-    plans = data.get("inboundPlans") or []
-    if not plans:
-        return None
-    return plans[0].get("sourceAddress") or None
+    # 新しい順に何件か見る。1件だけだと、それがたまたま住所を持たない
+    # 書きかけのプランだったときに取れない
+    last_err = ""
+    for params in ({"pageSize": 10, "sortBy": "LAST_UPDATED_TIME",
+                    "sortOrder": "DESC"},
+                   {"pageSize": 10}):
+        try:
+            data = _call_sp_api(
+                "/inbound/fba/2024-03-20/inboundPlans?"
+                + urllib.parse.urlencode(params)
+            )
+        except Exception as e:
+            last_err = str(e)
+            continue
+        for plan in data.get("inboundPlans") or []:
+            addr = plan.get("sourceAddress")
+            if addr:
+                return addr
+        last_err = ""
+        break
+    if last_err:
+        # 黙って None を返すと画面に「セラーセントラルで作って」としか
+        # 出ず、本当の原因（権限・引数）が分からなくなる
+        raise Exception(last_err)
+    return None
+
+
+def fetch_prep_owners(mskus: List[str], marketplace: str,
+                      errors: Optional[list] = None) -> dict:
+    """SKUごとに、準備作業とラベルの担当を誰にできるかを調べる。
+
+    商品によっては「準備は要らない（NONE）」と決まっていて、そこへ
+    SELLER を入れると納品プランの作成がまるごと弾かれる。
+    逆に準備が要る商品に NONE を入れても弾かれるので、SKUごとに
+    Amazonの言うとおりに合わせる。
+
+    戻り値: {msku: {"prep": "SELLER"|"NONE"|..., "label": ...}}
+    """
+    want = {"NONE_ONLY": "NONE", "SELLER_ONLY": "SELLER",
+            "AMAZON_ONLY": "AMAZON"}
+    out: dict = {}
+    uniq = [m for m in dict.fromkeys(mskus) if m]
+    for i in range(0, len(uniq), 50):          # 1回に問い合わせられる数に合わせる
+        chunk = uniq[i:i + 50]
+        try:
+            data = _call_sp_api(
+                "/inbound/fba/2024-03-20/items/prepDetails?"
+                + urllib.parse.urlencode({"marketplaceId": marketplace,
+                                          "mskus": ",".join(chunk)})
+            )
+        except Exception as e:
+            # 調べられなければ既定（SELLER）のまま。ただし理由は
+            # 覚えておいて、作成が失敗したときに一緒に出す
+            if errors is not None:
+                errors.append(str(e))
+            continue
+        for d in data.get("mskuPrepDetails") or []:
+            msku = d.get("msku") or ""
+            if not msku:
+                continue
+            c = d.get("allOwnersConstraint") or {}
+            out[msku] = {
+                "prep": want.get(c.get("prepOwnerConstraint") or "", ""),
+                "label": want.get(c.get("labelOwnerConstraint") or "", ""),
+                # 未設定は UNKNOWN か空で返る。そのままだと
+                # 納品プランが読み取り専用になる
+                "category": (d.get("prepCategory") or "").upper(),
+            }
+    return out
+
+
+_OWNER_RE = re.compile(
+    r"ERROR:\s*(\S+?)\s+(?:does not require|requires)\s+"
+    r"(prepOwner|labelOwner)[^.]*\.\s*Accepted values:\s*\[([^\]]*)\]"
+)
+
+
+def _owner_fixes(text: str) -> dict:
+    """SP-APIのエラー本文から、SKUごとの正しい担当を読み取る。
+
+    「a05_black does not require prepOwner but SELLER was assigned.
+      Accepted values: [NONE]」のような文が並ぶので、そのまま使う。
+    調べ方（prepDetails）が合っていなくても、これで追いつける。
+    """
+    out: dict = {}
+    for msku, field, accepted in _OWNER_RE.findall(text or ""):
+        vals = [v.strip() for v in accepted.split(",") if v.strip()]
+        if not vals:
+            continue
+        # SELLERが選べるならこちらで引き受ける。選べなければ言われたもの
+        value = "SELLER" if "SELLER" in vals else vals[0]
+        out.setdefault(msku, {})[field] = value
+    return out
 
 
 def create_inbound_plan(items: List[dict], source_address: dict, name: str = "") -> dict:
@@ -768,17 +850,21 @@ def create_inbound_plan(items: List[dict], source_address: dict, name: str = "")
     こちらで確定できるのはSKUと数量までになる。
     """
     mp = "A1VC38T7YXB528"
-    payload_items = [
-        {
+    rows = [it for it in items
+            if it.get("sku") and int(it.get("qty") or 0) > 0]
+    # 商品ラベルの貼付・準備はこちら（出品者）で行うが、
+    # 準備が要らないと決まっている商品は NONE しか受け付けない
+    prep_errors: list = []
+    owners = fetch_prep_owners([it["sku"] for it in rows], mp, prep_errors)
+    payload_items = []
+    for it in rows:
+        o = owners.get(it["sku"]) or {}
+        payload_items.append({
             "msku": it["sku"],
             "quantity": int(it["qty"]),
-            # 商品ラベルの貼付・準備はこちら（出品者）で行う
-            "labelOwner": "SELLER",
-            "prepOwner": "SELLER",
-        }
-        for it in items
-        if it.get("sku") and int(it.get("qty") or 0) > 0
-    ]
+            "labelOwner": o.get("label") or "SELLER",
+            "prepOwner": o.get("prep") or "SELLER",
+        })
     if not payload_items:
         raise ValueError("納品数が1以上の商品がありません")
 
@@ -790,7 +876,31 @@ def create_inbound_plan(items: List[dict], source_address: dict, name: str = "")
     if name:
         body["name"] = name
 
-    data = _post_sp_api("/inbound/fba/2024-03-20/inboundPlans", body)
+    # 準備作業・ラベルの担当は、調べても外れることがある。
+    # 外れたときはAmazonが「このSKUはこの値」と教えてくるので、
+    # それを読んで入れ直してもう一度出す
+    data = None
+    last = ""
+    for _ in range(5):
+        try:
+            data = _post_sp_api("/inbound/fba/2024-03-20/inboundPlans", body)
+            break
+        except Exception as e:
+            last = str(e)
+            fixes = _owner_fixes(last)
+            changed = False
+            for it in payload_items:
+                for field, value in (fixes.get(it["msku"]) or {}).items():
+                    if it.get(field) != value:
+                        it[field] = value
+                        changed = True
+            if not changed:
+                break
+    if data is None:
+        if prep_errors:
+            last += (" ｜ 準備作業の確認ができませんでした: "
+                     + prep_errors[0][:300])
+        raise Exception(last)
     return {
         "inbound_plan_id": data.get("inboundPlanId") or "",
         "operation_id": data.get("operationId") or "",
@@ -2127,3 +2237,285 @@ def fetch_attr_definition(product_type: str, name: str) -> dict:
     if prop is None:
         return {"ok": False, "error": "その項目は定義にありません"}
     return {"ok": True, "name": name, "definition": prop}
+
+
+# ---------- 納品プランの梱包（2024-03-20） ----------
+#
+# createInboundPlan のあと、セラーセントラルで「梱包」「配送」を進めていたが、
+# 同じことがAPIで全部できる。画面を行き来せずに済むよう、ここに揃える。
+#
+# Amazonの決まった順番：
+#   generatePackingOptions → listPackingOptions → confirmPackingOption
+#   → setPackingInformation（箱の3辺・重量・中身）
+# どれも非同期なので operationId の完了待ちが要る。
+
+def _put_sp_api(path: str, body: dict) -> dict:
+    """SP-APIへのPUT。setPackingInformation などで使う。"""
+    token = _get_access_token()
+    req = urllib.request.Request(
+        "https://sellingpartnerapi-fe.amazon.com" + path,
+        data=json.dumps(body).encode(),
+        method="PUT",
+        headers={"x-amz-access-token": token, "Content-Type": "application/json"},
+    )
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as res:
+                return json.loads(res.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                time.sleep(2 ** (attempt + 1))
+                continue
+            raise Exception(f"HTTP {e.code}: {e.read().decode()[:500]}")
+    raise Exception("SP-API rate limited after retries: " + path)
+
+
+def wait_inbound_operation(operation_id: str, timeout_sec: int = 90) -> dict:
+    """operationId が終わるまで待つ。
+
+    SUCCESS になれば {}、失敗なら中身の理由を添えて例外にする。
+    待たずに次を叩くと「まだ用意できていない」で弾かれるため、
+    呼ぶ側で毎回これを通す。
+    """
+    waited = 0
+    while waited < timeout_sec:
+        st = get_inbound_operation_status(operation_id)
+        status = (st.get("operationStatus") or "").upper()
+        if status == "SUCCESS":
+            return st
+        if status == "FAILED":
+            problems = st.get("operationProblems") or []
+            msg = "／".join(
+                str(p.get("message") or p.get("details") or "") for p in problems)
+            raise Exception(msg or "Amazon側で処理に失敗しました")
+        time.sleep(3)
+        waited += 3
+    raise Exception("Amazonの処理が終わりませんでした（時間切れ）")
+
+
+def list_packing_options(plan_id: str) -> List[dict]:
+    """梱包オプションを出す。無ければ作らせてから取り直す。"""
+    path = f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}/packingOptions"
+    data = _call_sp_api(path)
+    options = data.get("packingOptions") or []
+    if options:
+        return options
+    op = _post_sp_api(path, {})
+    wait_inbound_operation(op.get("operationId") or "")
+    return (_call_sp_api(path).get("packingOptions") or [])
+
+
+def confirm_packing_option(plan_id: str, packing_option_id: str) -> None:
+    op = _post_sp_api(
+        f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+        f"/packingOptions/{packing_option_id}/confirmation", {})
+    wait_inbound_operation(op.get("operationId") or "")
+
+
+def set_prep_details(mskus: List[str], marketplace: str,
+                     category: str = "NONE",
+                     prep_owner: str = "SELLER",
+                     label_owner: str = "SELLER") -> dict:
+    """SKUの梱包カテゴリーを決める。
+
+    これが未設定だと、納品プランが「読み取り専用」になって
+    先へ進めない（セラーセントラルでも数量欄がグレーのまま）。
+    新しい商品を出すたびに設定が要るので、こちらから入れる。
+    """
+    details = [{"msku": m,
+                "prepCategory": category,
+                "prepOwner": prep_owner,
+                "labelOwner": label_owner}
+               for m in dict.fromkeys(mskus) if m]
+    if not details:
+        return {}
+    return _post_sp_api(
+        "/inbound/fba/2024-03-20/items/prepDetails",
+        {"marketplaceId": marketplace, "mskuPrepDetails": details})
+
+
+def list_inbound_plans(limit: int = 20) -> List[dict]:
+    """納品プランを新しい順に返す。
+
+    状態を指定しないと出てこないものがあるので、
+    状態を変えて何度か聞き、重複を除いてまとめる。
+    """
+    out, seen = [], set()
+    for status in (None, "ACTIVE", "SHIPPED", "READY_TO_SHIP"):
+        q = {"pageSize": max(1, min(limit, 30)),
+             "sortBy": "LAST_UPDATED_TIME", "sortOrder": "DESC"}
+        if status:
+            q["status"] = status
+        try:
+            data = _call_sp_api(
+                "/inbound/fba/2024-03-20/inboundPlans?"
+                + urllib.parse.urlencode(q))
+        except Exception:
+            continue
+        for plan in data.get("inboundPlans") or []:
+            pid = plan.get("inboundPlanId") or ""
+            if pid and pid not in seen:
+                seen.add(pid)
+                out.append(plan)
+    return out
+
+
+def find_shipment(confirmation_id: str) -> Optional[dict]:
+    """FBA番号（FBAで始まる番号）から、プランと納品を探す。
+
+    セラーセントラルで作った納品でも、確定済みなら
+    こちらから見える。これが追跡番号を入れる入り口になる。
+    """
+    want = (confirmation_id or "").strip().upper()
+    if not want:
+        return None
+    for plan in list_inbound_plans(30):
+        pid = plan.get("inboundPlanId") or ""
+        if not pid:
+            continue
+        try:
+            shipments = list_plan_shipments(pid)
+        except Exception:
+            continue
+        for sh in shipments:
+            if (sh.get("shipmentConfirmationId") or "").upper() == want:
+                return {"inbound_plan_id": pid,
+                        "shipment_id": sh.get("shipmentId") or "",
+                        "name": sh.get("name") or "",
+                        "destination": ((sh.get("destination") or {})
+                                        .get("warehouseId") or "")}
+    return None
+
+
+def list_shipment_boxes(plan_id: str, shipment_id: str) -> List[dict]:
+    """納品の箱を返す。追跡番号は箱ごとに入れる。"""
+    path = (f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+            f"/shipments/{shipment_id}/boxes")
+    return _call_sp_api(path).get("boxes") or []
+
+
+def set_shipment_tracking(plan_id: str, shipment_id: str,
+                          tracking_by_box: List[dict]) -> None:
+    """個口配送（SPD）の追跡番号を入れる。
+
+    tracking_by_box: [{"boxId": ..., "trackingId": ...}, ...]
+    1便をまとめて送るので、実際には全部同じ番号になる。
+    """
+    _put_sp_api(
+        f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+        f"/shipments/{shipment_id}/trackingDetails",
+        {"trackingDetails": {"spdTrackingDetail": {
+            "spdTrackingItems": tracking_by_box}}},
+    )
+
+
+def list_placement_options(plan_id: str) -> List[dict]:
+    """納品先（どのFCに、いくつの納品に分けて送るか）の候補を出す。
+
+    Amazonの新しい流れでは、梱包情報より先にこちらを確定する。
+    確定して初めて納品（FBA番号）ができ、セラセンにも現れる。
+    """
+    path = f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}/placementOptions"
+    options = _call_sp_api(path).get("placementOptions") or []
+    if options:
+        return options      # 確定済みもここで返るので、作り直さない
+    op = _post_sp_api(path, {})
+    wait_inbound_operation(op.get("operationId") or "")
+    return _call_sp_api(path).get("placementOptions") or []
+
+
+def confirm_placement_option(plan_id: str, placement_option_id: str) -> None:
+    op = _post_sp_api(
+        f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+        f"/placementOptions/{placement_option_id}/confirmation", {})
+    wait_inbound_operation(op.get("operationId") or "")
+
+
+def list_plan_shipments(plan_id: str) -> List[dict]:
+    """納品先を確定したあとにできる納品を返す。
+
+    納品を一覧で取る口は無い（叩くと403）。確定済みの
+    納品先の候補が納品IDを持っているので、それを1つずつ引く。
+    """
+    ids: List[str] = []
+    try:
+        for o in list_placement_options(plan_id):
+            if (o.get("status") or "").upper() in ("ACCEPTED", "CONFIRMED"):
+                ids = list(o.get("shipmentIds") or [])
+                break
+    except Exception:
+        return []
+    out = []
+    for sid in ids:
+        try:
+            out.append(_call_sp_api(
+                f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+                f"/shipments/{sid}"))
+        except Exception:
+            continue
+    return out
+
+
+def get_plan_shipment(plan_id: str, shipment_id: str) -> dict:
+    return _call_sp_api(
+        f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+        f"/shipments/{shipment_id}")
+
+
+def list_packing_group_items(plan_id: str, packing_group_id: str) -> List[dict]:
+    """梱包グループに入っているSKUと数を返す。
+
+    どのSKUがどのグループかはAmazonが決めるので、箱の中身を送るときは
+    グループごとに分けて渡す必要がある。
+    """
+    rows, token = [], None
+    while True:
+        params = {"pageSize": 100}
+        if token:
+            params["paginationToken"] = token
+        data = _call_sp_api(
+            f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+            f"/packingGroups/{packing_group_id}/items"
+            f"?{urllib.parse.urlencode(params)}")
+        rows.extend(data.get("items") or [])
+        token = (data.get("pagination") or {}).get("nextToken")
+        if not token:
+            break
+    return rows
+
+
+def set_packing_information(plan_id: str, groups: List[dict]) -> None:
+    """箱の3辺・重量・中身をまとめて登録する。
+
+    groups: [{"packing_group_id": ..., "boxes": [
+        {"l": 40, "w": 30, "h": 20, "weight_kg": 8.5,
+         "items": [{"sku": ..., "qty": 10}, ...]}, ...]}, ...]
+    """
+    payload_groups = []
+    for g in groups:
+        boxes = []
+        for b in g.get("boxes") or []:
+            items = [{"msku": it["sku"], "quantity": int(it["qty"]),
+                      "labelOwner": "SELLER", "prepOwner": "SELLER"}
+                     for it in (b.get("items") or [])
+                     if it.get("sku") and int(it.get("qty") or 0) > 0]
+            if not items:
+                continue
+            boxes.append({
+                "dimensions": {"length": float(b["l"]), "width": float(b["w"]),
+                               "height": float(b["h"]), "unitOfMeasurement": "CM"},
+                "weight": {"value": float(b["weight_kg"]), "unit": "KG"},
+                "quantity": 1,
+                "contentInformationSource": "BOX_CONTENT_PROVIDED",
+                "items": items,
+            })
+        if boxes:
+            payload_groups.append({"packingGroupId": g["packing_group_id"],
+                                   "boxes": boxes})
+    if not payload_groups:
+        raise ValueError("送る箱がありません")
+
+    op = _put_sp_api(
+        f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}/packingInformation",
+        {"packageGroupings": payload_groups})
+    wait_inbound_operation(op.get("operationId") or "")

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, Date
+from sqlalchemy import Column, Integer, String, Float, Boolean, Date, Text
 from app.core.database import Base
 
 class OrderSettings(Base):
@@ -37,3 +37,14 @@ class OrderSettings(Base):
     free_storage_days = Column(Integer, default=90)          # TAO太郎無料保管日数
     air_threshold_days = Column(Integer, default=18)         # 航空便判断: FBA残日数がこれ以下
     hold_daily_threshold = Column(Float, default=0.1)        # 保留判断: 日販がこれ以下なら送らない
+    # タオタロウのサイトにログインした状態のクッキー。
+    # FBA指示書は公式APIに無く、画面が使っているGraphQL(exportFBA)でしか
+    # 取れない。画像認証があるので自動ログインはできず、ブラウザで
+    # ログインしたときの値を貼ってもらう。1か月ほどで切れる
+    taotaro_web_cookie = Column(Text, nullable=True)
+    # 配送依頼ごとに前回見た状態（JSON）。支払い待ちになった瞬間を
+    # 知らせるために持つ。消えても次の巡回で入り直る
+    send_order_states = Column(Text, nullable=True)
+    # FBAに何日分の在庫を持たせるか。0なら無料保管日数から自動で出す
+    # （90−7＝83日）。船便の間隔に合わせて決め直したいことがある
+    fba_target_days = Column(Integer, default=0)

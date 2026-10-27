@@ -197,6 +197,32 @@ def work_room() -> Optional[str]:
     return default_room()
 
 
+def my_room() -> Optional[str]:
+    """自分のマイチャット。自分あての知らせはここが邪魔にならない。"""
+    try:
+        r = httpx.get(f"{settings.CHATWORK_API_BASE}/rooms",
+                      headers=_headers(), timeout=TIMEOUT)
+        for x in (_check(r) or []):
+            if x.get("type") == "my":
+                return str(x.get("room_id"))
+    except Exception:
+        pass
+    return None
+
+
+def alert_room() -> Optional[str]:
+    """運用の知らせ（タオタロウの出荷待ちなど）を送る部屋。
+
+    既定は状況確認シートの知らせと同じ部屋（北田しずくさん）。
+    二人で見るので、どちらが先に気づいても動ける。
+    別の部屋にしたいときは CHATWORK_ALERT_ROOM で変えられる。
+    """
+    rid = os.environ.get("CHATWORK_ALERT_ROOM", "").strip()
+    if rid:
+        return rid
+    return work_room() or my_room() or default_room()
+
+
 def work_sheet_url() -> str:
     """外注さんが開くシートのURL。"""
     url = os.environ.get("WORK_SHARE_URL", "").strip()
@@ -247,6 +273,44 @@ def _to_tags(room_id: str) -> str:
         return "".join(f"[To:{i}]" for i in ids)
     except Exception:
         return ""
+
+
+def _room_member_ids(room_id: str) -> list:
+    try:
+        if room_id not in _members_cache:
+            r = httpx.get(
+                f"{settings.CHATWORK_API_BASE}/rooms/{room_id}/members",
+                headers=_headers(), timeout=TIMEOUT)
+            _members_cache[room_id] = _check(r) or []
+        return [m.get("account_id") for m in _members_cache[room_id]
+                if m.get("account_id")]
+    except Exception:
+        return []
+
+
+def create_task(room_id: str, body: str, to_ids: Optional[list] = None,
+                limit_at: Optional[int] = None) -> dict:
+    """タスクを作る。
+
+    メッセージと違い、自分あてのタスクは自分にも通知が出る。
+    トークンが自分のアカウントのものだと、自分の発言は自分に
+    通知されないため、気づいてほしい知らせはタスクにする。
+    """
+    ids = to_ids if to_ids else _room_member_ids(room_id)
+    if not ids:
+        raise ChatworkError("タスクの宛先が取れませんでした")
+    data = {"body": body, "to_ids": ",".join(str(i) for i in ids)}
+    if limit_at:
+        data["limit"] = str(limit_at)
+        data["limit_type"] = "date"
+    try:
+        r = httpx.post(f"{settings.CHATWORK_API_BASE}/rooms/{room_id}/tasks",
+                       headers=_headers(), data=data, timeout=TIMEOUT)
+    except ChatworkError:
+        raise
+    except Exception as e:
+        raise ChatworkError(f"Chatworkに繋がりませんでした（{type(e).__name__}）")
+    return _check(r) or {}
 
 
 def notify_work(title: str, lines: list) -> None:

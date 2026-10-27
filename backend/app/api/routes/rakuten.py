@@ -2024,6 +2024,12 @@ def sync_orders_with_taotaro(data: SyncTaotaroIn, request: Request,
     except taotaro.TaotaroError as e:
         raise HTTPException(502, e.message)
 
+    # 付属品は本体と一緒に発注するもので、数が合わないのが普通。
+    # （y91_case は耳栓のケース。本体より多く発注する）
+    # 「足りない」と毎回出ても手の打ちようがないので、報告から外す。
+    comp_skus = {p.sku for p in db.query(RakutenProduct)
+                 .filter(RakutenProduct.is_component == True).all() if p.sku}
+
     over, short, unknown, closed = [], [], [], []
     for sku, recs in by_sku.items():
         info = stat.get(sku) or {}
@@ -2037,8 +2043,10 @@ def sync_orders_with_taotaro(data: SyncTaotaroIn, request: Request,
         if theirs == ours:
             continue
         if theirs > ours:
-            short.append({"sku": sku, "ours": ours, "theirs": theirs,
-                          "missing": theirs - ours})
+            # 付属品は本体と別に発注するので、多いのは正常
+            if sku not in comp_skus:
+                short.append({"sku": sku, "ours": ours, "theirs": theirs,
+                              "missing": theirs - ours})
             continue
 
         gap = ours - theirs

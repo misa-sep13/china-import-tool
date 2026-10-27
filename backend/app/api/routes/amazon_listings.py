@@ -16,6 +16,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response
 from pydantic import BaseModel
+from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -69,6 +70,7 @@ class ListingIn(BaseModel):
     axis1_label: Optional[str] = None
     axis2_label: Optional[str] = None
     master_note: Optional[str] = None   # 商品マスタの備考に持っていく
+    delivery_note: Optional[str] = None  # 納品時の備考に持っていく
     status: Optional[str] = None
     is_test: Optional[bool] = None
     children: Optional[list] = None      # [{id?, sku, title, axis1, axis2, price}]
@@ -137,6 +139,7 @@ def _out(row: AmazonListing, db: Session, src: dict = None) -> dict:
         "review_rate": row.review_rate, "profit_rate": row.profit_rate,
         "rival_image": row.rival_image,
         "master_note": row.master_note or "",
+        "delivery_note": row.delivery_note or "",
         "status": row.status,
         "is_test": bool(row.is_test),
         "synced_at": row.synced_at.isoformat() if row.synced_at else None,
@@ -635,6 +638,89 @@ async def add_image(listing_id: int, child_id: Optional[int] = None,
     db.commit()
     db.refresh(img)
     return _image_out(img)
+
+
+# ---------- Amazonの登録Excelから商品マスタを更新 ----------
+#
+# スプレッドシート（Amazonの在庫ファイル）で直接登録した商品は、ツールの
+# 出品フローを通らないので商品マスタに行ができない。発注も在庫も
+# マスタを見るので、入れておかないとその商品だけ管理から外れる。
+#
+# 古い名前が残っていることがあるため、既にある行は上書きする。
+# 仕入URL・原価・入数など、こちらでしか持っていない情報は触らない。
+
+_TPL_SHEET = "テンプレート"
+_TPL_LABEL_ROW = 4
+_TPL_DATA_ROW = 7
+
+
+def _tpl_col(ws, label: str):
+    for c in range(1, ws.max_column + 1):
+        if ws.cell(_TPL_LABEL_ROW, c).value == label:
+            return c
+    return None
+
+
+@router.post("/master/import-excel")
+async def master_import_excel(files: list[UploadFile] = File(...),
+                              db: Session = Depends(get_db)):
+    """Amazonの登録Excel（.xlsm）を読んで、商品マスタを作る・直す。
+
+    1行＝1SKU。親の行は売り物ではないので飛ばす。
+    """
+    from openpyxl import load_workbook
+
+    made, fixed, skipped = [], [], []
+    for up in files:
+        try:
+            wb = load_workbook(io.BytesIO(await up.read()), data_only=True)
+        except Exception:
+            skipped.append(f"{up.filename}：Excelとして読めません")
+            continue
+        if _TPL_SHEET not in wb.sheetnames:
+            skipped.append(f"{up.filename}：「テンプレート」のシートがありません")
+            continue
+        ws = wb[_TPL_SHEET]
+        c_sku = _tpl_col(ws, "SKU")
+        c_name = _tpl_col(ws, "商品名")
+        c_lvl = _tpl_col(ws, "親子レベル")
+        c_color = _tpl_col(ws, "色")
+        c_price = _tpl_col(ws, "商品の販売価格 JPY (Amazonで販売, JP)")
+        if not c_sku:
+            skipped.append(f"{up.filename}：SKUの列が見つかりません")
+            continue
+
+        max_no = db.query(sa_func.max(Product.no)).scalar() or 0
+        for r in range(_TPL_DATA_ROW, ws.max_row + 1):
+            sku = str(ws.cell(r, c_sku).value or "").strip()
+            if not sku or sku == "ABC123":
+                continue
+            if c_lvl and str(ws.cell(r, c_lvl).value or "").strip() == "親":
+                continue
+            name = str(ws.cell(r, c_name).value or "").strip() if c_name else ""
+            color = str(ws.cell(r, c_color).value or "").strip() if c_color else ""
+            price = ws.cell(r, c_price).value if c_price else None
+
+            p = db.query(Product).filter(Product.sku == sku).first()
+            new = p is None
+            if new:
+                max_no += 1
+                p = Product(sku=sku, no=max_no, supplier="タオタロウ")
+                db.add(p)
+            # 名前・色・売価はExcelが新しい。古い名前が残るので上書きする
+            if name:
+                p.name = name[:500]
+            if color:
+                p.color = color
+            try:
+                if price not in (None, ""):
+                    p.selling_price = float(price)
+            except (TypeError, ValueError):
+                pass
+            (made if new else fixed).append(sku)
+        db.flush()
+    db.commit()
+    return {"作った": made, "直した": fixed, "読めなかった": skipped}
 
 
 @router.post("/images/shrink")
@@ -1988,6 +2074,11 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
                     notes.append(f"Amazonからの指摘: {i.get('message')}")
         if notes:
             ng += 1
+        # 読めたASIN・FNSKUはその場で残す。出すだけだと、再梱包指示や
+        # 商品マスタからは永久に見えないままになる（自己発送はFBA在庫の
+        # 取り込みにも出てこないので、ここが唯一の入り口になる）
+        _keep_ids(db, c, got.get("asin"), got.get("fnsku"))
+
         out.append({
             "kind": "子" if has_variation else "単品", "sku": c.sku,
             "ok": not notes, "asin": got.get("asin"),
@@ -1998,11 +2089,42 @@ def verify_listing(listing_id: int, db: Session = Depends(get_db)):
                     if got.get("asin") else None),
         })
 
+    db.commit()
+
     return {
         "ok": ng == 0, "ng": ng, "items": out,
         "note": ("画像が正しい色のものかまでは分かりません。"
                  "商品ページを開いて目で確かめてください"),
     }
+
+
+def _keep_ids(db: Session, child: AmazonListingChild,
+              asin: str = None, fnsku: str = None) -> None:
+    """Amazonから読めたASIN・FNSKUを残す。
+
+    出品の子と、商品マスタ（再梱包指示や発注が見るところ）の両方に入れる。
+    自己発送の商品はFBA在庫の取り込みに出てこないので、Amazonから
+    読み戻すこの経路が唯一の入り口になる。
+
+    手で直した値を消さないよう、空のときだけ入れる。ASINは一度付けば
+    変わらないので、上書きの必要もない。
+    """
+    asin = (asin or "").strip()
+    fnsku = (fnsku or "").strip()
+    if not asin and not fnsku:
+        return
+    if asin and not (child.asin or "").strip():
+        child.asin = asin
+    sku = (child.sku or "").strip()
+    if not sku:
+        return
+    p = db.query(Product).filter(Product.sku == sku).first()
+    if p is None:
+        return
+    if asin and not (p.asin or "").strip():
+        p.asin = asin
+    if fnsku and not (p.fnsku or "").strip():
+        p.fnsku = fnsku
 
 
 # 親ができるまで待てる上限（1リクエスト全体で）。
@@ -3009,11 +3131,19 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
             warnings.append(
                 f"付属品「{a.get('name') or '名前なし'}」に単価が入っていません。"
                 "原価に乗らないので、そのぶん利益を多く見積もります")
+        # SKUが無いと、タオタロウへの発注行に番号が入らず紐づけられない。
+        # 画面で決めてもらうので、空なら知らせる
+        if not (a.get("sku") or "").strip():
+            warnings.append(
+                f"付属品「{a.get('name') or '名前なし'}」にSKUがありません。"
+                "タオタロウへの発注で紐づけられないので、"
+                "シートの付属品欄にSKUを入れてください（例: a09_1_tape）")
         components.append({
-            "sku": "", "qty": a.get("qty") or 1,
+            "sku": (a.get("sku") or "").strip(), "qty": a.get("qty") or 1,
             "buy_url": (a.get("url") or "").strip() or buy_url,
+            # 仕入先の言い方は中国語名。人が読む名前は日本語のほうを使う
             "supplier_spec": a.get("name") or "",
-            "name": a.get("name") or "",
+            "name": (a.get("jp_name") or "").strip() or a.get("name") or "",
             "price": a.get("price"),
         })
 
@@ -3046,6 +3176,7 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
             "asin": c.asin or "",
             # ⑦で書いた備考。全SKU共通で同じものを入れる
             "note": (row.master_note or "").strip(),
+            "delivery_note": (row.delivery_note or "").strip(),
             "exists": bool(exist),
             "exists_name": exist.name if exist else "",
         })
@@ -3083,6 +3214,7 @@ class MasterRowIn(BaseModel):
     fba_fee: Optional[float] = None
     asin: str = ""
     note: str = ""
+    delivery_note: str = ""
 
 
 class ToMasterIn(BaseModel):
@@ -3134,6 +3266,7 @@ def to_master(listing_id: int, body: ToMasterIn, db: Session = Depends(get_db)):
         put("cost_jpy", r.cost_jpy)
         put("fba_fee", r.fba_fee)
         put("note", (r.note or "").strip())
+        put("delivery_note", (r.delivery_note or "").strip())
         if r.asin:
             put("asin", r.asin)
             put("amazon_url", f"https://www.amazon.co.jp/dp/{r.asin}")
@@ -3143,6 +3276,32 @@ def to_master(listing_id: int, body: ToMasterIn, db: Session = Depends(get_db)):
             p.purchase_components = comp_json
         (created if new else updated).append(sku)
 
+    # 付属品も、SKUが決まっていれば商品マスタに部材として作る。
+    # 作っておかないと、商品マスタの付属品欄（マスタから選ぶ作り）で
+    # 選べず、毎回あちらで手当てすることになる。
+    # 在庫には連動しない（purchase_components は在庫計算に入らない）
+    parts = []
+    for c in comps:
+        csku = (c.get("sku") or "").strip()
+        if not csku:
+            continue
+        cp = db.query(Product).filter(Product.sku == csku).first()
+        if cp is None:
+            max_no = db.query(sa_func.max(Product.no)).scalar() or 0
+            cp = Product(sku=csku, no=max_no + 1, supplier="タオタロウ",
+                         is_component=True)
+            db.add(cp)
+            parts.append(csku)
+        if not (cp.name or "").strip():
+            cp.name = (c.get("name") or csku)[:500]
+        if not (cp.spec or "").strip():
+            cp.spec = c.get("supplier_spec") or ""
+        if not (cp.buy_url or "").strip():
+            cp.buy_url = c.get("buy_url") or ""
+        if not cp.price and c.get("price"):
+            cp.price = c["price"]
+        cp.is_component = True
+
     db.commit()
     return {"created": created, "updated": updated,
-            "components": len(comps)}
+            "components": len(comps), "parts": parts}

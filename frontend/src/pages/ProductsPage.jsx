@@ -12,6 +12,8 @@ const EMPTY = {
   // 普段はSP-APIが入れるが、取れない商品があるので手でも入れられるようにする
   selling_price: '',
   note: '',
+  // 納品（FBAへ送るとき）の指示。買付の備考とは別に持つ
+  delivery_note: '',
   set_size: 1, extra_stock: 0, amazon_fee_rate: 0.1, category: '標準',
   // 発注用付属品。本体と一緒にタオタロウへ頼むもの。在庫には連動しない
   purchase_components: '',
@@ -255,7 +257,37 @@ export default function ProductsPage() {
   }
 
   const suppliers = [...new Set(products.map(p => p.supplier).filter(Boolean))].sort()
+
+  // 発注用付属品（部材）は、本体と同じ並びに出すと商品が探しにくくなる。
+  // どの本体に付くかは本体側の purchase_components が持っているので、
+  // それを引いて、本体の行のすぐ下にぶら下げる
+  const partsOf = {}
+  const isPart = {}
+  products.forEach(p => {
+    let comps = []
+    try { comps = JSON.parse(p.purchase_components || '[]') } catch (e) { comps = [] }
+    const skus = (comps || []).map(c => (c?.sku || '').trim()).filter(Boolean)
+    if (!skus.length) return
+    partsOf[p.sku] = skus
+    skus.forEach(s => { isPart[s] = true })
+  })
+  const bySku = Object.fromEntries(products.map(p => [p.sku, p]))
+
+  // 本体の purchase_components にSKUが入っていない付属品もある
+  // （SKUの欄ができる前に登録したもの）。付属品の印が付いていれば、
+  // SKUの頭が一致する本体にぶら下げる（a09_1_tape → a09_1）
+  products.forEach(p => {
+    if (!p.is_component || isPart[p.sku]) return
+    const parent = products
+      .filter(x => x.sku !== p.sku && p.sku.startsWith(x.sku + '_'))
+      .sort((a, b) => b.sku.length - a.sku.length)[0]
+    if (!parent) return            // 親が分からないものは単独で出す
+    partsOf[parent.sku] = (partsOf[parent.sku] || []).concat(p.sku)
+    isPart[p.sku] = true
+  })
+
   const filteredProducts = products.filter(p => {
+    if (isPart[p.sku]) return false   // 本体の下に出すので、単独では並べない
     if (supplierFilter && (p.supplier || '') !== supplierFilter) return false
     if (!search) return true
     const q = normalizeSearch(search)
@@ -358,9 +390,11 @@ export default function ProductsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredProducts.map(p => {
+                {filteredProducts.flatMap(p => {
                   const profit = calcProfit(p)
-                  return (
+                  const parts = (partsOf[p.sku] || [])
+                    .map(s => bySku[s]).filter(Boolean)
+                  return [(
                     <tr key={p.id}>
                       <td style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap' }}>{p.sku}</td>
                       <td style={{ maxWidth: 320, minWidth: 260 }}>
@@ -446,7 +480,27 @@ export default function ProductsPage() {
                         </div>
                       </td>
                     </tr>
-                  )
+                  ),
+                  // 付属品。本体にぶら下げて、SKUを字下げして出す
+                  ...parts.map(c => (
+                    <tr key={`p${p.id}-${c.id}`} style={{ background: '#fafafa' }}>
+                      <td style={{ fontFamily: 'monospace', fontSize: 12,
+                        whiteSpace: 'nowrap', paddingLeft: 24, color: '#64748b' }}>
+                        └ {c.sku}
+                      </td>
+                      <td style={{ color: '#64748b' }}>
+                        {c.name || '（名前なし）'}
+                        <span style={{ fontSize: 11, marginLeft: 6 }}>付属品</span>
+                      </td>
+                      <td colSpan={20} style={{ color: '#94a3b8', fontSize: 12 }}>
+                        {[c.spec, c.price ? `${c.price} 元` : '']
+                          .filter(Boolean).join('　/　')}
+                        <button className="btn btn-secondary btn-sm"
+                          style={{ marginLeft: 10 }}
+                          onClick={() => openEdit(c)}>編集</button>
+                      </td>
+                    </tr>
+                  ))]
                 })}
               </tbody>
             </table>
@@ -551,8 +605,17 @@ export default function ProductsPage() {
                   <textarea {...f('customer_memo')} rows={2} style={{ resize: 'vertical' }} />
                 </div>
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                  <label>備考</label>
+                  <label>備考（買付時。タオタロウの発注Excelに出ます）</label>
                   <textarea {...f('note')} rows={2} style={{ resize: 'vertical' }} />
+                </div>
+                {/* 買付の指示（全量検品・写真撮影）は納品の段階では
+                    終わっている。FBA指示書に残ると現場が迷うので、
+                    納品のときの指示は別に持つ */}
+                <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                  <label>納品時の備考（FBAへ送るとき。発注Excelには出ません）</label>
+                  <textarea {...f('delivery_note')} rows={2}
+                    placeholder="例: 5825743とセット組、2枚ずつ入れる"
+                    style={{ resize: 'vertical' }} />
                 </div>
                 {/* 本体と一緒に頼む付属品。楽天マスタと同じ作り。
                     在庫には連動しないが、頼まないと本体だけ届く */}

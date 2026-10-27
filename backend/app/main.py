@@ -80,6 +80,8 @@ def _migrate():
     migrations = [
         ("rakuten_products","orphan_ok",      "ALTER TABLE rakuten_products ADD COLUMN orphan_ok BOOLEAN DEFAULT FALSE"),
         ("import_permits","kind",                "ALTER TABLE import_permits ADD COLUMN kind VARCHAR DEFAULT 'permit'"),
+        ("products",      "delivery_note",       "ALTER TABLE products ADD COLUMN delivery_note TEXT"),
+        ("amazon_listings", "delivery_note",     "ALTER TABLE amazon_listings ADD COLUMN delivery_note TEXT"),
         ("products",      "selling_price",       "ALTER TABLE products ADD COLUMN selling_price FLOAT"),
         ("products",      "fba_fee",             "ALTER TABLE products ADD COLUMN fba_fee FLOAT"),
         ("products",      "amazon_fee_rate",     "ALTER TABLE products ADD COLUMN amazon_fee_rate FLOAT DEFAULT 0.1"),
@@ -89,6 +91,9 @@ def _migrate():
         ("products",      "spec",                "ALTER TABLE products ADD COLUMN spec VARCHAR"),
         ("products",      "customer_memo",       "ALTER TABLE products ADD COLUMN customer_memo TEXT"),
         ("products",      "supplier",            "ALTER TABLE products ADD COLUMN supplier VARCHAR DEFAULT 'タオタロウ'"),
+        ("order_settings","taotaro_web_cookie",  "ALTER TABLE order_settings ADD COLUMN taotaro_web_cookie TEXT"),
+        ("order_settings","send_order_states",  "ALTER TABLE order_settings ADD COLUMN send_order_states TEXT"),
+        ("order_settings","fba_target_days",   "ALTER TABLE order_settings ADD COLUMN fba_target_days INTEGER DEFAULT 0"),
         ("order_settings","exchange_rate",        "ALTER TABLE order_settings ADD COLUMN exchange_rate FLOAT DEFAULT 21.0"),
         ("order_settings","price_adjust_enabled", "ALTER TABLE order_settings ADD COLUMN price_adjust_enabled BOOLEAN DEFAULT FALSE"),
         ("order_settings","price_drop_threshold", "ALTER TABLE order_settings ADD COLUMN price_drop_threshold FLOAT DEFAULT 0.20"),
@@ -1494,6 +1499,109 @@ def _capture_month_end_inventory():
 _last_captured_period = None
 
 
+async def _fill_amazon_ids(limit: int = 40):
+    """出品済みでASIN・FNSKUが空のSKUを、Amazonから読んで埋める。
+
+    ⑤「登録結果を確かめる」を押せば入るが、押さなければ永久に空のまま。
+    再梱包指示や商品マスタはこの2つを見るので、気づかないうちに
+    空欄が並ぶ。押し忘れても埋まるように、裏で少しずつ拾う。
+
+    ASINは出品が通ってから、FNSKUはFBAに在庫が入ってから付くので、
+    取れないものは次の回にまた試す。1回で全部やるとSP-APIの
+    呼び出し制限に当たるため、空いているものから少しずつ。
+    """
+    from app.core.database import SessionLocal
+    from app.models.amazon_listing import AmazonListingChild
+    from app.models.product import Product
+    from app.services import amazon_api
+
+    db = SessionLocal()
+    try:
+        kids = (db.query(AmazonListingChild)
+                .filter(AmazonListingChild.sku.isnot(None),
+                        AmazonListingChild.status.in_(("submitted", "live")))
+                .all())
+        done = 0
+        for c in kids:
+            sku = (c.sku or "").strip()
+            if not sku:
+                continue
+            p = db.query(Product).filter(Product.sku == sku).first()
+            need_asin = not (c.asin or "").strip() or (
+                p is not None and not (p.asin or "").strip())
+            need_fnsku = p is not None and not (p.fnsku or "").strip()
+            if not (need_asin or need_fnsku):
+                continue
+            if done >= limit:
+                break
+            try:
+                got = await asyncio.to_thread(amazon_api.fetch_listing, sku)
+            except Exception as e:
+                logger.warning(f"[scheduler] ASIN取得に失敗 {sku}: {e}")
+                continue
+            done += 1
+            asin = (got.get("asin") or "").strip()
+            fnsku = (got.get("fnsku") or "").strip()
+            if asin and not (c.asin or "").strip():
+                c.asin = asin
+            if p is not None:
+                if asin and not (p.asin or "").strip():
+                    p.asin = asin
+                if fnsku and not (p.fnsku or "").strip():
+                    p.fnsku = fnsku
+
+        # スプレッドシートで登録した商品は出品レコードが無いので、
+        # 上のループに出てこない。商品マスタ側からも拾う
+        if done < limit:
+            have = {(k.sku or "").strip() for k in kids}
+            rows = (db.query(Product)
+                    .filter(Product.is_active == True,
+                            Product.sku.isnot(None),
+                            (Product.asin.is_(None)) | (Product.asin == ""))
+                    .all())
+            for p in rows:
+                sku = (p.sku or "").strip()
+                if not sku or sku in have:
+                    continue
+                if done >= limit:
+                    break
+                try:
+                    got = await asyncio.to_thread(amazon_api.fetch_listing, sku)
+                except Exception as e:
+                    logger.warning(f"[scheduler] ASIN取得に失敗 {sku}: {e}")
+                    continue
+                done += 1
+                asin = (got.get("asin") or "").strip()
+                fnsku = (got.get("fnsku") or "").strip()
+                if asin:
+                    p.asin = asin
+                if fnsku and not (p.fnsku or "").strip():
+                    p.fnsku = fnsku
+        if done:
+            db.commit()
+            logger.info(f"[scheduler] ASIN・FNSKUを調べた: {done}件")
+    except Exception as e:
+        logger.warning(f"[scheduler] ASIN・FNSKUの取り込みでエラー: {e}")
+    finally:
+        db.close()
+
+
+async def _watch_send_orders():
+    """配送依頼の状態を見に行き、変わっていたら知らせる。"""
+    def _run():
+        from app.core.database import SessionLocal
+        from app.services.send_order_watch import check_once
+        db = SessionLocal()
+        try:
+            return check_once(db)
+        finally:
+            db.close()
+    try:
+        await asyncio.to_thread(_run)
+    except Exception as e:
+        logger.warning(f"[scheduler] 配送依頼の見回りでエラー: {e}")
+
+
 async def _scheduler_loop():
     """1分ごとに受注差分の在庫同期＋RMS在庫取得、30分ごとにキャンセル再チェックを実行。
 
@@ -1515,6 +1623,14 @@ async def _scheduler_loop():
             logger.warning(f"[scheduler] 期末在庫の自動確定でエラー: {e}")
         if tick % 30 == 0:
             await _check_delayed_cancellations()
+        # 6時間ごと: 出品済みでASIN・FNSKUが空のSKUをAmazonから埋める。
+        # 自己発送はFBA在庫の取り込みに出てこないので、ここが唯一の入り口
+        if tick % 360 == 0:
+            await _fill_amazon_ids()
+        # 10分ごと: 配送依頼が「お支払い待ち」になったらChatworkへ。
+        # 支払いのお願いはメールで来るので、気づくのが遅れて出荷が遅れていた
+        if tick % 10 == 0:
+            await _watch_send_orders()
 
 
 @asynccontextmanager
@@ -1542,7 +1658,7 @@ app.add_middleware(
     # ZIPやExcelのファイル名は Content-Disposition に入っている。
     # 既定では JavaScript から読めないため、名前が取れず「保存」にできず、
     # 新しいタブを開こうとしてポップアップブロックで止まっていた
-    expose_headers=["Content-Disposition"],
+    expose_headers=["Content-Disposition", "X-Fill-Report"],
 )
 
 
