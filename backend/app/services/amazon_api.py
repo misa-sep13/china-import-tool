@@ -2,6 +2,7 @@ from typing import Dict, List, Optional
 import urllib.parse
 import urllib.request
 import json
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.core.config import settings
@@ -734,7 +735,7 @@ def _post_sp_api(path: str, body: dict) -> dict:
             if e.code == 429:
                 time.sleep(2 ** (attempt + 1))
                 continue
-            raise Exception(f"HTTP {e.code}: {e.read().decode()[:500]}")
+            raise Exception(f"HTTP {e.code}: {e.read().decode()[:4000]}")
     raise Exception("SP-API rate limited after retries: " + path)
 
 
@@ -812,6 +813,30 @@ def fetch_prep_owners(mskus: List[str], marketplace: str,
     return out
 
 
+_OWNER_RE = re.compile(
+    r"ERROR:\s*(\S+?)\s+(?:does not require|requires)\s+"
+    r"(prepOwner|labelOwner)[^.]*\.\s*Accepted values:\s*\[([^\]]*)\]"
+)
+
+
+def _owner_fixes(text: str) -> dict:
+    """SP-APIのエラー本文から、SKUごとの正しい担当を読み取る。
+
+    「a05_black does not require prepOwner but SELLER was assigned.
+      Accepted values: [NONE]」のような文が並ぶので、そのまま使う。
+    調べ方（prepDetails）が合っていなくても、これで追いつける。
+    """
+    out: dict = {}
+    for msku, field, accepted in _OWNER_RE.findall(text or ""):
+        vals = [v.strip() for v in accepted.split(",") if v.strip()]
+        if not vals:
+            continue
+        # SELLERが選べるならこちらで引き受ける。選べなければ言われたもの
+        value = "SELLER" if "SELLER" in vals else vals[0]
+        out.setdefault(msku, {})[field] = value
+    return out
+
+
 def create_inbound_plan(items: List[dict], source_address: dict, name: str = "") -> dict:
     """FBA納品プランを作成する。
 
@@ -848,14 +873,31 @@ def create_inbound_plan(items: List[dict], source_address: dict, name: str = "")
     if name:
         body["name"] = name
 
-    try:
-        data = _post_sp_api("/inbound/fba/2024-03-20/inboundPlans", body)
-    except Exception as e:
+    # 準備作業・ラベルの担当は、調べても外れることがある。
+    # 外れたときはAmazonが「このSKUはこの値」と教えてくるので、
+    # それを読んで入れ直してもう一度出す
+    data = None
+    last = ""
+    for _ in range(5):
+        try:
+            data = _post_sp_api("/inbound/fba/2024-03-20/inboundPlans", body)
+            break
+        except Exception as e:
+            last = str(e)
+            fixes = _owner_fixes(last)
+            changed = False
+            for it in payload_items:
+                for field, value in (fixes.get(it["msku"]) or {}).items():
+                    if it.get(field) != value:
+                        it[field] = value
+                        changed = True
+            if not changed:
+                break
+    if data is None:
         if prep_errors:
-            raise Exception(
-                f"{e} ｜ 準備作業の確認ができませんでした: "
-                f"{prep_errors[0][:300]}")
-        raise
+            last += (" ｜ 準備作業の確認ができませんでした: "
+                     + prep_errors[0][:300])
+        raise Exception(last)
     return {
         "inbound_plan_id": data.get("inboundPlanId") or "",
         "operation_id": data.get("operationId") or "",
