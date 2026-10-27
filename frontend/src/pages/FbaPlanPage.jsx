@@ -685,6 +685,13 @@ export default function FbaPlanPage() {
             梱包が終わったら<b>④ 箱の中身をAmazonに入れる</b>
             <span style={{ color: '#64748b' }}>　→ セラーセントラルに貼る作業は要りません</span>
           </li>
+          <li>
+            <b>⑤ 納品先を決める</b>
+            <span style={{ color: '#64748b' }}>　→ ここで納品番号（FBA…）ができます</span>
+          </li>
+          <li>
+            出荷済みのお知らせが来たら<b>⑥ 追跡番号を入れる</b>
+          </li>
         </ol>
         <div style={{ marginTop: 10, padding: '8px 12px', background: '#fffbeb',
           border: '1px solid #fde68a', borderRadius: 6, fontSize: 12,
@@ -697,6 +704,9 @@ export default function FbaPlanPage() {
           <br />
           <b>④だけ後になるのは：</b>箱に詰める前は箱の中身が無いためです。
           インボイスができるまで待ちます。
+          <br />
+          <b>⑤は必ず④のあと：</b>納品先を先に確定すると、Amazonが
+          「納品先が確定済みなので梱包は作れない」と言って止めます。
         </div>
       </div>
 
@@ -1025,59 +1035,11 @@ export default function FbaPlanPage() {
                     セラーセントラルにも出てきます。
                   </div>
 
-                  <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 12 }}>
-                    <div style={{ marginBottom: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <b style={{ fontSize: 14 }}>③-2 納品先を決める</b>
-                        <span style={{ fontSize: 12, color: '#64748b' }}>
-                          どのFCに、いくつの納品に分けて送るか
-                        </span>
-                      </div>
-                      <button className="btn btn-primary" onClick={loadPlacement}
-                        disabled={loadingPlace} style={{ marginTop: 8 }}>
-                        {loadingPlace ? '処理中…' : '候補を出す'}
-                      </button>
-                    </div>
-
-                    {placeMsg && (
-                      <div style={{ fontSize: 12, color: '#b45309', marginBottom: 8,
-                        whiteSpace: 'pre-wrap' }}>{placeMsg}</div>
-                    )}
-
-                    {!placeResult && placeOpts.map(o => (
-                      <div key={o.placement_option_id} style={{
-                        display: 'flex', alignItems: 'center', gap: 12,
-                        padding: '8px 10px', border: '1px solid #e2e8f0',
-                        borderRadius: 6, marginBottom: 6, fontSize: 13,
-                      }}>
-                        <span><b>{o.shipment_count}</b>納品に分かれます</span>
-                        <span style={{ color: '#475569' }}>
-                          手数料: {o.fee ? `${o.fee} ${o.currency}` : 'なし'}
-                        </span>
-                        <button className="btn btn-primary" style={{ marginLeft: 'auto' }}
-                          disabled={loadingPlace}
-                          onClick={() => confirmPlacement(o.placement_option_id)}>
-                          これで確定
-                        </button>
-                      </div>
-                    ))}
-
-                    {placeResult && (
-                      <div style={{ fontSize: 13 }}>
-                        <div style={{ color: '#166534', fontWeight: 700, marginBottom: 6 }}>
-                          納品先を確定しました（{placeResult.shipments?.length || 0}納品）
-                        </div>
-                        {(placeResult.shipments || []).map(sh => (
-                          <div key={sh.shipment_id} style={{ color: '#334155' }}>
-                            {sh.confirmation_id || sh.shipment_id}
-                            {sh.destination ? `（${sh.destination}）` : ''}
-                          </div>
-                        ))}
-                        <div style={{ marginTop: 8, color: '#475569' }}>
-                          このあと④（箱の中身）に進めます。
-                        </div>
-                      </div>
-                    )}
+                  <div style={{ fontSize: 13, color: '#334155',
+                    background: '#f1f5f9', borderRadius: 6, padding: '8px 12px',
+                    marginBottom: 10 }}>
+                    次は<b>④箱の中身</b>、そのあと<b>⑤納品先を決める</b>の順です。
+                    納品先を先に確定してしまうと、箱の中身を入れられなくなります。
                   </div>
 
                   <a href={createResult.seller_central_url} target="_blank" rel="noreferrer"
@@ -1301,11 +1263,72 @@ export default function FbaPlanPage() {
         )}
       </div>
 
+      {/* 納品先の確定。箱の中身よりあと。先に確定すると
+          Amazonが「納品先が確定済みだから梱包は作れない」と言って止める */}
+      {createResult && !createResult.error && (
+      <div className="card" style={{ marginBottom: 16 }}>
+                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 12 }}>
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <b style={{ fontSize: 14 }}>⑤ 納品先を決める</b>
+                      <span style={{ fontSize: 12, color: '#64748b' }}>
+                        どのFCに、いくつの納品に分けて送るか
+                      </span>
+                    </div>
+                    <button className="btn btn-primary" onClick={loadPlacement}
+                      disabled={loadingPlace} style={{ marginTop: 8 }}>
+                      {loadingPlace ? '処理中…' : '候補を出す'}
+                    </button>
+                  </div>
+
+                  {placeMsg && (
+                    <div style={{ fontSize: 12, color: '#b45309', marginBottom: 8,
+                      whiteSpace: 'pre-wrap' }}>{placeMsg}</div>
+                  )}
+
+                  {!placeResult && placeOpts.map(o => (
+                    <div key={o.placement_option_id} style={{
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      padding: '8px 10px', border: '1px solid #e2e8f0',
+                      borderRadius: 6, marginBottom: 6, fontSize: 13,
+                    }}>
+                      <span><b>{o.shipment_count}</b>納品に分かれます</span>
+                      <span style={{ color: '#475569' }}>
+                        手数料: {o.fee ? `${o.fee} ${o.currency}` : 'なし'}
+                      </span>
+                      <button className="btn btn-primary" style={{ marginLeft: 'auto' }}
+                        disabled={loadingPlace}
+                        onClick={() => confirmPlacement(o.placement_option_id)}>
+                        これで確定
+                      </button>
+                    </div>
+                  ))}
+
+                  {placeResult && (
+                    <div style={{ fontSize: 13 }}>
+                      <div style={{ color: '#166534', fontWeight: 700, marginBottom: 6 }}>
+                        納品先を確定しました（{placeResult.shipments?.length || 0}納品）
+                      </div>
+                      {(placeResult.shipments || []).map(sh => (
+                        <div key={sh.shipment_id} style={{ color: '#334155' }}>
+                          {sh.confirmation_id || sh.shipment_id}
+                          {sh.destination ? `（${sh.destination}）` : ''}
+                        </div>
+                      ))}
+                      <div style={{ marginTop: 8, color: '#475569' }}>
+                        このあと⑥（追跡番号）に進めます。
+                      </div>
+                    </div>
+                  )}
+                </div>
+      </div>
+      )}
+
       {/* 出荷されたあと。追跡番号は配送依頼の sn そのもので、
           便ごとに1つ。Amazonは箱ごとに欲しがるので全箱に同じ番号を入れる */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <b style={{ fontSize: 15 }}>⑤ 追跡番号をAmazonに入れる</b>
+          <b style={{ fontSize: 15 }}>⑥ 追跡番号をAmazonに入れる</b>
           <span style={{ fontSize: 12, color: '#64748b' }}>
             出荷後にやります。タオタロウに聞く必要はありません
           </span>
