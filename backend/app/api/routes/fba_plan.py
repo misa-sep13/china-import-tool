@@ -437,6 +437,80 @@ def confirm_placement(req: ConfirmPlacementIn):
     return {"ok": True, "shipments": shipments}
 
 
+# ---------- 追跡番号をAmazonに入れる ----------
+#
+# 配送依頼が出荷済みになると、タオタロウの sn がそのまま
+# 追跡番号になる。業者に毎回聞かなくても、APIから取れる。
+# 番号は便ごとに1つ。Amazonは箱ごとに欲しがるので、
+# 全部の箱に同じ番号を入れる（1便でまとめて送っているため）。
+
+@router.get("/tracking/{sid:int}")
+def tracking_info(sid: int):
+    """配送依頼の追跡番号と業者を返す。"""
+    try:
+        d = taotaro.get_send_order(sid)
+    except Exception as e:
+        raise HTTPException(400, f"配送依頼が読めませんでした（{e}）")
+    return {
+        "sid": sid,
+        "tracking_id": d.get("sn") or "",
+        "carrier": d.get("delivery_name") or "",
+        "tracking_url": d.get("tracking_url") or "",
+        "state": d.get("state"),
+        "state_label": d.get("state_label") or "",
+        "shipped": d.get("state") in (2, 3),
+    }
+
+
+class TrackingIn(BaseModel):
+    sid: int
+    shipment_confirmation_id: str
+    tracking_id: str = ""
+
+
+@router.post("/tracking")
+def send_tracking(req: TrackingIn):
+    """配送依頼の追跡番号を、FBA納品の全部の箱に入れる。"""
+    from app.services import amazon_api
+
+    num = (req.tracking_id or "").strip()
+    if not num:
+        try:
+            num = (taotaro.get_send_order(req.sid).get("sn") or "").strip()
+        except Exception as e:
+            raise HTTPException(400, f"配送依頼が読めませんでした（{e}）")
+    if not num:
+        raise HTTPException(400, "追跡番号がまだありません（出荷前です）")
+
+    try:
+        found = amazon_api.find_shipment(req.shipment_confirmation_id)
+    except Exception as e:
+        raise HTTPException(400, f"納品を探せませんでした（{e}）")
+    if not found:
+        raise HTTPException(
+            400, f"{req.shipment_confirmation_id} の納品が見つかりません")
+
+    try:
+        boxes = amazon_api.list_shipment_boxes(
+            found["inbound_plan_id"], found["shipment_id"])
+    except Exception as e:
+        raise HTTPException(400, f"箱が読めませんでした（{e}）")
+    items = [{"boxId": b.get("boxId"), "trackingId": num}
+             for b in boxes if b.get("boxId")]
+    if not items:
+        raise HTTPException(400, "箱が1つもありませんでした")
+
+    try:
+        amazon_api.set_shipment_tracking(
+            found["inbound_plan_id"], found["shipment_id"], items)
+    except Exception as e:
+        raise HTTPException(400, f"追跡番号を入れられませんでした（{e}）")
+
+    return {"ok": True, "tracking_id": num, "boxes": len(items),
+            "shipment": req.shipment_confirmation_id,
+            "destination": found.get("destination") or ""}
+
+
 @router.post("/export-excel")
 def export_plan_excel(req: PlanExportRequest, db: Session = Depends(get_db)):
     if not req.items:

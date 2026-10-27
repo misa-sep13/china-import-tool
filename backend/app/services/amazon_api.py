@@ -2309,6 +2309,66 @@ def confirm_packing_option(plan_id: str, packing_option_id: str) -> None:
     wait_inbound_operation(op.get("operationId") or "")
 
 
+def list_inbound_plans(limit: int = 20) -> List[dict]:
+    """納品プランを新しい順に返す。"""
+    data = _call_sp_api(
+        "/inbound/fba/2024-03-20/inboundPlans?"
+        + urllib.parse.urlencode({"pageSize": max(1, min(limit, 30)),
+                                  "sortBy": "LAST_UPDATED_TIME",
+                                  "sortOrder": "DESC"})
+    )
+    return data.get("inboundPlans") or []
+
+
+def find_shipment(confirmation_id: str) -> Optional[dict]:
+    """FBA番号（FBAで始まる番号）から、プランと納品を探す。
+
+    セラーセントラルで作った納品でも、確定済みなら
+    こちらから見える。これが追跡番号を入れる入り口になる。
+    """
+    want = (confirmation_id or "").strip().upper()
+    if not want:
+        return None
+    for plan in list_inbound_plans(30):
+        pid = plan.get("inboundPlanId") or ""
+        if not pid:
+            continue
+        try:
+            shipments = list_plan_shipments(pid)
+        except Exception:
+            continue
+        for sh in shipments:
+            if (sh.get("shipmentConfirmationId") or "").upper() == want:
+                return {"inbound_plan_id": pid,
+                        "shipment_id": sh.get("shipmentId") or "",
+                        "name": sh.get("name") or "",
+                        "destination": ((sh.get("destination") or {})
+                                        .get("warehouseId") or "")}
+    return None
+
+
+def list_shipment_boxes(plan_id: str, shipment_id: str) -> List[dict]:
+    """納品の箱を返す。追跡番号は箱ごとに入れる。"""
+    path = (f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+            f"/shipments/{shipment_id}/boxes")
+    return _call_sp_api(path).get("boxes") or []
+
+
+def set_shipment_tracking(plan_id: str, shipment_id: str,
+                          tracking_by_box: List[dict]) -> None:
+    """個口配送（SPD）の追跡番号を入れる。
+
+    tracking_by_box: [{"boxId": ..., "trackingId": ...}, ...]
+    1便をまとめて送るので、実際には全部同じ番号になる。
+    """
+    _put_sp_api(
+        f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+        f"/shipments/{shipment_id}/trackingDetails",
+        {"trackingDetails": {"spdTrackingDetail": {
+            "spdTrackingItems": tracking_by_box}}},
+    )
+
+
 def list_placement_options(plan_id: str) -> List[dict]:
     """納品先（どのFCに、いくつの納品に分けて送るか）の候補を出す。
 

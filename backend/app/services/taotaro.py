@@ -214,6 +214,9 @@ def get_send_order(sid: int, raw: bool = False) -> dict:
         "consignee": x.get("consignee"),
         "address": x.get("address"),
         "delivery_name": x.get("delivery_name"),
+        # 追跡番号は sn そのもの。業者に毎回聞かなくてもここから取れる
+        "tracking_url": x.get("tracking_url"),
+        "latest_trace": x.get("latest_trace"),
         "count_weight": x.get("count_weight"),
         # 費用は荷物がたどる順。単位はすべて人民元
         "send_price": x.get("send_price"),        # 中国国内運賃

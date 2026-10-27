@@ -323,6 +323,42 @@ export default function FbaPlanPage() {
   const [packing, setPacking] = useState(null)
   // 納品先（placement）。Amazonの新しい流れでは、箱の中身より
   // 先に「どのFCに分けて送るか」を決めないと先へ進めない
+  // 追跡番号。配送依頼の sn がそのまま番号なので、
+  // タオタロウに毎回聞かなくてもAPIから取れる
+  const [track, setTrack] = useState(null)
+  const [trackFba, setTrackFba] = useState('')
+  const [trackMsg, setTrackMsg] = useState('')
+  const [trackBusy, setTrackBusy] = useState(false)
+
+  const loadTracking = async (sid) => {
+    if (!sid) { setTrackMsg('上で便を選んでください'); return }
+    setTrackBusy(true); setTrackMsg('')
+    try {
+      const { data } = await api.get(`/fba-plan/tracking/${sid}`)
+      setTrack(data)
+      if (!data.tracking_id) setTrackMsg('追跡番号がまだありません（出荷前）')
+    } catch (e) {
+      setTrack(null)
+      setTrackMsg(e.response?.data?.detail || '取れませんでした')
+    }
+    setTrackBusy(false)
+  }
+
+  const sendTracking = async (sid) => {
+    const fba = trackFba.trim()
+    if (!fba) { setTrackMsg('FBA番号を入れてください'); return }
+    setTrackBusy(true); setTrackMsg('')
+    try {
+      const { data } = await api.post('/fba-plan/tracking', {
+        sid, shipment_confirmation_id: fba, tracking_id: track?.tracking_id || '',
+      })
+      setTrackMsg(`${data.tracking_id} を ${data.boxes}箱に入れました`)
+    } catch (e) {
+      setTrackMsg(e.response?.data?.detail || '入れられませんでした')
+    }
+    setTrackBusy(false)
+  }
+
   const [placeOpts, setPlaceOpts] = useState([])
   const [placeMsg, setPlaceMsg] = useState('')
   const [placeResult, setPlaceResult] = useState(null)
@@ -1232,6 +1268,53 @@ export default function FbaPlanPage() {
               </div>
             ))}
           </div>
+        )}
+      </div>
+
+      {/* 出荷されたあと。追跡番号は配送依頼の sn そのもので、
+          便ごとに1つ。Amazonは箱ごとに欲しがるので全箱に同じ番号を入れる */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 15 }}>⑤ 追跡番号をAmazonに入れる</b>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            出荷後にやります。タオタロウに聞く必要はありません
+          </span>
+          <button className="btn btn-secondary" style={{ marginLeft: 'auto', fontSize: 13 }}
+            onClick={() => loadTracking(planSid)} disabled={trackBusy || !planSid}>
+            {trackBusy ? '処理中…' : '追跡番号を確かめる'}
+          </button>
+        </div>
+
+        {track && (
+          <div style={{ marginTop: 10, fontSize: 13, color: '#334155', lineHeight: 1.9 }}>
+            <div>状態: <b>{track.state_label || '—'}</b></div>
+            <div>業者: {track.carrier || '—'}</div>
+            <div>追跡番号: <b style={{ fontFamily: 'monospace' }}>
+              {track.tracking_id || 'まだなし'}</b></div>
+            {track.latest_trace && (
+              <div style={{ color: '#64748b' }}>
+                最新: {track.latest_trace.time} {track.latest_trace.location}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center',
+          flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13 }}>FBA番号</span>
+          <input value={trackFba} onChange={e => setTrackFba(e.target.value)}
+            placeholder="FBA15GKPKN8B"
+            style={{ padding: '5px 8px', border: '1px solid #cbd5e1', borderRadius: 4,
+              fontSize: 13, fontFamily: 'monospace', width: 180 }} />
+          <button className="btn btn-primary" style={{ fontSize: 13 }}
+            onClick={() => sendTracking(planSid)}
+            disabled={trackBusy || !planSid || !track?.tracking_id}>
+            Amazonに入れる
+          </button>
+        </div>
+
+        {trackMsg && (
+          <div style={{ marginTop: 8, fontSize: 12, color: '#334155' }}>{trackMsg}</div>
         )}
       </div>
 

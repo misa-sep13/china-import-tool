@@ -92,6 +92,9 @@ def check_once(db) -> dict:
             "weight": x.get("count_weight"),
             "total": x.get("total_send_fee"),
             "boxes_ready": ready,
+            # 出荷済みになると sn がそのまま追跡番号になる
+            "carrier": x.get("delivery_name") or "",
+            "tracking_url": x.get("tracking_url") or "",
         })
 
     for n in notices:
@@ -118,6 +121,12 @@ def _send(n: dict) -> None:
                 lines.append(f"金額: {n['total']} 元")
             if n.get("weight"):
                 lines.append(f"重量: {n['weight']} kg")
+        if n["state"] == 2:
+            # 追跡番号は配送依頼番号（sn）そのもの
+            if n.get("carrier"):
+                lines.append(f"業者: {n['carrier']}")
+            lines.append(f"追跡番号: {n['sn']}")
+            lines.append("納品プランの⑤でAmazonに入れられます。")
         if n.get("boxes_ready"):
             lines.append("インボイスができています。"
                          "納品プランの④（箱の中身）まで進められます。")
