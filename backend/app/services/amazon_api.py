@@ -2310,14 +2310,29 @@ def confirm_packing_option(plan_id: str, packing_option_id: str) -> None:
 
 
 def list_inbound_plans(limit: int = 20) -> List[dict]:
-    """納品プランを新しい順に返す。"""
-    data = _call_sp_api(
-        "/inbound/fba/2024-03-20/inboundPlans?"
-        + urllib.parse.urlencode({"pageSize": max(1, min(limit, 30)),
-                                  "sortBy": "LAST_UPDATED_TIME",
-                                  "sortOrder": "DESC"})
-    )
-    return data.get("inboundPlans") or []
+    """納品プランを新しい順に返す。
+
+    状態を指定しないと出てこないものがあるので、
+    状態を変えて何度か聞き、重複を除いてまとめる。
+    """
+    out, seen = [], set()
+    for status in (None, "ACTIVE", "SHIPPED", "READY_TO_SHIP"):
+        q = {"pageSize": max(1, min(limit, 30)),
+             "sortBy": "LAST_UPDATED_TIME", "sortOrder": "DESC"}
+        if status:
+            q["status"] = status
+        try:
+            data = _call_sp_api(
+                "/inbound/fba/2024-03-20/inboundPlans?"
+                + urllib.parse.urlencode(q))
+        except Exception:
+            continue
+        for plan in data.get("inboundPlans") or []:
+            pid = plan.get("inboundPlanId") or ""
+            if pid and pid not in seen:
+                seen.add(pid)
+                out.append(plan)
+    return out
 
 
 def find_shipment(confirmation_id: str) -> Optional[dict]:
