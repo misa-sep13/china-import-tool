@@ -360,6 +360,81 @@ def get_inbound_operation(operation_id: str):
     }
 
 
+# ---------- 納品先を決める（placement） ----------
+#
+# Amazonの新しい流れでは、納品プランを作ったあとすぐに
+# 「どのFCに、いくつの納品に分けて送るか」を決める。
+# これを確定しないと納品（FBA番号）ができず、セラセンにも
+# 出てこないし、箱の中身も入れられない。
+
+def _fee_total(option: dict) -> tuple:
+    total, cur = 0.0, ""
+    for f in option.get("fees") or []:
+        v = f.get("value") or {}
+        try:
+            total += float(v.get("amount") or 0)
+        except Exception:
+            pass
+        cur = v.get("code") or cur
+    return round(total, 2), cur
+
+
+@router.get("/placement/{plan_id}")
+def placement_options(plan_id: str):
+    """納品先の候補を出す。安い順に並べる。"""
+    from app.services import amazon_api
+    try:
+        options = amazon_api.list_placement_options(plan_id)
+    except Exception as e:
+        raise HTTPException(400, f"納品先の候補が取れませんでした（{e}）")
+
+    out = []
+    for o in options:
+        fee, cur = _fee_total(o)
+        out.append({
+            "placement_option_id": o.get("placementOptionId") or "",
+            "shipment_ids": o.get("shipmentIds") or [],
+            "shipment_count": len(o.get("shipmentIds") or []),
+            "fee": fee,
+            "currency": cur,
+            "status": o.get("status") or "",
+            "expires_at": o.get("expiration") or "",
+        })
+    out.sort(key=lambda x: (x["fee"], x["shipment_count"]))
+    return {"plan_id": plan_id, "options": out}
+
+
+class ConfirmPlacementIn(BaseModel):
+    plan_id: str
+    placement_option_id: str
+
+
+@router.post("/placement/confirm")
+def confirm_placement(req: ConfirmPlacementIn):
+    """納品先を確定して、できた納品を返す。"""
+    from app.services import amazon_api
+    try:
+        amazon_api.confirm_placement_option(
+            req.plan_id, req.placement_option_id)
+    except Exception as e:
+        raise HTTPException(400, f"納品先を確定できませんでした（{e}）")
+
+    shipments = []
+    try:
+        for sh in amazon_api.list_plan_shipments(req.plan_id):
+            shipments.append({
+                "shipment_id": sh.get("shipmentId") or "",
+                # FBAで始まる番号。セラセンで探すときはこれ
+                "confirmation_id": sh.get("shipmentConfirmationId") or "",
+                "destination": ((sh.get("destination") or {})
+                                .get("warehouseId") or ""),
+                "name": sh.get("name") or "",
+            })
+    except Exception:
+        pass
+    return {"ok": True, "shipments": shipments}
+
+
 @router.post("/export-excel")
 def export_plan_excel(req: PlanExportRequest, db: Session = Depends(get_db)):
     if not req.items:

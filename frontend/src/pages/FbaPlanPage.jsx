@@ -289,6 +289,47 @@ export default function FbaPlanPage() {
   const [sendOrders, setSendOrders] = useState(null)
   const [loadingSo, setLoadingSo] = useState(false)
   const [packing, setPacking] = useState(null)
+  // 納品先（placement）。Amazonの新しい流れでは、箱の中身より
+  // 先に「どのFCに分けて送るか」を決めないと先へ進めない
+  const [placeOpts, setPlaceOpts] = useState([])
+  const [placeMsg, setPlaceMsg] = useState('')
+  const [placeResult, setPlaceResult] = useState(null)
+  const [loadingPlace, setLoadingPlace] = useState(false)
+
+  const loadPlacement = async () => {
+    const planId = createResult?.inbound_plan_id
+    if (!planId) return
+    setLoadingPlace(true)
+    setPlaceMsg('納品先の候補を出しています…（1分ほどかかります）')
+    try {
+      const { data } = await api.get(`/fba-plan/placement/${planId}`)
+      const opts = data.options || []
+      setPlaceOpts(opts)
+      setPlaceMsg(opts.length ? '' : '候補がありませんでした')
+    } catch (e) {
+      setPlaceOpts([])
+      setPlaceMsg(e.response?.data?.detail || '候補が取れませんでした')
+    } finally {
+      setLoadingPlace(false)
+    }
+  }
+
+  const confirmPlacement = async (optId) => {
+    if (!confirm('この納品先で確定します。確定すると変更できません。')) return
+    setLoadingPlace(true)
+    setPlaceMsg('確定しています…')
+    try {
+      const { data } = await api.post('/fba-plan/placement/confirm', {
+        plan_id: createResult.inbound_plan_id, placement_option_id: optId,
+      })
+      setPlaceResult(data)
+      setPlaceMsg('')
+    } catch (e) {
+      setPlaceMsg(e.response?.data?.detail || '確定できませんでした')
+    } finally {
+      setLoadingPlace(false)
+    }
+  }
   const [packErr, setPackErr] = useState('')
   const [loadingPack, setLoadingPack] = useState(false)
 
@@ -881,16 +922,68 @@ export default function FbaPlanPage() {
                     プランID: <span style={{ fontFamily: 'monospace' }}>{createResult.inbound_plan_id}</span>
                   </div>
                   <div style={{ fontSize: 13, color: '#334155', marginBottom: 10 }}>
-                    次にやること:
-                    <ol style={{ margin: '6px 0 0', paddingLeft: 20, lineHeight: 1.9 }}>
-                      <li>セラーセントラルでこのプランを開き、<b>商品ラベルをダウンロード</b></li>
-                      <li>タオタロウのFBA指示書と一緒に<b>WeChatへ送る</b></li>
-                      <li>（梱包・配送業者はタオタロウが決めるのでこちらでは指定しません）</li>
-                    </ol>
+                    この段階ではまだ納品（FBA番号）はできていません。
+                    次の<b>納品先を決める</b>を済ませると納品ができ、
+                    セラーセントラルにも出てきます。
                   </div>
+
+                  <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                      <b style={{ fontSize: 14 }}>③-2 納品先を決める</b>
+                      <span style={{ fontSize: 12, color: '#64748b' }}>
+                        どのFCに、いくつの納品に分けて送るか
+                      </span>
+                      <button className="btn" onClick={loadPlacement} disabled={loadingPlace}
+                        style={{ marginLeft: 'auto' }}>
+                        {loadingPlace ? '処理中…' : '候補を出す'}
+                      </button>
+                    </div>
+
+                    {placeMsg && (
+                      <div style={{ fontSize: 12, color: '#b45309', marginBottom: 8,
+                        whiteSpace: 'pre-wrap' }}>{placeMsg}</div>
+                    )}
+
+                    {!placeResult && placeOpts.map(o => (
+                      <div key={o.placement_option_id} style={{
+                        display: 'flex', alignItems: 'center', gap: 12,
+                        padding: '8px 10px', border: '1px solid #e2e8f0',
+                        borderRadius: 6, marginBottom: 6, fontSize: 13,
+                      }}>
+                        <span><b>{o.shipment_count}</b>納品に分かれます</span>
+                        <span style={{ color: '#475569' }}>
+                          手数料: {o.fee ? `${o.fee} ${o.currency}` : 'なし'}
+                        </span>
+                        <button className="btn btn-primary" style={{ marginLeft: 'auto' }}
+                          disabled={loadingPlace}
+                          onClick={() => confirmPlacement(o.placement_option_id)}>
+                          これで確定
+                        </button>
+                      </div>
+                    ))}
+
+                    {placeResult && (
+                      <div style={{ fontSize: 13 }}>
+                        <div style={{ color: '#166534', fontWeight: 700, marginBottom: 6 }}>
+                          納品先を確定しました（{placeResult.shipments?.length || 0}納品）
+                        </div>
+                        {(placeResult.shipments || []).map(sh => (
+                          <div key={sh.shipment_id} style={{ color: '#334155' }}>
+                            {sh.confirmation_id || sh.shipment_id}
+                            {sh.destination ? `（${sh.destination}）` : ''}
+                          </div>
+                        ))}
+                        <div style={{ marginTop: 8, color: '#475569' }}>
+                          このあと④（箱の中身）に進めます。
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <a href={createResult.seller_central_url} target="_blank" rel="noreferrer"
                     style={{
-                      display: 'inline-block', padding: '8px 16px', background: '#1e40af',
+                      display: 'inline-block', marginTop: 12,
+                      padding: '8px 16px', background: '#1e40af',
                       color: '#fff', borderRadius: 6, fontSize: 13, fontWeight: 600,
                       textDecoration: 'none',
                     }}>

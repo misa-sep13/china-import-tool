@@ -2309,6 +2309,40 @@ def confirm_packing_option(plan_id: str, packing_option_id: str) -> None:
     wait_inbound_operation(op.get("operationId") or "")
 
 
+def list_placement_options(plan_id: str) -> List[dict]:
+    """納品先（どのFCに、いくつの納品に分けて送るか）の候補を出す。
+
+    Amazonの新しい流れでは、梱包情報より先にこちらを確定する。
+    確定して初めて納品（FBA番号）ができ、セラセンにも現れる。
+    """
+    path = f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}/placementOptions"
+    options = _call_sp_api(path).get("placementOptions") or []
+    if options:
+        return options
+    op = _post_sp_api(path, {})
+    wait_inbound_operation(op.get("operationId") or "")
+    return _call_sp_api(path).get("placementOptions") or []
+
+
+def confirm_placement_option(plan_id: str, placement_option_id: str) -> None:
+    op = _post_sp_api(
+        f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+        f"/placementOptions/{placement_option_id}/confirmation", {})
+    wait_inbound_operation(op.get("operationId") or "")
+
+
+def list_plan_shipments(plan_id: str) -> List[dict]:
+    """納品先を確定したあとにできる納品を返す。"""
+    path = f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}/shipments"
+    return _call_sp_api(path).get("shipments") or []
+
+
+def get_plan_shipment(plan_id: str, shipment_id: str) -> dict:
+    return _call_sp_api(
+        f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+        f"/shipments/{shipment_id}")
+
+
 def list_packing_group_items(plan_id: str, packing_group_id: str) -> List[dict]:
     """梱包グループに入っているSKUと数を返す。
 
