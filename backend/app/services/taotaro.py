@@ -196,9 +196,15 @@ def _send_order_brief(x: dict) -> dict:
     }
 
 
-def get_send_order(sid: int) -> dict:
-    """配送依頼の詳細。費用の内訳と、同梱されている注文の明細。"""
+def get_send_order(sid: int, raw: bool = False) -> dict:
+    """配送依頼の詳細。費用の内訳と、同梱されている注文の明細。
+
+    2026-10-27版から、インボイスができると箱ごとの情報が返る
+    （box_count・boxes_ready・boxes[]・orders[].box_ref）。
+    """
     x = _request(f"/api/v1/send-orders/{int(sid)}")
+    if raw:
+        return x
     orders = x.get("orders") or []
     return {
         "sid": x.get("sid"),
@@ -222,6 +228,10 @@ def get_send_order(sid: int) -> dict:
         "created_at": _ts(x.get("created_at")),
         "updated_at": _ts(x.get("updated_at")),
         "orders": [_order_brief(o) for o in orders],
+        # インボイス作成後に入る。これが true なら箱の中身まで分かる
+        "boxes_ready": x.get("boxes_ready"),
+        "box_count": x.get("box_count"),
+        "boxes": x.get("boxes") or [],
     }
 
 
@@ -249,6 +259,8 @@ def _order_brief(o: dict) -> dict:
         "remark": o.get("goods_remark"),
         "created_at": _ts(o.get("created_at")),
         "arrived_at": _ts(o.get("arrived_at")),
+        # どの箱に入っているか（倉庫が書いた箱番号のまま）
+        "box_ref": o.get("box_ref"),
     }
 
 

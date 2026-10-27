@@ -744,3 +744,13 @@ def watch_check(db: Session = Depends(get_db)):
     """
     from app.services.send_order_watch import check_once
     return check_once(db)
+
+
+@router.get("/send-orders/{sid:int}/raw")
+def send_order_raw(sid: int):
+    """配送依頼の詳細を、タオタロウから返ってきたまま返す。
+
+    新しい項目（箱の情報など）が本番でどう入るのかを確かめるために使う。
+    仕様書と実物が食い違うことがあるので、加工前を見られるようにしておく。
+    """
+    return _call(taotaro.get_send_order, sid, True)
