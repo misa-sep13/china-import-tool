@@ -301,11 +301,17 @@ def create_inbound_plan_api(req: PlanExportRequest, db: Session = Depends(get_db
         create_inbound_plan, fetch_default_source_address,
     )
 
-    source = fetch_default_source_address()
+    try:
+        source = fetch_default_source_address()
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"発送元住所を読めませんでした（{e}）",
+        )
     if not source:
         raise HTTPException(
             status_code=400,
-            detail="発送元住所を取得できませんでした。セラーセントラルで一度納品プランを作ると、その住所を引き継げます",
+            detail="発送元住所を持った納品プランがありません。セラーセントラルで一度納品プランを作ると、その住所を引き継げます",
         )
 
     # plan_qtyはセット数なのでピース数に直して送る

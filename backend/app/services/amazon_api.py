@@ -744,17 +744,31 @@ def fetch_default_source_address() -> Optional[dict]:
     住所をコードや設定に持たせるとセラーセントラル側で変更したときにずれるため、
     実際に使われた住所をそのまま再利用する。
     """
-    try:
-        data = _call_sp_api(
-            "/inbound/fba/2024-03-20/inboundPlans?"
-            + urllib.parse.urlencode({"pageSize": 1})
-        )
-    except Exception:
-        return None
-    plans = data.get("inboundPlans") or []
-    if not plans:
-        return None
-    return plans[0].get("sourceAddress") or None
+    # 新しい順に何件か見る。1件だけだと、それがたまたま住所を持たない
+    # 書きかけのプランだったときに取れない
+    last_err = ""
+    for params in ({"pageSize": 10, "sortBy": "LAST_UPDATED_TIME",
+                    "sortOrder": "DESC"},
+                   {"pageSize": 10}):
+        try:
+            data = _call_sp_api(
+                "/inbound/fba/2024-03-20/inboundPlans?"
+                + urllib.parse.urlencode(params)
+            )
+        except Exception as e:
+            last_err = str(e)
+            continue
+        for plan in data.get("inboundPlans") or []:
+            addr = plan.get("sourceAddress")
+            if addr:
+                return addr
+        last_err = ""
+        break
+    if last_err:
+        # 黙って None を返すと画面に「セラーセントラルで作って」としか
+        # 出ず、本当の原因（権限・引数）が分からなくなる
+        raise Exception(last_err)
+    return None
 
 
 def create_inbound_plan(items: List[dict], source_address: dict, name: str = "") -> dict:
