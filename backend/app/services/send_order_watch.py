@@ -110,7 +110,9 @@ def _send(n: dict) -> None:
         room = chatwork.alert_room()
         if not room:
             return
-        lines = [f"配送依頼 {n['sn']}　が「{n['label']}」になりました"]
+        head = ("インボイスができました" if n.get("boxes_ready")
+                else f"「{n['label']}」になりました")
+        lines = [f"配送依頼 {n['sn']}　{head}"]
         if n["state"] in (7, 8):
             if n.get("total"):
                 lines.append(f"金額: {n['total']} 元")
@@ -126,7 +128,8 @@ def _send(n: dict) -> None:
             lines.append("支払うとインボイスができます。"
                          "そのあと納品プランの④（箱の中身）まで進めます。")
         lines.append(SITE_URL)
-        body = "\n".join([f"[info][title]タオタロウ {n['label']}[/title]"]
+        title = "インボイス作成" if n.get("boxes_ready") else n["label"]
+        body = "\n".join([f"[info][title]タオタロウ {title}[/title]"]
                          + lines + ["[/info]"])
         chatwork.send_message(room, body)
 
@@ -136,8 +139,7 @@ def _send(n: dict) -> None:
             try:
                 chatwork.create_task(
                     room,
-                    f"配送依頼 {n['sn']} 出荷待ち。"
-                    f"インボイスができているので、"
+                    f"配送依頼 {n['sn']} インボイス作成。"
                     f"納品プランの④（箱の中身）まで進める")
             except Exception as e:
                 logger.warning(f"[send-order-watch] タスクを作れません: {e}")
