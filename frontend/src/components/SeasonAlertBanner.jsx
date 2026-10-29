@@ -107,13 +107,15 @@ export default function SeasonAlertBanner({ site = null }) {
           </div>
           <div style={{ fontSize: 13, marginBottom: 8 }}>
             去年の同じ時期（{seasonal.last_year_from} 〜 {seasonal.last_year_to}）に、
-            平月より多く売れていた商品です。早めに積んでおく候補になります。
+            平月より多く売れていた商品です。「上積みの目安」は、平月どおりの
+            ペースでは足りなかった個数です。多い順に並べています。
           </div>
           <table style={{ fontSize: 13, borderCollapse: 'collapse', background: '#fff' }}>
             <thead>
               <tr style={{ background: '#dbeafe' }}>
                 <th style={{ textAlign: 'left', padding: '4px 10px' }}>SKU</th>
                 <th style={{ textAlign: 'left', padding: '4px 10px' }}>商品</th>
+                <th style={{ textAlign: 'right', padding: '4px 10px' }}>上積みの目安</th>
                 <th style={{ textAlign: 'right', padding: '4px 10px' }}>去年の倍率</th>
                 <th style={{ textAlign: 'right', padding: '4px 10px' }}>去年の販売数</th>
               </tr>
@@ -127,6 +129,9 @@ export default function SeasonAlertBanner({ site = null }) {
                     {c.name}
                   </td>
                   <td style={{ padding: '4px 10px', textAlign: 'right', fontWeight: 700 }}>
+                    +{c.extra_units}個
+                  </td>
+                  <td style={{ padding: '4px 10px', textAlign: 'right' }}>
                     {c.ratio}倍
                   </td>
                   <td style={{ padding: '4px 10px', textAlign: 'right' }}>

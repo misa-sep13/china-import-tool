@@ -60,6 +60,7 @@ class Candidate:
     units_last_year: int  # 去年その時期に売れた数
     daily_last_year: float
     daily_base: float     # 平月の日販
+    extra_units: int      # 平月どおりなら売れなかったぶん（＝上積みが要る数）
     arrival_from: date    # いま発注すると届くころ
     arrival_to: date
 
@@ -119,9 +120,12 @@ def find_candidates(rows_by_sku: dict[str, list[DayRow]],
             units_last_year=ly_units,
             daily_last_year=round(daily_ly, 2),
             daily_base=round(daily_base, 2),
+            extra_units=round((daily_ly - daily_base) * WINDOW_DAYS),
             arrival_from=arrival_from, arrival_to=arrival_to,
         ))
-    out.sort(key=lambda c: -c.ratio)
+    # 倍率ではなく「余分に要る個数」で並べる。10個が12倍になっても
+    # 打つ手は無いが、1900個の商品が8倍なら仕入れを変える必要がある
+    out.sort(key=lambda c: -c.extra_units)
     return {
         "enough_data": True,
         "arrival_from": arrival_from.isoformat(),
@@ -133,6 +137,7 @@ def find_candidates(rows_by_sku: dict[str, list[DayRow]],
             "units_last_year": c.units_last_year,
             "daily_last_year": c.daily_last_year,
             "daily_base": c.daily_base,
+            "extra_units": c.extra_units,
         } for c in out],
     }
 
