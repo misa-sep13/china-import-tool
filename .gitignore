@@ -31,8 +31,9 @@ backend/china_import.db
 .vscode/
 *.swp
 
-# Claude Code
-.claude/
+# Claude Code（スキルだけは共有するのでコミットする）
+.claude/*
+!.claude/skills/
 
 .gh-dep*/
 
