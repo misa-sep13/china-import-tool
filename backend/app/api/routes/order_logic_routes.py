@@ -315,3 +315,12 @@ def backfill(start: str = Query(...), end: str = Query(...),
     return daily_sales_sync.sync_order_metrics(
         db, date.fromisoformat(start), date.fromisoformat(end),
         offset=offset, limit=limit)
+
+
+@router.get("/debug/metrics")
+def debug_metrics(asin: str = Query(...), start: str = Query(...),
+                  end: str = Query(...), tz: bool = True):
+    """売上APIの生の返り。日別が0件で戻る原因を見るため。"""
+    from app.services import amazon_api
+    return amazon_api.probe_order_metrics(
+        asin, date.fromisoformat(start), date.fromisoformat(end), tz)

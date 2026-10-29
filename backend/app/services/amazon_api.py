@@ -304,6 +304,28 @@ def _fetch_sales_one(asin: str, days: int, end_dt, order_qty_cap: int = 0) -> tu
         return asin, None
 
 
+def probe_order_metrics(asin: str, start, end, tz: bool = True) -> dict:
+    """売上APIの生の返りを見る。日別が0件で戻るときの切り分け用。"""
+    from datetime import timedelta
+    mp = "A1VC38T7YXB528"
+    if tz:
+        iv = (f"{start.isoformat()}T00:00:00+09:00--"
+              f"{(end + timedelta(days=1)).isoformat()}T00:00:00+09:00")
+        q = {"marketplaceIds": mp, "interval": iv, "granularity": "Day",
+             "granularityTimeZone": "Asia/Tokyo", "asin": asin}
+    else:
+        iv = (f"{start.isoformat()}T00:00:00Z--"
+              f"{(end + timedelta(days=1)).isoformat()}T00:00:00Z")
+        q = {"marketplaceIds": mp, "interval": iv, "granularity": "Day",
+             "granularityTimeZone": "Asia/Tokyo", "asin": asin}
+    try:
+        data = _call_sp_api(f"/sales/v1/orderMetrics?{urllib.parse.urlencode(q)}")
+        return {"query": q, "payload": (data.get("payload") or [])[:5],
+                "count": len(data.get("payload") or [])}
+    except Exception as e:
+        return {"query": q, "error": str(e)[:500]}
+
+
 def fetch_order_metrics_daily(asin: str, start, end) -> list[tuple]:
     """1ASINの「日ごとの販売数・売上」を返す。
 
