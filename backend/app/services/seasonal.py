@@ -143,16 +143,32 @@ def find_candidates(rows_by_sku: dict[str, list[DayRow]],
 
 
 def rakuten_rows(db) -> tuple[dict[str, list[DayRow]], dict[str, str]]:
+    """楽天の日別実績。中国から仕入れているものだけ。
+
+    メーカー品は国内からすぐ入るので、早めに積む話が要らない。
+    候補に混ざると、本当に前倒ししたい商品が埋もれる。
+    """
+    from app.api.routes.rakuten import _is_manufacturer_product
     from app.models.rakuten_daily_sales import RakutenDailySales
     from app.models.rakuten_product import RakutenProduct
+
+    keep, names = set(), {}
+    for p in db.query(RakutenProduct).all():
+        if not p.sku or _is_manufacturer_product(p):
+            continue
+        names[p.sku] = p.name or ""
+        keep.add(p.sku)
+        # 実績は楽天SKU番号で入っていることもある
+        if p.rakuten_sku_id:
+            names[p.rakuten_sku_id] = p.name or ""
+            keep.add(p.rakuten_sku_id)
+
     rows = defaultdict(list)
     for sku, day, qty, so in db.query(
             RakutenDailySales.sku, RakutenDailySales.sale_date,
             RakutenDailySales.qty, RakutenDailySales.is_stockout).all():
-        if sku and day:
+        if sku and day and sku in keep:
             rows[sku].append(DayRow(sku, day, int(qty or 0), bool(so)))
-    names = {p.sku: (p.name or "") for p in db.query(RakutenProduct).all()
-             if p.sku}
     return rows, names
 
 
