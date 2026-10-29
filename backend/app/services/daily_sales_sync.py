@@ -138,6 +138,50 @@ def sync_ledger(db: Session, start: Optional[date] = None,
     return {"from": str(start), "to": str(end), "skus": len({s for s, _ in seen})}
 
 
+def sync_order_metrics(db: Session, start: date, end: date) -> dict:
+    """売上API（orderMetrics）から日別の販売数を取り込む。
+
+    レポートAPI（全注文・在庫元帳）はこのアカウントだと
+    見出し行だけで戻る（権限が足りていない）。発注画面が日販を
+    出すのに使っている売上APIは動くので、過去を遡るときはそちらを使う。
+
+    制約が2つある。
+      ・ASIN単位なので、同じASINに商品が複数ぶら下がっていると
+        どのSKUの売れかが決められない。その分は入れずに数だけ返す
+      ・在庫があったかどうかは分からない。欠品していた日も
+        「売れなかった日」になるので、季節性は少し薄く出る
+    """
+    from app.models.product import Product
+    from app.services import amazon_api
+
+    by_asin: dict[str, list] = {}
+    for p in db.query(Product).filter(Product.is_active == True).all():
+        if p.asin and p.sku:
+            by_asin.setdefault(p.asin, []).append(p)
+
+    rows, skipped, asins = 0, [], 0
+    for asin, products in by_asin.items():
+        if len(products) > 1:
+            skipped.append(asin)
+            continue
+        sku = products[0].sku
+        try:
+            daily = amazon_api.fetch_order_metrics_daily(asin, start, end)
+        except Exception as e:
+            log.warning("orderMetrics %s: %s", asin, e)
+            continue
+        asins += 1
+        for day, units, revenue in daily:
+            if units <= 0 and revenue <= 0:
+                continue
+            _upsert(db, sku, day, asin=asin, units=units, revenue=revenue)
+            rows += 1
+        db.flush()
+    db.commit()
+    return {"from": str(start), "to": str(end), "asins": asins,
+            "rows": rows, "skipped_shared_asin": len(skipped)}
+
+
 def purge_old(db: Session, keep_days: int = KEEP_DAYS + 30) -> int:
     """古い日別データを捨てる。窓は60日なので、これ以上は使わない。"""
     limit = date.today() - timedelta(days=keep_days)

@@ -2,6 +2,7 @@ from typing import Dict, List, Optional
 import urllib.parse
 import urllib.request
 import json
+from datetime import date
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -301,6 +302,48 @@ def _fetch_sales_one(asin: str, days: int, end_dt, order_qty_cap: int = 0) -> tu
         return asin, round(units / days, 4)
     except Exception:
         return asin, None
+
+
+def fetch_order_metrics_daily(asin: str, start, end) -> list[tuple]:
+    """1ASINの「日ごとの販売数・売上」を返す。
+
+    レポートAPI（全注文・在庫元帳）はこのアカウントだと空で戻る。
+    画面が日販を出すのに使っているこの売上APIは動くので、過去を
+    遡るときもこちらを使う。
+
+    日の区切りは日本時間。UTCで区切ると、夜に売れたぶんが
+    前日に寄って曜日ごとの傾向がずれる。
+
+    戻り: [(date, units, revenue), ...]
+    """
+    from datetime import timedelta
+    mp = "A1VC38T7YXB528"
+    out = []
+    # 長すぎる期間を一気に聞くと落ちるので区切る
+    chunk = timedelta(days=60)
+    cur = start
+    while cur <= end:
+        stop = min(cur + chunk, end)
+        params = urllib.parse.urlencode({
+            "marketplaceIds": mp,
+            "interval": (f"{cur.isoformat()}T00:00:00+09:00--"
+                         f"{(stop + timedelta(days=1)).isoformat()}T00:00:00+09:00"),
+            "granularity": "Day",
+            "granularityTimeZone": "Asia/Tokyo",
+            "asin": asin,
+        })
+        data = _call_sp_api(f"/sales/v1/orderMetrics?{params}")
+        for m in (data.get("payload") or []):
+            iv = str(m.get("interval") or "")
+            try:
+                day = date.fromisoformat(iv[:10])
+            except ValueError:
+                continue
+            units = int(m.get("unitCount") or 0)
+            amount = ((m.get("totalSales") or {}).get("amount")) or 0
+            out.append((day, units, float(amount)))
+        cur = stop + timedelta(days=1)
+    return out
 
 
 def fetch_all_sales(asin_list: List[str], order_qty_cap: int = 0) -> tuple:

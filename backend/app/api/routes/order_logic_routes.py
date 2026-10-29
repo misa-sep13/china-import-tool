@@ -298,3 +298,15 @@ def debug_report(kind: str = Query("orders", pattern="^(orders|ledger)$"),
                                     date.fromisoformat(end))
     except amazon_reports.ReportError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.post("/backfill")
+def backfill(start: str = Query(...), end: str = Query(...),
+             db: Session = Depends(get_db)):
+    """過去の日別販売数を売上APIから埋める。
+
+    季節商品の判定には去年の同じ時期が要る。
+    レポートAPIはこのアカウントだと空で戻るのでこちらを使う。
+    """
+    return daily_sales_sync.sync_order_metrics(
+        db, date.fromisoformat(start), date.fromisoformat(end))
