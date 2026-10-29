@@ -287,3 +287,14 @@ def compare(p: PreviewIn, db: Session = Depends(get_db)):
         "new_total": sum(x["new"]["qty_pieces"] for x in out),
         "items": out,
     }
+
+
+@router.get("/debug/report")
+def debug_report(kind: str = Query("orders", pattern="^(orders|ledger)$"),
+                 start: str = Query(...), end: str = Query(...)):
+    """レポートが空で戻るときの中身を見る。"""
+    try:
+        return amazon_reports.probe(kind, date.fromisoformat(start),
+                                    date.fromisoformat(end))
+    except amazon_reports.ReportError as e:
+        raise HTTPException(status_code=502, detail=str(e))

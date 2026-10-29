@@ -154,6 +154,42 @@ def _num(s) -> float:
         return 0.0
 
 
+def probe(kind: str, start: date, end: date) -> dict:
+    """レポートが空で戻るとき、何が起きているかを見る。
+
+    「0行」だけでは、データが無いのか、権限が無いのか、
+    列名が違うのかが分からない。生の状態と先頭をそのまま返す。
+    """
+    if kind == "ledger":
+        rid = _create_report(LEDGER_REPORT, start, end,
+                             {"aggregateByLocation": "COUNTRY",
+                              "aggregatedByTimePeriod": "DAILY"})
+    else:
+        rid = _create_report(ORDERS_REPORT, start, end)
+    waited = 0
+    status = None
+    info = {}
+    while waited < POLL_MAX_SEC:
+        info = _request(f"/reports/2021-06-30/reports/{rid}")
+        status = info.get("processingStatus")
+        if status in ("DONE", "CANCELLED", "FATAL"):
+            break
+        time.sleep(POLL_INTERVAL)
+        waited += POLL_INTERVAL
+    out = {"report_id": rid, "status": status,
+           "document_id": info.get("reportDocumentId"),
+           "report": {k: v for k, v in info.items()
+                      if k != "reportDocumentId"}}
+    if info.get("reportDocumentId"):
+        text = _download(info["reportDocumentId"])
+        rows = _rows(text)
+        out["chars"] = len(text)
+        out["head"] = text[:600]
+        out["row_count"] = len(rows)
+        out["columns"] = list(rows[0].keys()) if rows else []
+    return out
+
+
 def fetch_orders(start: date, end: date) -> List[dict]:
     """注文明細を日別に集計して返す。
 
