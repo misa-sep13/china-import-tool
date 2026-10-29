@@ -620,6 +620,25 @@ async def import_sales_month(
             rpp_from_db = True
             rpp_name = f"広告の取り込み（{period}）"
 
+    # 商品ごとのレポートは「月初〜昨日」で作られるので、月が変わって
+    # から取り直していないと最後の数日が欠ける。日ごとの消化（3か月分を
+    # 毎回取り直す）の合計と比べて、足りなければ知らせる
+    rpp_short = ""
+    if rpp_from_db:
+        from app.models.rakuten_ad import RakutenAdDaily
+        y, mo = int(period[:4]), int(period[5:7])
+        start = date(y, mo, 1)
+        end = date(y + (mo == 12), (mo % 12) + 1, 1)
+        daily_total = (db.query(func.coalesce(func.sum(RakutenAdDaily.cost), 0))
+                       .filter(RakutenAdDaily.day >= start,
+                               RakutenAdDaily.day < end).scalar()) or 0
+        db_total = sum(r["実績額"] for r in rpp_rows)
+        if daily_total and db_total < daily_total * 0.97:
+            rpp_short = (
+                f" / ※広告費が足りないかもしれません"
+                f"（商品ごと {round(db_total):,}円 ≠ 日ごと {round(daily_total):,}円）。"
+                f"RMSの広告画面を開いて取り直してください")
+
     coupon_ad_rows, coupon_ad_name = await _read_many(
         coupon_ad_file,
         [
@@ -669,6 +688,7 @@ async def import_sales_month(
         info.message = f"受注スキップ {built['skipped_orders']}件"
         if rpp_from_db:
             info.message += f" / RPPは広告の取り込みから {len(rpp_rows)}商品"
+            info.message += rpp_short
         elif not rpp_rows:
             info.message += " / RPPの広告費がゼロです"
         if api_fields:

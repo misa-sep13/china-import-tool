@@ -270,13 +270,19 @@
     const now = Date.now();
     const want = ["daily", "product"].filter(
       (k) => force || now - (last[k] || 0) >= GAP_MS);
-    if (!want.length) { render(); return; }
-
     // 集計は昨日まで。毎日の消化は3か月以内、商品ごとは今月ぶん
     const to = new Date(); to.setDate(to.getDate() - 1);
     const dailyFrom = new Date(to); dailyFrom.setDate(dailyFrom.getDate() - 87);
     const monthFrom = new Date(to.getFullYear(), to.getMonth(), 1);
+    // 先月ぶん。月が変わったら一度だけ、月末まで入った形で取り直す。
+    // 月中に作ったレポートは「昨日まで」なので最後の数日が欠けている
+    const prevEnd = new Date(to.getFullYear(), to.getMonth(), 0);
+    const prevFrom = new Date(prevEnd.getFullYear(), prevEnd.getMonth(), 1);
+    const prevKey = ymd(prevFrom).slice(0, 7);
     const done = Object.assign({}, last);
+
+    if (!want.length && last.prev_month === prevKey) { render(); return; }
+
 
     busy = true;
     render();
@@ -296,6 +302,14 @@
         const r = await toTool("upload", file);
         done.product = Date.now();
         setStatus(`取り込みました：商品ごと ${r.saved}行`);
+      }
+      if (last.prev_month !== prevKey) {
+        setStatus(`${prevKey} の全商品レポートを作っています…`);
+        const item = await makeAllItemReport(ymd(prevFrom), ymd(prevEnd));
+        const file = await downloadReport(item);
+        const r = await toTool("upload", file);
+        done.prev_month = prevKey;
+        setStatus(`取り込みました：${prevKey} の商品ごと ${r.saved}行`);
       }
       // 商品ごと・日ごと。クリックの暴走は商品単位で起きるので、
       // 1日だけのレポートを作って溜めていく。1回に3日ぶんまで
