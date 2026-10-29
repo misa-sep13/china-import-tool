@@ -306,8 +306,6 @@ function ShipmentTab() {
 
   return (
     <div>
-      {/* 春節のしめきり。下の帯は「今増やしている」話、こちらは「いつまでに」話 */}
-      <SeasonAlertBanner site="rakuten" />
       {done
           ? <div className="card">
               <p style={{ color: '#166534', fontWeight: 700 }}>入荷処理が完了しました。</p>
@@ -1035,6 +1033,9 @@ export default function RakutenOrderPage() {
 
   return (
     <div>
+      {/* 春節のしめきりと季節商品。下の帯は「今増やしている」話、
+          こちらは「いつまでに発注するか」話 */}
+      <SeasonAlertBanner site="rakuten" />
       {/* 中国の長期休暇で入荷が遅れるぶん、発注数を多めに出していることを知らせる。
           何も出ていないと「急に数が増えた」と見えて混乱するため */}
       {holiday?.enabled && (
