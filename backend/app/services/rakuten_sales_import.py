@@ -33,6 +33,16 @@ PAYMENT_FEE_RATE = 0.0335       # 楽天ペイ利用料
 # 率ではなく月ごとの実額として別に持つこと。
 FIXED_FEE_RATE = 0.0
 AFFILIATE_SERVICE_RATE = 0.30   # アフィリエイト成果報酬に対するシステム利用料
+
+# 受注API（getOrder）には「利用端末」と「ポイント倍率」が無い。
+# PointModel にあるのは usedPoint（お客様が使ったポイント）だけで、
+# 端末を表す項目は一つも無い。CSVにはあるが、APIには無い。
+# 取れないときは、請求書の実績から見込む。
+#   端末：6月のPC売上 589,425 / モバイル 6,947,344 → PCは 7.8%
+#   ポイント倍率：6月のCSVから出た上乗せ分が売上の 0.74%
+# 倍率はイベントで動くので、請求書とずれたらここを直すこと。
+PC_SHARE_WHEN_UNKNOWN = 0.078   # 端末が取れないときのPC比率
+POINT_EXTRA_RATE = 0.0074       # ポイント倍率の上乗せ分（倍率が取れないとき）
 # 店舗発行クーポンの発行手数料。1点50円で数えると請求と合わなかった
 # （6月：コード11,300円 / 請求2,650円）。単価も課金単位も確かめられていないので、
 # 分かるまでは計上しない。利益を多めに見せないよう0にしてある。
@@ -151,6 +161,9 @@ class SalesAgg:
     sales_all_coupon_excluded: float = 0
     pc_sales: float = 0
     mobile_sales: float = 0
+    # 端末・倍率が取れなかった分。あとで実績の率で見込む
+    unknown_device_sales: float = 0
+    unknown_point_base: float = 0
     platform_fee: float = 0
     shipping_cost: float = 0
     product_cost: float = 0
@@ -167,10 +180,15 @@ class SalesAgg:
         self.coupon_fee += line["coupon_fee"]
         self.sales_store_coupon_excluded += line["line_total"] - line["store_coupon_alloc"]
         self.sales_all_coupon_excluded += line["line_total"] - line["all_coupon_alloc"]
-        if line["is_pc"]:
-            self.pc_sales += line["line_total"] - line["store_coupon_alloc"]
+        net = line["line_total"] - line["store_coupon_alloc"]
+        if not line.get("device_known", True):
+            self.unknown_device_sales += net
+        elif line["is_pc"]:
+            self.pc_sales += net
         else:
-            self.mobile_sales += line["line_total"] - line["store_coupon_alloc"]
+            self.mobile_sales += net
+        if not line.get("point_rate_known", True):
+            self.unknown_point_base += line["line_total"] - line["all_coupon_alloc"]
         self.shipping_cost += line["shipping_cost"]
         self.product_cost += line["product_cost"]
         if not self.product_name and line.get("product_name"):
@@ -180,9 +198,17 @@ class SalesAgg:
 
     def finalize(self):
         self.affiliate_fee = self.affiliate_cost * AFFILIATE_SERVICE_RATE
+        # 端末が取れない分は、実績のPC比率で混ぜた率を使う。
+        # 空をPC扱いにすると4.0%が全額にかかり、手数料を多めに数えていた
+        blended = (PC_SHARE_WHEN_UNKNOWN * PC_FEE_RATE
+                   + (1 - PC_SHARE_WHEN_UNKNOWN) * MOBILE_FEE_RATE)
+        # 倍率が取れない分は、上乗せ分を実績の率で見込む。
+        # 0のままだと利益が多めに出る
+        self.point_cost += self.unknown_point_base * POINT_EXTRA_RATE
         self.platform_fee = (
             self.pc_sales * PC_FEE_RATE
             + self.mobile_sales * MOBILE_FEE_RATE
+            + self.unknown_device_sales * blended
             + self.sales_all_coupon_excluded * POINT_BASE_RATE
             + self.sales_all_coupon_excluded * SAFETY_SYSTEM_RATE
             + self.sales_all_coupon_excluded * PAYMENT_FEE_RATE
@@ -285,10 +311,12 @@ def _parse_order_lines(order_rows: list[dict], products, default_shipping_fee: i
         store_coupon_total = to_float(row.get("店舗発行クーポン利用額"))
         all_coupon_alloc = all_coupon_total * ratio
         store_coupon_alloc = store_coupon_total * ratio
+        point_rate_known = row.get("ポイント倍率") not in (None, "")
         point_rate = to_float(row.get("ポイント倍率"), 1)
         point_base = max(0, to_float(row.get("合計金額")) - all_coupon_total)
         point_cost = math.floor(point_base * 0.01 * max(0, point_rate - 1))
         coupon_fee = (COUPON_ISSUE_FEE * qty) if store_coupon_total >= 1 else 0
+        device_known = row.get("利用端末") not in (None, "")
         terminal = normalize_key(row.get("利用端末"))
         is_pc = terminal in {"", "0", "0.0"}
 
@@ -312,6 +340,8 @@ def _parse_order_lines(order_rows: list[dict], products, default_shipping_fee: i
                 "point_cost": point_cost,
                 "coupon_fee": coupon_fee,
                 "is_pc": is_pc,
+                "device_known": device_known,
+                "point_rate_known": point_rate_known,
                 "shipping_cost": qty * to_float(shipping_fee),
                 "product_cost": qty * to_float(cost_jpy),
                 "product_name": product_name,
