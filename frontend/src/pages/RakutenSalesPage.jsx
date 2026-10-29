@@ -127,7 +127,7 @@ export default function RakutenSalesPage() {
           ) : (
             <FileInput label="受注データ" required multiple onChange={onFile('order_files', true)} />
           )}
-          <FileInput label="RPP（拡張枠もまとめて選べます）" multiple onChange={onFile('rpp_files', true)} />
+          <FileInput label="RPP（通常は不要）" multiple onChange={onFile('rpp_files', true)} />
           <FileInput label="クーアド・CPA等" multiple onChange={onFile('coupon_ad_files', true)} />
           <FileInput label="アフィ" onChange={onFile('affiliate_file')} />
           <button
@@ -139,8 +139,11 @@ export default function RakutenSalesPage() {
             {importMutation.isPending ? '取込中...' : '⬆️ 取込'}
           </button>
         </div>
-        {/* 受注データだけはAPIで取れる。広告3つは楽天にAPIが無いので
-            これまでどおりファイルを選ぶ */}
+        <div style={{ fontSize: 12, color: '#16a34a', marginTop: 6 }}>
+          RPPは広告管理に溜まっている数字を使います。ファイルを選んだときだけそちらを優先します。
+        </div>
+        {/* 受注はAPI、RPPは拡張機能が取り込んだもの。
+            クーアドとアフィは楽天にAPIが無いのでファイルを選ぶ */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'center',
           marginTop: 10, flexWrap: 'wrap' }}>
           <label style={{ fontSize: 12, color: '#475569', display: 'flex',

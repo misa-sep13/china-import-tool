@@ -606,6 +606,20 @@ async def import_sales_month(
         rpp_file,
         [["商品管理番号", "実績額(合計)"], ["商品管理番号", "実績額"], ["商品ページURL", "実績額(合計)"]],
     )
+    # RPPはChrome拡張がRMSの画面から毎日取り込んでいるので、CSVを
+    # 入れなければそちらを使う。通常枠と拡張枠の入れ忘れも起きない
+    rpp_from_db = False
+    if not rpp_rows:
+        from app.models.rakuten_ad import RakutenAdProduct
+        ads = (db.query(RakutenAdProduct)
+               .filter(RakutenAdProduct.period == period).all())
+        rpp_rows = [{"商品管理番号": a.manage_number,
+                     "実績額": a.cost or 0}
+                    for a in ads if a.manage_number]
+        if rpp_rows:
+            rpp_from_db = True
+            rpp_name = f"広告の取り込み（{period}）"
+
     coupon_ad_rows, coupon_ad_name = await _read_many(
         coupon_ad_file,
         [
@@ -653,6 +667,10 @@ async def import_sales_month(
         info.total_profit = built["totals"]["profit"]
         info.status = "completed"
         info.message = f"受注スキップ {built['skipped_orders']}件"
+        if rpp_from_db:
+            info.message += f" / RPPは広告の取り込みから {len(rpp_rows)}商品"
+        elif not rpp_rows:
+            info.message += " / RPPの広告費がゼロです"
         if api_fields:
             miss = [k for k, v in api_fields.items() if not v]
             if miss:
