@@ -22,6 +22,10 @@ class CalcSettings:
     sale_start: Optional[date] = None
     sale_end: Optional[date] = None
     sale_multiplier: float = 3.0     # セール中の売上倍率（例: 3倍）
+    # 中国の長期休暇（春節・国慶節）で工場が止まるぶん、リードタイムに
+    # 足す日数。休みが近づくと自動で増え、過ぎれば0に戻る。
+    # 計算は china_holiday.order_lead_effect がやる
+    holiday_extra_days: float = 0.0
     # 後方互換（旧設定から移行）
     threshold_days: int = 75
     target_days_normal: int = 75
@@ -125,7 +129,8 @@ def calc_order_qty(
 
     # セール期間・直前は上乗せ日数を加算（動的計算）
     sale = is_in_sale(s)
-    lead = s.lead_days + calc_sale_extra_days(s)
+    lead = (s.lead_days + calc_sale_extra_days(s)
+            + (s.holiday_extra_days or 0))
 
     # 目標在庫数 = 日販 × 補正 × リードタイム合計日数
     target_stock = round(daily * growth * lead)

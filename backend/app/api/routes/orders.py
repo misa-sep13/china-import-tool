@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import date, datetime
 import io
 import json
 import uuid
@@ -332,7 +332,9 @@ def _run_stock_job(job_id: str):
             ship_method, air_sets, pipeline_days = _shipping_split(
                 plan, sea_lead, daily, stock, max(0, calc.qty), p.set_size)
             from app.services.calc import calc_sale_extra_days
-            needed_pieces = round(daily * calc.growth * (s.lead_days + calc_sale_extra_days(s)) - stock) if daily > 0 else 0
+            needed_pieces = round(daily * calc.growth * (
+                s.lead_days + calc_sale_extra_days(s)
+                + (s.holiday_extra_days or 0)) - stock) if daily > 0 else 0
 
             result.append({
                 "product_id": p.id,
@@ -890,6 +892,27 @@ def delete_order_history(history_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+def _holiday_effect(row: Optional[OrderSettings], today=None):
+    """中国の長期休暇で伸びるリードタイム。
+
+    楽天側には入っていたがAmazon側に無かった。春節は工場が3週間ほど
+    止まるので、その前に多めに発注しておかないと在庫が切れる。
+    休みをまたぐぶんを lead_days に足すと、近づくほど発注数が自然に増え、
+    過ぎれば勝手に元へ戻る（戻し忘れが起きない）。
+    """
+    from app.services.china_holiday import order_lead_effect
+    today = today or date.today()
+    lead = (getattr(row, "lead_days", 75) or 75) if row else 75
+    return order_lead_effect(
+        today, lead,
+        # 次に発注するまでの間隔。在庫を何日分持つかの設定をそのまま使う
+        review_days=(getattr(row, "threshold_days", 75) or 75) if row else 75,
+        cny_before=(getattr(row, "cny_closed_before", 7) or 0) if row else 7,
+        cny_after=(getattr(row, "cny_closed_after", 15) or 0) if row else 15,
+        national_days=(getattr(row, "national_closed_days", 7) or 0) if row else 7,
+    )
+
+
 def _build_calc_settings(row: Optional[OrderSettings]) -> CalcSettings:
     if not row:
         return CalcSettings()
@@ -909,6 +932,7 @@ def _build_calc_settings(row: Optional[OrderSettings]) -> CalcSettings:
         sale_start=row.sale_start,
         sale_end=row.sale_end,
         sale_multiplier=getattr(row, 'sale_multiplier', 3.0) or 3.0,
+        holiday_extra_days=_holiday_effect(row).extra_days,
         # 後方互換
         threshold_days=row.threshold_days,
         target_days_normal=row.target_days_normal,

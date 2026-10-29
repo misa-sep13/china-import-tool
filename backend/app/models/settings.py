@@ -48,3 +48,8 @@ class OrderSettings(Base):
     # FBAに何日分の在庫を持たせるか。0なら無料保管日数から自動で出す
     # （90−7＝83日）。船便の間隔に合わせて決め直したいことがある
     fba_target_days = Column(Integer, default=0)
+    # 中国の長期休暇で工場が止まる期間。楽天側と同じ考え方で、
+    # 春節は法定休日より長く止まる工場が多いので前後に日数を足せる
+    cny_closed_before = Column(Integer, default=7)    # 春節の何日前から止まるか
+    cny_closed_after = Column(Integer, default=15)    # 春節の何日後まで止まるか
+    national_closed_days = Column(Integer, default=7) # 国慶節の停止日数（10/1から）

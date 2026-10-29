@@ -9,6 +9,7 @@ from app.api.routes import work_status
 from app.api.routes import mercari
 from app.api.routes import rakuten_shipping_daily
 from app.api.routes import amazon_sales
+from app.api.routes import season as season_routes
 from app.api.routes import rakuten_ads
 from app.api.routes import inventory_snapshots
 from app.api.routes import material_costs
@@ -92,6 +93,9 @@ def _migrate():
         ("products",      "customer_memo",       "ALTER TABLE products ADD COLUMN customer_memo TEXT"),
         ("products",      "supplier",            "ALTER TABLE products ADD COLUMN supplier VARCHAR DEFAULT 'タオタロウ'"),
         ("order_settings","taotaro_web_cookie",  "ALTER TABLE order_settings ADD COLUMN taotaro_web_cookie TEXT"),
+        ("order_settings","cny_closed_before",   "ALTER TABLE order_settings ADD COLUMN cny_closed_before INTEGER DEFAULT 7"),
+        ("order_settings","cny_closed_after",    "ALTER TABLE order_settings ADD COLUMN cny_closed_after INTEGER DEFAULT 15"),
+        ("order_settings","national_closed_days","ALTER TABLE order_settings ADD COLUMN national_closed_days INTEGER DEFAULT 7"),
         ("order_settings","send_order_states",  "ALTER TABLE order_settings ADD COLUMN send_order_states TEXT"),
         ("order_settings","fba_target_days",   "ALTER TABLE order_settings ADD COLUMN fba_target_days INTEGER DEFAULT 0"),
         ("order_settings","exchange_rate",        "ALTER TABLE order_settings ADD COLUMN exchange_rate FLOAT DEFAULT 21.0"),
@@ -1824,6 +1828,7 @@ app.include_router(work_status.router, prefix="/api")
 app.include_router(mercari.router, prefix="/api")
 app.include_router(rakuten_shipping_daily.router, prefix="/api")
 app.include_router(amazon_sales.router, prefix="/api")
+app.include_router(season_routes.router, prefix="/api")
 app.include_router(rakuten_ads.router, prefix="/api")
 app.include_router(import_permit_routes.router, prefix="/api")
 app.include_router(chatwork_routes.router, prefix="/api")

@@ -6,6 +6,7 @@ import { normalizeSearch } from '../searchUtil'
 
 const SORT_OPTIONS = { numeric: true, sensitivity: 'base' }
 import TaotaroOrderModal from './TaotaroOrderModal'
+import SeasonAlertBanner from '../components/SeasonAlertBanner'
 
 const POLL_INTERVAL = 3000 // 3秒ごとにポーリング
 
@@ -391,6 +392,9 @@ export default function OrderPage() {
   return (
     <div>
       <h1>📦 発注管理</h1>
+
+      {/* 春節のしめきり。発注数が増えた理由をここで言う */}
+      <SeasonAlertBanner site="amazon" />
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <button

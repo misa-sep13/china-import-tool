@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import { normalizeSearch } from '../searchUtil'
 import TaotaroOrderModal from './TaotaroOrderModal'
+import SeasonAlertBanner from '../components/SeasonAlertBanner'
 
 // 追跡の色。「配達完了」と「配達中」はどちらも手元へ向かっている状態なので同じ色。
 // 就労支援在庫の一覧と揃えてある
@@ -305,6 +306,8 @@ function ShipmentTab() {
 
   return (
     <div>
+      {/* 春節のしめきり。下の帯は「今増やしている」話、こちらは「いつまでに」話 */}
+      <SeasonAlertBanner site="rakuten" />
       {done
           ? <div className="card">
               <p style={{ color: '#166534', fontWeight: 700 }}>入荷処理が完了しました。</p>
