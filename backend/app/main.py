@@ -1606,6 +1606,28 @@ async def _watch_send_orders():
         logger.warning(f"[scheduler] 配送依頼の見回りでエラー: {e}")
 
 
+async def _sync_amazon_daily_sales():
+    """Amazonの日別販売数をためる。1日に1回だけ走る。
+
+    季節商品の判定は去年の同じ時期と比べる。過去に遡って
+    取れるのは売れていた分だけなので、今日から残していく。
+    """
+    def _run():
+        from app.core.database import SessionLocal
+        from app.services.daily_sales_sync import daily_tick
+        db = SessionLocal()
+        try:
+            return daily_tick(db)
+        finally:
+            db.close()
+    try:
+        out = await asyncio.to_thread(_run)
+        if out and not out.get("skipped"):
+            logger.info(f"[scheduler] Amazonの日別実績: {out}")
+    except Exception as e:
+        logger.warning(f"[scheduler] Amazonの日別実績でエラー: {e}")
+
+
 async def _scheduler_loop():
     """1分ごとに受注差分の在庫同期＋RMS在庫取得、30分ごとにキャンセル再チェックを実行。
 
@@ -1635,6 +1657,10 @@ async def _scheduler_loop():
         # 支払いのお願いはメールで来るので、気づくのが遅れて出荷が遅れていた
         if tick % 10 == 0:
             await _watch_send_orders()
+        # 1時間ごとに見に行き、前回から20時間経っていたら走る。
+        # 再起動で tick が戻っても、何度も走らないようにするため
+        if tick % 60 == 0:
+            await _sync_amazon_daily_sales()
 
 
 @asynccontextmanager

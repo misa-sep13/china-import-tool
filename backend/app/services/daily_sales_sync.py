@@ -202,6 +202,42 @@ def sync_order_metrics(db: Session, start: date, end: date,
             "next_offset": done if done < len(all_asins) else None}
 
 
+def daily_tick(db: Session, min_hours: int = 20,
+               back_days: int = 10) -> dict:
+    """1日に1回、売上APIから日別実績をつめる。
+
+    季節商品の判定には去年の同じ時期が要るが、過去に遡って
+    取れるのは売れていた分だけ。その日に残しておかないと、
+    来年の今ごろにまた「データが無い」になる。
+
+    スケジューラは再起動でカウンタが戻るので、時刻ではなく
+    「前回から何時間経ったか」で決める。直近数日を毎回取り直すのは、
+    あとから確定する注文があるため。
+    """
+    row = _sync_row(db, "order_metrics")
+    now = datetime.now(timezone.utc)
+    if row.last_run_at and (now - row.last_run_at) < timedelta(hours=min_hours):
+        return {"skipped": True, "reason": "まだ時期ではありません"}
+
+    end = date.today() - timedelta(days=1)
+    start = end - timedelta(days=max(1, back_days) - 1)
+    try:
+        out = sync_order_metrics(db, start, end)
+    except Exception as ex:
+        row = _sync_row(db, "order_metrics")
+        row.last_error = str(ex)[:500]
+        row.last_run_at = now
+        db.commit()
+        raise
+    # sync_order_metrics が commit するので、取り直してから書く
+    row = _sync_row(db, "order_metrics")
+    row.last_day = end
+    row.last_run_at = now
+    row.last_error = None
+    db.commit()
+    return out
+
+
 def purge_old(db: Session, keep_days: int = KEEP_DAYS + 30) -> int:
     """古い日別データを捨てる。窓は60日なので、これ以上は使わない。"""
     limit = date.today() - timedelta(days=keep_days)
