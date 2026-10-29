@@ -302,11 +302,16 @@ def debug_report(kind: str = Query("orders", pattern="^(orders|ledger)$"),
 
 @router.post("/backfill")
 def backfill(start: str = Query(...), end: str = Query(...),
+             offset: int = 0, limit: Optional[int] = None,
              db: Session = Depends(get_db)):
     """過去の日別販売数を売上APIから埋める。
 
     季節商品の判定には去年の同じ時期が要る。
     レポートAPIはこのアカウントだと空で戻るのでこちらを使う。
+
+    商品数×期間の分だけAPIを叩くので、offset/limit で区切って呼ぶ。
+    返す next_offset が null になるまで繰り返す。
     """
     return daily_sales_sync.sync_order_metrics(
-        db, date.fromisoformat(start), date.fromisoformat(end))
+        db, date.fromisoformat(start), date.fromisoformat(end),
+        offset=offset, limit=limit)

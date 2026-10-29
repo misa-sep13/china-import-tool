@@ -19,6 +19,8 @@ log = logging.getLogger("daily_sales")
 KEEP_DAYS = 90
 # レポートは1回で取れる期間に限りがあるので、この日数ずつに切る
 CHUNK_DAYS = 30
+# 売上APIを続けて叩くときの間隔（秒）。毎秒0.5回までなので少し余裕を見る
+API_GAP_SEC = 2.2
 
 
 def _sync_row(db: Session, kind: str) -> DailySalesSync:
@@ -138,7 +140,8 @@ def sync_ledger(db: Session, start: Optional[date] = None,
     return {"from": str(start), "to": str(end), "skus": len({s for s, _ in seen})}
 
 
-def sync_order_metrics(db: Session, start: date, end: date) -> dict:
+def sync_order_metrics(db: Session, start: date, end: date,
+                       offset: int = 0, limit: int | None = None) -> dict:
     """売上API（orderMetrics）から日別の販売数を取り込む。
 
     レポートAPI（全注文・在庫元帳）はこのアカウントだと
@@ -151,6 +154,8 @@ def sync_order_metrics(db: Session, start: date, end: date) -> dict:
       ・在庫があったかどうかは分からない。欠品していた日も
         「売れなかった日」になるので、季節性は少し薄く出る
     """
+    import time as _time
+
     from app.models.product import Product
     from app.services import amazon_api
 
@@ -159,16 +164,26 @@ def sync_order_metrics(db: Session, start: date, end: date) -> dict:
         if p.asin and p.sku:
             by_asin.setdefault(p.asin, []).append(p)
 
-    rows, skipped, asins = 0, [], 0
-    for asin, products in by_asin.items():
+    # ASINの順を固定しないと、offsetで区切ったときに取りこぼす
+    all_asins = sorted(by_asin)
+    chunk = all_asins[offset:offset + limit] if limit else all_asins[offset:]
+
+    rows, skipped, asins, failed = 0, 0, 0, []
+    for i, asin in enumerate(chunk):
+        products = by_asin[asin]
         if len(products) > 1:
-            skipped.append(asin)
+            skipped += 1
             continue
         sku = products[0].sku
+        if i:
+            # 売上APIは毎秒0.5回まで。間を空けずに叩くと429が返り、
+            # 指数バックオフで1商品に1分かかることがある
+            _time.sleep(API_GAP_SEC)
         try:
             daily = amazon_api.fetch_order_metrics_daily(asin, start, end)
         except Exception as e:
             log.warning("orderMetrics %s: %s", asin, e)
+            failed.append(asin)
             continue
         asins += 1
         for day, units, revenue in daily:
@@ -178,8 +193,13 @@ def sync_order_metrics(db: Session, start: date, end: date) -> dict:
             rows += 1
         db.flush()
     db.commit()
+    done = offset + len(chunk)
     return {"from": str(start), "to": str(end), "asins": asins,
-            "rows": rows, "skipped_shared_asin": len(skipped)}
+            "rows": rows, "skipped_shared_asin": skipped,
+            "failed": failed,
+            "offset": offset, "done": done,
+            "total_asins": len(all_asins),
+            "next_offset": done if done < len(all_asins) else None}
 
 
 def purge_old(db: Session, keep_days: int = KEEP_DAYS + 30) -> int:
