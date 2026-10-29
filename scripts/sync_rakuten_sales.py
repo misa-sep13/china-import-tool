@@ -41,12 +41,22 @@ def main() -> int:
         print("ERROR: RMS APIキーが未設定です（楽天設定で登録してください）")
         return 1
 
-    # 2) 重い受注取得(60日) — GitHubランナーのメモリで実行
+    # 2) 重い受注取得 — GitHubランナーのメモリで実行
+    #
+    # 普段は60日。これは発注計算が見る窓に合わせてある。
+    # DAYS を伸ばすと過去を遡って日別実績を埋める（季節商品の
+    # 判定には去年の同じ時期が要る）。ただしそのときは
+    # SKU別の合計を書き換えてはいけない。400日分の合計を
+    # 「直近60日の販売数」として入れると、発注数が大幅に狂う
+    days = int(os.environ.get("DAYS") or 60)
+    backfill = days > 60
     order_qty_cap = settings.get("order_qty_cap", 3) or 0
-    print(f"受注データ取得中（60日分、1注文キャップ={order_qty_cap}）...")
+    print(f"受注データ取得中（{days}日分、1注文キャップ={order_qty_cap}）...")
+    if backfill:
+        print("過去を埋めるモードです。日別実績だけ入れ、販売数の合計は触りません。")
     try:
         sku_sales, sku_daily = asyncio.run(
-            fetch_sales_by_sku(secret, license_key, days=60, include_daily=True,
+            fetch_sales_by_sku(secret, license_key, days=days, include_daily=True,
                                order_qty_cap=order_qty_cap)
         )
     except Exception as e:
@@ -64,10 +74,13 @@ def main() -> int:
 
     with httpx.Client(timeout=180, headers=auth_headers) as c:
         # 3) 集計結果をRenderに送ってDB更新（従来のSKU別集計）
-        res = c.post(f"{backend}/api/rakuten/rms/sales/apply", json={"sales": sku_sales})
-        res.raise_for_status()
-        result = res.json()
-        print("反映結果:", result)
+        if backfill:
+            print("販売数の合計は更新しません（過去を埋めるモード）")
+        else:
+            res = c.post(f"{backend}/api/rakuten/rms/sales/apply", json={"sales": sku_sales})
+            res.raise_for_status()
+            result = res.json()
+            print("反映結果:", result)
 
         # 4) 日別販売数をRenderに送ってDB更新（50 SKUずつバッチ送信）
         all_skus = list(sku_daily.keys())
@@ -89,11 +102,13 @@ def main() -> int:
             print(f"  バッチ {i // BATCH + 1}/{-(-len(all_skus) // BATCH)}: {len(batch_skus)} SKU done")
         print(f"日別反映結果: upserted={total_upserted}")
 
-        # 5) 在庫切れSKUをマーク
-        res = c.post(f"{backend}/api/rakuten/rms/daily-sales/mark-stockouts")
-        res.raise_for_status()
-        stockout_result = res.json()
-        print("在庫切れマーク:", stockout_result)
+        # 5) 在庫切れSKUをマーク。今の在庫を見るので、過去を
+        #    埋めるときに走らせると昔の日まで在庫切れ扱いになる
+        if not backfill:
+            res = c.post(f"{backend}/api/rakuten/rms/daily-sales/mark-stockouts")
+            res.raise_for_status()
+            stockout_result = res.json()
+            print("在庫切れマーク:", stockout_result)
 
     return 0
 

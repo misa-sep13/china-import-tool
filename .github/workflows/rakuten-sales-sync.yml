@@ -5,6 +5,11 @@ on:
     # 毎日 18:00 UTC（= JST 3:00）
     - cron: '0 18 * * *'
   workflow_dispatch:  # 手動実行も可能
+    inputs:
+      days:
+        description: '何日分遡るか。普段は60。季節商品の判定用に過去を埋めるときは400など。60を超えると日別実績だけ入れ、販売数の合計は触らない'
+        required: false
+        default: '60'
 
 jobs:
   sync:
@@ -20,4 +25,5 @@ jobs:
         env:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
           AUTH_SERVICE_TOKEN: ${{ secrets.AUTH_SERVICE_TOKEN }}
+          DAYS: ${{ inputs.days || '60' }}
         run: python scripts/sync_rakuten_sales.py

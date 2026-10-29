@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.rakuten_settings import RakutenSettings
 from app.models.settings import OrderSettings
-from app.services import season_alert
+from app.services import season_alert, seasonal
 
 router = APIRouter(prefix="/season", tags=["season"])
 
@@ -58,3 +58,27 @@ def alert(today: str | None = None, db: Session = Depends(get_db)):
         _cfg(rak, "rakuten", "楽天", 20, "target_days", 30),
     ])
     return out or {"show": False}
+
+
+@router.get("/seasonal")
+def seasonal_candidates(site: str = "rakuten", today: str | None = None,
+                        db: Session = Depends(get_db)):
+    """いま仕入れるべき季節商品の候補。
+
+    「いま発注すると届くころ」に、去年平月の何倍売れていたかで見る。
+    去年の実績が無いうちは enough_data=false を返す。
+    適当な候補を出すより、出せないと言うほうが安全。
+    """
+    day = date.fromisoformat(today) if today else date.today()
+    if site == "amazon":
+        rows, names = seasonal.amazon_rows(db)
+        row = db.query(OrderSettings).first()
+        lead = _int(row, "lead_days", 75)
+    else:
+        rows, names = seasonal.rakuten_rows(db)
+        row = db.query(RakutenSettings).first()
+        lead = _int(row, "lead_days", 20)
+    out = seasonal.find_candidates(rows, names, day, lead)
+    out["site"] = site
+    out["lead_days"] = lead
+    return out
