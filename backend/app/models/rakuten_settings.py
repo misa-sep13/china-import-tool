@@ -19,7 +19,7 @@ class RakutenSettings(Base):
     cny_closed_before   = Column(Integer, default=7)         # 春節の何日前から止まるか
     cny_closed_after    = Column(Integer, default=15)        # 春節の何日後まで止まるか
     national_closed_days = Column(Integer, default=7)        # 国慶節の停止日数（10/1から）
-    commission_rate     = Column(Float,   default=0.09)      # 楽天手数料率（デフォルト9%）
+    commission_rate     = Column(Float,   default=0.12)      # 楽天手数料率。実績でシステム利用料約8.8%、それに消費税・ポイント付与料・アフィリエイトを足して12%
     default_shipping_fee = Column(Integer, default=180)      # デフォルト送料（円）
     # 楽天RMS API
     rms_service_secret  = Column(String,  nullable=True)    # SP411150_xxx

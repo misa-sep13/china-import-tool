@@ -440,7 +440,7 @@ def _profit_per_order(p, commission_rate: float) -> Optional[float]:
     if not p or not p.selling_price or not p.cost_jpy:
         return None
     price = float(p.selling_price)
-    fee = price * (commission_rate or 0.09)
+    fee = price * (commission_rate or 0.12)
     ship = float(p.shipping_fee or 0)
     return price - float(p.cost_jpy) - fee - ship
 
@@ -458,7 +458,7 @@ def _breakeven_roas(p, commission_rate: float) -> Optional[float]:
 def watch(db: Session = Depends(get_db)):
     """クリックの暴走と、広告費の上げ下げの目安を出す。"""
     st = db.query(RakutenSettings).first()
-    commission_rate = st.commission_rate if st and st.commission_rate else 0.09
+    commission_rate = st.commission_rate if st and st.commission_rate else 0.12
 
     products = {p.sku: p for p in db.query(RakutenProduct).all() if p.sku}
 

@@ -354,7 +354,7 @@ class RakutenSettingsSchema(BaseModel):
     cny_closed_before:  int   = 7
     cny_closed_after:   int   = 15
     national_closed_days: int = 7
-    commission_rate:    float = 0.09
+    commission_rate:    float = 0.12
     default_shipping_fee: int = 180
     rms_service_secret: Optional[str] = None
     rms_license_key:    Optional[str] = None
@@ -750,7 +750,7 @@ def list_stock(db: Session = Depends(get_db)):
     """在庫・損益一覧（バリエーション商品のみ、is_component=Falseを対象）。
     発送資材(is_material)・販促品(is_promo)は販売商品ではないので除外する。"""
     settings = _get_or_create_settings(db)
-    commission_rate = settings.commission_rate or 0.09
+    commission_rate = settings.commission_rate or 0.12
     products = (
         db.query(RakutenProduct)
         .filter(
