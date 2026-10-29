@@ -93,12 +93,22 @@ def _parse_day(v) -> Optional[date]:
 
 
 def _parse_span(v) -> tuple:
-    """「2026年09月01日～2026年09月30日」から開始と終了を読む。"""
+    """「2026年09月01日～2026年09月30日」から開始と終了を読む。
+
+    波線は全角（～・〜）と半角が混ざる。記号で切ると切れず、
+    1日だけのレポートと見間違えるので、日付そのものを拾う。
+    """
     s = str(v or "").strip()
-    parts = re.split(r"[~〜]", s)
-    a = _parse_day(parts[0]) if parts else None
-    b = _parse_day(parts[1]) if len(parts) > 1 else a
-    return a, (b or a)
+    found = []
+    for m in re.finditer(r"(\d{4})\D{1,3}(\d{1,2})\D{1,3}(\d{1,2})", s):
+        try:
+            found.append(date(int(m.group(1)), int(m.group(2)),
+                              int(m.group(3))))
+        except ValueError:
+            pass
+    if not found:
+        return None, None
+    return found[0], found[-1]
 
 
 @router.post("/import")
@@ -728,6 +738,22 @@ def item_days(days: int = 10, db: Session = Depends(get_db)):
         if d not in have:
             missing.append(d)
     return {"missing": missing, "have": sorted(have, reverse=True)[:30]}
+
+
+@router.delete("/item-days/{day}")
+def drop_item_day(day: str, db: Session = Depends(get_db)):
+    """その日の商品別をまるごと捨てる。
+
+    月のレポートが1日分として入ってしまった日を消すと、
+    足りない日として拡張機能が取り直してくれる。
+    """
+    d = _parse_day(day)
+    if not d:
+        raise HTTPException(400, "日付を読めませんでした")
+    n = (db.query(RakutenAdItemDaily)
+         .filter(RakutenAdItemDaily.day == d).delete())
+    db.commit()
+    return {"day": d.isoformat(), "deleted": n}
 
 
 # ============================================================
