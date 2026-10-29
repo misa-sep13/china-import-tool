@@ -34,18 +34,29 @@ def freshness(db: Session = Depends(get_db)):
 @router.post("/sync")
 def sync(kind: str = Query("all", pattern="^(all|orders|ledger)$"),
          days: Optional[int] = None,
+         start: Optional[str] = None,
+         end: Optional[str] = None,
          db: Session = Depends(get_db)):
     """レポートから日別実績を取り込む。数分かかる。
 
     days を渡すとその日数ぶん遡って取り直す（初回や、抜けを埋めるとき）。
+
+    start / end で期間を直接指定できる。過去を遡って埋めるときは
+    こちらを使う。1回の呼び出しの終わりにしか commit しないので、
+    400日を一気にやるとRender（512MB）のメモリに乗らない。
+    1か月ずつ呼べば、途中で止まってもそこまでは残る。
     """
-    start = (date.today() - timedelta(days=days)) if days else None
+    s_day = date.fromisoformat(start) if start else (
+        (date.today() - timedelta(days=days)) if days else None)
+    e_day = date.fromisoformat(end) if end else None
     out = {}
     try:
         if kind in ("all", "orders"):
-            out["orders"] = daily_sales_sync.sync_orders(db, start=start)
+            out["orders"] = daily_sales_sync.sync_orders(db, start=s_day,
+                                                         end=e_day)
         if kind in ("all", "ledger"):
-            out["ledger"] = daily_sales_sync.sync_ledger(db, start=start)
+            out["ledger"] = daily_sales_sync.sync_ledger(db, start=s_day,
+                                                         end=e_day)
     except amazon_reports.ReportError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return out
