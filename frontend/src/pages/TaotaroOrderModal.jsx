@@ -98,6 +98,9 @@ export default function TaotaroOrderModal({
           otherOn: !!((x.inspect || {}).var7 || '').trim(),
           rememberInspect: false,
           send: x.ok,
+          // 開いたときの数。数を変えたあと、発注済みに残す販売単位の数を
+          // 割り戻すのに使う（2個セットなら、ここでの数は個数になっている）
+          qty0: x.qty, originQty0: x.origin_qty,
         })))
       } catch (e) {
         if (alive) setErr(e.response?.data?.detail || e.message)
@@ -111,16 +114,44 @@ export default function TaotaroOrderModal({
 
   const patch = (i, v) => setRows(rs => rs.map((r, n) => n === i ? { ...r, ...v } : r))
 
+  // 色・サイズと数から、送れるかどうかを決め直す。
+  // 最小発注数や在庫で弾かれた行を、この画面で数を変えて通せるようにする
+  const recheck = (r, skuId, qty) => {
+    const s = (r.skus || []).find(x => x.sku_id === skuId)
+    let bad = ''
+    if (!s) bad = '選んでください'
+    else if (!(qty > 0)) bad = '数を入れてください'
+    else if (qty < (r.min_order_quantity || 1)) bad = `最小発注数 ${r.min_order_quantity} を下回っています`
+    else if (s.stock != null && qty > s.stock) bad = `在庫 ${s.stock} 個を超えています`
+    return { skuId, qty, chosen: s || null, error: bad, ok: !bad }
+  }
+
   // SKUを選び直したら、在庫と最小発注数をその場で見直す
   const pickSku = (i, skuId) => {
     setRows(rs => rs.map((r, n) => {
       if (n !== i) return r
-      const s = (r.skus || []).find(x => x.sku_id === skuId)
-      let bad = ''
-      if (!s) bad = '選んでください'
-      else if (r.qty < (r.min_order_quantity || 1)) bad = `最小発注数 ${r.min_order_quantity} を下回っています`
-      else if (s.stock != null && r.qty > s.stock) bad = `在庫 ${s.stock} 個を超えています`
-      return { ...r, skuId, chosen: s || null, error: bad, ok: !bad, send: !bad }
+      const v = recheck(r, skuId, r.qty)
+      return { ...r, ...v, send: v.ok }
+    }))
+  }
+
+  // 数を変えたら同じく見直す。弾かれていた行が通るようになったら、
+  // 送る側にチェックを入れる（入れ忘れて送られないのを防ぐ）
+  const changeQty = (i, qty) => {
+    setRows(rs => rs.map((r, n) => {
+      if (n !== i) return r
+      const v = recheck(r, r.skuId, qty)
+      // 発注済みには販売単位の数で残る。開いたときの数と販売単位の数の比で
+      // 割り戻す（2個セット30セット＝60個 を 80個にしたら 40セット）。
+      // 付属品・部材の行は本体の数とは別物なので触らない。最小発注数に
+      // 合わせて付属品を増やしても、売る数が増えたことにはならない
+      let originQty = r.origin_qty
+      if (r.originQty0 && r.qty0 && !r.is_accessory && !r.is_part
+          && r.sku === (r.origin_sku || r.sku)) {
+        const unit = r.qty0 / r.originQty0
+        originQty = Math.max(1, Math.floor(qty / unit))
+      }
+      return { ...r, ...v, origin_qty: originQty, send: v.ok ? (r.ok ? r.send : true) : false }
     }))
   }
 
@@ -134,7 +165,7 @@ export default function TaotaroOrderModal({
     try {
       const r = await api.post(submitUrl, {
         items: targets.map(t => ({
-          sku: t.sku, qty: t.qty, buy_url: t.buy_url,
+          sku: t.sku, qty: Number(t.qty), buy_url: t.buy_url,
           // どの発注から展開された行か。発注済は販売単位で残すので、
           // 部材ごとに行が増えても数が膨らまないようにサーバーへ渡す
           origin_sku: t.origin_sku || t.sku, origin_qty: t.origin_qty,
@@ -207,7 +238,8 @@ export default function TaotaroOrderModal({
           {!busy && !result && rows && rows.map((r, i) => (
             // 4色セットや付属品は、同じSKUの行が並ぶ。SKUだけを鍵にすると
             // Reactが別の行と取り違えて、選んだ色が隣の行に移ることがある
-            <Row key={r.sku + '#' + i} r={r} i={i} patch={patch} pickSku={pickSku} />
+            <Row key={r.sku + '#' + i} r={r} i={i} patch={patch} pickSku={pickSku}
+              changeQty={changeQty} />
           ))}
         </div>
 
@@ -249,7 +281,7 @@ function Err({ text }) {
   )
 }
 
-function Row({ r, i, patch, pickSku }) {
+function Row({ r, i, patch, pickSku, changeQty }) {
   const [open, setOpen] = useState(false)
   const ng = !r.ok
   return (
@@ -273,7 +305,19 @@ function Row({ r, i, patch, pickSku }) {
           : null}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
-            {r.sku} <span style={{ fontWeight: 400, color: C.sub }}>×{r.qty}</span>
+            {r.sku}
+            {/* 最小発注数・在庫で弾かれることが多いので、ここで数を変えられる */}
+            <span style={{ fontWeight: 400, color: C.sub, marginLeft: 6 }}>×</span>
+            <input type="number" min={1} value={r.qty ?? ''}
+              onChange={e => changeQty(i, e.target.value === '' ? '' : Number(e.target.value))}
+              style={{ width: 80, fontSize: 13, padding: '2px 6px', marginLeft: 2,
+                border: `1px solid ${r.qty !== r.qty0 ? C.key : C.line}`, borderRadius: 4,
+                background: r.qty !== r.qty0 ? '#eff6ff' : '#fff' }} />
+            {r.qty !== r.qty0 && (
+              <span style={{ fontSize: 11, fontWeight: 400, color: C.key, marginLeft: 6 }}>
+                （元は {r.qty0}）
+              </span>
+            )}
             {r.shipping === 'air' && (
               <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: '#1d4ed8',
                 background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 4, padding: '1px 6px' }}>
@@ -328,6 +372,26 @@ function Row({ r, i, patch, pickSku }) {
           {r.error && (
             <div style={{ fontSize: 12, color: ng ? C.bad : C.warn, marginTop: 5 }}>
               {r.error}
+              {/* よくあるのは最小発注数に足りないケース。ワンタッチで合わせる */}
+              {r.min_order_quantity > 1 && Number(r.qty) < r.min_order_quantity && (
+                <button onClick={() => changeQty(i, r.min_order_quantity)}
+                  style={{ marginLeft: 8, fontSize: 11, padding: '2px 8px',
+                    border: `1px solid ${C.key}`, color: C.key, background: '#fff',
+                    borderRadius: 4, cursor: 'pointer' }}>
+                  {r.min_order_quantity} 個にする
+                </button>
+              )}
+              {(() => {
+                const s = (r.skus || []).find(x => x.sku_id === r.skuId)
+                return s && s.stock != null && s.stock > 0 && Number(r.qty) > s.stock
+                  ? <button onClick={() => changeQty(i, s.stock)}
+                      style={{ marginLeft: 8, fontSize: 11, padding: '2px 8px',
+                        border: `1px solid ${C.key}`, color: C.key, background: '#fff',
+                        borderRadius: 4, cursor: 'pointer' }}>
+                      在庫の {s.stock} 個にする
+                    </button>
+                  : null
+              })()}
             </div>
           )}
 
