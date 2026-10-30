@@ -103,6 +103,22 @@ class ProductOut(ProductCreate):
 def list_products(db: Session = Depends(get_db)):
     return db.query(Product).filter(Product.is_active == True).order_by(Product.no).all()
 
+@router.get("/lookup")
+def lookup_product(sku: str, db: Session = Depends(get_db)):
+    """SKUで引く。削除済み（is_active=False）も返す。
+
+    一覧は生きている商品しか返さないので、「見当たらないのに
+    既に存在しますと言われる」ときに中を見るため。変更はしない。
+    """
+    key = (sku or "").strip()
+    rows = (db.query(Product)
+            .filter(Product.sku.ilike(f"%{key}%")).all()) if key else []
+    return {"sku": key, "found": [{
+        "id": r.id, "sku": r.sku, "name": r.name, "asin": r.asin,
+        "fnsku": r.fnsku, "is_active": r.is_active,
+    } for r in rows]}
+
+
 @router.post("/fba-import", response_model=dict)
 def import_from_fba(db: Session = Depends(get_db)):
     try:
@@ -187,7 +203,11 @@ def update_product(product_id: int, data: ProductUpdate, request: Request, db: S
         if existing:
             if existing.is_active:
                 raise HTTPException(status_code=400, detail="SKUが既に存在します")
+            # 退避を先に書き出す。同じトランザクションに入れたままだと
+            # UPDATEの順が逆になることがあり、削除済みの行とSKUがぶつかって
+            # 「SKUが既に存在します」になる（消したはずの名前に戻せない）
             _retire_deleted_sku(existing)
+            db.flush()
     for k, v in updates.items():
         setattr(p, k, v)
     log_activity(db, request, "update", "amazon_product", p.id, f"商品マスタ更新: {p.sku}（{', '.join(sorted(updates.keys()))}）", sku=p.sku)
