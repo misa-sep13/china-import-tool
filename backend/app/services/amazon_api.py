@@ -1899,23 +1899,34 @@ def fetch_raw_property(product_type: str, name: str) -> dict:
 _PT_NAMES_CACHE = {}
 
 
-def find_attr_name(product_type: str, keyword: str) -> str:
+def find_attr_name(product_type: str, *keywords) -> str:
     """商品タイプの定義から、名前にその語を含む項目を1つ探す。
 
     同じ欄でも商品タイプによって項目名が違うことがあるので、
     名前を決め打ちにすると送ったつもりで入らない。定義から探す。
+
+    語は複数渡せる。前のものから順に探し、最初に見つかったものを返す。
+    「商品のハイライト」は BABY_PRODUCT では title_differentiation という
+    名前で、highlight という語をどこにも含まない。1語だけで探していたため
+    何も見つからず、ハイライトを黙って送っていなかった。
     見つからなければ空を返す。
     """
     pt = (product_type or "").strip().upper()
-    if not pt or not keyword:
+    if not pt:
         return ""
     if pt not in _PT_NAMES_CACHE:
         got = fetch_raw_property(pt, "")
         _PT_NAMES_CACHE[pt] = got.get("names") or [] if got.get("ok") else []
-    k = keyword.lower()
-    hit = [n for n in _PT_NAMES_CACHE[pt] if k in n.lower()]
-    # 短いほうが素直な名前（product_highlight < product_highlight_type など）
-    return sorted(hit, key=len)[0] if hit else ""
+    names = _PT_NAMES_CACHE[pt]
+    for kw in keywords:
+        k = (kw or "").strip().lower()
+        if not k:
+            continue
+        hit = [n for n in names if k in n.lower()]
+        if hit:
+            # 短いほうが素直な名前（product_highlight < product_highlight_type）
+            return sorted(hit, key=len)[0]
+    return ""
 
 
 def fetch_product_type_schema(product_type: str) -> dict:

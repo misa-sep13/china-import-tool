@@ -1744,7 +1744,8 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
     # 商品のハイライト。商品名が75文字未満のときだけ商品ページに出る短い一言。
     # 項目名は商品タイプによって違うので、定義から探す
     if (row.highlight or "").strip():
-        hn = amazon_api.find_attr_name(row.product_type, "highlight")
+        hn = amazon_api.find_attr_name(row.product_type,
+                                       "title_differentiation", "highlight")
         if hn:
             a[hn] = one(row.highlight.strip())
 
@@ -1903,7 +1904,8 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
     # 商品のハイライト。商品名が75文字未満のときだけ商品ページに出る短い一言。
     # 項目名は商品タイプによって違うので、定義から探す
     if (row.highlight or "").strip():
-        hn = amazon_api.find_attr_name(row.product_type, "highlight")
+        hn = amazon_api.find_attr_name(row.product_type,
+                                       "title_differentiation", "highlight")
         if hn:
             a[hn] = one(row.highlight.strip())
 
