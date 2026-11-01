@@ -1321,6 +1321,21 @@ def import_pages(body: PagesBulkIn, workspace: str = "default",
 _GS1_FORM = "gjdb_product_uploadform.xlsx"
 
 
+_SKU_PREFIX_RE = re.compile(r"^[A-Za-z]+\d+(?:_[A-Za-z0-9]+)*[_\s-]+")
+
+
+def _strip_sku_prefix(s: str) -> str:
+    """商品名の頭に付いているSKUを外す。
+
+    台帳の名前は「y127_母乳パッド」のようにSKU込みで入っている。
+    GS1の商品名は全角しか受け付けないので、このまま出すと
+    半角の「y127_」が残って弾かれる。
+    外した結果が空になるときは、元のまま返す（名前が消えるほうが困る）。
+    """
+    out = _SKU_PREFIX_RE.sub("", (s or "").strip()).strip()
+    return out or (s or "").strip()
+
+
 def _gs1_zen(s: str) -> str:
     """半角の英数字・記号を全角にする。
 
@@ -1394,7 +1409,10 @@ def gs1_export(db: Session = Depends(get_db)):
     # 1〜3行目は見出し・型・必須の説明。4行目から入れる
     for i, r in enumerate(rows):
         at = 4 + i
-        name = (r.name or r.sku or "").strip()
+        # 商品名はGS1の辞書に全角でしか入らない。SKUを頭に付けたままだと
+        # 「y127_」の部分が半角で残り、全件が「商品名は全角で入力して
+        # ください」で弾かれる。接頭辞を外してから全角にする
+        name = _gs1_zen(_strip_sku_prefix(r.name or r.sku or ""))
         zen_brand = _gs1_zen(brand)[:40]
         ws.cell(at, _GS1_COL["status"]).value = "02"
         ws.cell(at, _GS1_COL["gtin"]).value = r.code
