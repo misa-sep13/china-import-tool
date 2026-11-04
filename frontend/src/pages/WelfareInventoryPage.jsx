@@ -1123,15 +1123,16 @@ export default function WelfareInventoryPage() {
                           }} />
                         </td>
                         <td style={{ ...instructionCellStyle(instruction), padding: 6 }}>
-                          {/* datalistは入力中の文字で候補を絞る。「保管」が入ったままだと
-                              「戻し」が候補に出ず、選べなくなる（実際に選べなかった）。
-                              触った瞬間に空にして全候補を出し、選ばずに離れたら元へ戻す。
+                          {/* datalistは入力中の文字で候補を絞る。何か入ったままだと
+                              他の指示が候補に出ず、選べなくなる（「5個戻し」から
+                              「保管」に変えられなかった）。触った瞬間に空にして
+                              全候補を出し、選ばずに離れたら元へ戻す。
                               自由入力（「戻し3個」など）は今までどおりできる */}
                           <input
                             list="work-instruction-options"
                             value={instruction}
                             onFocus={e => {
-                              if (WORK_INSTRUCTION_OPTIONS.includes(instruction)) {
+                              if (instruction) {
                                 e.target.dataset.prev = instruction
                                 updateWorkDraft(row, { instruction: '' })
                               }
@@ -1148,6 +1149,14 @@ export default function WelfareInventoryPage() {
                               if (v === '一部戻し') {
                                 updateWorkDraft(row, {
                                   instruction: `${row.units}個戻し`, remaining_qty: 0 })
+                                return
+                              }
+                              // 「5個戻し」から「保管」に変えると、残が戻す前の数（5）の
+                              // ままになる。全部ここに置く指示なので入荷数に戻す。
+                              // そのままだと施設に置く数が足りなくなる
+                              if (isPartialReturn(e.target.dataset.prev || '')
+                                  && (v === '保管' || v === '作業保管')) {
+                                updateWorkDraft(row, { instruction: v, remaining_qty: row.units })
                                 return
                               }
                               updateWorkDraft(row, { instruction: v })
