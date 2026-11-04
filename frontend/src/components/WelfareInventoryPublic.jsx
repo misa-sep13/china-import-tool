@@ -102,9 +102,9 @@ export default function WelfareInventoryPublic() {
                   <td style={{ padding: '10px 12px', textAlign: 'right' }}>
                     {(r.remaining_qty || 0).toLocaleString()}
                   </td>
-                  {/* 残量のうち、この1週間に届いたぶん。作業は平均1週間かかるので、
+                  {/* この1週間に届いたぶん。作業は平均1週間かかるので、
                       ここに出ているぶんはまだ手つかずの可能性がある。
-                      1週間より前に届いたぶんは出ない（残量にだけ入っている） */}
+                      届いた数をそのまま出す（残量とは別の数字） */}
                   <td style={{ padding: '6px 12px', whiteSpace: 'nowrap' }}>
                     {(r.recent_receipts || []).length === 0
                       ? <span style={{ color: '#cbd5e1' }}>-</span>

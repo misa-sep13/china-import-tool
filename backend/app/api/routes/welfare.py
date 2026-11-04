@@ -325,42 +325,32 @@ def _jst_day(dt) -> Optional[str]:
     return dt.astimezone(JST).date().isoformat()
 
 
-def _allocate_receipts(received: list, remaining: int, limit: str) -> list:
-    """残量を、新しい便のほうへ割り当てる。
+def _recent_receipts(received: list, limit: str) -> list:
+    """この1週間に届いた便だけを、日付ごとにまとめる。
 
-    received は (入荷日, 便, 個数) を古い順に並べたもの。先に届いたものから
-    作業するとみなすので、消えているのは古い便のぶんになる。
-    limit より前の便は落とす。合計は残量と一致しない。
+    received は (入荷日, 便, 個数) を古い順に並べたもの。届いた数を
+    そのまま出す。残量と突き合わせたりはしない。
     """
-    remaining = max(0, remaining or 0)
-    # 画面から直接作った在庫や残量修正のぶんは入荷の記録が無い。
-    # そのぶんは日付が分からないので、古いものとして先に使う
-    used = max(0, sum(q for _, _, q in received) - remaining)
     lines = []
     for day, ship, qty in received:
-        if used >= qty:
-            used -= qty
-            continue
-        left, used = qty - used, 0
         if not day or day < limit:
             continue
         if lines and lines[-1]["date"] == day:
-            lines[-1]["qty"] += left
+            lines[-1]["qty"] += qty
             if ship and ship not in lines[-1]["shipment_no"]:
                 lines[-1]["shipment_no"] += "・" + ship
         else:
-            lines.append({"date": day, "shipment_no": ship, "qty": left})
+            lines.append({"date": day, "shipment_no": ship, "qty": qty})
     return lines
 
 
 def _receipt_breakdown(db: Session, items) -> dict:
-    """残量のうち、この1週間に届いたぶんを便ごとに分ける。
+    """この1週間に届いたぶんを、便ごとに出す。
 
     在庫反映は便の区別を残さず remaining_qty に足し込むだけなので、
     施設側からは「いま何個あるか」しか見えなかった。作業は平均1週間
-    かかるため、今日届いたぶんと先週届いたぶんが同じ数字に混ざると、
-    どれがまだ手つかずなのか分からない（在庫はあるのに「ありません」に
-    なるのはこれが理由）。
+    かかるため、今日届いたぶんと先週届いたぶんが同じ数字に混ざり、
+    在庫はあるのに「ありません」になることがあった。
     """
     ids = [i.id for i in items if i.id]
     if not ids:
@@ -386,8 +376,7 @@ def _receipt_breakdown(db: Session, items) -> dict:
              - timedelta(days=RECEIPT_NOTICE_DAYS - 1)).isoformat()
     out = {}
     for it in items:
-        lines = _allocate_receipts(got.get(it.id) or [],
-                                   it.remaining_qty or 0, limit)
+        lines = _recent_receipts(got.get(it.id) or [], limit)
         if lines:
             out[it.id] = lines
     return out
@@ -485,7 +474,7 @@ def list_inventory(q: Optional[str] = None, db: Session = Depends(get_db)):
         # 楽天「在庫・損益」に登録されている実在庫。就労支援の手元の残量とは別物
         # （手元にあっても出品在庫に入れていない分などがあるため）
         d["rakuten_stock"] = (p.stock if p else None)
-        # 残量のうち、この1週間に届いたぶん。作業待ちかどうかの手がかり
+        # この1週間に届いたぶん。作業待ちかどうかの手がかり
         d["recent_receipts"] = receipts.get(r.id, [])
         result.append(d)
     return result
