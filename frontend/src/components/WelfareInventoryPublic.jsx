@@ -1,6 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import api, { mediaUrl } from '../api/client'
+
+// 「11/4入荷」の形。年は同じ年のことしか出ないので省く
+const arrivalLabel = (d) => {
+  const [, m, day] = (d || '').split('-')
+  return m ? `${Number(m)}/${Number(day)}入荷` : '入荷'
+}
 import { useWelfareVersion } from '../api/welfareVersion'
 
 /**
@@ -61,7 +67,7 @@ export default function WelfareInventoryPublic() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, whiteSpace: 'nowrap' }}>
             <thead>
               <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-                {['写真', 'SKU', '商品名', '仕様', '換算', '入荷数', '残量', '実在庫', '備考'].map(h => (
+                {['写真', 'SKU', '商品名', '仕様', '換算', '入荷数', '残量', 'この1週間の入荷', '実在庫', '備考'].map(h => (
                   <th key={h} style={{
                     padding: '10px 12px',
                     textAlign: ['入荷数', '残量', '実在庫', '換算'].includes(h) ? 'right' : 'left',
@@ -95,6 +101,21 @@ export default function WelfareInventoryPublic() {
                   </td>
                   <td style={{ padding: '10px 12px', textAlign: 'right' }}>
                     {(r.remaining_qty || 0).toLocaleString()}
+                  </td>
+                  {/* 残量のうち、この1週間に届いたぶん。作業は平均1週間かかるので、
+                      ここに出ているぶんはまだ手つかずの可能性がある。
+                      1週間より前に届いたぶんは出ない（残量にだけ入っている） */}
+                  <td style={{ padding: '6px 12px', whiteSpace: 'nowrap' }}>
+                    {(r.recent_receipts || []).length === 0
+                      ? <span style={{ color: '#cbd5e1' }}>-</span>
+                      : r.recent_receipts.map(b => (
+                          <div key={b.date} style={{ lineHeight: 1.5 }}>
+                            <b>{b.qty.toLocaleString()}個</b>
+                            <span style={{ color: '#64748b', marginLeft: 6 }}>
+                              {arrivalLabel(b.date)}
+                            </span>
+                          </div>
+                        ))}
                   </td>
                   {/* 楽天「在庫・損益」に登録されている実在庫。
                       就労支援の手元の残量とは別物なので青で見分けられるようにする */}
