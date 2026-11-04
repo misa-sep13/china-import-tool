@@ -84,6 +84,10 @@ def _allow_list() -> tuple:
 
 
 def _wanted(room: dict, allow: tuple) -> bool:
+    # マイチャットは常に出す。自分の控え・下書き置き場として使うので、
+    # 部屋名（自分の名前）では拾えない。種別で判断する
+    if room.get("type") == "my":
+        return True
     name = str(room.get("name") or "")
     rid = str(room.get("room_id") or "")
     return any(a == rid or a in name for a in allow)
@@ -102,17 +106,19 @@ def list_rooms(all_rooms: bool = False) -> list:
     allow = _allow_list()
     out = []
     for x in rooms:
-        # 自分のマイチャットや既読専用の部屋まで並べると選びにくい。
-        # 書き込める部屋だけに絞る
-        if x.get("type") == "my":
-            continue
+        # マイチャットは部屋名が自分の名前になっていて、一覧に並んでも
+        # それと分からない。送り先として選べるように名前を付け替える
+        is_my = x.get("type") == "my"
         out.append({
             "room_id": x.get("room_id"),
-            "name": x.get("name"),
+            "name": "マイチャット（自分用）" if is_my else x.get("name"),
             "type": x.get("type"),
-            "can_post": (x.get("role") in ("admin", "member")),
+            # マイチャットは自分しかいないので必ず書き込める。
+            # roleが想定と違う値で返っても選べなくならないようにする
+            "can_post": is_my or (x.get("role") in ("admin", "member")),
         })
-    out.sort(key=lambda x: str(x.get("name") or ""))
+    # マイチャットは最後に置く。ふだん送るのは相手のいる部屋のほう
+    out.sort(key=lambda x: (x.get("type") == "my", str(x.get("name") or "")))
     if all_rooms:
         return out
     # 絞った結果が空なら、部屋名が変わったということ。黙って0件にすると
