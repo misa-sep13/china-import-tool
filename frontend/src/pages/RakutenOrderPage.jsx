@@ -224,12 +224,12 @@ function ShipmentTab() {
 
   // ---- 未照合行からの新規マスタ登録 ----
   const [regRow, setRegRow] = useState(null)
-  const [regForm, setRegForm] = useState({ sku: '', name: '', set_size: 1, selling_price: '' })
+  const [regForm, setRegForm] = useState({ sku: '', name: '', set_size: 1, selling_price: '', is_material: false })
   const [registering, setRegistering] = useState(false)
 
   function openRegister(i) {
     setRegRow(i)
-    setRegForm({ sku: '', name: '', set_size: 1, selling_price: '' })
+    setRegForm({ sku: '', name: '', set_size: 1, selling_price: '', is_material: false })
   }
 
   async function handleRegister() {
@@ -246,6 +246,9 @@ function ShipmentTab() {
         set_size: parseInt(regForm.set_size) || 1,
         selling_price: regForm.selling_price ? parseFloat(regForm.selling_price) : null,
         supplier: 'タオタロウ',
+        // 宅配袋・OPP袋などの梱包材。売り物ではないので、ここを落とすと
+        // 発注推奨や在庫一覧に並び、仕入れ値が商品原価に乗ってしまう
+        is_material: !!regForm.is_material,
       }
       const res = await api.post('/rakuten/products', payload)
       const prod = res.data
@@ -770,7 +773,12 @@ function ShipmentTab() {
                                     <div>
                                       <label style={{ fontSize: 11, color: '#64748b', display: 'block' }}>SKU（必須）</label>
                                       <input value={regForm.sku} placeholder="例: y134_black" style={{ width: 140, fontSize: 12 }}
-                                        onChange={e => setRegForm(f => ({ ...f, sku: e.target.value }))} />
+                                        onChange={e => setRegForm(f => ({
+                                          ...f, sku: e.target.value,
+                                          // 梱包材は z_ 始まりで揃えている。入れた時点で倒しておく。
+                                          // 違うときは下のチェックで外せる
+                                          is_material: e.target.value.startsWith('z_') ? true : f.is_material,
+                                        }))} />
                                     </div>
                                     <div>
                                       <label style={{ fontSize: 11, color: '#64748b', display: 'block' }}>商品名（空欄なら中国語名）</label>
@@ -782,14 +790,33 @@ function ShipmentTab() {
                                       <input type="number" min="1" value={regForm.set_size} style={{ width: 70, fontSize: 12 }}
                                         onChange={e => setRegForm(f => ({ ...f, set_size: e.target.value }))} />
                                     </div>
-                                    <div>
-                                      <label style={{ fontSize: 11, color: '#64748b', display: 'block' }}>販売価格（円・任意）</label>
-                                      <input type="number" value={regForm.selling_price} style={{ width: 90, fontSize: 12 }}
-                                        onChange={e => setRegForm(f => ({ ...f, selling_price: e.target.value }))} />
-                                    </div>
+                                    {!regForm.is_material && (
+                                      <div>
+                                        <label style={{ fontSize: 11, color: '#64748b', display: 'block' }}>販売価格（円・任意）</label>
+                                        <input type="number" value={regForm.selling_price} style={{ width: 90, fontSize: 12 }}
+                                          onChange={e => setRegForm(f => ({ ...f, selling_price: e.target.value }))} />
+                                      </div>
+                                    )}
+                                    {/* 宅配袋・OPP袋など、商品を届けるために使うもの。売り物ではないので
+                                        発注推奨・在庫一覧・RMSへの反映から外れ、仕入れ値は商品原価ではなく
+                                        資材費になる。ここで入れ忘れると売り物として登録されてしまう */}
+                                    <label style={{
+                                      fontSize: 12, display: 'flex', alignItems: 'center', gap: 4,
+                                      color: regForm.is_material ? '#0f766e' : '#64748b',
+                                      fontWeight: regForm.is_material ? 700 : 400, cursor: 'pointer',
+                                    }}>
+                                      <input type="checkbox" checked={!!regForm.is_material}
+                                        onChange={e => setRegForm(f => ({ ...f, is_material: e.target.checked }))} />
+                                      梱包材
+                                    </label>
                                     <div style={{ fontSize: 11, color: '#64748b' }}>
                                       入荷数: {item.qty} ÷ {parseInt(regForm.set_size) || 1} = <b>{Math.floor(item.qty / (parseInt(regForm.set_size) || 1))}</b>個
                                       ／ 仕入単価 {item.unit_price_cny}元・色/仕様は自動セット
+                                      {regForm.is_material && (
+                                        <div style={{ color: '#0f766e' }}>
+                                          梱包材として登録します（発注推奨・在庫一覧には出さず、仕入れ値は資材費）
+                                        </div>
+                                      )}
                                     </div>
                                     <button className="btn btn-primary" style={{ fontSize: 12, padding: '4px 12px' }}
                                       onClick={handleRegister} disabled={registering}>
