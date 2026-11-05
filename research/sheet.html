@@ -7974,6 +7974,38 @@ if(FIREBASE_CONFIG.databaseURL){
           }, 600);
         });
         line.appendChild(ptIn);
+        // 正しい商品タイプの名前は普通は分からない。言葉から探せるようにする
+        const ptFind = el('button', 'mini', '🔎 探す');
+        ptFind.addEventListener('click', async () => {
+          const q = window.prompt(
+            '商品タイプを探します。商品を表す言葉を入れてください（日本語でも英語でも可）',
+            (data.title || '').slice(0, 20)) || '';
+          if(!q.trim()) return;
+          ptMsg.textContent = '探しています…';
+          try{
+            const j = await regApi('/product-types/search?q='
+              + encodeURIComponent(q.trim()));
+            const items = (j && j.items) || [];
+            if(!items.length){
+              ptMsg.textContent = j && j.error
+                ? j.error : '見つかりませんでした。言葉を変えてみてください';
+              return;
+            }
+            const list = items.slice(0, 20)
+              .map((x, i) => (i + 1) + '. ' + x.name
+                + (x.label ? '（' + x.label + '）' : '')).join(String.fromCharCode(10));
+            const pick = window.prompt('候補です。使う番号を入れてください'
+              + String.fromCharCode(10, 10) + list + String.fromCharCode(10),
+              '1');
+            const n = parseInt(pick, 10);
+            if(!n || n < 1 || n > items.length){ ptMsg.textContent = ''; return; }
+            ptIn.value = items[n - 1].name;
+            ptIn.dispatchEvent(new Event('input'));
+          }catch(e){
+            ptMsg.textContent = 'うまくいきませんでした：' + (e.message || e);
+          }
+        });
+        line.appendChild(ptFind);
         line.appendChild(document.createTextNode(
           '※ 商品の中身と合っていないと、必須項目が埋まらず'
           + 'Amazonで「不足している情報」になります。'
