@@ -1517,6 +1517,29 @@ def _dim_keys(name: str) -> list:
     return []
 
 
+def _put_extras(a: dict, extra: dict, mp: str) -> None:
+    """画面で入れてもらった項目を attributes へ移す。
+
+    「shaft.height」のように点で区切った名前は入れ子の項目。
+    shaft は {"value": …} では受け取ってもらえず、height・calf_size の
+    ような枝を持つ1つのまとまりで送る必要がある。
+    同じ親の枝をまとめて1件にする。
+    """
+    nested = {}
+    for k, v in extra.items():
+        if v is None or (isinstance(v, str) and not v.strip()):
+            continue
+        if "." in k:
+            parent, sub = k.split(".", 1)
+            nested.setdefault(parent, {})[sub] = v
+        else:
+            a[k] = _wrap_attr(k, v, mp)
+    for parent, subs in nested.items():
+        one = {"marketplace_id": mp}
+        one.update(subs)
+        a[parent] = [one]
+
+
 def _wrap_attr(name: str, value, mp: str) -> list:
     """attributes に入れる形にする。
 
@@ -1907,10 +1930,7 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
             a[key] = one(val)
 
     # 商品タイプごとの必須項目。画面で入れてもらったもの
-    for k, v in extra.items():
-        if v is None or (isinstance(v, str) and not v.strip()):
-            continue
-        a[k] = _wrap_attr(k, v, mp)
+    _put_extras(a, extra, mp)
     return a
 
 
@@ -2000,10 +2020,7 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
                 a[f"other_product_image_locator_{n}"] = [
                     {"marketplace_id": mp, "media_location": u}]
 
-    for k, v in extra.items():
-        if v is None or (isinstance(v, str) and not v.strip()):
-            continue
-        a[k] = _wrap_attr(k, v, mp)
+    _put_extras(a, extra, mp)
     return a
 
 
@@ -3096,7 +3113,15 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
     material = read_material(texts, mat_choices)
 
     need = []
+    # Amazonの指摘は親の名前（shaft・closure など）で来るが、
+    # 入れ子の項目は枝ごとに入れてもらわないと送れない。
+    # 定義に枝があるものは、枝の欄に置き換える
+    asked = []
     for n in memo["asked"]:
+        subs = [k for k in by_name if k.startswith(n + ".")]
+        asked.extend(subs or [n])
+
+    for n in asked:
         # 商品名・JAN・価格・画像などツールが埋めるものは、ここでは聞かない
         if n in amazon_api._FILLED_BY_TOOL:
             continue

@@ -2038,6 +2038,33 @@ def fetch_product_type_schema(product_type: str) -> dict:
                     return br["enum"], br.get("enumNames") or []
             return None, []
 
+        def mk(name, title, desc, node):
+            e, nm = pick_enum(node)
+            ch = []
+            for i, v in enumerate((e or [])[:200]):
+                ch.append({"value": v,
+                           "label": (nm[i] if i < len(nm) else None) or str(v)})
+            return {"name": name, "label": title or name,
+                    "description": desc or "",
+                    "type": "select" if e else "text", "choices": ch}
+
+        # 入れ子の項目（shaft・closure・footwear_size など）は
+        # items.properties.value を持たず、height・type・size_system
+        # といった枝を持つ。これを1つの箱として出していたので、
+        # {"value": …} の形で送ってしまい「商品タイプに属さない」と
+        # 無視され、枝のほうは「必須なのに入っていない」と言われていた。
+        # 枝ごとに欄を出し、attr.sub という名前で持つ
+        sub = {k: v for k, v in (items.get("properties") or {}).items()
+               if k not in ("marketplace_id", "language_tag")}
+        if not inner and len(sub) > 1:
+            need = [k for k in (items.get("required") or []) if k in sub] or list(sub)
+            for sk in need:
+                sp = sub.get(sk) or {}
+                fields.append(mk(
+                    f"{key}.{sk}",
+                    f"{p.get('title') or key}：{sp.get('title') or sk}",
+                    sp.get("description") or "", sp))
+            continue
         enum, names = pick_enum(inner)
         if not enum:
             enum, names = pick_enum(items)
