@@ -2056,7 +2056,10 @@ def fetch_product_type_schema(product_type: str) -> dict:
         # 枝ごとに欄を出し、attr.sub という名前で持つ
         sub = {k: v for k, v in (items.get("properties") or {}).items()
                if k not in ("marketplace_id", "language_tag")}
-        if not inner and len(sub) > 1:
+        # 枝が1つだけの項目（closure の type など）も入れ子なので展開する。
+        # 2つ以上に限っていたため closure が1つの箱のままで、
+        # 「留め具の種類が必須」と言われ続けていた
+        if not inner and sub:
             need = [k for k in (items.get("required") or []) if k in sub] or list(sub)
             for sk in need:
                 sp = sub.get(sk) or {}
