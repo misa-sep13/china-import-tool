@@ -459,10 +459,23 @@ export default function RakutenProductsPage() {
       {editing && (
         /* 背景を押しても閉じない。縦に長い画面なので、スクロールや
            選択のつもりで箱の外を押してしまい、入力が丸ごと消えていた。
-           閉じるのは「キャンセル」だけにする */
+           閉じるのは ✕ とキャンセルだけにする */
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#fff', color: '#1a1a2e', borderRadius: 12, padding: 32, width: 620, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
-            <h2 style={{ marginBottom: 20 }}>{editing === 'new' ? '商品追加' : '商品編集'}</h2>
+            {/* 見出しと ✕ は上に貼り付けておく。中身が長いので、
+                下までスクロールした先からでも閉じられるようにする。
+                padding ぶん左右へ広げて、白の帯で本文を隠す */}
+            <div style={{ position: 'sticky', top: -32, zIndex: 1,
+              background: '#fff', margin: '-32px -32px 20px', padding: '32px 32px 12px',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h2 style={{ margin: 0 }}>{editing === 'new' ? '商品追加' : '商品編集'}</h2>
+              {/* 書きかけがあれば確かめてから閉じる */}
+              <button onClick={handleModalClose} title="閉じる" aria-label="閉じる"
+                style={{ background: 'none', border: 'none', cursor: 'pointer',
+                  fontSize: 22, lineHeight: 1, color: '#64748b', padding: '2px 6px' }}>
+                ✕
+              </button>
+            </div>
 
             {/* 基本情報 */}
             <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>基本情報</h3>
