@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import api, { mediaUrl } from '../api/client'
 import WelfarePackingAdmin from '../components/WelfarePackingAdmin'
 import { matchesQuery as hit } from '../searchUtil'
+import { arrivalLabel } from '../welfareReceipts'
 
 const fmtDate = (v) => {
   if (!v) return '-'
@@ -872,6 +873,7 @@ export default function WelfareInventoryPage() {
                   <th>換算</th>
                   <th>入荷数</th>
                   <th>残量</th>
+                  <th>この1週間の入荷</th>
                   <th>実在庫</th>
                   <th>備考</th>
                   <th>更新</th>
@@ -929,6 +931,21 @@ export default function WelfareInventoryPage() {
                             </button>
                           )}
                         </div>
+                      </td>
+                      {/* この1週間に届いたぶん。作業は平均1週間かかるので、
+                          ここに出ているぶんはまだ手つかずの可能性がある。
+                          届いた数をそのまま出す（残量とは別の数字） */}
+                      <td style={{ whiteSpace: 'nowrap', fontSize: 13 }}>
+                        {(item.recent_receipts || []).length === 0
+                          ? <span style={{ color: '#cbd5e1' }}>-</span>
+                          : item.recent_receipts.map(b => (
+                              <div key={b.date} style={{ lineHeight: 1.5 }}>
+                                <b>{b.qty.toLocaleString()}個</b>
+                                <span style={{ color: '#64748b', marginLeft: 6 }}>
+                                  {arrivalLabel(b.date)}
+                                </span>
+                              </div>
+                            ))}
                       </td>
                       {/* 楽天「在庫・損益」に登録されている実在庫。
                           就労支援の手元の残量とは別物なので青で見分けられるようにする */}

@@ -1,12 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import api, { mediaUrl } from '../api/client'
-
-// 「11/4入荷」の形。年は同じ年のことしか出ないので省く
-const arrivalLabel = (d) => {
-  const [, m, day] = (d || '').split('-')
-  return m ? `${Number(m)}/${Number(day)}入荷` : '入荷'
-}
+import { arrivalLabel } from '../welfareReceipts'
 import { useWelfareVersion } from '../api/welfareVersion'
 
 /**
