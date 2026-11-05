@@ -7966,7 +7966,7 @@ if(FIREBASE_CONFIG.databaseURL){
             const v = ptIn.value.trim().toUpperCase();
             ptIn.value = v;
             try{
-              await regApi('/' + data.id, {method: 'PATCH',
+              await regApi('/' + data.id, {method: 'PUT',
                 body: JSON.stringify({product_type: v})});
               data.product_type = v;
               ptMsg.textContent = '保存しました。❶を押し直すと必須項目が入れ替わります';
@@ -8038,7 +8038,7 @@ if(FIREBASE_CONFIG.databaseURL){
               const v = bn.value.replace(/[^0-9]/g, '');
               bn.value = v;
               try{
-                await regApi('/' + data.id, {method: 'PATCH',
+                await regApi('/' + data.id, {method: 'PUT',
                   body: JSON.stringify({browse_node: v})});
                 data.browse_node = v;
                 bMsg.textContent = v ? '保存しました' : '競合から自動で入れます';
