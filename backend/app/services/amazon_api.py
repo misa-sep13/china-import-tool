@@ -1929,6 +1929,36 @@ def find_attr_name(product_type: str, *keywords) -> str:
     return ""
 
 
+def search_product_types(keywords: str) -> dict:
+    """言葉から商品タイプを探す。
+
+    競合ASINから引いた商品タイプが実態と合わないことがある
+    （シューズカバーが PHONE_ACCESSORY になっていた）。
+    そのとき正しい名前を調べる手立てが無く、直しようがなかった。
+    """
+    kw = (keywords or "").strip()
+    if not kw:
+        return {"ok": False, "error": "探す言葉を入れてください"}
+    try:
+        params = urllib.parse.urlencode({
+            "keywords": kw,
+            "marketplaceIds": _RESEARCH_MP,
+            "locale": "ja_JP",
+        })
+        d = _call_sp_api(f"/definitions/2020-09-01/productTypes?{params}")
+    except Exception as e:
+        return {"ok": False,
+                "error": f"探せませんでした（{type(e).__name__}: {str(e)[:200]}）"}
+    items = []
+    for p in d.get("productTypes") or []:
+        name = (p.get("name") or "").strip()
+        if not name:
+            continue
+        items.append({"name": name,
+                      "label": (p.get("displayName") or "").strip()})
+    return {"ok": True, "keywords": kw, "items": items}
+
+
 def fetch_product_type_schema(product_type: str) -> dict:
     """その商品タイプの必須項目を、画面に出せる形にして返す。
 

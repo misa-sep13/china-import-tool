@@ -2861,6 +2861,12 @@ def _remember_asked(db: Session, product_type: str, issues: list,
     return added
 
 
+@router.get("/product-types/search")
+def product_types_search(q: str = ""):
+    """言葉から商品タイプの候補を返す。画面の「商品タイプ」を直すときに使う。"""
+    return amazon_api.search_product_types(q)
+
+
 @router.get("/product-type-schema/{product_type}")
 def product_type_schema(product_type: str, name: str = ""):
     """項目の定義をそのまま見る。
