@@ -1640,7 +1640,44 @@ def _public_base() -> str:
 # Amazonはバリエーションテーマが色でないと、選択肢ごとの画像が出ない。
 # 個数違い・サイズ違いでも色として登録し、値のほうに「2個/ブラック」の
 # ように書く（Amazonの商品ページでも「色: 4個/クリア」と出る）。
+# バリエーションの軸。色だけを前提にしていたが、サイズ違いの商品
+# （シューズカバーの 23.0〜23.5cm など）を色として送ってしまい、
+# 「色＝23.0〜23.5cm」という商品になっていた。
+# 出品レコードの variation_theme が入っていればそれを使い、
+# 無ければ軸の名前と値から見分ける。
 VARIATION_THEME = "COLOR"
+
+_SIZE_WORDS = ("サイズ", "size", "寸法", "丈", "cm", "ｃｍ", "号")
+_AXIS_ATTR = {"SIZE": "size", "COLOR": "color"}
+
+
+# 「24.0〜24.5cm」「26cm」「L」「XL」のような値だけをサイズとみなす。
+# 数字が混じるだけで拾うと「ブラック2」のような色名まで
+# サイズにしてしまう
+_SIZE_VALUE_RE = re.compile(
+    r"^(?:[0-9.,]+\s*(?:[〜~\-]\s*[0-9.,]+)?\s*"
+    r"(?:cm|センチ|mm|ミリ|inch|インチ|号)?|"
+    r"(?:XS|S|M|L|XL|XXL|XXXL|2XL|3XL|F|フリー))$", re.I)
+
+
+def _looks_like_size(v: str) -> bool:
+    return bool(_SIZE_VALUE_RE.match((v or "").strip()))
+
+
+def _axis_theme(row: AmazonListing, kids=None) -> str:
+    """この商品のバリエーション軸。SIZE か COLOR。"""
+    want = (getattr(row, "variation_theme", "") or "").strip().upper()
+    if want in _AXIS_ATTR:
+        return want
+    label = (getattr(row, "axis1_label", "") or "").strip().lower()
+    if any(w.lower() in label for w in _SIZE_WORDS):
+        return "SIZE"
+    # 名前が付いていないときは値を見る。「24.0〜24.5cm」「M」のような
+    # 値ばかりならサイズとみなす
+    vals = [(c.axis1 or "").strip() for c in (kids or []) if (c.axis1 or "").strip()]
+    if vals and all(_looks_like_size(v) for v in vals):
+        return "SIZE"
+    return "COLOR"
 
 
 def _required_names(schema: dict) -> set:
@@ -1713,10 +1750,13 @@ def _dedupe_images(rows: list) -> list:
     return out
 
 
-def _axis_attrs(row: AmazonListing, child: AmazonListingChild) -> dict:
-    """子の軸の値。色として送る。"""
+def _axis_attrs(row: AmazonListing, child: AmazonListingChild,
+                theme: str = None) -> dict:
+    """子の軸の値。色かサイズかは商品ごとに決まる。"""
     v = (child.axis1 or "").strip()
-    return {"color": v} if v else {}
+    if not v:
+        return {}
+    return {_AXIS_ATTR.get(theme or VARIATION_THEME, "color"): v}
 
 
 def _attributes(row: AmazonListing, child: AmazonListingChild,
@@ -1859,10 +1899,10 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
         # theme は「商品タイプがテーマを必須にしているか」。
         # 子が1つでも必須なら送る（ハンガーで必須と言われた）
         want = (has_variation is not False) if theme is None else theme
-        axis = _axis_attrs(row, child) if want else {}
+        vt = _axis_theme(row, [child])
+        axis = _axis_attrs(row, child, vt) if want else {}
         if axis or theme:
-            a["variation_theme"] = [{"marketplace_id": mp,
-                                     "name": VARIATION_THEME}]
+            a["variation_theme"] = [{"marketplace_id": mp, "name": vt}]
         for key, val in axis.items():
             a[key] = one(val)
 
@@ -1902,7 +1942,12 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
     }
     # 子が1つでも、商品タイプがテーマを必須にしているなら送る
     if has_variation if theme is None else theme:
-        a["variation_theme"] = [{"marketplace_id": mp, "name": VARIATION_THEME}]
+        # 親と子でテーマが違うと弾かれるので、同じ決め方で出す
+        kids = (db.query(AmazonListingChild)
+                .filter(AmazonListingChild.listing_id == row.id).all()
+                if db is not None else [])
+        a["variation_theme"] = [{"marketplace_id": mp,
+                                 "name": _axis_theme(row, kids)}]
     brand = _brand_for(db, row) if db is not None else (row.brand or "")
     if brand:
         a["brand"] = one(brand)
