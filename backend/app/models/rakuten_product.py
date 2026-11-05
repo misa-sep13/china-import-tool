@@ -56,6 +56,18 @@ class RakutenProduct(Base):
     # レビューキャンペーン等の販促品（楽天には出品していない・在庫は就労支援の
     # 保管数把握のためだけにマスタ登録する）。RMS push・発注推奨・在庫一覧の対象外。
     is_promo     = Column(Boolean, default=False)
+    # この商品だけの発注の取り決め。仕入先が変わって条件が違う商品のためのもので、
+    # 空なら全体設定（設定画面のリードタイム等）のまま。元に戻すときは空にする。
+    #   lead_days_override … 発注から入荷までの日数（全体のリードタイムの代わり）
+    #   order_lot          … 1回の発注数。仕入先が「この数でしか売らない」場合
+    #   order_lot_group    … ロットを合算する相手。同じ文字列の商品どうしで
+    #                        合計が order_lot になるよう日販の比で振り分ける
+    #                        （例: 介護シューズのグレーM・Sを合わせて500個）
+    #   discontinued       … 終売。在庫は売り切るが、発注推奨には出さない
+    lead_days_override = Column(Integer, nullable=True)
+    order_lot          = Column(Integer, nullable=True)
+    order_lot_group    = Column(String,  nullable=True)
+    discontinued       = Column(Boolean, default=False)
     # 「どの商品の中身にもなっていない単品」の警告を、この商品については出さない。
     # y91_caseのように、組み立てで使うだけで売り物に紐づけない単品がある
     orphan_ok    = Column(Boolean, default=False)

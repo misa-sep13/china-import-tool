@@ -417,6 +417,15 @@ def _migrate():
         # 商品マスタの備考に持っていきたいこと（出品には送らない）
         ("amazon_listings","master_note",
          "ALTER TABLE amazon_listings ADD COLUMN master_note TEXT"),
+        # 商品ごとの発注の取り決め（仕入先が変わって条件が違う商品のため）
+        ("rakuten_products","lead_days_override",
+         "ALTER TABLE rakuten_products ADD COLUMN lead_days_override INTEGER"),
+        ("rakuten_products","order_lot",
+         "ALTER TABLE rakuten_products ADD COLUMN order_lot INTEGER"),
+        ("rakuten_products","order_lot_group",
+         "ALTER TABLE rakuten_products ADD COLUMN order_lot_group VARCHAR"),
+        ("rakuten_products","discontinued",
+         "ALTER TABLE rakuten_products ADD COLUMN discontinued BOOLEAN DEFAULT FALSE"),
     ]
 
     inspector = inspect(engine)

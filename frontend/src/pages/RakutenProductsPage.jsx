@@ -11,6 +11,8 @@ const EMPTY = {
   cost_jpy: null, selling_price: null, shipping_fee: 180,
   customer_memo: '', notes: '', memo: '',
   set_components: '', purchase_components: '', is_component: false, is_material: false, is_promo: false, is_active: true,
+  // この商品だけの発注条件。空なら設定画面の値のまま
+  lead_days_override: null, order_lot: null, order_lot_group: '', discontinued: false,
 }
 
 const BASE_URL = api.defaults.baseURL || ''
@@ -607,6 +609,63 @@ export default function RakutenProductsPage() {
                 <div className="form-group">
                   <label>60日前〜31日前の販売数</label>
                   <input type="number" min={0} {...f('sales_30_prev', 'number')} />
+                </div>
+              </div>
+            </div>
+
+            {/* この商品だけの発注条件。
+                仕入先を変えると納期やロットが全体設定と変わることがある。
+                空にすれば設定画面の値に戻るので、元に戻すのは欄を消すだけ */}
+            <div style={{ borderTop: '1px solid #e2e8f0', margin: '0 0 16px', paddingTop: 14 }}>
+              <h3 style={{ fontSize: 13, color: '#64748b', marginBottom: 4 }}>⚙️ この商品だけの発注条件</h3>
+              <p style={{ fontSize: 12, color: '#475569', marginBottom: 10 }}>
+                空のままなら設定画面の値（全体のリードタイム等）で計算します。
+                仕入先を変えたときだけ入れてください。<b>元に戻すときは欄を空にします。</b>
+              </p>
+              <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                <div className="form-group">
+                  <label>納期（日）</label>
+                  <input type="number" min={0} placeholder="空＝全体設定のまま"
+                    value={form.lead_days_override ?? ''}
+                    onChange={e => setForm(p => ({ ...p,
+                      lead_days_override: e.target.value === '' ? null : Number(e.target.value) }))} />
+                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                    発注してから入荷するまでの日数
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>発注ロット（個）</label>
+                  <input type="number" min={0} placeholder="空＝計算どおり"
+                    value={form.order_lot ?? ''}
+                    onChange={e => setForm(p => ({ ...p,
+                      order_lot: e.target.value === '' ? null : Number(e.target.value) }))} />
+                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                    仕入先がこの数でしか売らないとき。発注推奨はこの数で出ます
+                  </div>
+                </div>
+                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                  <label>ロットを合算する相手（まとめ名）</label>
+                  <input placeholder="例: y48_glay"
+                    value={form.order_lot_group || ''}
+                    onChange={e => setForm(p => ({ ...p, order_lot_group: e.target.value }))} />
+                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                    色違いを合わせて1ロットで買うとき、同じ名前を入れます。
+                    合計がロットの数になるよう、日販の比で振り分けます
+                  </div>
+                </div>
+              </div>
+              <div style={{ marginTop: 4 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!form.discontinued}
+                    onChange={e => setForm(p => ({ ...p, discontinued: e.target.checked }))}
+                    style={{ width: 'auto', accentColor: '#ef4444' }}
+                  />
+                  <span>🚫 終売（在庫は売り切る — 発注推奨には出さない）</span>
+                </label>
+                <div style={{ fontSize: 11, color: '#64748b', marginLeft: 26, marginTop: 2 }}>
+                  楽天には出したまま、在庫が切れるまで売ります。仕入れが再開できるようになったら外してください。
                 </div>
               </div>
             </div>

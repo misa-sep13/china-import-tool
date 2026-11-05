@@ -7,6 +7,7 @@ from datetime import date, datetime, timezone, timedelta
 import csv, io, json
 import uuid, time, threading
 import re
+from dataclasses import replace
 from pydantic import BaseModel
 import asyncio
 from app.core.database import get_db, SessionLocal
@@ -770,6 +771,11 @@ class RakutenProductIn(BaseModel):
     is_material:      bool = False          # 発送用の梱包資材（商品原価に載せず資材費に計上）
     is_promo:         bool = False          # レビューキャンペーン等の販促品（楽天未出品・RMS push対象外）
     is_active:        bool = True
+    # この商品だけの発注条件。空（None / 0）なら全体設定のまま
+    lead_days_override: Optional[int] = None  # 納期（発注〜入荷の日数）
+    order_lot:          Optional[int] = None  # 1回の発注数（固定ロット）
+    order_lot_group:    Optional[str] = None  # ロットを合算する相手
+    discontinued:       bool = False          # 終売（発注推奨に出さない）
 
 class RakutenProductOut(RakutenProductIn):
     id:               int
@@ -1509,6 +1515,61 @@ def china_holiday_preview(
     return {"today": today.isoformat(), "effect": _china_holiday_out(eff), "upcoming": upcoming[:4]}
 
 
+def _calc_settings_for(p, base: RakutenCalcSettings, holiday) -> RakutenCalcSettings:
+    """その商品の計算設定。納期を個別に決めている商品だけ差し替える。
+
+    仕入先を変えて納期が変わっても、中国の長期休暇で止まるぶんは
+    同じようにかかるので、休暇の延長日数は足したまま残す。
+    """
+    override = getattr(p, "lead_days_override", None)
+    if not override:
+        return base
+    return replace(base, lead_days=int(override) + holiday.extra_days)
+
+
+def _apply_order_lots(items: list, sku_to_product: dict) -> None:
+    """固定ロットの商品を、ロットの数ちょうどに直す（items を書き換える）。
+
+    「この数でしか売らない」仕入先がある。さらに、色違いを合わせて
+    1ロットという買い方もある（介護シューズのグレーM・Sで合計500個）。
+    order_lot_group が同じ商品を1つのまとまりとして扱い、
+    どれか1つでも発注時期が来ていれば、まとまり全体を発注にする。
+
+    振り分けは日販の比。売れている色に多く行く。日販が全部0のときは
+    頭割りにする（比が出せないため）。丸めで合計がロットからずれないよう、
+    最後の1件で帳尻を合わせる。
+    """
+    groups: dict = {}
+    for it in items:
+        p = sku_to_product.get(it.get("sku"))
+        lot = getattr(p, "order_lot", None) if p else None
+        if not lot or int(lot) <= 0:
+            continue
+        key = (getattr(p, "order_lot_group", None) or "").strip()
+        groups.setdefault(key or f"__sku__{it['sku']}", []).append((it, int(lot)))
+
+    for key, members in groups.items():
+        if not any(it.get("needs_order") for it, _ in members):
+            continue
+        # 同じまとまりで違う数が入っていたら、多いほうに合わせる（足りないと買えない）
+        lot = max(l for _, l in members)
+        weights = [max(0.0, float(it.get("daily_avg") or 0)) for it, _ in members]
+        total = sum(weights)
+        if total <= 0:
+            weights = [1.0] * len(members)
+            total = float(len(members))
+        given = 0
+        last = len(members) - 1
+        for i, (it, _) in enumerate(members):
+            qty = lot - given if i == last else int(round(lot * weights[i] / total))
+            if i != last:
+                given += qty
+            it["order_qty"] = max(0, qty)
+            it["needs_order"] = True
+            it["order_lot"] = lot
+            it["order_lot_group"] = "" if key.startswith("__sku__") else key
+
+
 def _super_sale_exclusion(settings_row):
     """除外モード（A）のときだけ、日販から除くセール期間を返す。
 
@@ -1621,6 +1682,8 @@ def get_recommendations(db: Session = Depends(get_db)):
         and not (not p.is_component and p.set_components)  # セット販売商品（parent_ordersに入らなかったもの）は除外
         and not getattr(p, "is_material", False)  # 発送資材は販売商品ではないので発注推奨に出さない
         and not getattr(p, "is_promo", False)  # 販促品も同様に発注推奨対象外
+        # 終売。在庫は売り切るが、もう仕入れないので推奨には出さない
+        and not getattr(p, "discontinued", False)
     ]
 
     # 通常単品 + 親発注品を合わせて計算
@@ -1651,14 +1714,16 @@ def get_recommendations(db: Session = Depends(get_db)):
             daily_avg_7=da.get("avg_7", 0),
             daily_avg_30=da.get("avg_30", 0),
             daily_avg_prev_30=da.get("avg_prev_30", 0),
-            s=s,
+            # 納期をこの商品だけ変えている場合はそちらで計算する
+            s=_calc_settings_for(p, s, holiday),
         )
         try:
             sc_parsed = json.loads(p.set_components) if p.set_components else []
         except Exception:
             sc_parsed = []
-        if not calc.needs_order:
-            continue
+        # 発注時期が来ていない行も、いったん全部入れておく。固定ロットは
+        # 色違いを合算するので、片方だけ時期が来ている場合に、もう片方の
+        # 行がここで落ちていると振り分けられない。絞るのはロットを当てたあと
         items.append({
             "product_id":      p.id,
             "sku":             p.sku or "",
@@ -1687,7 +1752,14 @@ def get_recommendations(db: Session = Depends(get_db)):
             "needs_order":     calc.needs_order,
             "sales_30_recent": sales_recent,
             "sales_30_prev":   sales_prev,
+            # 固定ロットの商品だけ、下で数と印が入る
+            "order_lot":       None,
+            "order_lot_group": "",
         })
+
+    # 固定ロット（「この数でしか買えない」仕入先）をここで当てる
+    _apply_order_lots(items, sku_to_product)
+    items = [x for x in items if x["needs_order"]]
 
     return {
         "items": items,
@@ -1780,7 +1852,8 @@ def get_all_products_order(db: Session = Depends(get_db)):
             daily_avg_7=da.get("avg_7", 0),
             daily_avg_30=da.get("avg_30", 0),
             daily_avg_prev_30=da.get("avg_prev_30", 0),
-            s=s,
+            # 納期をこの商品だけ変えている場合はそちらで計算する
+            s=_calc_settings_for(p, s, holiday),
         )
         sc_parsed = []
         if p.set_components:
@@ -1807,11 +1880,18 @@ def get_all_products_order(db: Session = Depends(get_db)):
             "daily_avg_30":    calc.daily_avg_30,
             "days_left":       calc.days_left,
             "growth_rate":     calc.growth_rate,
-            "order_qty":       calc.order_qty,
-            "needs_order":     calc.needs_order,
+            # 終売は在庫を売り切るだけなので、発注数を出さない。
+            # ここから数を拾って発注してしまうのを防ぐ
+            "order_qty":       0 if getattr(p, "discontinued", False) else calc.order_qty,
+            "needs_order":     False if getattr(p, "discontinued", False) else calc.needs_order,
+            "discontinued":    bool(getattr(p, "discontinued", False)),
             "sales_30_recent": sales_recent,
             "sales_30_prev":   sales_prev,
+            "order_lot":       None,
+            "order_lot_group": "",
         })
+    # 固定ロット（「この数でしか買えない」仕入先）を、この一覧にも当てる
+    _apply_order_lots(items, {p.sku: p for p in all_products})
     return {
         "items": items,
         "settings": RakutenSettingsSchema.model_validate(settings_row),

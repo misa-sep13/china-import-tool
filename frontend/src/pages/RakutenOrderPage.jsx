@@ -1339,6 +1339,14 @@ export default function RakutenOrderPage() {
                             {item.order_qty > 0 ? item.order_qty : '—'}
                           </span>
                         )}
+                        {/* 固定ロットの商品。計算どおりの数ではないので、
+                            なぜこの数なのかが分かるように出しておく */}
+                        {item.order_lot > 0 && (
+                          <div style={{ fontSize: 10, color: '#64748b', marginTop: 2, whiteSpace: 'nowrap' }}>
+                            ロット{item.order_lot}
+                            {item.order_lot_group ? `（${item.order_lot_group} で合算）` : ''}
+                          </div>
+                        )}
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                         <div style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: 'center' }}>
