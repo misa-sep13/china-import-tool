@@ -7978,9 +7978,12 @@ if(FIREBASE_CONFIG.databaseURL){
         const ptFind = el('button', 'mini', '🔎 探す');
         ptFind.addEventListener('click', async () => {
           const q = window.prompt(
-            '商品タイプを探します。商品を表す言葉を入れてください（日本語でも英語でも可）',
-            (data.title || '').slice(0, 20)) || '';
-          if(!q.trim()) return;
+            '商品タイプを探します。商品を表す言葉を入れてください'
+            + '（日本語でも英語でも可）。'
+            + String.fromCharCode(10)
+            + '空のままOKを押すと、使える商品タイプを全部出します',
+            (data.title || '').slice(0, 20));
+          if(q === null) return;
           ptMsg.textContent = '探しています…';
           try{
             const j = await regApi('/product-types/search?q='
@@ -7991,10 +7994,11 @@ if(FIREBASE_CONFIG.databaseURL){
                 ? j.error : '見つかりませんでした。言葉を変えてみてください';
               return;
             }
-            const list = items.slice(0, 20)
+            const list = items
               .map((x, i) => (i + 1) + '. ' + x.name
                 + (x.label ? '（' + x.label + '）' : '')).join(String.fromCharCode(10));
-            const pick = window.prompt('候補です。使う番号を入れてください'
+            const pick = window.prompt(
+              items.length + '件。使う番号を入れてください'
               + String.fromCharCode(10, 10) + list + String.fromCharCode(10),
               '1');
             const n = parseInt(pick, 10);

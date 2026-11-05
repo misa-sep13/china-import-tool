@@ -1937,14 +1937,13 @@ def search_product_types(keywords: str) -> dict:
     そのとき正しい名前を調べる手立てが無く、直しようがなかった。
     """
     kw = (keywords or "").strip()
-    if not kw:
-        return {"ok": False, "error": "探す言葉を入れてください"}
     try:
-        params = urllib.parse.urlencode({
-            "keywords": kw,
-            "marketplaceIds": _RESEARCH_MP,
-            "locale": "ja_JP",
-        })
+        q = {"marketplaceIds": _RESEARCH_MP, "locale": "ja_JP"}
+        # 言葉を入れなければ全部返す。言葉での検索は取りこぼすことがあり
+        # （「シューズカバー」で靴しか出ない）、一覧から選べる道も要る
+        if kw:
+            q["keywords"] = kw
+        params = urllib.parse.urlencode(q)
         d = _call_sp_api(f"/definitions/2020-09-01/productTypes?{params}")
     except Exception as e:
         return {"ok": False,
@@ -1956,7 +1955,8 @@ def search_product_types(keywords: str) -> dict:
             continue
         items.append({"name": name,
                       "label": (p.get("displayName") or "").strip()})
-    return {"ok": True, "keywords": kw, "items": items}
+    items.sort(key=lambda x: x["name"])
+    return {"ok": True, "keywords": kw, "count": len(items), "items": items}
 
 
 def fetch_product_type_schema(product_type: str) -> dict:
