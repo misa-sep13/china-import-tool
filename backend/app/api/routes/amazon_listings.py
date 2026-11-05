@@ -61,6 +61,7 @@ class ListingIn(BaseModel):
     len_c: Optional[float] = None
     weight: Optional[float] = None
     rival_asin: Optional[str] = None
+    product_type: Optional[str] = None   # 手で直せる。競合から拾った値が合わないことがある
     attrs: Optional[dict] = None
     must_kw: Optional[str] = None       # ② 商品説明に入れる必須キーワード
     diff_points: Optional[str] = None   # 自社の差別化ポイント
@@ -964,10 +965,17 @@ def prepare(listing_id: int, db: Session = Depends(get_db)):
     if not (row.rival_asin or "").strip():
         raise HTTPException(400, "参考にする競合のASINを入れてください")
 
-    pt = amazon_api.fetch_product_type(row.rival_asin.strip())
-    if not pt.get("ok"):
-        raise HTTPException(400, pt.get("error") or "商品タイプが分かりませんでした")
-    row.product_type = pt["product_type"]
+    # 競合ASINから引くのは、まだ決まっていないときだけ。
+    # 競合がAmazon上で違う分類に入っていることがあり（シューズカバーが
+    # PHONE_ACCESSORY など）、毎回ここで上書きすると手で直しても
+    # ❶を押すたびに戻ってしまう。直した値のほうを優先する。
+    if (row.product_type or "").strip():
+        pt = {"ok": True, "product_type": row.product_type.strip()}
+    else:
+        pt = amazon_api.fetch_product_type(row.rival_asin.strip())
+        if not pt.get("ok"):
+            raise HTTPException(400, pt.get("error") or "商品タイプが分かりませんでした")
+        row.product_type = pt["product_type"]
 
     schema = amazon_api.fetch_product_type_schema(row.product_type)
     fields = schema.get("fields") or [] if schema.get("ok") else []

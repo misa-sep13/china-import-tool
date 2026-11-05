@@ -7944,15 +7944,41 @@ if(FIREBASE_CONFIG.databaseURL){
       // 「不足している情報」になりASINが出ない。❶を押した一瞬しか
       // 出ていなかったので、いつでも見えるようにする
       {
+        // 競合がAmazon上で違う分類に入っていることがある（シューズカバーが
+        // PHONE_ACCESSORY など）。❶が拾った値をそのまま使うと必須項目が
+        // 噛み合わないので、ここで直せるようにする
         const pt = (data.product_type || '').trim();
         const line = el('div', 'reg-hint');
         line.appendChild(document.createTextNode('商品タイプ：'));
-        const b = el('b', '', pt || '（まだ決まっていません。❶を押してください）');
-        if(pt) b.style.color = '#1d4ed8';
-        line.appendChild(b);
-        if(pt) line.appendChild(document.createTextNode(
-          '　※ 商品の中身と合っていないと、必須項目が埋まらず'
-          + 'Amazonで「不足している情報」になります'));
+        const ptIn = document.createElement('input');
+        ptIn.type = 'text';
+        ptIn.value = pt;
+        ptIn.placeholder = '❶を押すと競合から入ります（例: SHOES）';
+        ptIn.style.cssText = 'width:230px;padding:3px 7px;font-size:12px;'
+          + 'font-weight:700;color:#1d4ed8;border:1px solid var(--line-2);'
+          + 'border-radius:5px;margin:0 6px;';
+        ptIn.dataset.writes = '1';
+        const ptMsg = el('span', 'an-status', '');
+        let ptT = null;
+        ptIn.addEventListener('input', () => {
+          clearTimeout(ptT);
+          ptT = setTimeout(async () => {
+            const v = ptIn.value.trim().toUpperCase();
+            ptIn.value = v;
+            try{
+              await regApi('/' + data.id, {method: 'PATCH',
+                body: JSON.stringify({product_type: v})});
+              data.product_type = v;
+              ptMsg.textContent = '保存しました。❶を押し直すと必須項目が入れ替わります';
+            }catch(e){ ptMsg.textContent = 'うまくいきませんでした：' + (e.message || e); }
+          }, 600);
+        });
+        line.appendChild(ptIn);
+        line.appendChild(document.createTextNode(
+          '※ 商品の中身と合っていないと、必須項目が埋まらず'
+          + 'Amazonで「不足している情報」になります。'
+          + '違うときはここに正しいタイプを入れてください'));
+        line.appendChild(ptMsg);
         panel.appendChild(line);
       }
       const ops = el('div', 'an-row');
