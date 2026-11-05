@@ -8016,6 +8016,42 @@ if(FIREBASE_CONFIG.databaseURL){
           + '違うときはここに正しいタイプを入れてください'));
         line.appendChild(ptMsg);
         panel.appendChild(line);
+
+        // ブラウズノード。競合ASINから自動で入るが、競合が違う分類に
+        // 入っていると一緒にずれる。セラーセントラルで見た番号を
+        // ここに入れれば、そちらを送る
+        {
+          const bl = el('div', 'reg-hint');
+          bl.appendChild(document.createTextNode('ブラウズノード：'));
+          const bn = document.createElement('input');
+          bn.type = 'text';
+          bn.value = (data.browse_node || '');
+          bn.placeholder = '空なら競合ASINから自動（例: 2130665051）';
+          bn.style.cssText = 'width:190px;padding:3px 7px;font-size:12px;'
+            + 'border:1px solid var(--line-2);border-radius:5px;margin:0 6px;';
+          bn.dataset.writes = '1';
+          const bMsg = el('span', 'an-status', '');
+          let bT = null;
+          bn.addEventListener('input', () => {
+            clearTimeout(bT);
+            bT = setTimeout(async () => {
+              const v = bn.value.replace(/[^0-9]/g, '');
+              bn.value = v;
+              try{
+                await regApi('/' + data.id, {method: 'PATCH',
+                  body: JSON.stringify({browse_node: v})});
+                data.browse_node = v;
+                bMsg.textContent = v ? '保存しました' : '競合から自動で入れます';
+              }catch(e){ bMsg.textContent = 'うまくいきませんでした：' + (e.message || e); }
+            }, 600);
+          });
+          bl.appendChild(bn);
+          bl.appendChild(document.createTextNode(
+            '※ セラーセントラルの「推奨されるブラウズノード」で選んだ番号。'
+            + '空なら競合ASINと同じところに置きます'));
+          bl.appendChild(bMsg);
+          panel.appendChild(bl);
+        }
       }
       const ops = el('div', 'an-row');
       const prep = el('button', 'mini', '❶ 出品の準備（商品タイプ・SKU・JAN）');

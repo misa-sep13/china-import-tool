@@ -38,6 +38,7 @@ class AmazonListing(Base):
     # ---- 商品タイプ。競合ASINから引く ----
     rival_asin   = Column(String)
     product_type = Column(String)
+    browse_node  = Column(String)          # 推奨されるブラウズノード。空なら競合ASINから拾う
     attrs        = Column(Text)            # 商品タイプごとの必須項目。JSON
 
     # FBA か自己発送か。DEFAULT で送ると自己発送になってしまうので、

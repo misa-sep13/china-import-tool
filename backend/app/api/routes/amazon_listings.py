@@ -62,6 +62,7 @@ class ListingIn(BaseModel):
     weight: Optional[float] = None
     rival_asin: Optional[str] = None
     product_type: Optional[str] = None   # 手で直せる。競合から拾った値が合わないことがある
+    browse_node: Optional[str] = None    # 同上。空なら競合ASINから拾う
     attrs: Optional[dict] = None
     must_kw: Optional[str] = None       # ② 商品説明に入れる必須キーワード
     diff_points: Optional[str] = None   # 自社の差別化ポイント
@@ -131,6 +132,7 @@ def _out(row: AmazonListing, db: Session, src: dict = None) -> dict:
         "len_a": row.len_a, "len_b": row.len_b, "len_c": row.len_c,
         "weight": row.weight,
         "rival_asin": row.rival_asin, "product_type": row.product_type,
+        "browse_node": row.browse_node or "",
         "attrs": _loads(row.attrs, {}),
         "parent_sku": row.parent_sku,
         "fulfillment": _fulfillment_of(db, row),
@@ -1377,7 +1379,10 @@ def auto_attr_values(db: Session, row, child=None) -> dict:
     jan = (child.jan if child is not None else None) or ""
     # ライバルが置かれているブラウズノード。ASINごとに覚えるので、
     # 親と子で何度呼んでも引きに行くのは1回だけ
-    browse = amazon_api.fetch_browse_nodes(row.rival_asin or "")
+    # 手で入れてあればそれを使う。競合がAmazon上で違う分類に入っていると
+    # 拾った値もずれるので、直せるほうを優先する
+    hand = (getattr(row, "browse_node", "") or "").strip()
+    browse = [hand] if hand else amazon_api.fetch_browse_nodes(row.rival_asin or "")
     srcs = {"sku": sku, "brand": brand, "price": price, "dims": dims,
             "jan": jan, "zero": 0,
             "browse": browse[0] if browse else None}

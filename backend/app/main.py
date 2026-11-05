@@ -242,6 +242,9 @@ def _migrate():
         # 出品原稿：商品のハイライト
         ("amazon_listings","highlight",
          "ALTER TABLE amazon_listings ADD COLUMN highlight TEXT"),
+        # 推奨されるブラウズノードの手動指定
+        ("amazon_listings","browse_node",
+         "ALTER TABLE amazon_listings ADD COLUMN browse_node VARCHAR"),
         # 再梱包指示書を代行会社へ見せるURLの鍵
         ("amazon_research_settings","repack_token",
          "ALTER TABLE amazon_research_settings ADD COLUMN repack_token VARCHAR"),
