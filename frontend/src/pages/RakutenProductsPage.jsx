@@ -457,8 +457,11 @@ export default function RakutenProductsPage() {
 
       {/* 編集モーダル */}
       {editing && (
-        <div onClick={handleModalClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', color: '#1a1a2e', borderRadius: 12, padding: 32, width: 620, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
+        /* 背景を押しても閉じない。縦に長い画面なので、スクロールや
+           選択のつもりで箱の外を押してしまい、入力が丸ごと消えていた。
+           閉じるのは「キャンセル」だけにする */
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#fff', color: '#1a1a2e', borderRadius: 12, padding: 32, width: 620, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
             <h2 style={{ marginBottom: 20 }}>{editing === 'new' ? '商品追加' : '商品編集'}</h2>
 
             {/* 基本情報 */}
@@ -676,7 +679,8 @@ export default function RakutenProductsPage() {
               >
                 {saveMutation.isPending ? '保存中...' : '💾 保存'}
               </button>
-              <button className="btn" onClick={() => setEditing(null)}>キャンセル</button>
+              {/* 書きかけがあれば確かめてから閉じる */}
+              <button className="btn" onClick={handleModalClose}>キャンセル</button>
             </div>
             {saveMutation.isError && (
               <div style={{ color: '#f87171', fontSize: 13, marginTop: 8 }}>

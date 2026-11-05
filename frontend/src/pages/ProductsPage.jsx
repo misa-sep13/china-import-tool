@@ -509,7 +509,9 @@ export default function ProductsPage() {
       )}
 
       {modal && (
-        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && handleModalClose()}>
+        /* 背景を押しても閉じない。押して入力が消える事故を防ぐ。
+           閉じるのは ✕ とキャンセルだけ */
+        <div className="modal-overlay">
           <div className="modal">
             <div className="modal-header">
               <h2>{editing ? '商品を編集' : '商品を追加'}</h2>
