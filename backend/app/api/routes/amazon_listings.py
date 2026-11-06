@@ -1517,7 +1517,7 @@ def _dim_keys(name: str) -> list:
     return []
 
 
-def _put_extras(a: dict, extra: dict, mp: str) -> None:
+def _put_extras(a: dict, extra: dict, mp: str, product_type: str = "") -> None:
     """画面で入れてもらった項目を attributes へ移す。
 
     「shaft.height」のように点で区切った名前は入れ子の項目。
@@ -1535,8 +1535,13 @@ def _put_extras(a: dict, extra: dict, mp: str) -> None:
         else:
             a[k] = _wrap_attr(k, v, mp)
     for parent, subs in nested.items():
+        # 枝の中がさらに {value, unit} だったり数値だったりする。
+        # 文字列のまま送ると検証にも進まず 400 で返されるので、
+        # 商品タイプの定義を見てその形に合わせる
+        shape = amazon_api.attr_sub_shape(product_type, parent) if product_type else {}
         one = {"marketplace_id": mp}
-        one.update(subs)
+        for k, v in subs.items():
+            one[k] = amazon_api.shape_sub_value(shape.get(k) or {}, v)
         a[parent] = [one]
 
 
@@ -1930,7 +1935,7 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
             a[key] = one(val)
 
     # 商品タイプごとの必須項目。画面で入れてもらったもの
-    _put_extras(a, extra, mp)
+    _put_extras(a, extra, mp, row.product_type or "")
     return a
 
 
@@ -2020,7 +2025,7 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
                 a[f"other_product_image_locator_{n}"] = [
                     {"marketplace_id": mp, "media_location": u}]
 
-    _put_extras(a, extra, mp)
+    _put_extras(a, extra, mp, row.product_type or "")
     return a
 
 

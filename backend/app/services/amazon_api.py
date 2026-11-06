@@ -1929,6 +1929,71 @@ def find_attr_name(product_type: str, *keywords) -> str:
     return ""
 
 
+# 商品タイプごとの生の定義。入れ子の項目の形を知るのに要る
+_PT_SCHEMA_CACHE = {}
+
+
+def _raw_schema(product_type: str) -> dict:
+    pt = (product_type or "").strip().upper()
+    if not pt:
+        return {}
+    if pt in _PT_SCHEMA_CACHE:
+        return _PT_SCHEMA_CACHE[pt]
+    out = {}
+    try:
+        params = urllib.parse.urlencode({
+            "marketplaceIds": _RESEARCH_MP, "sellerId": _seller_id(),
+            "productType": pt, "requirements": "LISTING", "locale": "ja_JP",
+        })
+        meta = _call_sp_api(f"/definitions/2020-09-01/productTypes/{pt}?{params}")
+        url = (meta.get("schema") or {}).get("link", {}).get("resource")
+        if url:
+            with urllib.request.urlopen(urllib.request.Request(url), timeout=30) as r:
+                out = json.loads(r.read())
+    except Exception:
+        out = {}
+    _PT_SCHEMA_CACHE[pt] = out
+    return out
+
+
+def attr_sub_shape(product_type: str, parent: str) -> dict:
+    """入れ子の項目の、枝ごとの形。{枝名: その枝の定義}。
+
+    shaft や footwear_size は枝を持ち、枝の中がさらに
+    {value, unit} だったり数値だったりする。文字列で送ると
+    検証にも進まず 400（payload invalid）で返される。
+    """
+    props = (_raw_schema(product_type).get("properties") or {}).get(parent) or {}
+    return ((props.get("items") or {}).get("properties") or {})
+
+
+def shape_sub_value(spec: dict, v):
+    """枝1つぶんの値を、定義に合わせた形にする。"""
+    if not isinstance(spec, dict):
+        return v
+    t = spec.get("type")
+    if t in ("number", "integer"):
+        try:
+            f = float(str(v).replace(",", ""))
+            return int(f) if t == "integer" or f == int(f) else f
+        except (TypeError, ValueError):
+            return v
+    if t == "object":
+        inner = spec.get("properties") or {}
+        if "value" in inner:
+            one = {"value": shape_sub_value(inner.get("value") or {}, v)}
+            # 単位が必須なら、選べる値の先頭を入れておく
+            need = [k for k in (spec.get("required") or []) if k != "value"]
+            for k in need:
+                en = (inner.get(k) or {}).get("enum") or []
+                if en:
+                    one[k] = en[0]
+            if "language_tag" in inner:
+                one["language_tag"] = "ja_JP"
+            return one
+    return v
+
+
 def search_product_types(keywords: str) -> dict:
     """言葉から商品タイプを探す。
 
