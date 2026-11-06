@@ -2707,8 +2707,12 @@ def _pull_children(db: Session, row: AmazonListing, src: dict) -> None:
             used.add(id(hit))
         pairs.append((sk, hit))
 
-    # 色が付いていない子（単品から育ったものなど）は、順番で引き当てる
-    spare = [c for c in kids if id(c) not in used and not key(c.axis1)]
+    # 値で引き当てられなかったぶんは、残っている子に順番で割り当てる。
+    # 色やサイズの名前を書き換えただけなのに、古い子が残ったまま
+    # 新しい子が作られ、JANが4本むだになっていた
+    # （23.0〜23.5cm → 23.0 cm と直したとき）。
+    # 値での突き合わせを先にやっているので、入れ替えの取り違えは起きない
+    spare = [c for c in kids if id(c) not in used]
     for i, (sk, hit) in enumerate(pairs):
         if hit is None and spare:
             pairs[i] = (sk, spare.pop(0))
