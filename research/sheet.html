@@ -8064,6 +8064,8 @@ if(FIREBASE_CONFIG.databaseURL){
       const val = el('button', 'mini', '❸ 🔎 Amazonで検証する');
       const sub = el('button', 'primary', '❹ Amazonへ出品する');
       sub.dataset.writes = '1';
+      // Amazonが理由を返さずに弾くことがある。そのとき中身を見るため
+      const dump = el('button', 'mini', '🧪 送る中身を見る');
       const opStatus = el('span', 'an-status');
       // 出したあとに、Amazonから読み戻して突き合わせる。
       // 送りっぱなしだと、登録はできたのに親子が繋がっていない・
@@ -8072,7 +8074,7 @@ if(FIREBASE_CONFIG.databaseURL){
       chk.title = 'Amazonから読み戻して、親子の繋がり・画像の枚数・'
         + 'FNSKUを送った内容と突き合わせます。\n'
         + '画像が正しい色のものかまでは分からないので、商品ページも開けます。';
-      [prep, mas, val, sub, chk, opStatus].forEach(x => ops.appendChild(x));
+      [prep, mas, val, sub, chk, dump, opStatus].forEach(x => ops.appendChild(x));
       panel.appendChild(ops);
       panel.appendChild(el('div', 'reg-hint',
         '❶ SKUとJANを決める　→　❷ 発注できるようにする（ここから発注可）'
@@ -8154,6 +8156,31 @@ if(FIREBASE_CONFIG.databaseURL){
         }finally{
           chk.disabled = false;
         }
+      });
+      // 400（payload invalid）のようにAmazonが理由を返さないとき、
+      // 何を送っているか見えないと直しようがない。送らずに中身だけ出す
+      dump.addEventListener('click', async () => {
+        dump.disabled = true; opStatus.textContent = '組み立てています…';
+        try{
+          await flush();
+          const r = await regApi('/submit', {method: 'POST',
+            body: JSON.stringify({listing_ids: [data.id], dry_run: true})});
+          const sent = ((r.results || [])[0] || {}).sent || [];
+          out.innerHTML = '';
+          sent.forEach(x => {
+            const d = el('div', 'reg-check');
+            d.appendChild(el('b', '', x.kind + ' ' + x.sku));
+            const pre = document.createElement('pre');
+            pre.style.cssText = 'white-space:pre-wrap;word-break:break-all;'
+              + 'font-size:11px;max-height:320px;overflow:auto;margin:4px 0 0;';
+            pre.textContent = JSON.stringify(x.attributes, null, 1);
+            d.appendChild(pre);
+            out.appendChild(d);
+          });
+          opStatus.textContent = '送らずに中身だけ出しました';
+        }catch(e){
+          opStatus.textContent = String(e.message || e);
+        }finally{ dump.disabled = false; }
       });
       sub.addEventListener('click', async () => {
         if(!ask('Amazonへ出品します。よろしいですか？')) return;
