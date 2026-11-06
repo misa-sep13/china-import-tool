@@ -1133,6 +1133,17 @@ def _problems(row: AmazonListing, db: Session) -> list:
         p.append("ブランド名がありません")
     if not row.price:
         p.append("価格がありません")
+    # バリエーションの軸の値。空のまま送ると、テーマだけ付いて
+    # 値が無い商品になり、Amazonが選択肢を作れない
+    kids_ = (db.query(AmazonListingChild)
+             .filter(AmazonListingChild.listing_id == row.id)
+             .order_by(AmazonListingChild.sort_order).all())
+    if len(kids_) > 1:
+        blank = [(c.sku or "(SKU未定)") for c in kids_ if not (c.axis1 or "").strip()]
+        if blank:
+            p.append("バリエーションの値（色・サイズ）が空です："
+                     + "・".join(blank[:6])
+                     + "。出品原稿の③ 商品タイトルで、子の左の欄に入れてください")
     if not _loads(row.bullets, []):
         p.append("商品の要点が1つもありません")
 
@@ -1533,7 +1544,7 @@ def _put_extras(a: dict, extra: dict, mp: str, product_type: str = "") -> None:
             parent, sub = k.split(".", 1)
             nested.setdefault(parent, {})[sub] = v
         else:
-            a[k] = _wrap_attr(k, v, mp)
+            a[k] = _wrap_attr(k, v, mp, product_type)
     for parent, subs in nested.items():
         # 枝の中がさらに {value, unit} だったり数値だったりする。
         # 文字列のまま送ると検証にも進まず 400 で返されるので、
@@ -1545,7 +1556,7 @@ def _put_extras(a: dict, extra: dict, mp: str, product_type: str = "") -> None:
         a[parent] = [one]
 
 
-def _wrap_attr(name: str, value, mp: str) -> list:
+def _wrap_attr(name: str, value, mp: str, product_type: str = "") -> list:
     """attributes に入れる形にする。
 
     ふつうは {"value": …} でよいが、品目寸法のように
@@ -1599,6 +1610,10 @@ def _wrap_attr(name: str, value, mp: str) -> list:
                  "type": {"language_tag": "ja_JP", "value": str(unit)},
                  "marketplace_id": mp}]
 
+    # 数値の項目に文字列を送ると、検証にも進まず 400 で返される。
+    # 画面の入力は全部文字列なので、定義の型に合わせてから入れる
+    if product_type:
+        value = amazon_api.shape_top_value(product_type, name, value)
     return [{"value": value, "marketplace_id": mp}]
 
 

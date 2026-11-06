@@ -1994,6 +1994,24 @@ def shape_sub_value(spec: dict, v):
     return v
 
 
+def attr_value_spec(product_type: str, name: str) -> dict:
+    """ふつうの項目の value の定義。数値かどうかを見るのに使う。"""
+    props = (_raw_schema(product_type).get("properties") or {}).get(name) or {}
+    return ((props.get("items") or {}).get("properties") or {}).get("value") or {}
+
+
+def shape_top_value(product_type: str, name: str, v):
+    """value に入れる値を、定義の型に合わせる。
+
+    数値の項目へ文字列の "1" を送ると、検証にも進まず
+    400（The provided payload is invalid）で返される。
+    画面の入力は全部文字列なので、ここで直す。
+    """
+    if not product_type or isinstance(v, bool):
+        return v
+    return shape_sub_value(attr_value_spec(product_type, name), v)
+
+
 def search_product_types(keywords: str) -> dict:
     """言葉から商品タイプを探す。
 
