@@ -1981,6 +1981,26 @@ def _parent_attributes(row: AmazonListing, has_variation: bool = True,
                   for k, v in (_loads(row.attrs, {}) or {}).items()
                   if v not in (None, "")})
 
+    # 親はバリエーションの器なので、軸そのもの（サイズ・色）は持たない。
+    # サイズの枠だけ付いて中身が無い状態になり、親が作られなかった。
+    # 軸の項目と、それを抱えている入れ子（footwear_size など）を外す
+    if has_variation:
+        kids0 = (db.query(AmazonListingChild)
+                 .filter(AmazonListingChild.listing_id == row.id).all()
+                 if db is not None else [])
+        axis_attr = _AXIS_ATTR.get(_axis_theme(row, kids0), "color")
+        drop = {axis_attr}
+        # 入れ子に軸が含まれるかは定義で見る。footwear_size は中に size を
+        # 持つので、親からはまるごと外す（size_system だけ残しても、
+        # 中身の無いサイズの枠が付いてしまう）
+        for base in {k.split(".", 1)[0] for k in extra if "." in k}:
+            subs = amazon_api.attr_sub_shape(row.product_type or "", base)
+            if axis_attr in subs:
+                drop.add(base)
+        for k in list(extra):
+            if k in drop or k.split(".", 1)[0] in drop:
+                extra.pop(k, None)
+
     def one(v, **kw):
         return [{"value": v, "marketplace_id": mp, **kw}]
 
