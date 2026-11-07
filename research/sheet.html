@@ -7677,7 +7677,23 @@ if(FIREBASE_CONFIG.databaseURL){
         jan.title = '台帳にある番号に付け替えられます';
         jan.addEventListener('change', () => { c.jan = jan.value.trim(); putKids(); });
         line.appendChild(jan);
-        line.appendChild(el('span', 'an-note', (c.axis1 || '') || '（色なし）'));
+        // バリエーションの値。ここが空だと、テーマだけ付いて中身が無い
+        // 商品になりAmazonが選択肢を作れない。③まで戻らず直せるようにする
+        const ax = document.createElement('input');
+        ax.type = 'text';
+        ax.className = 'reg-axis';
+        ax.value = c.axis1 || '';
+        ax.placeholder = '色・サイズ（例: ブラック／23.0 cm）';
+        ax.title = 'この子のバリエーションの値。空だと親子になりません';
+        ax.style.cssText = 'width:150px;padding:3px 7px;font-size:12px;'
+          + 'border:1px solid ' + (c.axis1 ? 'var(--line-2)' : '#dc2626')
+          + ';border-radius:5px;';
+        ax.addEventListener('input', () => {
+          c.axis1 = ax.value.trim();
+          ax.style.borderColor = c.axis1 ? 'var(--line-2)' : '#dc2626';
+          putKids();
+        });
+        line.appendChild(ax);
         if(c.status && c.status !== 'draft'){
           line.appendChild(el('span', 'an-note',
             {submitted: '送信済', failed: '失敗', live: '公開中'}[c.status] || c.status));
