@@ -127,6 +127,13 @@ def cost_of(row: dict, st: dict) -> dict:
     }
 
 
+# 軸の名前として使われる語。これで始まるときだけ「名前 値」に切る
+_AXIS_WORD_RE = re.compile(
+    r"^(?:カラー|色|いろ|サイズ|寸法|丈|タイプ|種類|柄|パターン|"
+    r"セット|入数|個数|枚数|容量|長さ|幅|高さ|"
+    r"color|colour|size|type|pattern|style|set|qty|count)$", re.I)
+
+
 def split_child_name(name: str) -> tuple:
     """子の名前「カラー ブラック」を（軸の名前, 値）に分ける。
 
@@ -137,7 +144,9 @@ def split_child_name(name: str) -> tuple:
     if not s:
         return ("", "")
     parts = re.split(r"[\s　:：/／]+", s, maxsplit=1)
-    if len(parts) == 2:
+    # 先頭が軸の名前のときだけ切る。「23.0 cm」のようにスペースを含む
+    # 値をそのまま切ると、軸名=23.0・値=cm に割れて、サイズが消える
+    if len(parts) == 2 and _AXIS_WORD_RE.match(parts[0].strip()):
         return (parts[0].strip(), parts[1].strip())
     return ("", s)
 
