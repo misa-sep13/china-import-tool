@@ -1544,7 +1544,9 @@ def _put_extras(a: dict, extra: dict, mp: str, product_type: str = "") -> None:
             parent, sub = k.split(".", 1)
             nested.setdefault(parent, {})[sub] = v
         else:
-            a[k] = _wrap_attr(k, v, mp, product_type)
+            w = _wrap_attr(k, v, mp, product_type)
+            if w:
+                a[k] = w
     for parent, subs in nested.items():
         # 枝の中がさらに {value, unit} だったり数値だったりする。
         # 文字列のまま送ると検証にも進まず 400 で返されるので、
@@ -1552,8 +1554,12 @@ def _put_extras(a: dict, extra: dict, mp: str, product_type: str = "") -> None:
         shape = amazon_api.attr_sub_shape(product_type, parent) if product_type else {}
         one = {"marketplace_id": mp}
         for k, v in subs.items():
-            one[k] = amazon_api.shape_sub_value(shape.get(k) or {}, v)
-        a[parent] = [one]
+            sv = amazon_api.shape_sub_value(shape.get(k) or {}, v)
+            if sv is amazon_api.DROP:
+                continue        # 型が合わないものは送らない（400を避ける）
+            one[k] = sv
+        if len(one) > 1:
+            a[parent] = [one]
 
 
 def _wrap_attr(name: str, value, mp: str, product_type: str = "") -> list:
@@ -1613,7 +1619,10 @@ def _wrap_attr(name: str, value, mp: str, product_type: str = "") -> list:
     # 数値の項目に文字列を送ると、検証にも進まず 400 で返される。
     # 画面の入力は全部文字列なので、定義の型に合わせてから入れる
     if product_type:
-        value = amazon_api.shape_top_value(product_type, name, value)
+        shaped = amazon_api.shape_top_value(product_type, name, value)
+        if shaped is amazon_api.DROP:
+            return []           # 型が合わないものは送らない（400を避ける）
+        value = shaped
     return [{"value": value, "marketplace_id": mp}]
 
 

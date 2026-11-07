@@ -1929,6 +1929,15 @@ def find_attr_name(product_type: str, *keywords) -> str:
     return ""
 
 
+# 型が合わず送れない値の印。送ると400で全件返されるので落とす
+class _Drop:
+    def __repr__(self):
+        return "DROP"
+
+
+DROP = _Drop()
+
+
 # 商品タイプごとの生の定義。入れ子の項目の形を知るのに要る
 _PT_SCHEMA_CACHE = {}
 
@@ -1977,11 +1986,18 @@ def shape_sub_value(spec: dict, v):
             f = float(str(v).replace(",", ""))
             return int(f) if t == "integer" or f == int(f) else f
         except (TypeError, ValueError):
-            return v
+            # 数値の項目に「フリー」のような文字を入れると、検証にも
+            # 進まず 400（payload invalid）で全件返される。理由が
+            # 分からず詰まるので、送らずに落とす。すると
+            # 「必須なのに入っていません」という読めるエラーになる
+            return DROP
     if t == "object":
         inner = spec.get("properties") or {}
         if "value" in inner:
-            one = {"value": shape_sub_value(inner.get("value") or {}, v)}
+            iv = shape_sub_value(inner.get("value") or {}, v)
+            if iv is DROP:
+                return DROP
+            one = {"value": iv}
             # 単位が必須なら、選べる値の先頭を入れておく
             need = [k for k in (spec.get("required") or []) if k != "value"]
             for k in need:
