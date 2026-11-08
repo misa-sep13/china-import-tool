@@ -2058,6 +2058,61 @@ def search_product_types(keywords: str) -> dict:
     return {"ok": True, "keywords": kw, "count": len(items), "items": items}
 
 
+# 商品タイプの日本語名。英語の名前（SKIN_CLEANING_WIPE など）だけでは
+# 何のことか分からないので、画面に添える
+_PT_LABEL_CACHE = {}
+
+
+def product_type_label(product_type: str) -> str:
+    pt = (product_type or "").strip().upper()
+    if not pt:
+        return ""
+    if pt in _PT_LABEL_CACHE:
+        return _PT_LABEL_CACHE[pt]
+    label = ""
+    try:
+        params = urllib.parse.urlencode({
+            "marketplaceIds": _RESEARCH_MP, "sellerId": _seller_id(),
+            "productType": pt, "requirements": "LISTING", "locale": "ja_JP",
+        })
+        meta = _call_sp_api(f"/definitions/2020-09-01/productTypes/{pt}?{params}")
+        label = (meta.get("displayName") or "").strip()
+    except Exception:
+        label = ""
+    _PT_LABEL_CACHE[pt] = label
+    return label
+
+
+def suggest_product_types(item_name: str) -> dict:
+    """商品名から、合いそうな商品タイプをAmazonに推薦してもらう。
+
+    競合ASINの商品タイプは、競合がAmazon上で違う分類に入っていると
+    そのままずれる（おしりふきウォーマーが SKIN_CLEANING_WIPE、
+    シューズカバーが PHONE_ACCESSORY など）。自分の商品名から出した
+    候補と並べて、選べるようにする。並びはAmazonが返した順（合いそうな順）。
+    """
+    name = (item_name or "").strip()
+    if not name:
+        return {"ok": False, "error": "商品名がありません", "items": []}
+    try:
+        params = urllib.parse.urlencode({
+            "marketplaceIds": _RESEARCH_MP,
+            "itemName": name[:200],
+            "locale": "ja_JP",
+            "searchLocale": "ja_JP",
+        })
+        d = _call_sp_api(f"/definitions/2020-09-01/productTypes?{params}")
+    except Exception as e:
+        return {"ok": False, "items": [],
+                "error": f"候補を出せませんでした（{type(e).__name__}: {str(e)[:200]}）"}
+    items = []
+    for p in d.get("productTypes") or []:
+        n = (p.get("name") or "").strip()
+        if n and n not in [x["name"] for x in items]:
+            items.append({"name": n, "label": (p.get("displayName") or "").strip()})
+    return {"ok": True, "items": items}
+
+
 def fetch_product_type_schema(product_type: str) -> dict:
     """その商品タイプの必須項目を、画面に出せる形にして返す。
 

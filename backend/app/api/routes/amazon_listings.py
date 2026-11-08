@@ -2987,6 +2987,56 @@ def _remember_asked(db: Session, product_type: str, issues: list,
     return added
 
 
+@router.get("/{listing_id:int}/product-type-suggest")
+def product_type_suggest(listing_id: int, db: Session = Depends(get_db)):
+    """商品タイプの候補。自分の商品名からの推薦と、競合の商品タイプを並べる。
+
+    競合がAmazon上で違う分類に入っていると、競合から引いた商品タイプは
+    実態とずれる。自分の商品名から出した候補に競合のタイプが入って
+    いなければ「ずれていそう」と知らせ、好きなほうを選べるようにする。
+    """
+    row = db.get(AmazonListing, listing_id)
+    if not row:
+        raise HTTPException(404, "ありません")
+    title = (row.title or row.research_title or "").strip()
+    cur = (row.product_type or "").strip().upper()
+
+    rival = ""
+    if (row.rival_asin or "").strip():
+        r = amazon_api.fetch_product_type(row.rival_asin.strip())
+        if r.get("ok"):
+            rival = (r.get("product_type") or "").strip().upper()
+
+    sug = amazon_api.suggest_product_types(title)
+    names = [x["name"] for x in (sug.get("items") or [])]
+
+    order = list(names)
+    for n in (rival, cur):
+        if n and n not in order:
+            order.append(n)
+    labels = {x["name"]: x.get("label") or "" for x in (sug.get("items") or [])}
+    cands = []
+    for i, n in enumerate(order):
+        cands.append({
+            "name": n,
+            "label": labels.get(n) or amazon_api.product_type_label(n),
+            "rank": (names.index(n) + 1) if n in names else None,
+            "is_current": n == cur,
+            "is_rival": n == rival,
+        })
+    # 推薦の上位に競合のタイプが無ければ、競合の分類がずれている見込みが高い
+    top = names[:5]
+    mismatch = bool(rival and top and rival not in top)
+    return {
+        "title": title,
+        "current": {"name": cur, "label": amazon_api.product_type_label(cur) if cur else ""},
+        "rival": {"name": rival, "label": amazon_api.product_type_label(rival) if rival else ""},
+        "candidates": cands[:12],
+        "mismatch": mismatch,
+        "error": sug.get("error") if not sug.get("ok") else None,
+    }
+
+
 @router.get("/product-types/search")
 def product_types_search(q: str = ""):
     """言葉から商品タイプの候補を返す。画面の「商品タイプ」を直すときに使う。"""
