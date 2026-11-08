@@ -7714,6 +7714,27 @@ if(FIREBASE_CONFIG.databaseURL){
         });
         line.appendChild(pr);
         line.appendChild(el('span', 'an-note', '円'));
+        // 子ごとの入数。シートの1688単価は商品ごとに1つ（例：10元×2）しか
+        // 持てず、1冊と2冊セットが同じ商品にあると全部「2」になっていた。
+        // 空ならシートの入数。商品マスタのセット数と原価に効く
+        const qs = document.createElement('input');
+        qs.type = 'number';
+        qs.min = '1';
+        qs.step = '1';
+        qs.className = 'reg-kid-qty';
+        qs.value = (c.set_size == null || c.set_size === '') ? '' : c.set_size;
+        qs.placeholder = '入数';
+        qs.title = 'この子が何個入りか。空ならリサーチシートの入数を使います';
+        qs.style.cssText = 'width:64px;padding:3px 7px;font-size:12px;'
+          + 'border:1px solid var(--line-2);border-radius:5px;text-align:right;'
+          + 'margin-left:6px;';
+        qs.addEventListener('input', () => {
+          const v = qs.value.trim();
+          c.set_size = (v === '' || Number(v) < 1) ? null : Math.round(Number(v));
+          putKids();
+        });
+        line.appendChild(qs);
+        line.appendChild(el('span', 'an-note', '個入'));
         if(c.status && c.status !== 'draft'){
           line.appendChild(el('span', 'an-note',
             {submitted: '送信済', failed: '失敗', live: '公開中'}[c.status] || c.status));
@@ -7751,7 +7772,7 @@ if(FIREBASE_CONFIG.databaseURL){
       function putKids(){
         put('children', (data.children || []).map(c => ({
           id: c.id, sku: c.sku, jan: c.jan, title: c.title,
-          axis1: c.axis1, price: c.price,
+          axis1: c.axis1, price: c.price, set_size: c.set_size,
         })));
       }
 
