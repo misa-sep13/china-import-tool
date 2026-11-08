@@ -157,6 +157,19 @@ export default function ProductsPage() {
     queryFn: () => api.get('/products/').then(r => r.data),
   })
 
+  // 元→円の目安と、単価を直したときの原価の動き。
+  // リサーチシートと同じ決済レート（市場為替＋補正）を使う。
+  // 以前は21円で固定していて、実際の24円台より1割以上安く出ていた
+  const { data: rateInfo } = useQuery({
+    queryKey: ['products-rate'],
+    queryFn: () => api.get('/products/rate').then(r => r.data),
+    staleTime: 10 * 60 * 1000,
+  })
+  const yenOf = (yuan) => {
+    const r = Number(rateInfo?.rate) || 0
+    return r > 0 ? Math.round(Number(yuan) * r) : null
+  }
+
   const { data: settings } = useQuery({
     queryKey: ['settings'],
     queryFn: () => api.get('/settings/').then(r => r.data),
@@ -551,11 +564,28 @@ export default function ProductsPage() {
                   {form.price > 0 && (
                     <div style={{ fontSize: 11, marginTop: 3,
                       color: Number(form.price) >= 100 ? '#b45309' : '#64748b' }}>
-                      {Number(form.price) >= 100
-                        ? `≒ ${Math.round(Number(form.price) * 21).toLocaleString()}円　円で入れていませんか？`
-                        : `≒ ${Math.round(Number(form.price) * 21).toLocaleString()}円`}
+                      {yenOf(form.price) != null
+                        && `≒ ${yenOf(form.price).toLocaleString()}円（${rateInfo.rate}円/元）`}
+                      {Number(form.price) >= 100 && '　円で入れていませんか？'}
                     </div>
                   )}
+                  {/* 単価かセット数を直すと、保存したときに原価もその分動く。
+                      黙って変わると驚くので、先に見せる */}
+                  {editing && form.cost_jpy
+                    && String(form.cost_jpy) === String(initialForm.cost_jpy)
+                    && Number(rateInfo?.cost_per_yuan) > 0
+                    && (() => {
+                      const d = ((Number(form.price) || 0) * (Number(form.set_size) || 1)
+                        - (Number(initialForm.price) || 0) * (Number(initialForm.set_size) || 1))
+                        * Number(rateInfo.cost_per_yuan)
+                      if (Math.abs(d) < 0.5) return null
+                      return (
+                        <div style={{ fontSize: 11, marginTop: 2, color: '#1d4ed8' }}>
+                          保存すると仕入原価が {d > 0 ? '+' : '−'}{Math.round(Math.abs(d))}円
+                          （{Math.round(Number(form.cost_jpy) + d)}円）になります
+                        </div>
+                      )
+                    })()}
                 </div>
                 <div className="form-group">
                   {/* 送料・輸入税まで含んだ1個あたりの原価。利益計算に使う */}

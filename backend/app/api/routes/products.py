@@ -192,6 +192,34 @@ def restore_product(data: ProductCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="SKUが既に存在します")
     return _restore_deleted_product(existing, data, db)
 
+def _cost_per_yuan(db: Session) -> float:
+    """1688代金が1元増えると、原価（円）がいくら増えるか。
+
+    原価 ＝ (中国側 ＋ 送料) × (1＋輸入関連費)、中国側 ＝ 1688代金 × 決済レート
+    なので、1元あたりは 決済レート × (1＋輸入関連費)。
+    リサーチシートと同じ設定を使う（片方だけずれないように）。
+    """
+    from app.models.amazon_research import AmazonResearchSettings
+    from app.services.amazon_research_calc import settle_rate
+    st = db.query(AmazonResearchSettings).first()
+    if st is None:
+        return 0.0
+    rate = settle_rate(st)
+    if rate <= 0:
+        return 0.0
+    return rate * (1 + (st.tariff_rate or 0) / 100)
+
+
+@router.get("/rate")
+def product_rate(db: Session = Depends(get_db)):
+    """商品マスタの画面で「≒ 〇円」を出すための決済レート。"""
+    from app.models.amazon_research import AmazonResearchSettings
+    from app.services.amazon_research_calc import settle_rate
+    st = db.query(AmazonResearchSettings).first()
+    return {"rate": round(settle_rate(st), 3) if st else 0,
+            "cost_per_yuan": round(_cost_per_yuan(db), 3)}
+
+
 @router.put("/{product_id}", response_model=ProductOut)
 def update_product(product_id: int, data: ProductUpdate, request: Request, db: Session = Depends(get_db)):
     p = db.query(Product).filter(Product.id == product_id).first()
@@ -208,8 +236,22 @@ def update_product(product_id: int, data: ProductUpdate, request: Request, db: S
             # 「SKUが既に存在します」になる（消したはずの名前に戻せない）
             _retire_deleted_sku(existing)
             db.flush()
+    # 単価（元）かセット数が変わったら、原価をその分だけ直す。
+    # 原価はリサーチの1行から一度だけ入るので、サイズ違いで単価が違う
+    # 商品や、あとで単価を直した商品では、古い単価の原価のままになっていた
+    # （a026_4040：単価4.3元なのに原価は5.2元で計算した391円）。
+    # 原価は1688代金に対して直線なので、差分だけ足し引きすれば正確に直る。
+    # 原価を同時に手で入れたときは、そちらを優先する
+    old_goods = (p.price or 0) * (p.set_size or 1)
     for k, v in updates.items():
         setattr(p, k, v)
+    if (("price" in updates or "set_size" in updates)
+            and "cost_jpy" not in updates and p.cost_jpy):
+        new_goods = (p.price or 0) * (p.set_size or 1)
+        if new_goods != old_goods:
+            per_yuan = _cost_per_yuan(db)
+            if per_yuan:
+                p.cost_jpy = round(p.cost_jpy + (new_goods - old_goods) * per_yuan, 1)
     log_activity(db, request, "update", "amazon_product", p.id, f"商品マスタ更新: {p.sku}（{', '.join(sorted(updates.keys()))}）", sku=p.sku)
     try:
         db.commit()
