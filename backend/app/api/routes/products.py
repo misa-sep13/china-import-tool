@@ -192,32 +192,49 @@ def restore_product(data: ProductCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="SKUが既に存在します")
     return _restore_deleted_product(existing, data, db)
 
+def _sheet_rate(db: Session) -> tuple:
+    """リサーチシートの決済レートと輸入関連費（%）。
+
+    原価はシートの設定（市場為替・補正・輸入関連費）で計算されている。
+    サーバーの設定表（amazon_research_settings）は為替が空のままで、
+    輸入関連費も古い値だったため、そちらを見るとレートが0になり
+    何も計算できなかった。シートの値を正とする。
+    """
+    import json as _json
+    from app.models.amazon_research import AmazonResearchSheet
+    row = (db.query(AmazonResearchSheet)
+           .filter(AmazonResearchSheet.workspace == "default").first())
+    try:
+        st = (_json.loads(row.data) or {}).get("settings") or {} if row and row.data else {}
+    except (ValueError, TypeError):
+        st = {}
+
+    def f(k):
+        try:
+            return float(st.get(k) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    rate = f("exchangeRate") * (1 + f("rateAdjust") / 100)
+    return rate, f("tariffRate")
+
+
 def _cost_per_yuan(db: Session) -> float:
     """1688代金が1元増えると、原価（円）がいくら増えるか。
 
     原価 ＝ (中国側 ＋ 送料) × (1＋輸入関連費)、中国側 ＝ 1688代金 × 決済レート
     なので、1元あたりは 決済レート × (1＋輸入関連費)。
-    リサーチシートと同じ設定を使う（片方だけずれないように）。
     """
-    from app.models.amazon_research import AmazonResearchSettings
-    from app.services.amazon_research_calc import settle_rate
-    st = db.query(AmazonResearchSettings).first()
-    if st is None:
-        return 0.0
-    rate = settle_rate(st)
+    rate, tariff = _sheet_rate(db)
     if rate <= 0:
         return 0.0
-    return rate * (1 + (st.tariff_rate or 0) / 100)
+    return rate * (1 + tariff / 100)
 
 
 @router.get("/rate")
 def product_rate(db: Session = Depends(get_db)):
-    """商品マスタの画面で「≒ 〇円」を出すための決済レート。"""
-    from app.models.amazon_research import AmazonResearchSettings
-    from app.services.amazon_research_calc import settle_rate
-    st = db.query(AmazonResearchSettings).first()
-    return {"rate": round(settle_rate(st), 3) if st else 0,
-            "cost_per_yuan": round(_cost_per_yuan(db), 3)}
+    """商品マスタの画面で「≒ 〇円」を出すための決済レート（シートと同じ）。"""
+    rate, _ = _sheet_rate(db)
+    return {"rate": round(rate, 2), "cost_per_yuan": round(_cost_per_yuan(db), 3)}
 
 
 @router.put("/{product_id}", response_model=ProductOut)
