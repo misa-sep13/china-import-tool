@@ -7997,7 +7997,6 @@ if(FIREBASE_CONFIG.databaseURL){
       });
 
       panel.appendChild(el('div', 'reg-sec', '進める（❶→❹の順に押します）'));
-      // ❸で商品タイプの候補も出すため、下の枠から呼べるようにしておく
       let ptSuggest = null;
       let ptSugBox = null;
       // 商品タイプが実態と違うと、そのタイプの必須項目が埋まらず
@@ -8150,9 +8149,11 @@ if(FIREBASE_CONFIG.databaseURL){
             if(open) ptMsg.textContent = 'うまくいきませんでした：' + (e.message || e);
           }
         };
-        // 候補は❸「Amazonで検証する」を押したときに出す
+        // 候補は❶「出品の準備」を押したときに出す。❶のあと画面を描き直すので、
+        // 押したことを覚えておき、描き直した先で開く
         ptSuggest = loadSug;
         ptSugBox = ptBox;
+        if(showPtSug[data.id]) loadSug(true);
         line.appendChild(ptJa);
         line.appendChild(document.createTextNode(
           '※ 商品の中身と合っていないと、必須項目が埋まらず'
@@ -8248,6 +8249,8 @@ if(FIREBASE_CONFIG.databaseURL){
             if(inp) inp.value = data.parent_sku;
             scheduleSave();
           }
+          // 商品タイプの候補（競合のタイプも含む）を開く
+          showPtSug[data.id] = true;
           const kids = (data.children || []).filter(c => (c.sku || '').trim());
           opStatus.textContent = '商品タイプ ' + (data.product_type || '')
             + '。SKU' + (kids.length ? '（' + kids.map(c => c.sku).join('・') + '）' : '')
@@ -8282,12 +8285,7 @@ if(FIREBASE_CONFIG.databaseURL){
           lastNeed = v.need || [];
           showNeed();
           opStatus.textContent = '';
-          // 商品タイプの候補（競合のタイプも含む）を検証結果のすぐ上に出す。
-          // 競合が違う分類に入っていると必須項目が噛み合わないので、ここで選び直せる
-          if(ptSuggest && ptSugBox){
-            out.parentNode.insertBefore(ptSugBox, out);
-            ptSuggest(true);
-          }
+
         }catch(e){ opStatus.textContent = String(e.message || e); }
         finally{ val.disabled = false; }
       });
@@ -9044,6 +9042,8 @@ if(FIREBASE_CONFIG.databaseURL){
 
   // 出品の結果。画面を描き直しても消えないよう、リサーチごとに覚えておく
   const lastSubmit = {};
+  // ❶を押した出品は、商品タイプの候補を開いたままにする
+  const showPtSug = {};
 
   function drawSubmit(out, r){
     out.innerHTML = '';
