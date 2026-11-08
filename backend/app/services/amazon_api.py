@@ -2879,16 +2879,23 @@ def ai_product_type_candidates(title: str, extra: list) -> dict:
         res = httpx.post(
             "https://api.anthropic.com/v1/messages",
             json={"model": _ai_model(),
-                  "max_tokens": 1200,
+                  "max_tokens": 4000,
                   "messages": [{"role": "user", "content": prompt}]},
             headers={"x-api-key": key, "anthropic-version": "2023-06-01",
                      "content-type": "application/json"},
             timeout=60)
         if res.status_code != 200:
             return {"error": f"AIの呼び出しに失敗（{res.status_code}）: {res.text[:200]}"}
-        text = "".join(b.get("text", "") for b in res.json().get("content", [])
+        body = res.json()
+        text = "".join(b.get("text", "") for b in body.get("content", [])
                        if b.get("type") == "text")
         a, b = text.find("{"), text.rfind("}")
+        if a < 0 or b <= a:
+            # 中身が空・JSONが無いときは、何が返ってきたか分かるように返す
+            kinds = ",".join(str(c.get("type")) for c in body.get("content", []))
+            return {"error": "AIの返事にJSONがありません（stop_reason="
+                    + str(body.get("stop_reason")) + "、中身=" + (kinds or "なし")
+                    + "）: " + text[:150]}
         d = json.loads(text[a:b + 1])
     except Exception as e:
         return {"error": f"AIの呼び出しに失敗（{type(e).__name__}: {str(e)[:200]}）"}
