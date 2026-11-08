@@ -957,6 +957,29 @@ def _issue_jan(db: Session, sku: str, name: str, test: bool = False) -> str:
     return code
 
 
+def _refresh_keywords(db: Session, row) -> None:
+    """検索キーワードをシートの今の値に合わせる。
+
+    取り込み（sync）は最初の1回だけで、そのあとシートの
+    「① 検索キーワード」を削っても登録レコードは古い長いままだった。
+    500バイト未満に削ったのに「上限です（514バイト）」で止まったのはこのため。
+    出品原稿はシートが正なので、❶❸❹を押すたびに読み直す。
+    """
+    if not row or not getattr(row, "research_id", None):
+        return
+    try:
+        for c in sync.candidates(_sheet(db)):
+            if c["research_id"] == row.research_id:
+                kw = (c.get("keywords") or "").strip()
+                if kw and kw != (row.keywords or "").strip():
+                    row.keywords = kw
+                    db.commit()
+                return
+    except Exception:
+        # 読めなければ今の値のまま進める
+        return
+
+
 @router.post("/{listing_id:int}/prepare")
 def prepare(listing_id: int, db: Session = Depends(get_db)):
     """出品に足りないものを揃える。
@@ -970,6 +993,7 @@ def prepare(listing_id: int, db: Session = Depends(get_db)):
     row = db.get(AmazonListing, listing_id)
     if not row:
         raise HTTPException(404, "ありません")
+    _refresh_keywords(db, row)
     if not (row.rival_asin or "").strip():
         raise HTTPException(400, "参考にする競合のASINを入れてください")
 
@@ -2312,6 +2336,7 @@ def submit(body: SubmitIn, db: Session = Depends(get_db)):
                             "error": "見つかりません"})
             continue
 
+        _refresh_keywords(db, row)
         problems = _problems(row, db)
         kids = (db.query(AmazonListingChild)
                 .filter(AmazonListingChild.listing_id == row.id)
@@ -3148,6 +3173,7 @@ def validate(listing_id: int, db: Session = Depends(get_db)):
     row = db.get(AmazonListing, listing_id)
     if not row:
         raise HTTPException(404, "ありません")
+    _refresh_keywords(db, row)
     if not row.product_type:
         raise HTTPException(400, "先に「出品の準備」を押してください")
 
