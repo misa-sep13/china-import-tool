@@ -245,6 +245,9 @@ def _migrate():
         # 推奨されるブラウズノードの手動指定
         ("amazon_listings","browse_node",
          "ALTER TABLE amazon_listings ADD COLUMN browse_node VARCHAR"),
+        # 子ごとの入数（1冊と2冊セットが同じ商品にあるとき）
+        ("amazon_listing_children","set_size",
+         "ALTER TABLE amazon_listing_children ADD COLUMN set_size INTEGER"),
         # 再梱包指示書を代行会社へ見せるURLの鍵
         ("amazon_research_settings","repack_token",
          "ALTER TABLE amazon_research_settings ADD COLUMN repack_token VARCHAR"),

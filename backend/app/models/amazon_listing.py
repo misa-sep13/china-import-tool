@@ -96,6 +96,7 @@ class AmazonListingChild(Base):
     axis1 = Column(String)                 # 軸の値（例: ブラック）
     axis2 = Column(String)
     price = Column(Integer)                # 子ごとに変える場合。空なら親の値
+    set_size = Column(Integer, nullable=True)  # 子ごとの入数。空ならシートの入数
 
     status       = Column(String, default="draft")   # draft/submitted/live/failed
     asin         = Column(String)

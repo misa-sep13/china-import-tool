@@ -104,8 +104,8 @@ def _loads(raw, fallback):
 def _child_out(c: AmazonListingChild) -> dict:
     return {"id": c.id, "sort_order": c.sort_order, "sku": c.sku, "jan": c.jan,
             "title": c.title, "axis1": c.axis1, "axis2": c.axis2,
-            "price": c.price, "status": c.status, "asin": c.asin,
-            "error": c.error}
+            "price": c.price, "set_size": c.set_size,
+            "status": c.status, "asin": c.asin, "error": c.error}
 
 
 def _image_out(i: AmazonListingImage) -> dict:
@@ -471,6 +471,12 @@ def update_listing(listing_id: int, body: ListingIn,
             c.axis1 = ch.get("axis1")
             c.axis2 = ch.get("axis2")
             c.price = ch.get("price")
+            # 子ごとの入数。空ならシートの入数を使う
+            ss = ch.get("set_size")
+            try:
+                c.set_size = int(ss) if ss not in (None, "") and int(ss) > 0 else None
+            except (TypeError, ValueError):
+                c.set_size = None
             db.flush()
             keep.add(c.id)
         for c in (db.query(AmazonListingChild)
@@ -3234,6 +3240,35 @@ def _src_of(db: Session, research_id: str) -> dict | None:
     return None
 
 
+def _kid_cost(db: Session, src: dict, main: dict, c) -> float:
+    """その子の原価。入数がシートと違えば、1688代金の差だけ直す。
+
+    原価は1688代金に対して直線なので、差 × 決済レート × (1＋輸入関連費)
+    を足し引きすればよい（商品マスタで単価を直したときと同じ式）。
+    送料はシートの重さのままなので、入数で重さが大きく変わる商品では
+    送料ぶんだけずれが残る。
+    """
+    base = src.get("cost_jpy")
+    if base is None or not main:
+        return base
+    try:
+        sheet_qty = int(float(main.get("qty") or 1))
+    except (TypeError, ValueError):
+        sheet_qty = 1
+    kid_qty = int(c.set_size or sheet_qty)
+    if kid_qty == sheet_qty:
+        return base
+    from app.api.routes.products import _cost_per_yuan
+    per = _cost_per_yuan(db)
+    if not per:
+        return base
+    try:
+        unit = float(main.get("price") or 0)
+    except (TypeError, ValueError):
+        return base
+    return round(base + unit * (kid_qty - sheet_qty) * per, 1)
+
+
 def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
     """商品マスタに作る予定の中身を組み立てる。まだ書き込まない。"""
     parts = src.get("parts") or []
@@ -3313,9 +3348,11 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
                      or (src.get("cn_name") or "").strip() or spec),
             "buy_url": buy_url,
             "price": (main or {}).get("price"),
-            "set_size": int((main or {}).get("qty") or 1),
+            # 子ごとの入数があればそれ。シートは商品ごとに1つしか持てず、
+            # 1冊と2冊セットが同じ商品にあると全部に同じ入数が入っていた
+            "set_size": int(c.set_size or (main or {}).get("qty") or 1),
             "selling_price": c.price or row.price,
-            "cost_jpy": src.get("cost_jpy"),
+            "cost_jpy": _kid_cost(db, src, main, c),
             "fba_fee": src.get("fee"),
             "asin": c.asin or "",
             # ⑦で書いた備考。全SKU共通で同じものを入れる
