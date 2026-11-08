@@ -3047,6 +3047,7 @@ def product_type_suggest(listing_id: int, db: Session = Depends(get_db)):
         "candidates": cands[:12],
         "mismatch": mismatch,
         "error": sug.get("error") if not sug.get("ok") else None,
+        "ai_error": ai.get("error"),
     }
 
 

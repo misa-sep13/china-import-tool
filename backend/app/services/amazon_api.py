@@ -2848,15 +2848,17 @@ def ai_product_type_candidates(title: str, extra: list) -> dict:
     import os, json, httpx
     key = os.environ.get("ANTHROPIC_API_KEY")
     t = (title or "").strip()
-    if not key or not t:
-        return {}
+    if not key:
+        return {"error": "ANTHROPIC_API_KEY がサーバーに入っていません"}
+    if not t:
+        return {"error": "商品名がありません"}
     extra = [e for e in dict.fromkeys(x for x in extra if x)]
     ck = (t, tuple(extra))
     if ck in _PT_AI_CACHE:
         return _PT_AI_CACHE[ck]
     names = all_product_type_names()
     if not names:
-        return {}
+        return {"error": "Amazonから商品タイプの一覧を取れませんでした"}
     prompt = (
         "Amazon.co.jp に出品する商品の「商品タイプ」を選びます。\n"
         f"商品名: {t}\n\n"
@@ -2883,13 +2885,13 @@ def ai_product_type_candidates(title: str, extra: list) -> dict:
                      "content-type": "application/json"},
             timeout=60)
         if res.status_code != 200:
-            return {}
+            return {"error": f"AIの呼び出しに失敗（{res.status_code}）: {res.text[:200]}"}
         text = "".join(b.get("text", "") for b in res.json().get("content", [])
                        if b.get("type") == "text")
         a, b = text.find("{"), text.rfind("}")
         d = json.loads(text[a:b + 1])
-    except Exception:
-        return {}
+    except Exception as e:
+        return {"error": f"AIの呼び出しに失敗（{type(e).__name__}: {str(e)[:200]}）"}
     valid = set(names)
     picks = []
     for p in d.get("picks") or []:

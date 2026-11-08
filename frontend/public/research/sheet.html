@@ -8099,6 +8099,11 @@ if(FIREBASE_CONFIG.databaseURL){
           if(j.error){
             ptBox.appendChild(el('div', '', '候補を出せませんでした：' + j.error));
           }
+          if(j.ai_error){
+            const ae = el('div', '', 'AIで候補と日本語名を出せませんでした：' + j.ai_error);
+            ae.style.cssText = 'color:#b91c1c;margin-bottom:4px;';
+            ptBox.appendChild(ae);
+          }
           const head = el('div', '', '商品タイプの候補：「' + (j.title || '').slice(0, 40)
             + '」から見て合いそうな順＋競合のタイプ。'
             + '変えたら❶→❸を押し直してください');
