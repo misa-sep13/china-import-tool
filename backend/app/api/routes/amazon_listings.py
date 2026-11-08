@@ -3009,28 +3009,41 @@ def product_type_suggest(listing_id: int, db: Session = Depends(get_db)):
 
     sug = amazon_api.suggest_product_types(title)
     names = [x["name"] for x in (sug.get("items") or [])]
+    # Amazonの推薦は1件だけのことが多く、日本語名もカタカナの当て字で
+    # 何の分類か分からない。AIに全一覧から選ばせ、ふつうの日本語名を付ける
+    ai = amazon_api.ai_product_type_candidates(title, [rival, cur] + names)
+    ai_names = [p["name"] for p in (ai.get("picks") or [])]
+    why = {p["name"]: p.get("why") or "" for p in (ai.get("picks") or [])}
+    ja = dict(ai.get("labels") or {})
 
-    order = list(names)
-    for n in (rival, cur):
+    order = []
+    for n in ai_names + names + [rival, cur]:
         if n and n not in order:
             order.append(n)
-    labels = {x["name"]: x.get("label") or "" for x in (sug.get("items") or [])}
+    amz_labels = {x["name"]: x.get("label") or "" for x in (sug.get("items") or [])}
+
+    def _label(n):
+        return ja.get(n) or amz_labels.get(n) or amazon_api.product_type_label(n)
+
     cands = []
-    for i, n in enumerate(order):
+    for n in order:
         cands.append({
             "name": n,
-            "label": labels.get(n) or amazon_api.product_type_label(n),
-            "rank": (names.index(n) + 1) if n in names else None,
+            "label": _label(n),
+            "why": why.get(n, ""),
+            "rank": (ai_names.index(n) + 1) if n in ai_names else None,
+            "amazon_pick": n in names,
             "is_current": n == cur,
             "is_rival": n == rival,
         })
+    names = ai_names or names
     # 推薦の上位に競合のタイプが無ければ、競合の分類がずれている見込みが高い
     top = names[:5]
     mismatch = bool(rival and top and rival not in top)
     return {
         "title": title,
-        "current": {"name": cur, "label": amazon_api.product_type_label(cur) if cur else ""},
-        "rival": {"name": rival, "label": amazon_api.product_type_label(rival) if rival else ""},
+        "current": {"name": cur, "label": _label(cur) if cur else ""},
+        "rival": {"name": rival, "label": _label(rival) if rival else ""},
         "candidates": cands[:12],
         "mismatch": mismatch,
         "error": sug.get("error") if not sug.get("ok") else None,

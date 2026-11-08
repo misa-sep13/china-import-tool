@@ -2809,3 +2809,99 @@ def set_packing_information(plan_id: str, groups: List[dict]) -> None:
         f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}/packingInformation",
         {"packageGroupings": payload_groups})
     wait_inbound_operation(op.get("operationId") or "")
+
+
+# 商品タイプの全一覧。ほとんど変わらないので一度引いたら使い回す
+_PT_ALL_CACHE = {"names": None}
+
+
+def all_product_type_names() -> list:
+    if _PT_ALL_CACHE["names"]:
+        return _PT_ALL_CACHE["names"]
+    r = search_product_types("")
+    names = [x["name"] for x in (r.get("items") or [])] if r.get("ok") else []
+    if names:
+        _PT_ALL_CACHE["names"] = names
+    return names
+
+
+_PT_AI_CACHE = {}
+
+
+def _ai_model() -> str:
+    # 他のAI生成（商品名・説明文）と同じモデルを使う
+    from app.services import copywriter
+    return copywriter._model()
+
+
+def ai_product_type_candidates(title: str, extra: list) -> dict:
+    """商品名から、合いそうな商品タイプをAIに選ばせ、ふつうの日本語名を付ける。
+
+    Amazonの日本語表示名は「スキンクリーニングワイプ」のような
+    カタカナの当て字で、何の分類か分からない。またAmazonの推薦
+    （itemName）は1件しか返さないことが多く、比べようがない。
+    全一覧から候補を選ばせ、「おしりふき・ウェットティッシュ」の
+    ように売り場で通じる言葉に直して返す。
+    extra（競合・いまのタイプ）も必ず日本語名を付けさせる。
+    キーが無いときや失敗したときは {} を返し、画面はAmazonの名前で出す。
+    """
+    import os, json, httpx
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    t = (title or "").strip()
+    if not key or not t:
+        return {}
+    extra = [e for e in dict.fromkeys(x for x in extra if x)]
+    ck = (t, tuple(extra))
+    if ck in _PT_AI_CACHE:
+        return _PT_AI_CACHE[ck]
+    names = all_product_type_names()
+    if not names:
+        return {}
+    prompt = (
+        "Amazon.co.jp に出品する商品の「商品タイプ」を選びます。\n"
+        f"商品名: {t}\n\n"
+        "下の一覧から、この商品の実態に合う商品タイプを合いそうな順に最大6個選んでください。"
+        "商品そのもの（本体）が何かで選び、付属品や用途の対象物と取り違えないこと"
+        "（例: おしりふきウォーマーは「おしりふき」ではなく、温める家電・ベビー用品側）。\n"
+        "また、次のタイプにも必ず日本語名を付けてください: "
+        + (", ".join(extra) or "(なし)") + "\n\n"
+        "日本語名は、カタカナの当て字ではなく売り場やカテゴリで通じる言葉にすること"
+        "（例: SKIN_CLEANING_WIPE→おしりふき・ウェットティッシュ、SHOES→靴、"
+        "PHONE_ACCESSORY→スマホアクセサリー）。15字程度まで。\n\n"
+        "出力はJSONのみ:\n"
+        '{"picks":[{"name":"一覧の名前そのまま","ja":"日本語名","why":"20字以内の理由"}],'
+        '"labels":{"タイプ名":"日本語名"}}\n\n'
+        "一覧:\n" + " ".join(names)
+    )
+    try:
+        res = httpx.post(
+            "https://api.anthropic.com/v1/messages",
+            json={"model": _ai_model(),
+                  "max_tokens": 1200,
+                  "messages": [{"role": "user", "content": prompt}]},
+            headers={"x-api-key": key, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            timeout=60)
+        if res.status_code != 200:
+            return {}
+        text = "".join(b.get("text", "") for b in res.json().get("content", [])
+                       if b.get("type") == "text")
+        a, b = text.find("{"), text.rfind("}")
+        d = json.loads(text[a:b + 1])
+    except Exception:
+        return {}
+    valid = set(names)
+    picks = []
+    for p in d.get("picks") or []:
+        n = str(p.get("name") or "").strip().upper()
+        if n in valid and n not in [x["name"] for x in picks]:
+            picks.append({"name": n, "ja": str(p.get("ja") or "").strip(),
+                          "why": str(p.get("why") or "").strip()})
+    labels = {str(k).strip().upper(): str(v).strip()
+              for k, v in (d.get("labels") or {}).items() if v}
+    for p in picks:
+        if p["ja"]:
+            labels.setdefault(p["name"], p["ja"])
+    out = {"picks": picks, "labels": labels}
+    _PT_AI_CACHE[ck] = out
+    return out
