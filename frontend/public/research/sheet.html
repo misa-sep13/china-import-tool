@@ -7997,6 +7997,9 @@ if(FIREBASE_CONFIG.databaseURL){
       });
 
       panel.appendChild(el('div', 'reg-sec', '進める（❶→❹の順に押します）'));
+      // ❸で商品タイプの候補も出すため、下の枠から呼べるようにしておく
+      let ptSuggest = null;
+      let ptSugBox = null;
       // 商品タイプが実態と違うと、そのタイプの必須項目が埋まらず
       // 「不足している情報」になりASINが出ない。❶を押した一瞬しか
       // 出ていなかったので、いつでも見えるようにする
@@ -8073,7 +8076,6 @@ if(FIREBASE_CONFIG.databaseURL){
         // あわせて、商品名から見た候補と競合のタイプを並べて選べるようにする
         const ptJa = el('span', '', '');
         ptJa.style.cssText = 'font-size:12px;color:#334155;margin:0 6px;';
-        const ptSug = el('button', 'mini', '💡 候補を見る');
         const ptBox = el('div', '', '');
         ptBox.style.cssText = 'display:none;margin:6px 0 4px;padding:8px 10px;'
           + 'border:1px solid var(--line-2);border-radius:6px;background:#f8fafc;'
@@ -8098,8 +8100,9 @@ if(FIREBASE_CONFIG.databaseURL){
           if(j.error){
             ptBox.appendChild(el('div', '', '候補を出せませんでした：' + j.error));
           }
-          const head = el('div', '', '「' + (j.title || '').slice(0, 40)
-            + '」から見た候補（上ほどAmazonのおすすめ）');
+          const head = el('div', '', '商品タイプの候補：「' + (j.title || '').slice(0, 40)
+            + '」から見たAmazonのおすすめ順＋競合のタイプ。'
+            + '変えたら❶→❸を押し直してください');
           head.style.cssText = 'color:#64748b;margin-bottom:2px;';
           ptBox.appendChild(head);
           (j.candidates || []).forEach(c => {
@@ -8147,14 +8150,10 @@ if(FIREBASE_CONFIG.databaseURL){
             if(open) ptMsg.textContent = 'うまくいきませんでした：' + (e.message || e);
           }
         };
-        ptSug.addEventListener('click', () => {
-          if(ptBox.style.display === 'block'){ ptBox.style.display = 'none'; return; }
-          loadSug(true);
-        });
-        line.appendChild(ptSug);
+        // 候補は❸「Amazonで検証する」を押したときに出す
+        ptSuggest = loadSug;
+        ptSugBox = ptBox;
         line.appendChild(ptJa);
-        // 開いたときに日本語名を出し、競合とずれていそうなら候補も開いておく
-        if(pt) loadSug(false);
         line.appendChild(document.createTextNode(
           '※ 商品の中身と合っていないと、必須項目が埋まらず'
           + 'Amazonで「不足している情報」になります。'
@@ -8283,6 +8282,12 @@ if(FIREBASE_CONFIG.databaseURL){
           lastNeed = v.need || [];
           showNeed();
           opStatus.textContent = '';
+          // 商品タイプの候補（競合のタイプも含む）を検証結果のすぐ上に出す。
+          // 競合が違う分類に入っていると必須項目が噛み合わないので、ここで選び直せる
+          if(ptSuggest && ptSugBox){
+            out.parentNode.insertBefore(ptSugBox, out);
+            ptSuggest(true);
+          }
         }catch(e){ opStatus.textContent = String(e.message || e); }
         finally{ val.disabled = false; }
       });
