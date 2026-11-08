@@ -8018,6 +8018,8 @@ if(FIREBASE_CONFIG.databaseURL){
         const ptMsg = el('span', 'an-status', '');
         let ptT = null;
         ptIn.addEventListener('input', () => {
+          // 手で書き換えたら日本語名は合わなくなるので一旦消す（候補から選んだときは直後に入れ直す）
+          if(typeof ptJa !== 'undefined') ptJa.textContent = '';
           clearTimeout(ptT);
           ptT = setTimeout(async () => {
             const v = ptIn.value.trim().toUpperCase();
@@ -8067,12 +8069,99 @@ if(FIREBASE_CONFIG.databaseURL){
           }
         });
         line.appendChild(ptFind);
+        // 英語のコードだけでは何の分類か分からないので、日本語名を横に出す。
+        // あわせて、商品名から見た候補と競合のタイプを並べて選べるようにする
+        const ptJa = el('span', '', '');
+        ptJa.style.cssText = 'font-size:12px;color:#334155;margin:0 6px;';
+        const ptSug = el('button', 'mini', '💡 候補を見る');
+        const ptBox = el('div', '', '');
+        ptBox.style.cssText = 'display:none;margin:6px 0 4px;padding:8px 10px;'
+          + 'border:1px solid var(--line-2);border-radius:6px;background:#f8fafc;'
+          + 'font-size:12px;line-height:1.7;';
+        const adoptPt = (name) => {
+          ptIn.value = name;
+          ptIn.dispatchEvent(new Event('input'));
+        };
+        const renderSug = (j) => {
+          ptBox.innerHTML = '';
+          ptBox.style.display = 'block';
+          const cur = (j.current && j.current.name) || '';
+          if(j.current && j.current.label) ptJa.textContent = '＝ ' + j.current.label;
+          if(j.mismatch){
+            const w = el('div', '', '⚠ 競合の商品タイプ（' + j.rival.name
+              + (j.rival.label ? '＝' + j.rival.label : '')
+              + '）は、この商品名から見た候補の上位に入っていません。'
+              + '競合が違う分類に入っている可能性があります');
+            w.style.cssText = 'color:#b45309;font-weight:700;margin-bottom:4px;';
+            ptBox.appendChild(w);
+          }
+          if(j.error){
+            ptBox.appendChild(el('div', '', '候補を出せませんでした：' + j.error));
+          }
+          const head = el('div', '', '「' + (j.title || '').slice(0, 40)
+            + '」から見た候補（上ほどAmazonのおすすめ）');
+          head.style.cssText = 'color:#64748b;margin-bottom:2px;';
+          ptBox.appendChild(head);
+          (j.candidates || []).forEach(c => {
+            const r = el('div', '', '');
+            r.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+            const tag = [];
+            if(c.rank) tag.push('おすすめ' + c.rank + '位');
+            if(c.is_rival) tag.push('競合と同じ');
+            if(c.is_current) tag.push('いま選択中');
+            const name = el('span', '', c.name);
+            name.style.cssText = 'font-weight:700;color:#1d4ed8;';
+            r.appendChild(name);
+            r.appendChild(el('span', '', c.label ? '（' + c.label + '）' : ''));
+            if(tag.length){
+              const t = el('span', '', tag.join('・'));
+              t.style.cssText = 'color:' + (c.is_current ? '#15803d' : '#64748b')
+                + ';font-size:11px;';
+              r.appendChild(t);
+            }
+            if(c.name !== cur){
+              const b = el('button', 'mini', 'これにする');
+              b.addEventListener('click', () => {
+                adoptPt(c.name);
+                ptJa.textContent = c.label ? '＝ ' + c.label : '';
+                renderSug(Object.assign({}, j, {
+                  current: {name: c.name, label: c.label},
+                  candidates: (j.candidates || []).map(x =>
+                    Object.assign({}, x, {is_current: x.name === c.name}))}));
+              });
+              r.appendChild(b);
+            }
+            ptBox.appendChild(r);
+          });
+        };
+        const loadSug = async (open) => {
+          if(open) ptMsg.textContent = '候補を探しています…';
+          try{
+            const j = await regApi('/' + data.id + '/product-type-suggest');
+            if(j.current && j.current.label) ptJa.textContent = '＝ ' + j.current.label;
+            if(open || j.mismatch){
+              renderSug(j);
+            }
+            if(open) ptMsg.textContent = '';
+          }catch(e){
+            if(open) ptMsg.textContent = 'うまくいきませんでした：' + (e.message || e);
+          }
+        };
+        ptSug.addEventListener('click', () => {
+          if(ptBox.style.display === 'block'){ ptBox.style.display = 'none'; return; }
+          loadSug(true);
+        });
+        line.appendChild(ptSug);
+        line.appendChild(ptJa);
+        // 開いたときに日本語名を出し、競合とずれていそうなら候補も開いておく
+        if(pt) loadSug(false);
         line.appendChild(document.createTextNode(
           '※ 商品の中身と合っていないと、必須項目が埋まらず'
           + 'Amazonで「不足している情報」になります。'
           + '違うときはここに正しいタイプを入れてください'));
         line.appendChild(ptMsg);
         panel.appendChild(line);
+        panel.appendChild(ptBox);
 
         // ブラウズノード。競合ASINから自動で入るが、競合が違う分類に
         // 入っていると一緒にずれる。セラーセントラルで見た番号を
