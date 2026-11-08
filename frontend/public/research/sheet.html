@@ -8105,7 +8105,7 @@ if(FIREBASE_CONFIG.databaseURL){
             ptBox.appendChild(ae);
           }
           const head = el('div', '', '商品タイプの候補：「' + (j.title || '').slice(0, 40)
-            + '」から見て合いそうな順＋競合のタイプ。'
+            + '」から見た候補＋競合のタイプ。'
             + '変えたら❶→❸を押し直してください');
           head.style.cssText = 'color:#64748b;margin-bottom:2px;';
           ptBox.appendChild(head);
@@ -8113,7 +8113,6 @@ if(FIREBASE_CONFIG.databaseURL){
             const r = el('div', '', '');
             r.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
             const tag = [];
-            if(c.rank) tag.push('おすすめ' + c.rank + '位');
             if(c.amazon_pick) tag.push('Amazon推薦');
             if(c.is_rival) tag.push('競合と同じ');
             if(c.is_current) tag.push('いま選択中');
