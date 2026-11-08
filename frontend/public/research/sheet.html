@@ -7694,6 +7694,26 @@ if(FIREBASE_CONFIG.databaseURL){
           putKids();
         });
         line.appendChild(ax);
+        // 子ごとの売価。空なら親（リサーチシートの売価）で出品する。
+        // 欄が無かったので、単品とセットのように値段の違う子も
+        // 全部同じ値段で出品されていた（a021：セットも1,280円）
+        const pr = document.createElement('input');
+        pr.type = 'number';
+        pr.min = '0';
+        pr.step = '1';
+        pr.className = 'reg-kid-price';
+        pr.value = (c.price == null || c.price === '') ? '' : c.price;
+        pr.placeholder = '売価（空なら' + (data.price || '親') + '）';
+        pr.title = 'この子だけ値段を変えるときに入れます。空なら親の売価で出品します';
+        pr.style.cssText = 'width:120px;padding:3px 7px;font-size:12px;'
+          + 'border:1px solid var(--line-2);border-radius:5px;text-align:right;';
+        pr.addEventListener('input', () => {
+          const v = pr.value.trim();
+          c.price = v === '' ? null : Math.round(Number(v));
+          putKids();
+        });
+        line.appendChild(pr);
+        line.appendChild(el('span', 'an-note', '円'));
         if(c.status && c.status !== 'draft'){
           line.appendChild(el('span', 'an-note',
             {submitted: '送信済', failed: '失敗', live: '公開中'}[c.status] || c.status));
