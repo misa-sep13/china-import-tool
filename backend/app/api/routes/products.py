@@ -348,6 +348,74 @@ def refresh_fees(db: Session = Depends(get_db)):
     }
 
 
+@router.get("/old-account/candidates")
+def old_account_candidates(db: Session = Depends(get_db)):
+    """旧アカウントの商品と思われるものを拾う。
+
+    アカウントを作り直し、同じ商品を新しいJANで出し直している。
+    マスタに旧アカウントの行が有効のまま残っていると、定期実行が
+    そのASINを新しいアカウントでAmazonに問い合わせてしまう。
+
+    新アカウントのFBA在庫（ASIN・FNSKU・SKUの一覧）と、このツールで
+    出品した子のSKU・ASINのどちらにも無いものを候補にする。
+    ここで新たにAmazonへ渡すのは在庫一覧の取得だけで、
+    旧商品のASINやSKUは送らない。
+    """
+    from app.services.amazon_api import fetch_inventory
+    from app.models.amazon_listing import AmazonListingChild
+    try:
+        inv = fetch_inventory()
+    except Exception as e:
+        raise HTTPException(502, f"新アカウントの在庫一覧を取れませんでした: {str(e)[:200]}")
+    if not inv:
+        # 空で返ってきたときに全部を旧扱いにしないよう止める
+        raise HTTPException(502, "新アカウントの在庫一覧が空でした。少し置いてから試してください")
+    fnskus = {k for k in inv.keys() if k}
+    asins = {v.get("asin") for v in inv.values() if v.get("asin")}
+    skus = {v.get("sku") for v in inv.values() if v.get("sku")}
+    for c in db.query(AmazonListingChild).all():
+        if c.sku:
+            skus.add(c.sku.strip())
+        if c.asin:
+            asins.add(c.asin.strip())
+
+    out = []
+    for p in (db.query(Product).filter(Product.is_active == True)
+              .order_by(Product.no).all()):
+        if p.is_component or p.is_material:
+            continue  # 部材・付属品はAmazonに問い合わせない
+        a, f, k = (p.asin or "").strip(), (p.fnsku or "").strip(), (p.sku or "").strip()
+        if not a and not f:
+            continue  # 問い合わせる材料が無いので害が無い
+        if (f and f in fnskus) or (a and a in asins) or (k and k in skus):
+            continue
+        out.append({"id": p.id, "no": p.no, "sku": k, "name": p.name or "",
+                    "asin": a, "fnsku": f, "photo_url": p.photo_url or "",
+                    "color": p.color or "", "size": p.size or ""})
+    return {"items": out, "checked": len(fnskus)}
+
+
+class _HideIn(BaseModel):
+    ids: List[int]
+
+
+@router.post("/old-account/hide")
+def old_account_hide(body: _HideIn, request: Request, db: Session = Depends(get_db)):
+    """選んだ旧アカウントの商品を非表示にする（消さない。あとで戻せる）。
+
+    非表示にした商品は定期実行の問い合わせ対象から外れる。
+    """
+    n = 0
+    for p in db.query(Product).filter(Product.id.in_(body.ids or [])).all():
+        if p.is_active:
+            p.is_active = False
+            log_activity(db, request, "delete", "amazon_product", p.id,
+                         f"旧アカウントの商品として非表示: {p.sku} {p.name or ''}", sku=p.sku)
+            n += 1
+    db.commit()
+    return {"ok": True, "hidden": n}
+
+
 @router.delete("/{product_id}")
 def delete_product(product_id: int, request: Request, db: Session = Depends(get_db)):
     p = db.query(Product).filter(Product.id == product_id).first()

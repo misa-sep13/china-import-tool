@@ -46,6 +46,10 @@ export default function StockPage() {
   const [justOrdered, setJustOrdered] = useState(new Set())
   const [hiding, setHiding] = useState(null)
   const [, setTick] = useState(0)
+  // 旧アカウントの商品の洗い出し（null=閉じている）
+  const [oldAcc, setOldAcc] = useState(null)
+  const [oldPick, setOldPick] = useState(new Set())
+  const [oldBusy, setOldBusy] = useState(false)
   const pollRef = useRef(null)
 
   const stopPolling = () => {
@@ -222,6 +226,41 @@ export default function StockPage() {
     }
   }
 
+  // 新アカウントの在庫・このツールの出品のどちらにも無い商品を拾う。
+  // 有効のままだと、定期実行がそのASINを新アカウントでAmazonに問い合わせてしまう
+  const findOldAccount = async () => {
+    setOldBusy(true)
+    setError('')
+    try {
+      const r = await api.get('/products/old-account/candidates')
+      const list = r.data.items || []
+      setOldAcc(list)
+      setOldPick(new Set(list.map(x => x.id)))
+    } catch (e) {
+      setError(e?.response?.data?.detail || '旧アカウントの商品を探せませんでした')
+    } finally {
+      setOldBusy(false)
+    }
+  }
+
+  const hideOldAccount = async () => {
+    const ids = [...oldPick]
+    if (!ids.length) return
+    if (!confirm(`${ids.length}件を非表示にします。
+Amazonへの問い合わせ対象から外れます（消さないので、あとで戻せます）`)) return
+    setOldBusy(true)
+    try {
+      await api.post('/products/old-account/hide', { ids })
+      setRawItems(prev => prev.filter(it => !oldPick.has(it.product_id)))
+      setOldAcc(null)
+      setError(`${ids.length}件を非表示にしました`)
+    } catch {
+      setError('非表示にできませんでした')
+    } finally {
+      setOldBusy(false)
+    }
+  }
+
   const recordOrder = async (item) => {
     if (!item.qty || item.qty <= 0) { setError('発注数が0です'); return }
     setOrdering(item.product_id)
@@ -361,8 +400,55 @@ export default function StockPage() {
             value={search} onChange={e => setSearch(e.target.value)}
             style={{ width: 320, flex: '0 0 320px' }}
           />
+          <button className="btn btn-secondary" style={{ fontSize: 12 }}
+            onClick={findOldAccount} disabled={oldBusy}>
+            {oldBusy && oldAcc === null ? '探しています…' : '🧹 旧アカウントの商品を探す'}
+          </button>
         </div>
         {error && <p className="error-msg">{error}</p>}
+        {oldAcc !== null && (
+          <div style={{ marginTop: 12, padding: 12, border: '1px solid #fecaca', borderRadius: 8, background: '#fff7f7' }}>
+            {oldAcc.length === 0 ? (
+              <div style={{ fontSize: 13 }}>
+                見つかりませんでした。有効な商品はすべて新アカウントにあります。
+                <button className="btn btn-sm" style={{ marginLeft: 8 }} onClick={() => setOldAcc(null)}>閉じる</button>
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 13, marginBottom: 8 }}>
+                  新アカウントのFBA在庫にも、このツールの出品にも無い商品が <b>{oldAcc.length}件</b> あります。
+                  旧アカウントの商品なら、非表示にするとAmazonへの問い合わせ対象から外れます。
+                  <b>新アカウントで出したばかりでFBAにまだ納品していない商品も混ざることがある</b>ので、チェックを外してから押してください。
+                </div>
+                <div style={{ maxHeight: 320, overflow: 'auto', background: '#fff', border: '1px solid #f1f5f9', borderRadius: 6 }}>
+                  {oldAcc.map(x => (
+                    <label key={x.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 8px', borderBottom: '1px solid #f8fafc', fontSize: 12 }}>
+                      <input type="checkbox" checked={oldPick.has(x.id)}
+                        onChange={() => setOldPick(prev => {
+                          const n = new Set(prev); n.has(x.id) ? n.delete(x.id) : n.add(x.id); return n
+                        })} />
+                      {x.photo_url
+                        ? <img src={x.photo_url} alt="" style={{ width: 32, height: 32, objectFit: 'cover', borderRadius: 4 }} />
+                        : <span style={{ width: 32, height: 32, background: '#f1f5f9', borderRadius: 4, display: 'inline-block' }} />}
+                      <span style={{ fontFamily: 'monospace', minWidth: 110 }}>{x.sku}</span>
+                      <span style={{ fontFamily: 'monospace', color: '#64748b', minWidth: 110 }}>{x.asin}</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {x.name}{(x.color || x.size) ? `（${[x.color, x.size].filter(Boolean).join(' / ')}）` : ''}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <button className="btn btn-danger" style={{ background: '#dc2626', color: '#fff' }}
+                    onClick={hideOldAccount} disabled={oldBusy || oldPick.size === 0}>
+                    {oldBusy ? '...' : `チェックした${oldPick.size}件を非表示にする`}
+                  </button>
+                  <button className="btn btn-sm" onClick={() => setOldAcc(null)}>閉じる</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {firstLoading && (
