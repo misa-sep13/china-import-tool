@@ -97,7 +97,9 @@ def sync_from_fba(db: Session = Depends(get_db)):
 def fetch_product_names(db: Session = Depends(get_db)):
     from app.services.amazon_api import fetch_item_name
 
+    # 非表示（旧アカウントの商品など）のASINはAmazonへ送らない
     products = db.query(Product).filter(
+        Product.is_active == True,
         (Product.name == "") | (Product.name == None),
         Product.asin != "",
         Product.asin != None,
