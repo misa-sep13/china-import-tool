@@ -428,7 +428,7 @@ Amazonへの問い合わせ対象から外れます（消さないので、あ�
                           const n = new Set(prev); n.has(x.id) ? n.delete(x.id) : n.add(x.id); return n
                         })} />
                       {x.photo_url
-                        ? <img src={x.photo_url} alt="" style={{ width: 32, height: 32, objectFit: 'cover', borderRadius: 4 }} />
+                        ? <img src={x.photo_url} alt="" referrerPolicy="no-referrer" style={{ width: 32, height: 32, objectFit: 'cover', borderRadius: 4 }} />
                         : <span style={{ width: 32, height: 32, background: '#f1f5f9', borderRadius: 4, display: 'inline-block' }} />}
                       <span style={{ fontFamily: 'monospace', minWidth: 110 }}>{x.sku}</span>
                       <span style={{ fontFamily: 'monospace', color: '#64748b', minWidth: 110 }}>{x.asin}</span>
@@ -527,7 +527,8 @@ Amazonへの問い合わせ対象から外れます（消さないので、あ�
                     <td style={{ minWidth: 340, maxWidth: 420 }}>
                       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                         {item.photo_url
-                          ? <img src={item.photo_url} alt="" loading="lazy"
+                          ? <img src={item.photo_url} alt="" loading="lazy" referrerPolicy="no-referrer"
+                              onError={e => { e.currentTarget.style.visibility = 'hidden' }}
                               style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: 6, border: '1px solid #e2e8f0', flex: '0 0 52px' }} />
                           : <div style={{ width: 52, height: 52, borderRadius: 6, background: '#f1f5f9', flex: '0 0 52px' }} />}
                         <div style={{ minWidth: 0 }}>

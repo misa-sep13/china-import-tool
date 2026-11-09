@@ -285,13 +285,22 @@ def _run_stock_job(job_id: str):
             from app.services.amazon_api import fetch_inventory, fetch_all_sales
             from concurrent.futures import ThreadPoolExecutor
             asin_list = [p.asin for p in products if p.asin]
-            with ThreadPoolExecutor(max_workers=2) as ex:
+            from app.services.amazon_api import fetch_catalog_info
+            with ThreadPoolExecutor(max_workers=3) as ex:
                 f_inv   = ex.submit(fetch_inventory)
                 f_sales = ex.submit(fetch_all_sales, asin_list, getattr(settings_row, 'order_qty_cap', 0) or 0)
+                # 写真はAmazonの商品画像を使う。マスタの写真は空だったり、
+                # 1688の画像で他のサイトからは表示できなかったりする（1日キャッシュ）
+                f_cat   = ex.submit(fetch_catalog_info, asin_list)
             inventory = f_inv.result()
             sales_7, sales_15, sales_30, sales_60, sales_90 = f_sales.result()
+            try:
+                catalog = f_cat.result() or {}
+            except Exception:
+                catalog = {}
         else:
             inventory = {}
+            catalog = {}
             sales_7 = sales_15 = sales_30 = sales_60 = sales_90 = {}
 
         from sqlalchemy import func as sqlfunc
@@ -360,7 +369,8 @@ def _run_stock_job(job_id: str):
                 "asin": p.asin or "",
                 "fnsku": p.fnsku or "",
                 "buy_url": p.buy_url or "",
-                "photo_url": p.photo_url or "",
+                "photo_url": ((catalog.get(p.asin) or {}).get("image_url")
+                              or p.photo_url or ""),
                 "color": p.color or "",
                 "size": p.size or "",
                 "spec": p.spec or "",
