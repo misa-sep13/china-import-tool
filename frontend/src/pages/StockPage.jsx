@@ -269,13 +269,9 @@ Amazonへの問い合わせ対象から外れます（消さないので、あ�
       const pre = await api.post('/products/old-account/clear-ids?dry_run=true')
       const n = pre.data.count || 0
       if (!n) { setError('消す対象はありません（ASIN・FNSKUはもう空です）'); return }
-      const list = (pre.data.items || []).slice(0, 10).map(x => `${x.sku}  ${x.asin || ''}`).join('
-')
-      if (!confirm(`旧アカウントとして非表示にした ${n}件 のASIN・FNSKUを空にします。
-元には戻せません（SKU・商品名・原価は残ります）。
-
-${list}${n > 10 ? '
-…ほか' + (n - 10) + '件' : ''}`)) return
+      const list = (pre.data.items || []).slice(0, 10).map(x => `${x.sku}  ${x.asin || ''}`).join('\n')
+      const more = n > 10 ? `\n…ほか${n - 10}件` : ''
+      if (!confirm(`旧アカウントとして非表示にした ${n}件 のASIN・FNSKUを空にします。\n元には戻せません（SKU・商品名・原価は残ります）。\n\n${list}${more}`)) return
       const r = await api.post('/products/old-account/clear-ids?dry_run=false')
       setError(`${r.data.count}件のASIN・FNSKUを空にしました`)
     } catch {
