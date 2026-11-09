@@ -261,6 +261,30 @@ Amazonへの問い合わせ対象から外れます（消さないので、あ�
     }
   }
 
+  // 旧アカウントとして非表示にした商品の、ASIN・FNSKUの記録を消す（元に戻せない）
+  const clearOldIds = async () => {
+    setOldBusy(true)
+    setError('')
+    try {
+      const pre = await api.post('/products/old-account/clear-ids?dry_run=true')
+      const n = pre.data.count || 0
+      if (!n) { setError('消す対象はありません（ASIN・FNSKUはもう空です）'); return }
+      const list = (pre.data.items || []).slice(0, 10).map(x => `${x.sku}  ${x.asin || ''}`).join('
+')
+      if (!confirm(`旧アカウントとして非表示にした ${n}件 のASIN・FNSKUを空にします。
+元には戻せません（SKU・商品名・原価は残ります）。
+
+${list}${n > 10 ? '
+…ほか' + (n - 10) + '件' : ''}`)) return
+      const r = await api.post('/products/old-account/clear-ids?dry_run=false')
+      setError(`${r.data.count}件のASIN・FNSKUを空にしました`)
+    } catch {
+      setError('消せませんでした')
+    } finally {
+      setOldBusy(false)
+    }
+  }
+
   const recordOrder = async (item) => {
     if (!item.qty || item.qty <= 0) { setError('発注数が0です'); return }
     setOrdering(item.product_id)
@@ -403,6 +427,10 @@ Amazonへの問い合わせ対象から外れます（消さないので、あ�
           <button className="btn btn-secondary" style={{ fontSize: 12 }}
             onClick={findOldAccount} disabled={oldBusy}>
             {oldBusy && oldAcc === null ? '探しています…' : '🧹 旧アカウントの商品を探す'}
+          </button>
+          <button className="btn btn-secondary" style={{ fontSize: 12 }}
+            onClick={clearOldIds} disabled={oldBusy}>
+            🗑 非表示にした旧商品のASIN・FNSKUを消す
           </button>
         </div>
         {error && <p className="error-msg">{error}</p>}

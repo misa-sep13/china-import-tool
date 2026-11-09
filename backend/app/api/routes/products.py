@@ -416,6 +416,42 @@ def old_account_hide(body: _HideIn, request: Request, db: Session = Depends(get_
     return {"ok": True, "hidden": n}
 
 
+@router.post("/old-account/clear-ids")
+def old_account_clear_ids(request: Request, dry_run: bool = True,
+                          db: Session = Depends(get_db)):
+    """「旧アカウントの商品として非表示」にした商品のASIN・FNSKUを空にする。
+
+    非表示にした時点でAmazonへは送られないが、記録ごと消しておきたい
+    という希望があった。対象は上のボタンで非表示にしたものだけ
+    （操作履歴で特定する）。いまも非表示のままのものに限る。
+    SKU・商品名・原価・セット構成は残す。元には戻せない。
+    """
+    from app.models.activity_log import ActivityLog
+    ids = set()
+    for a in (db.query(ActivityLog)
+              .filter(ActivityLog.entity_type == "amazon_product",
+                      ActivityLog.summary.like("旧アカウントの商品として非表示%"))
+              .all()):
+        try:
+            ids.add(int(a.entity_id))
+        except (TypeError, ValueError):
+            continue
+    rows = [p for p in db.query(Product).filter(Product.id.in_(ids)).all()
+            if not p.is_active and ((p.asin or "").strip() or (p.fnsku or "").strip())]
+    target = [{"id": p.id, "sku": p.sku, "name": (p.name or "")[:40],
+               "asin": p.asin, "fnsku": p.fnsku} for p in rows]
+    if dry_run:
+        return {"dry_run": True, "count": len(target), "items": target}
+    for p in rows:
+        log_activity(db, request, "update", "amazon_product", p.id,
+                     f"旧アカウントのASIN・FNSKUを消去: {p.sku} ASIN={p.asin} FNSKU={p.fnsku}",
+                     sku=p.sku)
+        p.asin = None
+        p.fnsku = None
+    db.commit()
+    return {"dry_run": False, "count": len(target), "items": target}
+
+
 @router.delete("/{product_id}")
 def delete_product(product_id: int, request: Request, db: Session = Depends(get_db)):
     p = db.query(Product).filter(Product.id == product_id).first()
