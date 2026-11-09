@@ -237,9 +237,10 @@ def _run_preview_job(job_id: str):
                 "days_left": calc.days_left,
                 "daily": calc.daily,
                 "stock": calc.stock,
-                "recommended_qty": calc.qty,
-                "qty": calc.qty,
-                "needs_order": calc.qty > 0,
+                # 今後発注しない商品は推奨に出さない
+                "recommended_qty": 0 if getattr(p, "discontinued", False) else calc.qty,
+                "qty": 0 if getattr(p, "discontinued", False) else calc.qty,
+                "needs_order": calc.qty > 0 and not getattr(p, "discontinued", False),
                 "growth_rate": growth_rate_pct(s7, s15, s90),
                 # 船便・航空便の振り分け（全在庫リストと同じ）
                 "ship_method": ship_method,
@@ -335,6 +336,22 @@ def _run_stock_job(job_id: str):
             needed_pieces = round(daily * calc.growth * (
                 s.lead_days + calc_sale_extra_days(s)
                 + (s.holiday_extra_days or 0)) - stock) if daily > 0 else 0
+            # 今後発注しない商品は、推奨を出さない（売り切ったら終わり）
+            disc = bool(getattr(p, "discontinued", False))
+            rec_qty = 0 if disc else calc.qty
+            if disc and needed_pieces > 0:
+                needed_pieces = 0
+            # 1個あたりの利益。fba_fee は販売手数料＋FBA手数料の合計
+            sp = p.selling_price or 0
+            cost = p.cost_jpy
+            fee = p.fba_fee
+            profit = (round(sp - cost - fee) if (sp and cost is not None
+                                                 and fee is not None) else None)
+            margin = round(profit / sp * 100, 1) if (profit is not None and sp) else None
+            try:
+                comps = json.loads(p.purchase_components or "[]") or []
+            except Exception:
+                comps = []
 
             result.append({
                 "product_id": p.id,
@@ -367,9 +384,19 @@ def _run_stock_job(job_id: str):
                 "days_left": calc.days_left,
                 "daily": round(daily, 2),
                 "stock": stock,
-                "recommended_qty": calc.qty,
+                "recommended_qty": rec_qty,
                 "recommended_pieces": needed_pieces,
-                "qty": max(0, calc.qty),
+                "qty": max(0, rec_qty),
+                "selling_price": sp or None,
+                "cost_jpy": cost,
+                "fba_fee": fee,
+                "profit": profit,
+                "margin": margin,
+                "components": len(comps) if isinstance(comps, list) else 0,
+                "discontinued": disc,
+                "order_lot": getattr(p, "order_lot", None) or None,
+                # 販売可能だけで何日もつか（輸送中・発注済を除く）
+                "fba_days": (int(available / daily) if daily > 0 else None),
                 # 船便・航空便の振り分け
                 "ship_method": ship_method,
                 "air_qty": air_sets,
@@ -379,6 +406,7 @@ def _run_stock_job(job_id: str):
                 "air_threshold_days": plan["air_threshold_days"],
             })
 
+        _save_snapshot(db, "amazon_stock", result)
         with _jobs_lock:
             _jobs[job_id]["status"] = "done"
             _jobs[job_id]["result"] = result
@@ -389,6 +417,33 @@ def _run_stock_job(job_id: str):
             _jobs[job_id]["error"] = str(e)
     finally:
         db.close()
+
+
+def _save_snapshot(db, key: str, result) -> None:
+    """最後に取れた結果をDBに残す。次に開いたとき待たずに出すため。"""
+    from datetime import datetime, timezone
+    from app.models.page_snapshot import PageSnapshot
+    try:
+        row = db.get(PageSnapshot, key)
+        if row is None:
+            row = PageSnapshot(key=key)
+            db.add(row)
+        row.data = json.dumps(result, ensure_ascii=False, default=str)
+        row.fetched_at = datetime.now(timezone.utc)
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+@router.get("/stock/snapshot")
+def stock_snapshot(db: Session = Depends(get_db)):
+    """最後に取れた全在庫一覧をすぐ返す。無ければ items は null。"""
+    from app.models.page_snapshot import PageSnapshot
+    row = db.get(PageSnapshot, "amazon_stock")
+    if not row or not row.data:
+        return {"items": None, "fetched_at": None}
+    return {"items": json.loads(row.data),
+            "fetched_at": row.fetched_at.isoformat() if row.fetched_at else None}
 
 
 @router.post("/stock/start")

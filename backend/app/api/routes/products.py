@@ -84,6 +84,8 @@ class ProductUpdate(BaseModel):
     is_component: Optional[bool] = None
     is_material: Optional[bool] = None
     taotaro_inspect: Optional[str] = None
+    discontinued: Optional[bool] = None
+    order_lot: Optional[int] = None
 
 class ProductOut(ProductCreate):
     id: int
@@ -95,6 +97,8 @@ class ProductOut(ProductCreate):
     fees_updated_at: Optional[datetime] = None
     category: Optional[str] = "標準"
     cost_jpy: Optional[float] = None  # 仕入管理で算出した1個あたり原価（円）
+    discontinued: Optional[bool] = False
+    order_lot: Optional[int] = None
 
     class Config:
         from_attributes = True

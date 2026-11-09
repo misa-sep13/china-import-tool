@@ -5,12 +5,35 @@ import { normalizeSearch } from '../searchUtil'
 import PeriodInventoryPanel from '../components/PeriodInventoryPanel'
 
 const POLL_INTERVAL = 3000
+// これより古い覚えなら、開いたときに裏で取り直す
+const STALE_MINUTES = 15
+
+// 「3分前」のように出す。何時の数字か分からないと、古い在庫で発注してしまう
+function ago(iso) {
+  if (!iso) return ''
+  const sec = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
+  if (sec < 60) return 'たった今'
+  if (sec < 3600) return `${Math.floor(sec / 60)}分前`
+  if (sec < 86400) return `${Math.floor(sec / 3600)}時間前`
+  return `${Math.floor(sec / 86400)}日前`
+}
+
+function fmtTime(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+const yen = (v) => (v === null || v === undefined || v === '') ? '-' : `¥${Math.round(v).toLocaleString()}`
 
 export default function StockPage() {
   const qc = useQueryClient()
-  const [jobId, setJobId] = useState(null)
+  // idle: 何も無い / loading: 覚えも無く取得中 / done: 表示中 / error
   const [jobStatus, setJobStatus] = useState('idle')
+  // 表を出したまま裏で取り直しているか
+  const [refreshing, setRefreshing] = useState(false)
   const [jobElapsed, setJobElapsed] = useState(0)
+  const [fetchedAt, setFetchedAt] = useState(null)
   const [rawItems, setRawItems] = useState([])
   const [selected, setSelected] = useState(null)
   const [qtyOverrides, setQtyOverrides] = useState({})
@@ -22,61 +45,74 @@ export default function StockPage() {
   const [ordering, setOrdering] = useState(null)
   const [justOrdered, setJustOrdered] = useState(new Set())
   const [hiding, setHiding] = useState(null)
+  const [, setTick] = useState(0)
   const pollRef = useRef(null)
 
   const stopPolling = () => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
   }
 
-  const startFetch = async (force = false) => {
-    if (force) sessionStorage.removeItem('stock_items')
-    setJobStatus('running')
+  // 新しい値を裏で取る。表が出ているときは出したまま、取れたら差し替える
+  const startFetch = async (force = false, hasTable = false) => {
+    stopPolling()
     setError('')
-    setRawItems([])
-    setSelected(null)
-    setQtyOverrides({})
+    setJobElapsed(0)
+    if (hasTable) setRefreshing(true)
+    else setJobStatus('loading')
     try {
       const res = await api.post(`/orders/stock/start?force=${force}`)
       const id = res.data.job_id
-      setJobId(id)
       pollRef.current = setInterval(async () => {
         try {
           const status = await api.get(`/orders/preview/status/${id}`)
           setJobElapsed(status.data.elapsed)
           if (status.data.status === 'done') {
             stopPolling()
-            const items = status.data.result || []
-            setRawItems(items)
-            sessionStorage.setItem('stock_items', JSON.stringify(items))
+            setRawItems(status.data.result || [])
+            setFetchedAt(new Date().toISOString())
+            setQtyOverrides({})
             setJobStatus('done')
+            setRefreshing(false)
           } else if (status.data.status === 'error') {
             stopPolling()
             setError(status.data.error || 'SP-APIデータ取得に失敗しました')
-            setJobStatus('error')
+            setRefreshing(false)
+            if (!hasTable) setJobStatus('error')
           }
         } catch {
           stopPolling()
           setError('ステータス取得に失敗しました')
-          setJobStatus('error')
+          setRefreshing(false)
+          if (!hasTable) setJobStatus('error')
         }
       }, POLL_INTERVAL)
     } catch {
-      setJobStatus('error')
+      setRefreshing(false)
       setError('データ取得の開始に失敗しました')
+      if (!hasTable) setJobStatus('error')
     }
   }
 
   useEffect(() => {
-    const cached = sessionStorage.getItem('stock_items')
-    if (cached) {
+    (async () => {
+      // まず最後に取れた結果を出す（待たない）
       try {
-        setRawItems(JSON.parse(cached))
-        setJobStatus('done')
-        return () => {}
-      } catch {}
-    }
-    startFetch()
-    return () => stopPolling()
+        const r = await api.get('/orders/stock/snapshot')
+        if (r.data && Array.isArray(r.data.items)) {
+          setRawItems(r.data.items)
+          setFetchedAt(r.data.fetched_at)
+          setJobStatus('done')
+          const age = r.data.fetched_at
+            ? (Date.now() - new Date(r.data.fetched_at).getTime()) / 60000 : 9999
+          if (age > STALE_MINUTES) startFetch(false, true)
+          return
+        }
+      } catch { /* 覚えが読めなければ普通に取りに行く */ }
+      startFetch(false, false)
+    })()
+    // 「○分前」を進める
+    const t = setInterval(() => setTick(x => x + 1), 30000)
+    return () => { stopPolling(); clearInterval(t) }
   }, [])
 
   const items = rawItems.map((item, i) => ({
@@ -90,6 +126,8 @@ export default function StockPage() {
     ? items.filter(item =>
         normalizeSearch(item.sku).includes(q) ||
         normalizeSearch(item.name).includes(q) ||
+        normalizeSearch(item.asin || '').includes(q) ||
+        normalizeSearch(item.fnsku || '').includes(q) ||
         normalizeSearch(item.color).includes(q) ||
         normalizeSearch(item.size).includes(q)
       )
@@ -97,6 +135,11 @@ export default function StockPage() {
 
   const sorted = [...filtered].sort((a, b) => {
     let va = a[sortKey], vb = b[sortKey]
+    // 値の無いもの（利益が出せない等）は常に下へ
+    const na = va === null || va === undefined, nb = vb === null || vb === undefined
+    if (na && nb) return 0
+    if (na) return 1
+    if (nb) return -1
     if (typeof va === 'string') va = va.toLowerCase()
     if (typeof vb === 'string') vb = vb.toLowerCase()
     if (va < vb) return sortAsc ? -1 : 1
@@ -108,8 +151,7 @@ export default function StockPage() {
 
   const toggleSelect = (idx) => {
     setSelected(prev => {
-      const base = prev ?? new Set()
-      const next = new Set(base)
+      const next = new Set(prev ?? new Set())
       next.has(idx) ? next.delete(idx) : next.add(idx)
       return next
     })
@@ -131,8 +173,12 @@ export default function StockPage() {
   const handleSort = (key) => {
     if (sortKey === key) { setSortAsc(a => !a) } else { setSortKey(key); setSortAsc(true) }
   }
-
   const sortIcon = (key) => sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : ''
+
+  // 手元の1行だけ書き換える（取り直さずに画面へ反映する）
+  const patchItem = (productId, patch) => {
+    setRawItems(prev => prev.map(it => it.product_id === productId ? { ...it, ...patch } : it))
+  }
 
   const hideProduct = async (item) => {
     if (!confirm(`${item.sku} を一覧から非表示にしますか？\n（商品マスタからも外れます。Amazonの出品には影響しません。後で復元可能）`)) return
@@ -140,15 +186,39 @@ export default function StockPage() {
     setError('')
     try {
       await api.delete(`/products/${item.product_id}`)
-      setRawItems(prev => {
-        const next = prev.filter(it => it.product_id !== item.product_id)
-        sessionStorage.setItem('stock_items', JSON.stringify(next))
-        return next
-      })
+      setRawItems(prev => prev.filter(it => it.product_id !== item.product_id))
     } catch {
       setError('非表示に失敗しました')
     } finally {
       setHiding(null)
+    }
+  }
+
+  // 今後発注しない。一覧には残し、推奨発注だけ止める
+  const toggleDiscontinued = async (item) => {
+    const next = !item.discontinued
+    if (next && !confirm(`${item.sku} を「今後発注しない」にしますか？\n推奨発注が0になり、発注管理にも出なくなります（いつでも戻せます）`)) return
+    try {
+      await api.put(`/products/${item.product_id}`, { discontinued: next })
+      patchItem(item.product_id, next
+        ? { discontinued: true, qty: 0, recommended_qty: 0,
+            recommended_pieces: Math.min(0, item.recommended_pieces || 0) }
+        : { discontinued: false })
+      if (!next) setError('戻しました。推奨発注は「いますぐ更新」で計算し直されます')
+    } catch {
+      setError('保存に失敗しました')
+    }
+  }
+
+  const editLot = async (item) => {
+    const v = window.prompt(`${item.sku} の最小ロット（個）を入れてください。\n空か0で消します`, item.order_lot || '')
+    if (v === null) return
+    const n = parseInt(v, 10) || 0
+    try {
+      await api.put(`/products/${item.product_id}`, { order_lot: n })
+      patchItem(item.product_id, { order_lot: n || null })
+    } catch {
+      setError('保存に失敗しました')
     }
   }
 
@@ -193,29 +263,63 @@ export default function StockPage() {
     }
   }
 
-  const selectedItems = sorted.filter(item => currentSelected.has(item._idx) && item.qty > 0)
   const checkedCount = sorted.filter(item => currentSelected.has(item._idx)).length
-  const isLoading = jobStatus === 'running' || jobStatus === 'idle'
+  const firstLoading = jobStatus === 'loading' || jobStatus === 'idle'
 
-  const daysBadge = (days) => {
-    if (days >= 9999) return <span style={{ color: '#999', fontSize: 12 }}>-</span>
-    if (days < 30) return <span className="badge badge-danger">{days}日</span>
-    if (days < 60) return <span className="badge badge-warn">{days}日</span>
-    return <span className="badge badge-ok">{days}日</span>
+  const daysText = (days) => {
+    if (days === null || days === undefined || days >= 9999) return null
+    const color = days < 30 ? '#dc2626' : days < 60 ? '#d97706' : '#64748b'
+    return <div style={{ fontSize: 11, color }}>({days}日)</div>
   }
 
-  const recBadge = (pieces) => {
-    if (pieces > 0) return <span style={{ color: '#e94560', fontWeight: 700 }}>+{pieces}</span>
-    if (pieces < 0) return <span style={{ color: '#16a34a', fontWeight: 600 }}>{pieces}</span>
-    return <span style={{ color: '#999' }}>0</span>
+  // 商品名の下に出す注意。開かなくても危ないものが分かるように
+  const notes = (item) => {
+    const out = []
+    if (item.discontinued) out.push({ t: '🚫 今後発注しない', bg: '#f1f5f9', c: '#475569' })
+    if (item.profit !== null && item.profit !== undefined && item.profit < 0) {
+      out.push({ t: `赤字 ${yen(item.profit)}/個`, bg: '#fee2e2', c: '#b91c1c' })
+    }
+    if (item.margin !== null && item.margin !== undefined && item.margin >= 0 && item.margin < 10) {
+      out.push({ t: `利益率 ${item.margin}%`, bg: '#fef3c7', c: '#92400e' })
+    }
+    if (item.order_lot && item.recommended_pieces > 0 && item.recommended_pieces < item.order_lot) {
+      out.push({ t: `⚠ ロット${item.order_lot}まで あと${item.order_lot - item.recommended_pieces}個`, bg: '#fee2e2', c: '#b91c1c' })
+    }
+    if (item.components > 0) out.push({ t: `▶ 付属品${item.components}点`, bg: '#eef2ff', c: '#3730a3' })
+    if (item.cost_jpy === null || item.cost_jpy === undefined) out.push({ t: '原価未設定', bg: '#fef3c7', c: '#92400e' })
+    if (!item.selling_price) out.push({ t: '売価未設定', bg: '#fef3c7', c: '#92400e' })
+    return out
   }
 
-  const thStyle = (key) => ({
-    cursor: 'pointer',
-    userSelect: 'none',
-    whiteSpace: 'nowrap',
-    background: sortKey === key ? '#f0f4ff' : undefined,
-  })
+  const th = (key, label, extra = {}) => (
+    <th
+      onClick={key ? () => handleSort(key) : undefined}
+      style={{
+        cursor: key ? 'pointer' : 'default', userSelect: 'none', whiteSpace: 'nowrap',
+        textAlign: 'right', fontSize: 12,
+        background: sortKey === key ? '#e0e7ff' : extra.bg,
+        ...extra.style,
+      }}
+    >{label}{key ? sortIcon(key) : ''}</th>
+  )
+
+  const num = (v, unit = '個', color) => (
+    <span style={{ fontWeight: 600, color: v > 0 ? (color || '#1e293b') : '#cbd5e1' }}>
+      {v || 0}<span style={{ fontSize: 10, color: '#94a3b8', marginLeft: 1 }}>{unit}</span>
+    </span>
+  )
+
+  // 期間の販売数（日販×日数）と日販を並べる
+  const salesCell = (rate, days) => (
+    <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontSize: 12 }}>
+      <div style={{ fontWeight: 600 }}>{Math.round((rate || 0) * days)}</div>
+      <div style={{ fontSize: 10, color: '#94a3b8' }}>{(rate || 0).toFixed(1)}/日</div>
+    </td>
+  )
+
+  const stockBg = '#f8fafc'
+  const salesBg = '#f0fdf4'
+  const moneyBg = '#fffbeb'
 
   return (
     <div>
@@ -224,40 +328,60 @@ export default function StockPage() {
       <PeriodInventoryPanel platform="amazon" title="📦 期末在庫金額（Amazon）" />
 
       <div className="card">
+        {/* いつの数字か。古い在庫で発注しないよう、常に見えるところに出す */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 12px',
+            borderRadius: 999, fontSize: 12, fontWeight: 600,
+            background: refreshing ? '#fef3c7' : '#dcfce7',
+            color: refreshing ? '#92400e' : '#166534',
+          }}>
+            <span style={{ width: 8, height: 8, borderRadius: 4, background: refreshing ? '#f59e0b' : '#22c55e' }} />
+            Amazon在庫・販売 {fetchedAt ? `${ago(fetchedAt)}（${fmtTime(fetchedAt)}）` : 'まだありません'}
+          </span>
+          {refreshing && (
+            <span style={{ fontSize: 12, color: '#92400e' }}>
+              裏で最新を取得中… {jobElapsed > 0 ? `${jobElapsed}秒` : ''}（表はそのまま使えます）
+            </span>
+          )}
+          <button
+            className="btn btn-secondary"
+            style={{ padding: '4px 12px', fontSize: 12 }}
+            onClick={() => startFetch(true, jobStatus === 'done')}
+            disabled={refreshing || firstLoading}
+          >⚡ いますぐ更新</button>
+        </div>
         <div className="top-actions">
-          <button className="btn btn-secondary" onClick={() => { stopPolling(); startFetch(true) }} disabled={isLoading}>
-            {isLoading ? '取得中...' : '🔄 再計算'}
-          </button>
           <button className="btn btn-success" onClick={handleExport} disabled={exporting || checkedCount === 0}>
             {exporting ? '生成中...' : `📥 Excelダウンロード（${checkedCount}件）`}
           </button>
           <input
-            type="text" placeholder="SKU・商品名・色/サイズで絞り込み"
+            type="text" placeholder="SKU・商品名・ASIN・FNSKU・色/サイズで絞り込み"
             className="search-input-ja"
             value={search} onChange={e => setSearch(e.target.value)}
-            style={{ width: 260, flex: '0 0 260px' }}
+            style={{ width: 320, flex: '0 0 320px' }}
           />
         </div>
         {error && <p className="error-msg">{error}</p>}
       </div>
 
-      {isLoading && (
+      {firstLoading && (
         <div className="card" style={{ textAlign: 'center', color: '#555', padding: 40 }}>
           <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
           <p style={{ fontWeight: 600, marginBottom: 8 }}>SP-APIからデータを取得中...</p>
-          <p style={{ fontSize: 13, color: '#888' }}>在庫・売上データを取得しています。しばらくお待ちください。</p>
+          <p style={{ fontSize: 13, color: '#888' }}>初回だけ待ちます。次からは前回の結果をすぐ出し、裏で更新します。</p>
           {jobElapsed > 0 && <p style={{ fontSize: 13, color: '#aaa', marginTop: 8 }}>経過時間: {jobElapsed}秒</p>}
         </div>
       )}
 
-      {jobStatus === 'error' && !isLoading && (
+      {jobStatus === 'error' && (
         <div className="card" style={{ textAlign: 'center', color: '#c00', padding: 40 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>⚠️</div>
-          <p>データ取得に失敗しました。再計算ボタンで再試行してください。</p>
+          <p>データ取得に失敗しました。「いますぐ更新」で再試行してください。</p>
         </div>
       )}
 
-      {!isLoading && jobStatus === 'done' && (
+      {jobStatus === 'done' && (
         <div className="card">
           <h2>全在庫（{sorted.length}件）</h2>
           <div className="sticky-table-wrap">
@@ -272,27 +396,39 @@ export default function StockPage() {
                       onClick={e => e.stopPropagation()}
                     />
                   </th>
-                  <th style={thStyle('sku')} onClick={() => handleSort('sku')}>SKU{sortIcon('sku')}</th>
-                  <th style={thStyle('name')} onClick={() => handleSort('name')}>商品名{sortIcon('name')}</th>
-                  <th style={thStyle('category')} onClick={() => handleSort('category')}>区分{sortIcon('category')}</th>
-                  <th style={thStyle('color')} onClick={() => handleSort('color')}>色/サイズ{sortIcon('color')}</th>
-                  <th style={{ ...thStyle('available'), textAlign: 'right' }} onClick={() => handleSort('available')}>在庫{sortIcon('available')}</th>
-                  <th style={{ ...thStyle('inbound'), textAlign: 'right' }} onClick={() => handleSort('inbound')}>納品中{sortIcon('inbound')}</th>
-                  <th style={{ ...thStyle('ordered'), textAlign: 'right' }} onClick={() => handleSort('ordered')}>発注済{sortIcon('ordered')}</th>
-                  <th style={{ ...thStyle('daily'), textAlign: 'right' }} onClick={() => handleSort('daily')}>日販{sortIcon('daily')}</th>
-                  <th style={{ ...thStyle('days_left'), textAlign: 'right' }} onClick={() => handleSort('days_left')}>残日数{sortIcon('days_left')}</th>
-                  <th style={{ ...thStyle('recommended_pieces'), textAlign: 'right' }} onClick={() => handleSort('recommended_pieces')}>推奨発注{sortIcon('recommended_pieces')}</th>
-                  <th style={{ textAlign: 'right' }}>発注数</th>
-                  <th style={{ ...thStyle('price'), textAlign: 'right' }} onClick={() => handleSort('price')}>単価(元){sortIcon('price')}</th>
-                  <th style={{ textAlign: 'center' }}>発注</th>
-                  <th style={{ textAlign: 'center' }}>非表示</th>
+                  <th onClick={() => handleSort('sku')} style={{ cursor: 'pointer', whiteSpace: 'nowrap', fontSize: 12, minWidth: 340 }}>
+                    商品{sortIcon('sku')}
+                  </th>
+                  {th('stock', <>在庫合計<br /><small>(日数)</small></>, { bg: stockBg })}
+                  {th('available', <>FBA販売可<br /><small>(日数)</small></>, { bg: stockBg })}
+                  {th('inbound', '輸送中', { bg: stockBg })}
+                  {th('processing', '梱包中', { bg: stockBg })}
+                  {th('ordered', '発注済', { bg: stockBg })}
+                  {th('recommended_pieces', <>推奨発注<br /><small>(個)</small></>)}
+                  {th(null, '発注数')}
+                  {th('sales_7', '7日', { bg: salesBg })}
+                  {th('sales_15', '15日', { bg: salesBg })}
+                  {th('sales_30', '30日', { bg: salesBg })}
+                  {th('sales_60', '60日', { bg: salesBg })}
+                  {th('daily', '日販', { bg: salesBg })}
+                  {th('selling_price', '売価', { bg: moneyBg })}
+                  {th('cost_jpy', '原価', { bg: moneyBg })}
+                  {th('profit', <>利益<br /><small>(1個)</small></>, { bg: moneyBg })}
+                  {th('margin', '利益率', { bg: moneyBg })}
+                  {th('price', <>仕入<br /><small>(元)</small></>)}
+                  <th style={{ textAlign: 'center', fontSize: 12 }}>発注</th>
+                  <th style={{ textAlign: 'center', fontSize: 12 }}>操作</th>
                 </tr>
               </thead>
               <tbody>
                 {sorted.map(item => (
                   <tr
                     key={item.product_id}
-                    style={{ background: item.recommended_pieces < 0 ? '#f0fdf4' : undefined }}
+                    style={{
+                      background: item.discontinued ? '#f8fafc'
+                        : item.recommended_pieces > 0 ? '#fff7ed' : undefined,
+                      opacity: item.discontinued ? 0.75 : 1,
+                    }}
                   >
                     <td style={{ textAlign: 'center', cursor: 'pointer' }} onClick={() => toggleSelect(item._idx)}>
                       <input
@@ -302,35 +438,72 @@ export default function StockPage() {
                         onClick={e => e.stopPropagation()}
                       />
                     </td>
-                    <td style={{ fontFamily: 'monospace', fontSize: 12, color: '#1a1a2e' }}>{item.sku}</td>
-                    <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1a1a2e' }}>{item.name}</td>
-                    <td style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
-                      <span style={{
-                        padding: '2px 6px', borderRadius: 4, fontWeight: 600,
-                        background: item.category === 'ファッション' ? '#fce7f3' : item.category === '大型' ? '#fef9c3' : '#e0f2fe',
-                        color: item.category === 'ファッション' ? '#9d174d' : item.category === '大型' ? '#854d0e' : '#0369a1',
-                      }}>
-                        {item.category || '標準'}
-                      </span>
+                    <td style={{ minWidth: 340, maxWidth: 420 }}>
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                        {item.photo_url
+                          ? <img src={item.photo_url} alt="" loading="lazy"
+                              style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: 6, border: '1px solid #e2e8f0', flex: '0 0 52px' }} />
+                          : <div style={{ width: 52, height: 52, borderRadius: 6, background: '#f1f5f9', flex: '0 0 52px' }} />}
+                        <div style={{ minWidth: 0 }}>
+                          <a href={item.amazon_url || undefined} target="_blank" rel="noreferrer"
+                            title={item.name}
+                            style={{
+                              color: '#1e293b', fontSize: 12, fontWeight: 600, lineHeight: 1.4,
+                              display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                              overflow: 'hidden', textDecoration: 'none',
+                            }}>{item.name}</a>
+                          <div style={{ fontSize: 10, color: '#64748b', marginTop: 2, fontFamily: 'monospace' }}>
+                            {item.sku}　{item.asin}　{item.fnsku}
+                            {(item.color || item.size) && <span style={{ fontFamily: 'inherit' }}>　{[item.color, item.size].filter(Boolean).join(' / ')}</span>}
+                            {item.buy_url && <> <a href={item.buy_url} target="_blank" rel="noreferrer"
+                              style={{ fontSize: 10, padding: '0 4px', border: '1px solid #fdba74', color: '#c2410c', borderRadius: 3, textDecoration: 'none' }}>仕入先</a></>}
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                            {notes(item).map((n, i) => (
+                              <span key={i} style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: n.bg, color: n.c, fontWeight: 600 }}>{n.t}</span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
                     </td>
-                    <td style={{ fontSize: 12, color: '#555' }}>{[item.color, item.size].filter(Boolean).join(' / ')}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{item.available}</td>
-                    <td style={{ textAlign: 'right', color: item.inbound > 0 ? '#2563eb' : '#aaa' }}>{item.inbound || '-'}</td>
-                    <td style={{ textAlign: 'right', color: item.ordered > 0 ? '#e94560' : '#aaa' }}>{item.ordered > 0 ? item.ordered : '-'}</td>
-                    <td style={{ textAlign: 'right', color: '#555' }}>{item.daily}</td>
-                    <td style={{ textAlign: 'right' }}>{daysBadge(item.days_left)}</td>
-                    <td style={{ textAlign: 'right' }}>{recBadge(item.recommended_pieces)}</td>
+                    <td style={{ textAlign: 'right', background: stockBg }}>
+                      {num(item.stock)}{daysText(item.days_left)}
+                    </td>
+                    <td style={{ textAlign: 'right', background: stockBg }}>
+                      {num(item.available)}{daysText(item.fba_days)}
+                    </td>
+                    <td style={{ textAlign: 'right', background: stockBg }}>{num(item.inbound, '個', '#2563eb')}</td>
+                    <td style={{ textAlign: 'right', background: stockBg }}>{num(item.processing, '個', '#7c3aed')}</td>
+                    <td style={{ textAlign: 'right', background: stockBg }}>{num(item.ordered, '個', '#e11d48')}</td>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {item.recommended_pieces > 0
+                        ? <span style={{ color: '#e11d48', fontWeight: 700 }}>+{item.recommended_pieces}</span>
+                        : <span style={{ color: '#16a34a' }}>{item.recommended_pieces || 0}</span>}
+                      {item.set_size > 1 && <div style={{ fontSize: 10, color: '#94a3b8' }}>{item.set_size}個/セット</div>}
+                    </td>
                     <td>
                       <input
-                        type="number"
-                        className="qty-input"
-                        min={0}
+                        type="number" className="qty-input" min={0}
                         value={item.qty}
                         onChange={e => updateQty(item.product_id, e.target.value)}
-                        style={{ width: 60 }}
+                        style={{ width: 64 }}
                       />
                     </td>
-                    <td style={{ textAlign: 'right', color: '#555' }}>{item.price}</td>
+                    {salesCell(item.sales_7, 7)}
+                    {salesCell(item.sales_15, 15)}
+                    {salesCell(item.sales_30, 30)}
+                    {salesCell(item.sales_60, 60)}
+                    <td style={{ textAlign: 'right', fontWeight: 700, background: salesBg }}>{item.daily}</td>
+                    <td style={{ textAlign: 'right', fontSize: 12, background: moneyBg }}>{yen(item.selling_price)}</td>
+                    <td style={{ textAlign: 'right', fontSize: 12, background: moneyBg }}>{yen(item.cost_jpy)}</td>
+                    <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, background: moneyBg,
+                      color: item.profit < 0 ? '#dc2626' : '#1e293b' }}>{yen(item.profit)}</td>
+                    <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, background: moneyBg,
+                      color: item.margin === null || item.margin === undefined ? '#cbd5e1'
+                        : item.margin < 0 ? '#dc2626' : item.margin < 15 ? '#d97706' : '#15803d' }}>
+                      {item.margin === null || item.margin === undefined ? '-' : `${item.margin}%`}
+                    </td>
+                    <td style={{ textAlign: 'right', color: '#555', fontSize: 12 }}>{item.price}</td>
                     <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
                       {justOrdered.has(item.product_id) ? (
                         <span style={{ color: '#16a34a', fontWeight: 700, fontSize: 12 }}>✓ 発注済</span>
@@ -345,15 +518,27 @@ export default function StockPage() {
                         </button>
                       )}
                     </td>
-                    <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
-                      <button
-                        className="btn btn-sm"
-                        style={{ background: '#fee2e2', color: '#991b1b', fontSize: 12 }}
-                        disabled={hiding === item.product_id}
-                        onClick={() => hideProduct(item)}
-                      >
-                        {hiding === item.product_id ? '...' : '非表示'}
-                      </button>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        <button className="btn btn-sm" style={{ fontSize: 11, padding: '2px 8px' }}
+                          onClick={() => editLot(item)}>
+                          {item.order_lot ? `ロット ${item.order_lot}` : 'ロット設定'}
+                        </button>
+                        <button className="btn btn-sm"
+                          style={{ fontSize: 11, padding: '2px 8px',
+                            background: item.discontinued ? '#e2e8f0' : '#fff', color: '#475569' }}
+                          onClick={() => toggleDiscontinued(item)}>
+                          {item.discontinued ? '発注を再開' : '今後発注しない'}
+                        </button>
+                        <button
+                          className="btn btn-sm"
+                          style={{ background: '#fee2e2', color: '#991b1b', fontSize: 11, padding: '2px 8px' }}
+                          disabled={hiding === item.product_id}
+                          onClick={() => hideProduct(item)}
+                        >
+                          {hiding === item.product_id ? '...' : '非表示'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -69,6 +69,7 @@ from app.models import import_permit as import_permit_models
 from app.models import work_status as work_status_models
 from app.models import rakuten_shipping_daily as rakuten_shipping_daily_models
 from app.models import rakuten_ad as rakuten_ad_models
+from app.models import page_snapshot as page_snapshot_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -98,6 +99,8 @@ def _migrate():
         ("order_settings","national_closed_days","ALTER TABLE order_settings ADD COLUMN national_closed_days INTEGER DEFAULT 7"),
         ("order_settings","send_order_states",  "ALTER TABLE order_settings ADD COLUMN send_order_states TEXT"),
         ("order_settings","fba_target_days",   "ALTER TABLE order_settings ADD COLUMN fba_target_days INTEGER DEFAULT 0"),
+        ("products",      "discontinued",        "ALTER TABLE products ADD COLUMN discontinued BOOLEAN DEFAULT FALSE"),
+        ("products",      "order_lot",           "ALTER TABLE products ADD COLUMN order_lot INTEGER"),
         ("order_settings","exchange_rate",        "ALTER TABLE order_settings ADD COLUMN exchange_rate FLOAT DEFAULT 21.0"),
         ("order_settings","price_adjust_enabled", "ALTER TABLE order_settings ADD COLUMN price_adjust_enabled BOOLEAN DEFAULT FALSE"),
         ("order_settings","price_drop_threshold", "ALTER TABLE order_settings ADD COLUMN price_drop_threshold FLOAT DEFAULT 0.20"),

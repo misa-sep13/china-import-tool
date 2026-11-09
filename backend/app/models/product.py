@@ -59,5 +59,10 @@ class Product(Base):
     taotaro_product_id = Column(Integer, nullable=True)
     taotaro_sku_id = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
+    # 今後は発注しない（売り切ったら終わり）。一覧には残すが推奨発注を0にする。
+    # 非表示（is_active=False）だと在庫が残っていても見えなくなるので分けて持つ
+    discontinued = Column(Boolean, default=False)
+    # 仕入先の最小ロット（個）。推奨がロットに届かないとき「あと何個」を出す
+    order_lot = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
