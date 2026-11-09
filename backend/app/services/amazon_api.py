@@ -276,6 +276,50 @@ def fetch_catalog_info(asin_list: List[str]) -> Dict[str, dict]:
     _cache[cache_key] = {"value": result, "expires_at": time.time() + _CACHE_TTL_LONG}
     return result
 
+def _fetch_sales_periods(asin: str, periods: list, end_dt, order_qty_cap: int = 0):
+    """1ASINの日別販売数を90日ぶん1回で取り、7/15/30/60/90日の日販をまとめて出す。
+
+    以前は期間ごとに1回ずつ（1ASINで5回）聞いていて、全在庫一覧を開くと
+    200回以上呼んで数分待たされていた。日別を1回取れば手元で全部出せる。
+    日の区切りは日本時間。今日はまだ途中なので入れず、昨日までの d 日で割る
+    （途中の今日を入れると日販が低く出る）。
+    失敗したら None（呼び出し側が従来のやり方で取り直す）。
+    """
+    from datetime import timedelta
+    mp = "A1VC38T7YXB528"
+    today = (end_dt + timedelta(hours=9)).date()
+    first = today - timedelta(days=max(periods))
+    try:
+        params = urllib.parse.urlencode({
+            "marketplaceIds": mp,
+            "interval": (f"{first.isoformat()}T00:00:00+09:00--"
+                         f"{today.isoformat()}T00:00:00+09:00"),
+            "granularity": "Day",
+            "granularityTimeZone": "Asia/Tokyo",
+            "asin": asin,
+        })
+        data = _call_sp_api(f"/sales/v1/orderMetrics?{params}")
+    except Exception:
+        return None
+    by_day = {}
+    for m in (data.get("payload") or []):
+        iv = str(m.get("interval") or "")
+        try:
+            day = date.fromisoformat(iv[:10])
+        except ValueError:
+            continue
+        by_day[day] = by_day.get(day, 0) + int(m.get("unitCount") or 0)
+    out = {}
+    for d in periods:
+        units = [by_day.get(today - timedelta(days=i), 0) for i in range(1, d + 1)]
+        if order_qty_cap and order_qty_cap > 0 and len(units) > 2:
+            srt = sorted(units)
+            cap = max(order_qty_cap, srt[len(srt) // 2] * 3, 1)
+            units = [min(u, cap) for u in units]
+        out[d] = round(sum(units) / d, 4)
+    return out
+
+
 def _fetch_sales_one(asin: str, days: int, end_dt, order_qty_cap: int = 0) -> tuple:
     """1ASIN×1期間の日販を取得。失敗時はNoneを返す（0.0を返すと「売れていない」と
     区別できず、レート制限失敗が日販の過小評価→発注推奨から漏れる事故になるため）
@@ -393,13 +437,19 @@ def fetch_all_sales(asin_list: List[str], order_qty_cap: int = 0) -> tuple:
         # now()を1回だけ取得して全タスクで共有（期間のブレをなくす）
         end_dt = datetime.now(timezone.utc)
         got = {}
-        # 並列数を抑えてレート制限(429)自体を減らす（10だと429多発で欠損が出ていた）
+        # 1ASINにつき日別を1回だけ取り、5期間を手元で出す（以前は期間ごとに5回）
+        need = {}
+        for a, d in todo:
+            need.setdefault(a, []).append(d)
         with ThreadPoolExecutor(max_workers=4) as ex:
-            futures = {ex.submit(_fetch_sales_one, a, d, end_dt, order_qty_cap): (a, d)
-                       for a, d in todo}
+            futures = {ex.submit(_fetch_sales_periods, a, periods, end_dt, order_qty_cap): a
+                       for a in need}
             for f in as_completed(futures):
-                _, val = f.result()
-                got[futures[f]] = val
+                a = futures[f]
+                r = f.result()
+                for d in need[a]:
+                    # 取れなかったASINは None のまま。下で従来どおり期間ごとに取り直す
+                    got[(a, d)] = r.get(d) if r else None
 
         # 失敗(None)分は間隔を空けて順次リトライ。それでも失敗したものだけ0にする
         import logging
