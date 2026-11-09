@@ -1987,6 +1987,14 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
             a["variation_theme"] = [{"marketplace_id": mp, "name": vt}]
         for key, val in axis.items():
             a[key] = one(val)
+        # 軸の値は、商品ごとに入れた同じ名前の項目より強い。
+        # 下の _put_extras は上書きしてしまうので、先にどけておく。
+        # サイズ違いを色の軸で登録してある商品（カタログが昔そう作られた）で、
+        # 商品ごとの color「ブラック」が軸の「23.0〜23.5cm」を潰し、
+        # 「カタログ値と矛盾しています」で子が全部弾かれていた
+        for key in axis:
+            for k in [x for x in extra if x == key or x.startswith(key + ".")]:
+                extra.pop(k, None)
 
     # 商品タイプごとの必須項目。画面で入れてもらったもの
     _put_extras(a, extra, mp, row.product_type or "")

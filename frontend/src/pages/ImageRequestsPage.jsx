@@ -35,6 +35,7 @@ const SOURCE_LABEL = { amazon: 'Amazon', rakuten: '楽天', manual: '手動' }
 const ASSIGNEES = [
   { value: '', label: '—' },
   { value: 'KANATAさん', label: 'KANATAさん' },
+  { value: 'ゆなさん', label: 'ゆなさん' },
   { value: '外注さん', label: '外注さん' },
 ]
 
