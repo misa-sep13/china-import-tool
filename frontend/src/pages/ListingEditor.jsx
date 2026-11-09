@@ -910,9 +910,10 @@ function Variations({ d, set, nextSku }) {
   }
   const del = i => set('children', kids.filter((c, n) => n !== i))
 
-  // 軸は常に「色」。個数違いも「2個/ブラック」のように色の値として書く
+  // 軸は色かサイズ。選ばなければ値の見た目で決まる（サーバー側で判定）
   const two = false
-  const a1 = '色'
+  const theme = (d.variation_theme || '').toUpperCase()
+  const a1 = theme === 'SIZE' ? 'サイズ' : '色'
   const a2 = ''
 
   return (
@@ -933,13 +934,20 @@ function Variations({ d, set, nextSku }) {
         </div>
       <div style={{ maxWidth: 380 }}>
         <span style={label}>バリエーションの軸</span>
-        <div style={{ ...input, background: C.soft, color: C.sub,
-          display: 'flex', alignItems: 'center' }}>
-          色（固定）
-        </div>
+        <select style={input} value={theme}
+          onChange={e => set('variation_theme', e.target.value)}>
+          <option value="">自動（値の見た目で決める）</option>
+          <option value="COLOR">色</option>
+          <option value="SIZE">サイズ</option>
+        </select>
         <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>
-          色でないと選択肢ごとの画像が出ないため、個数違い・サイズ違いも
-          色として登録します（例: 2個/ブラック）
+          ふつうは自動のままでかまいません。「24.0〜24.5cm」「M」のような値
+          ばかりならサイズ、それ以外は色になります。個数違いは色です
+          （例: 2個/ブラック）。
+          <br />
+          すでにASINがある商品で、カタログの軸がこちらと食い違うときだけ
+          手で合わせます。食い違うと「カタログ値と矛盾しています」で
+          子が全部弾かれます。
         </div>
       </div>
       </div>
