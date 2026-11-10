@@ -258,6 +258,39 @@ export default function CreateSendOrder() {
     return () => clearTimeout(t)
   }, [picked, rows])
 
+  // 何個・どの便で送るかのおすすめ（納品プランの「計算する」と同じ計算）。
+  // 別の画面にあると、配送依頼を出す前に見忘れるので、ここで各商品の横に出す
+  const [splitBySku, setSplitBySku] = useState({})
+  const [splitMsg, setSplitMsg] = useState('計算中…')
+  useEffect(() => {
+    api.get('/fba-plan/restock-split')
+      .then(r => {
+        const m = {}
+        ;(r.data.items || []).forEach(x => { m[x.sku] = x })
+        setSplitBySku(m)
+        setSplitMsg((r.data.items || []).length ? '' : (r.data.note || ''))
+      })
+      .catch(e => setSplitMsg('計算できませんでした：' + (e?.response?.data?.detail || e.message)))
+  }, [])
+
+  // 選んだ便のおすすめがある商品の注文を選ぶ。付属品は本体と一緒に選ぶ
+  const pickByPlan = () => {
+    const key = way === 'air' ? 'air_pieces' : 'sea_pieces'
+    const n = new Set()
+    const groups = new Set()
+    rows.filter(r => inChan(r, 'amazon')).forEach(r => {
+      const k = kindOf(r)
+      if (k.kind === 'component') return
+      const rec = splitBySku[k.sku || r.out_id]
+      if (rec && rec[key] > 0) { n.add(r.oid); groups.add(k.sku || r.out_id) }
+    })
+    rows.forEach(r => {
+      const k = kindOf(r)
+      if (k.kind === 'component' && groups.has(k.group)) n.add(r.oid)
+    })
+    setPicked(n)
+  }
+
   const errors = (check.problems || []).filter(p => p.level === 'error')
   const blocked = errors.length > 0 && !override
   const addOids = (oids) => setPicked(s => {
@@ -266,8 +299,34 @@ export default function CreateSendOrder() {
     return n
   })
 
-  const shown = rows.filter(r => !q.trim()
-    || matchesQuery(q, [r.out_id, r.title, r.title_trans]))
+  // Amazon と楽天は同じ倉庫に入るが、送り先も作業も違う。まず分けて出す
+  const [chan, setChan] = useState('amazon')
+  const kindOf = (r) => (check.kinds || {})[r.oid] || {}
+  const chanOf = (r) => {
+    const c = kindOf(r).channel
+    if (c === 'both') return 'both'
+    return c || (kindOf(r).kind === 'unknown' ? 'unknown' : '')
+  }
+  const inChan = (r, c) => c === 'all' || chanOf(r) === c || chanOf(r) === 'both'
+    || chanOf(r) === 'unknown'          // 何か分からないものはどのタブにも出す
+  const countOf = (c) => rows.filter(r => inChan(r, c)).length
+  const shown = rows
+    .filter(r => inChan(r, chan))
+    .filter(r => !q.trim()
+      || matchesQuery(q, [r.out_id, r.title, r.title_trans, kindOf(r).name, kindOf(r).sku]))
+    // 本体のすぐ下に付属品が来るよう、本体のSKUでまとめて並べる
+    .sort((a, b) => {
+      const ga = kindOf(a).group || a.out_id || '', gb = kindOf(b).group || b.out_id || ''
+      if (ga !== gb) return ga < gb ? -1 : 1
+      const ca = kindOf(a).kind === 'component' ? 1 : 0
+      const cb = kindOf(b).kind === 'component' ? 1 : 0
+      return ca - cb
+    })
+  const daysAgo = (iso) => {
+    if (!iso) return null
+    const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
+    return isNaN(d) ? null : d
+  }
 
   const toggle = (oid) => setPicked(s => {
     const n = new Set(s)
@@ -323,8 +382,6 @@ export default function CreateSendOrder() {
 
   return (
     <div>
-      <IdFiller />
-
       {result && (
         <div style={{ marginBottom: 12, padding: 10, borderRadius: 6,
           background: '#f0fdf4', border: `1px solid ${C.good}`, fontSize: 13 }}>
@@ -344,6 +401,7 @@ export default function CreateSendOrder() {
 
       {err && <div style={{ color: C.bad, fontSize: 12, marginBottom: 8 }}>{err}</div>}
 
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '4px 0 6px' }}>① 便と届け先を選ぶ</div>
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end',
         flexWrap: 'wrap', marginBottom: 12, padding: 10,
         background: '#f8fafc', borderRadius: 6 }}>
@@ -389,66 +447,42 @@ export default function CreateSendOrder() {
         備考はこう入ります：<b style={{ color: C.text }}>{remarkPreview || '—'}</b>
       </div>
 
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '14px 0 2px' }}>② 送る注文を選ぶ</div>
+      <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>
+        右の「おすすめ」は、いまの売れ行きとFBA在庫から計算した数です（航空便＝欠品しそうな分だけ、船便＝目標日数までの残り）。
+        便を選んでから「おすすめで選ぶ」を押すと、その便で送る商品と付属品にチェックが入ります。
+        注文は1件まるごと送るので、おすすめより多い注文は数を見て判断してください。
+        付属品が足りないなどの問題は、③の上に赤で出ます。
+      </div>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center',
         flexWrap: 'wrap', marginBottom: 8 }}>
+        <div style={{ display: 'inline-flex', border: `1px solid ${C.line}`, borderRadius: 6, overflow: 'hidden' }}>
+          {[['amazon', 'Amazon'], ['rakuten', '楽天'], ['all', 'すべて']].map(([k, label]) => (
+            <button key={k} onClick={() => setChan(k)}
+              style={{ padding: '6px 12px', fontSize: 13, border: 'none', cursor: 'pointer',
+                background: chan === k ? C.key : '#fff', color: chan === k ? '#fff' : C.text,
+                fontWeight: chan === k ? 700 : 400 }}>
+              {label}（{countOf(k)}）
+            </button>
+          ))}
+        </div>
         <input value={q} onChange={e => setQ(e.target.value)}
           placeholder="SKU・商品名で絞り込み"
           style={{ padding: '6px 10px', border: `1px solid ${C.line}`,
-            borderRadius: 6, fontSize: 13, width: 220 }} />
+            borderRadius: 6, fontSize: 13, width: 200 }} />
         <span style={{ fontSize: 12, color: C.sub }}>
-          入庫済み {rows.length}件　／　選択中 <b style={{ color: C.text }}>{picked.size}</b>件
+          選択中 <b style={{ color: C.text }}>{picked.size}</b>件
         </span>
-        {(() => {
-          const off = busy || checking || blocked || !picked.size || !way || !addrId
-          const why = !picked.size ? '注文を選んでください'
-            : !way ? '便を選んでください'
-            : !addrId ? '届け先を選んでください'
-            : checking ? '確かめています…'
-            : blocked ? '下の赤い問題を直してください' : ''
-          return (
-            <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-              {why && <span style={{ fontSize: 12, color: blocked ? C.bad : C.sub }}>{why}</span>}
-              <button onClick={submit} disabled={off}
-                style={{ padding: '7px 16px', fontSize: 13,
-                  border: 'none', borderRadius: 6, fontWeight: 600,
-                  background: off ? '#cbd5e1' : C.key, color: '#fff',
-                  cursor: off ? 'default' : 'pointer' }}>
-                {busy ? '出しています…' : '🚢 この内容で配送依頼を出す'}
-              </button>
-            </span>
-          )
-        })()}
+        {chan === 'amazon' && (
+          <button onClick={pickByPlan} disabled={!way || !!splitMsg}
+            title={!way ? '先に便を選んでください' : ''}
+            style={{ fontSize: 12, padding: '5px 10px', borderRadius: 6,
+              border: `1px solid ${C.key}`, background: '#fff', color: C.key,
+              cursor: (!way || splitMsg) ? 'default' : 'pointer', opacity: (!way || splitMsg) ? 0.5 : 1 }}>
+            ✓ おすすめで選ぶ（{way === 'air' ? '航空便' : way === 'sea' ? '船便' : '便を選んでから'}）
+          </button>
+        )}
       </div>
-
-      {(check.problems || []).length > 0 && (
-        <div style={{ marginBottom: 10, padding: '10px 12px', borderRadius: 8, fontSize: 13,
-          lineHeight: 1.7, border: `2px solid ${errors.length ? C.bad : '#f59e0b'}`,
-          background: errors.length ? '#fef2f2' : '#fffbeb' }}>
-          {check.problems.map((p, i) => (
-            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start',
-              padding: '3px 0', borderTop: i ? '1px dashed #fecaca' : 'none' }}>
-              <span style={{ fontWeight: 700, color: p.level === 'error' ? C.bad : C.warn,
-                whiteSpace: 'nowrap' }}>{p.level === 'error' ? '⛔ 送れません' : '⚠ 確認'}</span>
-              <span style={{ flex: 1 }}>{p.text}</span>
-              {p.add_oids?.length > 0 && (
-                <button onClick={() => addOids(p.add_oids)}
-                  style={{ whiteSpace: 'nowrap', fontSize: 12, padding: '3px 10px',
-                    border: `1px solid ${C.key}`, color: C.key, background: '#fff',
-                    borderRadius: 5, cursor: 'pointer' }}>
-                  ＋ 付属品の注文（{p.add_oids.length}件）を入れる
-                </button>
-              )}
-            </div>
-          ))}
-          {errors.length > 0 && (
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6,
-              fontSize: 12, color: C.sub }}>
-              <input type="checkbox" checked={override} onChange={e => setOverride(e.target.checked)} />
-              承知のうえで送る（付属品は別の便で送る・セット組みしない など）
-            </label>
-          )}
-        </div>
-      )}
 
       <table style={{ width: '100%', borderCollapse: 'collapse',
         background: '#fff', border: `1px solid ${C.line}` }}>
@@ -457,52 +491,86 @@ export default function CreateSendOrder() {
             <th style={th}>
               <input type="checkbox" checked={allShownPicked} onChange={toggleAll} />
             </th>
-            <th style={th}>SKU</th>
             <th style={th}>商品</th>
-            <th style={th}>色</th>
-            <th style={th}>数</th>
-            <th style={th}>発注日</th>
+            <th style={{ ...th, textAlign: 'right' }}>数</th>
+            <th style={th}>倉庫に来て</th>
+            <th style={th}>
+              おすすめ（いまの売れ行きで計算）
+              {splitMsg && <span style={{ fontWeight: 400, marginLeft: 6 }}>{splitMsg}</span>}
+            </th>
           </tr>
         </thead>
         <tbody>
-          {shown.map(r => (
-            <tr key={r.oid} style={{ background: picked.has(r.oid) ? '#eff6ff' : '#fff' }}>
-              <td style={td}>
-                <input type="checkbox" checked={picked.has(r.oid)}
-                  onChange={() => toggle(r.oid)} />
-              </td>
-              <td style={{ ...td, fontWeight: 600, whiteSpace: 'nowrap' }}>
-                {(() => {
-                  // 本体か付属品か。付属品は管理番号が違っていても仕様で見分けた結果
-                  const k = (check.kinds || {})[r.oid] || {}
-                  const tag = { body: ['本体', '#dbeafe', '#1d4ed8'],
-                    component: ['付属品', '#fef3c7', '#92400e'],
-                    unknown: ['マスタに無い', '#fee2e2', '#b91c1c'] }[k.kind]
-                  return (
+          {shown.map(r => {
+            // 本体か付属品か。付属品は管理番号が違っていても仕様で見分けた結果
+            const k = kindOf(r)
+            const tag = { body: ['本体', '#dbeafe', '#1d4ed8'],
+              component: ['付属品', '#fef3c7', '#92400e'],
+              unknown: ['マスタに無い', '#fee2e2', '#b91c1c'] }[k.kind]
+            const ch = { amazon: 'Amazon', rakuten: '楽天', both: 'Amazon・楽天' }[k.channel]
+            const isComp = k.kind === 'component'
+            const rec = !isComp ? splitBySku[k.sku || r.out_id] : null
+            const d = daysAgo(r.arrived_at)
+            const spec = (r.sku_props || []).map(p => p.value).join(' / ')
+            return (
+              <tr key={r.oid} style={{ background: picked.has(r.oid) ? '#eff6ff' : '#fff' }}>
+                <td style={td}>
+                  <input type="checkbox" checked={picked.has(r.oid)}
+                    onChange={() => toggle(r.oid)} />
+                </td>
+                <td style={{ ...td, paddingLeft: isComp ? 34 : 8 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    {isComp && <span style={{ color: C.sub }}>└</span>}
+                    {r.image
+                      ? <img src={r.image.startsWith('//') ? 'https:' + r.image : r.image} alt=""
+                          referrerPolicy="no-referrer" loading="lazy"
+                          onError={e => { e.currentTarget.style.visibility = 'hidden' }}
+                          style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4,
+                            border: `1px solid ${C.line}`, flex: '0 0 40px' }} />
+                      : <span style={{ width: 40, height: 40, background: '#f1f5f9', borderRadius: 4, flex: '0 0 40px' }} />}
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
+                        {k.name || (r.title_trans || r.title || '').slice(0, 40)}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>
+                        {tag && <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4,
+                          background: tag[1], color: tag[2], marginRight: 5 }}>{tag[0]}</span>}
+                        {ch && chan === 'all' && <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4,
+                          background: '#f1f5f9', marginRight: 5 }}>{ch}</span>}
+                        <b style={{ color: C.text }}>{r.out_id || '—'}</b>
+                        {isComp && k.sku && k.sku !== r.out_id && (
+                          <span style={{ color: C.warn }}>　→ {k.sku} とみなしました</span>
+                        )}
+                        {spec && <span>　{spec}</span>}
+                        <span>　注文{r.oid}</span>
+                      </div>
+                    </div>
+                  </div>
+                </td>
+                <td style={{ ...td, textAlign: 'right', fontSize: 13, fontWeight: 600 }}>{r.quantity}</td>
+                <td style={{ ...td, whiteSpace: 'nowrap', color: d !== null && d >= 70 ? C.bad : C.sub }}>
+                  {d === null ? '—' : `${d}日`}
+                  {d !== null && d >= 70 && <div style={{ fontSize: 10 }}>無料保管あと{Math.max(0, 90 - d)}日</div>}
+                </td>
+                <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                  {rec ? (
                     <>
-                      {tag && <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4,
-                        background: tag[1], color: tag[2], marginRight: 5 }}>{tag[0]}</span>}
-                      {r.out_id || '—'}
-                      {k.kind === 'component' && k.sku && k.sku !== r.out_id && (
-                        <div style={{ fontSize: 10, color: C.warn, fontWeight: 400 }}>→ {k.sku} とみなしました</div>
-                      )}
-                      {k.name && <div style={{ fontSize: 10, color: C.sub, fontWeight: 400 }}>{k.name.slice(0, 24)}</div>}
+                      {rec.air_pieces > 0 && <span style={{ color: '#7c3aed', fontWeight: 700, marginRight: 8 }}>✈ 航空便 {rec.air_pieces}個</span>}
+                      {rec.sea_pieces > 0 && <span style={{ color: C.key, fontWeight: 700, marginRight: 8 }}>🚢 船便 {rec.sea_pieces}個</span>}
+                      {rec.keep_pieces > 0 && <span style={{ color: C.sub, marginRight: 8 }}>倉庫に残す {rec.keep_pieces}個</span>}
+                      <div style={{ fontSize: 10, color: C.sub }}>
+                        日販 {rec.daily}　FBA在庫 {rec.fba_days === null ? '—' : `${rec.fba_days}日分`}
+                        {rec.rakuten_reserve > 0 && `　楽天ぶん取り置き ${rec.rakuten_reserve}個`}
+                      </div>
                     </>
-                  )
-                })()}
-              </td>
-              <td style={td}>{(r.title_trans || r.title || '').slice(0, 40)}</td>
-              <td style={{ ...td, color: C.sub }}>
-                {(r.sku_props || []).map(p => p.value).join(' / ')}
-              </td>
-              <td style={{ ...td, textAlign: 'right' }}>{r.quantity}</td>
-              <td style={{ ...td, color: C.sub, whiteSpace: 'nowrap' }}>
-                {String(r.created_at || '').slice(0, 10)}
-              </td>
-            </tr>
-          ))}
+                  ) : isComp ? <span style={{ fontSize: 11, color: C.sub }}>本体と一緒に送る</span>
+                    : <span style={{ fontSize: 11, color: '#cbd5e1' }}>—</span>}
+                </td>
+              </tr>
+            )
+          })}
           {!shown.length && (
-            <tr><td colSpan={6} style={{ ...td, color: C.sub, textAlign: 'center',
+            <tr><td colSpan={5} style={{ ...td, color: C.sub, textAlign: 'center',
               padding: 24 }}>
               {rows.length ? '絞り込みに合うものがありません'
                 : '配送依頼に入れられる注文（入庫済み）がありません'}
@@ -510,6 +578,75 @@ export default function CreateSendOrder() {
           )}
         </tbody>
       </table>
+
+      {/* ③ 確かめて送る。一覧が長くても見えるよう、画面の下に貼り付ける */}
+      {(() => {
+        const off = busy || checking || blocked || !picked.size || !way || !addrId
+        const why = !picked.size ? '注文を選んでください'
+          : !way ? '①で便を選んでください'
+          : !addrId ? '①で届け先を選んでください'
+          : checking ? '確かめています…'
+          : blocked ? '赤い問題を直してください' : ''
+        const probs = check.problems || []
+        return (
+          <div style={{ position: 'sticky', bottom: 0, zIndex: 5, marginTop: 12,
+            background: '#fff', borderTop: `2px solid ${C.line}`, padding: '10px 0',
+            boxShadow: '0 -4px 12px rgba(15,23,42,.06)' }}>
+            {probs.length > 0 && (
+              <div style={{ marginBottom: 8, padding: '8px 12px', borderRadius: 8, fontSize: 13,
+                lineHeight: 1.7, maxHeight: 200, overflowY: 'auto',
+                border: `2px solid ${errors.length ? C.bad : '#f59e0b'}`,
+                background: errors.length ? '#fef2f2' : '#fffbeb' }}>
+                {probs.map((p, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start',
+                    padding: '3px 0', borderTop: i ? '1px dashed #fecaca' : 'none' }}>
+                    <span style={{ fontWeight: 700, color: p.level === 'error' ? C.bad : C.warn,
+                      whiteSpace: 'nowrap' }}>{p.level === 'error' ? '⛔ 送れません' : '⚠ 確認'}</span>
+                    <span style={{ flex: 1 }}>{p.text}</span>
+                    {p.add_oids?.length > 0 && (
+                      <button onClick={() => addOids(p.add_oids)}
+                        style={{ whiteSpace: 'nowrap', fontSize: 12, padding: '3px 10px',
+                          border: `1px solid ${C.key}`, color: C.key, background: '#fff',
+                          borderRadius: 5, cursor: 'pointer' }}>
+                        ＋ 付属品の注文（{p.add_oids.length}件）を入れる
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {errors.length > 0 && (
+                  <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6,
+                    fontSize: 12, color: C.sub }}>
+                    <input type="checkbox" checked={override} onChange={e => setOverride(e.target.checked)} />
+                    承知のうえで送る（付属品は別の便で送る・セット組みしない など）
+                  </label>
+                )}
+              </div>
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 14, fontWeight: 700 }}>③ 確かめて送る</span>
+              <span style={{ fontSize: 12, color: C.sub }}>
+                {wayDef ? wayDef.label : '便：未選択'}　／　{addrDef ? addrDef.consignee : '届け先：未選択'}
+                　／　選択 <b style={{ color: C.text }}>{picked.size}</b>件
+              </span>
+              <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                {why && <span style={{ fontSize: 12, color: blocked ? C.bad : C.sub }}>{why}</span>}
+                <button onClick={submit} disabled={off}
+                  style={{ padding: '8px 18px', fontSize: 14,
+                    border: 'none', borderRadius: 6, fontWeight: 700,
+                    background: off ? '#cbd5e1' : C.key, color: '#fff',
+                    cursor: off ? 'default' : 'pointer' }}>
+                  {busy ? '出しています…' : '🚢 この内容で配送依頼を出す'}
+                </button>
+              </span>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* タオタロウの注文に ASIN・FNSKU・管理番号を後から入れる道具。配送依頼の手順とは別なので下に置く */}
+      <div style={{ marginTop: 24 }}>
+        <IdFiller />
+      </div>
     </div>
   )
 }

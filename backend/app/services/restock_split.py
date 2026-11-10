@@ -150,6 +150,26 @@ def send_check(db, oids: list, pages: int = 5) -> dict:
     """
     prods, comps, comps_of, as_component = set_tables(db)
     picked = {int(x) for x in (oids or [])}
+    # 楽天の商品も同じ倉庫に入る。Amazonのマスタに無いからといって
+    # 「マスタに無い」と出すと、楽天の商品が全部そう見えてしまう
+    rk = {}
+    for r in db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all():
+        for k in (r.sku, r.rakuten_sku_id):
+            k = (k or "").strip()
+            if k:
+                rk.setdefault(k, r)
+    # 付属品 → 使う本体（画面で本体のすぐ下に並べるため）
+    parent_of = {}
+    for b, lst in comps_of.items():
+        for c, _q in lst:
+            parent_of.setdefault(c, b)
+
+    def channel(sku):
+        p = prods.get(sku)
+        amz = bool(p and ((p.fnsku or "").strip() or (p.asin or "").strip()
+                          or p.is_component))
+        rak = sku in rk
+        return "both" if (amz and rak) else "amazon" if amz else "rakuten" if rak else ""
 
     kinds, arrived, coming = {}, [], {}
     for page in range(1, max(1, pages) + 1):
@@ -164,12 +184,20 @@ def send_check(db, oids: list, pages: int = 5) -> dict:
                 kind, key = "component", c
             elif sku in prods:
                 kind, key = ("body" if sku in comps_of else "other"), sku
+            elif sku in rk:
+                kind, key = "other", sku
             else:
                 kind, key = "unknown", sku
             if st == 4:
                 p = prods.get(key)
-                kinds[o.get("oid")] = {"kind": kind, "sku": key,
-                                       "name": (p.name if p else "") or ""}
+                name = (p.name if p else "") or ((rk[key].name if key in rk else "") or "")
+                kinds[o.get("oid")] = {
+                    "kind": kind, "sku": key, "name": name,
+                    "channel": channel(key) if kind != "component"
+                               else channel(parent_of.get(key, key)) or "amazon",
+                    # 付属品は本体のすぐ下に並べる
+                    "group": parent_of.get(key, key) if kind == "component" else key,
+                }
                 arrived.append((o, kind, key))
             elif st in _ON_THE_WAY and kind == "component":
                 coming.setdefault(key, []).append(
