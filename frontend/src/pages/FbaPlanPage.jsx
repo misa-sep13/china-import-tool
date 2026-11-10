@@ -748,6 +748,40 @@ export default function FbaPlanPage() {
             {split.note || '振り分ける在庫がありません'}
           </div>
         )}
+        {/* 本体と付属品は別の注文なので届く日がずれる。タオタロウの配送依頼は
+            付属品が無くても通ってしまうので、揃っていないものをここで止める */}
+        {split?.set_short?.length > 0 && (
+          <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8,
+            border: '2px solid #dc2626', background: '#fef2f2', fontSize: 13, lineHeight: 1.7 }}>
+            <div style={{ fontWeight: 700, color: '#b91c1c', marginBottom: 4 }}>
+              ⚠ セット組みの付属品が倉庫に揃っていません。この本体は配送依頼に入れないでください
+            </div>
+            {split.set_short.map((s, i) => s.error ? (
+              <div key={i} style={{ color: '#b91c1c' }}>{s.error}</div>
+            ) : (
+              <div key={i} style={{ borderTop: i ? '1px dashed #fecaca' : 'none', paddingTop: i ? 6 : 0, marginTop: i ? 6 : 0 }}>
+                <div>
+                  <b>{s.component}</b>（{s.name}{s.spec ? `／${s.spec}` : ''}）：
+                  倉庫に <b>{s.have}</b> 個 ／ 必要 <b>{s.need}</b> 個（<b style={{ color: '#b91c1c' }}>{s.short}個足りない</b>）
+                </div>
+                <div style={{ fontSize: 12, color: '#475569' }}>
+                  使う本体：{s.parents.map(p => `${p.sku} ${p.pieces}個×${p.per}`).join('、')}
+                </div>
+                <div style={{ fontSize: 12, color: '#475569' }}>
+                  {s.coming?.length
+                    ? <>まだ届いていない注文：{s.coming.map(c => `注文${c.oid} ${c.qty}個（${c.state}）`).join('、')}</>
+                    : <span style={{ color: '#b91c1c' }}>届く予定の注文がありません。発注漏れの可能性があります</span>}
+                </div>
+                {s.wrong_out_id?.length > 0 && (
+                  <div style={{ fontSize: 12, color: '#92400e' }}>
+                    管理番号が違う注文：{s.wrong_out_id.map(w => `注文${w.oid}（${w.out_id}）`).join('、')}
+                    → タオタロウで管理番号を「{s.component}」に直してください
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         {split && split.items?.length > 0 && (
           <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>

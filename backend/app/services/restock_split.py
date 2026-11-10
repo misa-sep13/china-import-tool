@@ -82,6 +82,122 @@ def warehouse_stock(db, pages: int = 5) -> dict:
     return rows
 
 
+def _norm(s: str) -> str:
+    """仕様の文字を比べられる形にする（空白・区切り・全角半角の差を消す）。"""
+    import unicodedata
+    t = unicodedata.normalize("NFKC", str(s or ""))
+    for ch in " 　、,，;；/／":
+        t = t.replace(ch, "")
+    return t.lower()
+
+
+# まだ倉庫に届いていない注文の状態（買付中〜ショップから出荷、オプション作業中、不良対応中）
+_ON_THE_WAY = {1, 2, 3, 7, 9}
+
+
+def set_check(db, pages: int = 5) -> list:
+    """倉庫にある本体に対して、セット組みの付属品が揃っているかを見る。
+
+    本体と付属品は別の注文で発注するので、届く日がずれる。
+    タオタロウの配送依頼は、付属品が入っていなくても通ってしまう
+    （a017_1 のフックが遅れて、本体だけ送りそうになった）。
+    配送依頼をかける前に、足りないものと、まだ届いていない注文を出す。
+
+    付属品の注文は管理番号で見分ける。管理番号が違う・空の古い注文もあるので、
+    付属品の仕入先ページと仕様の文字でも当てる。
+    """
+    import json
+    from app.services.accessories import _offer
+
+    prods = {p.sku: p for p in
+             db.query(Product).filter(Product.is_active == True).all()}
+    comps = {s: p for s, p in prods.items() if p.is_component}
+    # 本体 → [(付属品SKU, 本体1個あたりの数)]
+    comps_of = {}
+    for p in prods.values():
+        if p.is_component:
+            continue
+        try:
+            lst = json.loads(p.purchase_components or "[]") or []
+        except (ValueError, TypeError):
+            lst = []
+        for x in lst if isinstance(lst, list) else []:
+            c = str((x or {}).get("sku") or "").strip()
+            if c in comps:
+                comps_of.setdefault(p.sku, []).append((c, int(x.get("qty") or 1)))
+    if not comps_of:
+        return []
+
+    def as_component(o):
+        sku = str(o.get("out_id") or "").strip()
+        if sku in comps:
+            return sku
+        offer = _offer(o.get("url") or "")
+        vals = _norm("".join(str(v.get("value") or "") for v in (o.get("sku_props") or [])))
+        for c in comps.values():
+            spec = _norm(c.spec)
+            if offer and _offer(c.buy_url) == offer and spec and vals and (
+                    spec in vals or vals in spec):
+                return c.sku
+        return None
+
+    body_pcs, have, coming, wrongs = {}, {}, {}, {}
+    for page in range(1, max(1, pages) + 1):
+        d = taotaro.list_orders(page=page, limit=100)
+        for o in d.get("items") or []:
+            if o.get("sid"):
+                continue                       # もう便に入っている
+            st = o.get("state")
+            qty = int(o.get("quantity") or 0)
+            if qty <= 0:
+                continue
+            c = as_component(o)
+            if c:
+                oid_sku = str(o.get("out_id") or "").strip()
+                if oid_sku and oid_sku != c:
+                    wrongs.setdefault(c, []).append(
+                        {"oid": o.get("oid"), "out_id": oid_sku, "qty": qty})
+                if st == 4:
+                    have[c] = have.get(c, 0) + qty
+                elif st in _ON_THE_WAY:
+                    coming.setdefault(c, []).append({
+                        "oid": o.get("oid"), "qty": qty,
+                        "state": o.get("state_label") or "",
+                        "out_id": str(o.get("out_id") or "").strip(),
+                    })
+                continue
+            sku = str(o.get("out_id") or "").strip()
+            if st == 4 and sku in comps_of:
+                body_pcs[sku] = body_pcs.get(sku, 0) + qty
+        if not d.get("has_more_pages"):
+            break
+
+    # 付属品ごとに、倉庫にある本体ぶんの必要数を足し上げる
+    # （a019_bag のように4つの本体が同じ付属品を使うことがある）
+    need, parents = {}, {}
+    for b, pcs in body_pcs.items():
+        for c, q in comps_of.get(b, []):
+            need[c] = need.get(c, 0) + pcs * q
+            parents.setdefault(c, []).append({"sku": b, "pieces": pcs, "per": q})
+
+    out = []
+    for c, n in need.items():
+        h = have.get(c, 0)
+        if h >= n:
+            continue
+        cp = comps[c]
+        wrong = wrongs.get(c, [])
+        out.append({
+            "component": c, "name": cp.name or "", "spec": cp.spec or "",
+            "need": n, "have": h, "short": n - h,
+            "parents": parents.get(c, []),
+            "coming": coming.get(c, []),
+            # 管理番号が付属品のSKUと違う注文。取り込みや照合で迷子になるので知らせる
+            "wrong_out_id": wrong,
+        })
+    return out
+
+
 def rakuten_need(db, skus: set, lt_sea: int) -> dict:
     """楽天でも売っている商品の、取り置きが要る数。
 

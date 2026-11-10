@@ -2068,8 +2068,16 @@ def restock_split(db: Session = Depends(get_db)):
     # 先に楽天ぶんを取り置かないと、楽天の在庫が切れる
     rk = rs.rakuten_need(db, set(stock.keys()), lt_sea)
 
+    # 本体と付属品は別の注文なので届く日がずれる。配送依頼は付属品が
+    # 無くても通ってしまうので、揃っていないものを先に出す
+    try:
+        set_short = rs.set_check(db)
+    except Exception as e:
+        set_short = [{"error": f"セット組みの確認ができませんでした（{e}）"}]
+
     return {
         "items": rs.split(stock, items, lt_sea, lt_air, target, rk),
         "lt_sea": lt_sea, "lt_air": lt_air, "target_days": target,
         "rakuten_count": len(rk),
+        "set_short": set_short,
     }
