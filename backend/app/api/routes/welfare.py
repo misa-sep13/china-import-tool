@@ -212,10 +212,16 @@ def _match_product(row: dict, by_url_spec: dict, unique_url: dict,
     if memo and by_sku and memo in by_sku:
         return by_sku[memo], "out_id"
 
+    # 「（付属品）」と書いてある行は本体の箱に入るもので、
+    # 本体と同じFNSKU・ASINが入っていることがある。
+    # 本体に引き直すと、本体の原価・在庫に足されてしまう
+    is_comp = any("付属品" in m for m in
+                  re.findall(r"[（(]([^（）()]*)[）)]", memo))
+
     # 管理番号は手で入れるものなので、注記が足してあったり
-    # （a021_stand_tube_squeezer（付属品））、打ち間違えていたりする
-    # （a020_silver を a020_white）。かっこを落として引き直す
-    if memo and by_sku:
+    # 打ち間違えていたりする（a020_silver を a020_white）。
+    # かっこを落として引き直す
+    if memo and by_sku and not is_comp:
         bare = re.sub(r"[（(][^（）()]*[）)]", "", memo).strip()
         if bare and bare in by_sku:
             return by_sku[bare], "out_id"
@@ -223,7 +229,7 @@ def _match_product(row: dict, by_url_spec: dict, unique_url: dict,
     # それでも駄目なら FNSKU・ASIN で引く。この2つは商品に1対1で付くので、
     # URLや色から推測するより確実（色違いは同じURLを共有している）。
     # 同じ値が2商品に付いていたら引かない。取り違えるほうが困る
-    if by_sku:
+    if by_sku and not is_comp:
         for key, attr in (("fnsku", "fnsku"), ("asin", "asin")):
             v = str(row.get(key) or "").strip()
             if not v:

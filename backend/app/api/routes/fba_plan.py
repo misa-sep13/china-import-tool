@@ -1587,6 +1587,17 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
             "odd": odd}
 
 
+def _memo_is_component(memo: str) -> bool:
+    """管理番号のかっこの中に「付属品」と書いてあるか。
+
+    セット品は本体と付属品を別々に発注する。付属品の行には
+    本体と同じFNSKU・ASINが入っていることがあり（a021の挤し出し器）、
+    それを本体として数えると納品数が倍になる
+    """
+    return any("付属品" in m for m in
+               re.findall(r"[（(]([^（）()]*)[）)]", memo or ""))
+
+
 def _sku_from_row(r: dict, prods: dict, by_fnsku: dict, by_asin: dict,
                   by_url: dict, offer: str = None) -> tuple:
     """配送依頼の1行から自社SKUを引く。引けた理由も返す。
@@ -1599,9 +1610,14 @@ def _sku_from_row(r: dict, prods: dict, by_fnsku: dict, by_asin: dict,
     sku = (r.get("customer_memo") or "").strip()
     if sku in prods:
         return sku, "管理番号"
-    # 管理番号に注記が足してあることがある（a021_stand_tube_squeezer（付属品））。
-    # 中身は合っているので、かっこを落として引き直す。
-    # これを「管理番号が違う」と言うと、直しようのない注意が毎回出る
+    if _memo_is_component(sku):
+        # 「（付属品）」の行は本体の箱に入るもの。本体のFNSKU・
+        # ASINで引き直すと本体に足されて、納品数が倍になる
+        if offer is None:
+            offer = _normalize_1688_url(r.get("buy_url") or "")
+        return by_url.get(offer, ""), "仕入先URL"
+    # 管理番号に注記が足してあることがある。付属品以外の注記なら
+    # 中身は合っているので、かっこを落として引き直す
     bare = re.sub(r"[（(][^（）()]*[）)]", "", sku).strip()
     if bare and bare in prods:
         return bare, "管理番号"
