@@ -398,7 +398,7 @@ export default function ProductsPage() {
                   <th style={{ textAlign: 'right', width: 56 }}>手数料</th>
                   <th style={{ textAlign: 'right' }}>利益額</th>
                   <th style={{ textAlign: 'right' }}>利益率</th>
-                  <th>備考</th>
+                  <th>①発注時の指示</th>
                   <th></th>
                 </tr>
               </thead>
@@ -632,21 +632,28 @@ export default function ProductsPage() {
                   <label>仕様（Excel出力用・色/サイズをまとめた表記）</label>
                   <input {...f('spec')} placeholder="例: 燕麦色、S 建议75-95斤" />
                 </div>
+                {/* 「お客様専用メモ」はタオタロウの管理番号（G列）の名残。
+                    今は管理番号にSKUが自動で入るので使っていない。
+                    中身が入っている商品のときだけ出す */}
+                {(form.customer_memo || '').trim() && (
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <label>（旧）お客様専用メモ — 今は使っていません。①へ移してください</label>
+                    <textarea {...f('customer_memo')} rows={2} style={{ resize: 'vertical' }} />
+                  </div>
+                )}
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                  <label>お客様専用メモ</label>
-                  <textarea {...f('customer_memo')} rows={2} style={{ resize: 'vertical' }} />
-                </div>
-                <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                  <label>備考（買付時。タオタロウの発注Excelに出ます）</label>
-                  <textarea {...f('note')} rows={2} style={{ resize: 'vertical' }} />
+                  <label>① 発注時の指示（仕入先へ。タオタロウの発注に出ます）</label>
+                  <textarea {...f('note')} rows={2}
+                    placeholder="例: グレーでお願いします／ロゴなし発注OKもらってます。検品は上の検品オプションで選びます"
+                    style={{ resize: 'vertical' }} />
                 </div>
                 {/* 買付の指示（全量検品・写真撮影）は納品の段階では
                     終わっている。FBA指示書に残ると現場が迷うので、
                     納品のときの指示は別に持つ */}
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                  <label>納品時の備考（FBAへ送るとき。発注Excelには出ません）</label>
+                  <label>② 納品時の指示（FBA納品へ。配送依頼のFBA指示書に出ます）</label>
                   <textarea {...f('delivery_note')} rows={2}
-                    placeholder="例: 5825743とセット組、2枚ずつ入れる"
+                    placeholder="例: a021_squeezer とセット組み／2個1セットにまとめる／袋を折らない"
                     style={{ resize: 'vertical' }} />
                 </div>
                 {/* 本体と一緒に頼む付属品。楽天マスタと同じ作り。
@@ -716,9 +723,9 @@ function AccessoryEditor({ value, onChange, allProducts = [] }) {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             <div style={{ gridColumn: '1 / -1' }}>
-              <div style={lab}>SKU（商品マスタから選ぶ — 空欄でも可）</div>
+              <div style={lab}>SKU（商品マスタから選ぶ — 空なら保存のときに自動で付けます）</div>
               <select value={it.sku || ''} onChange={e => setField(i, 'sku', e.target.value)}>
-                <option value="">— 選ばない（発注先URLを直接入れる）—</option>
+                <option value="">— 新しい付属品（保存すると「a021_acc1」のように自動で付く）—</option>
                 {allProducts.map(p => (
                   <option key={p.id} value={p.sku}>
                     {p.sku}{p.name ? ` - ${p.name}` : ''}
@@ -750,18 +757,14 @@ function AccessoryEditor({ value, onChange, allProducts = [] }) {
                   onChange={e => setField(i, 'qty', Number(e.target.value))} />
               </div>
             </div>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <div style={lab}>お客様専用メモ（タオタロウG列）</div>
-              <input value={it.customer_memo || ''}
-                placeholder="例: 本体と同じ色でお願いします"
-                onChange={e => setField(i, 'customer_memo', e.target.value)} />
-            </div>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <div style={lab}>備考（タオタロウH列）</div>
-              <input value={it.notes || ''}
-                placeholder="例: チャック袋に入っているものをお願いします"
-                onChange={e => setField(i, 'notes', e.target.value)} />
-            </div>
+            {/* 付属品ごとのメモは、今の発注（API）では使われない。
+                中身があるものだけ出し、付属品の部材（SKU）側の①に移してもらう */}
+            {((it.customer_memo || '').trim() || (it.notes || '').trim()) && (
+              <div style={{ gridColumn: '1 / -1', fontSize: 11, color: '#92400e' }}>
+                （旧）メモ：{[it.customer_memo, it.notes].filter(Boolean).join(' / ')}
+                — 今の発注には使われません。必要なら付属品の部材（{it.sku || 'SKU'}）の「① 発注時の指示」に入れてください
+              </div>
+            )}
           </div>
         </div>
       ))}

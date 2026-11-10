@@ -73,6 +73,7 @@ class ListingIn(BaseModel):
     axis2_label: Optional[str] = None
     master_note: Optional[str] = None   # 商品マスタの備考に持っていく
     delivery_note: Optional[str] = None  # 納品時の備考に持っていく
+    taotaro_inspect: Optional[str] = None  # 検品オプション（JSON）。❷でマスタへ
     status: Optional[str] = None
     is_test: Optional[bool] = None
     children: Optional[list] = None      # [{id?, sku, title, axis1, axis2, price}]
@@ -143,6 +144,7 @@ def _out(row: AmazonListing, db: Session, src: dict = None) -> dict:
         "rival_image": row.rival_image,
         "master_note": row.master_note or "",
         "delivery_note": row.delivery_note or "",
+        "taotaro_inspect": row.taotaro_inspect or "",
         "status": row.status,
         "is_test": bool(row.is_test),
         "synced_at": row.synced_at.isoformat() if row.synced_at else None,
@@ -3408,13 +3410,13 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
             warnings.append(
                 f"付属品「{a.get('name') or '名前なし'}」に単価が入っていません。"
                 "原価に乗らないので、そのぶん利益を多く見積もります")
-        # SKUが無いと、タオタロウへの発注行に番号が入らず紐づけられない。
-        # 画面で決めてもらうので、空なら知らせる
+        # SKUが無いと、タオタロウへの管理番号が本体のSKUになり取り違える。
+        # 登録のときに自動で付ける（同じページ・同じ仕様の部材があればそれを使う）
         if not (a.get("sku") or "").strip():
             warnings.append(
-                f"付属品「{a.get('name') or '名前なし'}」にSKUがありません。"
-                "タオタロウへの発注で紐づけられないので、"
-                "シートの付属品欄にSKUを入れてください（例: a09_1_tape）")
+                f"付属品「{a.get('jp_name') or a.get('name') or '名前なし'}」のSKUは"
+                "登録のときに自動で付けます（例: a021_acc1）。"
+                "分かりやすい名前にしたいときは、シートの付属品欄に入れてください（例: a021_squeezer）")
         components.append({
             "sku": (a.get("sku") or "").strip(), "qty": a.get("qty") or 1,
             "buy_url": (a.get("url") or "").strip() or buy_url,
@@ -3516,7 +3518,24 @@ def to_master(listing_id: int, body: ToMasterIn, db: Session = Depends(get_db)):
         raise HTTPException(400, "登録するSKUがありません")
 
     comps = [c for c in (body.components or []) if (c or {}).get("buy_url")]
+    # SKUが空の付属品には自動で番号を付け、部材として作る。
+    # 空のままだとタオタロウへの管理番号が本体のSKUになり、
+    # 届いたときに本体と取り違えて納品数が倍になる
+    if comps:
+        from app.services import accessories
+        comps, _auto = accessories.ensure_skus(
+            db, comps, (body.rows[0].sku or "").strip())
     comp_json = json.dumps(comps, ensure_ascii=False) if comps else None
+    # タオタロウの検品オプション。シートで選んだものを全SKUに入れる
+    inspect_json = None
+    if (row.taotaro_inspect or "").strip():
+        from app.services import taotaro as _tt
+        try:
+            inspect_json = json.dumps(
+                _tt.inspect_options(json.loads(row.taotaro_inspect)),
+                ensure_ascii=False)
+        except (ValueError, TypeError):
+            inspect_json = None
 
     created, updated = [], []
     for r in body.rows:
@@ -3545,7 +3564,11 @@ def to_master(listing_id: int, body: ToMasterIn, db: Session = Depends(get_db)):
         put("cost_jpy", r.cost_jpy)
         put("fba_fee", r.fba_fee)
         put("note", (r.note or "").strip())
-        put("delivery_note", (r.delivery_note or "").strip())
+        # 画面から送られてこないことがあったので、出品パネルの値も見る
+        put("delivery_note", (r.delivery_note or row.delivery_note or "").strip())
+        if inspect_json:
+            # シートで選び直したら、それを正とする
+            p.taotaro_inspect = inspect_json
         if r.asin:
             put("asin", r.asin)
             put("amazon_url", f"https://www.amazon.co.jp/dp/{r.asin}")

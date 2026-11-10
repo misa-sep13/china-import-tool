@@ -68,6 +68,8 @@ class AmazonListing(Base):
     # 納品（FBAへ送るとき）の指示。買付の備考とは分けて持つ。
     # 全量検品・写真撮影は買付で終わるので、FBA指示書には出さない
     delivery_note = Column(Text, nullable=True)
+    # タオタロウの検品オプション（JSON）。❷で全SKUの商品マスタに入る
+    taotaro_inspect = Column(Text, nullable=True)
 
     # 動作確認のための出品。JANを本番ぶんとして数えず、
     # GS1への届け出にも載せない

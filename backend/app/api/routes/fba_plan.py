@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import io
+import re
 import uuid
 import time
 import threading
@@ -1206,6 +1207,27 @@ def _norm_spec(v: str) -> str:
     return s
 
 
+# 元の備考から「セット組み」の指示だけを拾う。タオタロウの備考は
+# 「①全开封检品③FBA㊹与5907785组合。请尽量不要折叠袋子」のように
+# 買付の指示と混ざっている。丸数字・句点で区切って、組み合わせの話だけ残す
+_SET_WORDS = re.compile(r"セット組|組み合わせ|組合せ|组合|组套|同梱|一緒に入れ|\d{6,}\s*と")
+_NOTE_SPLIT = re.compile(r"[。\n；;]|[①-⑳㉑-㉟㊱-㊿]")
+
+
+def _keep_set_notes(text: str) -> str:
+    parts = [x.strip(" 、，,") for x in _NOTE_SPLIT.split(text or "")]
+    return "。".join(x for x in parts if x and _SET_WORDS.search(x))
+
+
+def _join_notes(a: str, b: str) -> str:
+    """マスタの納品時の指示と、元の備考から拾ったセット組みをつなぐ。同じものは重ねない。"""
+    if not b or b in (a or ""):
+        return a or ""
+    if not a:
+        return b
+    return a.rstrip("。") + "。" + b
+
+
 class _NoteMatcher:
     """FBA指示書の行を、商品マスタの商品に当てる。
 
@@ -1307,10 +1329,16 @@ async def fill_taotaro_note(file: UploadFile = File(...),
         if not tid and not info:
             continue
         p = matcher.find(tid, info, _cell(r, c_fnsku), _cell(r, c_asin))
+        # 元の備考のうち、セット組みの指示だけは残す（買付の指示は消す）。
+        # 「5856609とセット組みです」は納品のときに要る指示なので、
+        # マスタの納品時の指示が空でも消してはいけない
+        keep = _keep_set_notes(_cell(r, c_note))
         if p is None:
             missed.append(f"{r}行目 {tid or info[:24]}")
+            # 当たらなかった行（付属品など）も、買付の中国語は残さない
+            ws.cell(r, c_note).value = keep or None
             continue
-        note = (p.delivery_note or "").strip()
+        note = _join_notes((p.delivery_note or "").strip(), keep)
         ws.cell(r, c_note).value = note or None
         (filled if note else cleared).append(p.sku)
     db.commit()          # 当たった行の商品IDを覚えておく
@@ -1828,10 +1856,16 @@ def _fill_notes_in_workbook(wb, db: Session) -> dict:
         if not tid and not info:
             continue
         p = matcher.find(tid, info, _cell(r, c_fnsku), _cell(r, c_asin))
+        # 元の備考のうち、セット組みの指示だけは残す（買付の指示は消す）。
+        # 「5856609とセット組みです」は納品のときに要る指示なので、
+        # マスタの納品時の指示が空でも消してはいけない
+        keep = _keep_set_notes(_cell(r, c_note))
         if p is None:
             missed.append(f"{r}行目 {tid or info[:24]}")
+            # 当たらなかった行（付属品など）も、買付の中国語は残さない
+            ws.cell(r, c_note).value = keep or None
             continue
-        note = (p.delivery_note or "").strip()
+        note = _join_notes((p.delivery_note or "").strip(), keep)
         ws.cell(r, c_note).value = note or None
         (filled if note else cleared).append(p.sku)
     db.commit()          # 当たった行の商品IDを覚えておく

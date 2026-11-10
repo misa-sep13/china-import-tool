@@ -174,6 +174,9 @@ def create_product(data: ProductCreate, request: Request, db: Session = Depends(
         if existing.is_active:
             raise HTTPException(status_code=400, detail="SKUが既に存在します")
         return _restore_deleted_product(existing, data, db)
+    if data.purchase_components:
+        data.purchase_components = _fill_accessory_skus(
+            db, data.purchase_components, data.sku)
     max_no = db.query(Product).count()
     p = Product(**data.model_dump(), no=max_no + 1)
     db.add(p)
@@ -195,6 +198,20 @@ def restore_product(data: ProductCreate, db: Session = Depends(get_db)):
     if existing.is_active:
         raise HTTPException(status_code=400, detail="SKUが既に存在します")
     return _restore_deleted_product(existing, data, db)
+
+def _fill_accessory_skus(db: Session, comps_json: str, base_sku: str) -> str:
+    """付属品（JSON文字列）のうちSKUが空のものに番号を付けて返す。"""
+    import json as _json
+    from app.services import accessories
+    try:
+        comps = _json.loads(comps_json or "[]")
+    except (ValueError, TypeError):
+        return comps_json
+    if not isinstance(comps, list) or not comps:
+        return comps_json
+    filled, _ = accessories.ensure_skus(db, comps, base_sku)
+    return _json.dumps(filled, ensure_ascii=False)
+
 
 def _sheet_rate(db: Session) -> tuple:
     """リサーチシートの決済レートと輸入関連費（%）。
@@ -264,6 +281,10 @@ def update_product(product_id: int, data: ProductUpdate, request: Request, db: S
     # 原価は1688代金に対して直線なので、差分だけ足し引きすれば正確に直る。
     # 原価を同時に手で入れたときは、そちらを優先する
     old_goods = (p.price or 0) * (p.set_size or 1)
+    # 付属品にSKUが無ければ自動で付け、部材として作る（管理番号の取り違え防止）
+    if updates.get("purchase_components"):
+        updates["purchase_components"] = _fill_accessory_skus(
+            db, updates["purchase_components"], updates.get("sku") or p.sku)
     for k, v in updates.items():
         setattr(p, k, v)
     if (("price" in updates or "set_size" in updates)
