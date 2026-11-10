@@ -598,7 +598,10 @@ export default function FbaPlanPage() {
         ? ['刷りました：'].concat(rep['刷った'].map(x => '　' + x))
           .concat(rep['刷れなかった'].length
             ? ['', '刷れなかったもの：'].concat(
-              rep['刷れなかった'].map(x => '　' + x)) : []).join('\n')
+              rep['刷れなかった'].map(x => '　' + x)) : [])
+          .concat((rep['管理番号が違う'] || []).length
+            ? ['', 'タオタロウの管理番号が違っています（直してください）：'].concat(
+              rep['管理番号が違う'].map(x => '　' + x)) : []).join('\n')
         : 'PDFを保存しました')
     } catch (e) {
       let detail = e.response?.data?.detail

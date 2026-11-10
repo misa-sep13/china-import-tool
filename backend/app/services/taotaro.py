@@ -169,6 +169,9 @@ def _summary(x: dict) -> dict:
             "supplier_spec": _prop(props, _COLOR_KEYS),
             "size": _prop(props, _SIZE_KEYS),
             "customer_memo": str(o.get("out_id") or "").strip(),
+            # 管理番号が合わないときの引き直し用
+            "asin": o.get("asin") or "",
+            "fnsku": o.get("fnsku") or "",
             "name_cn": (o.get("goods_name_trans") or o.get("goods_name") or "").strip(),
         })
     return {"order_count": len(orders), "lines": lines}
@@ -245,6 +248,11 @@ def _order_brief(o: dict) -> dict:
         # 紐づく配送依頼。まだ便に入っていなければ0かNone
         "sid": o.get("sid"),
         "out_id": o.get("out_id"),
+        # 2026-11-05版から、注文にASIN・FNSKUが入って返る。
+        # 管理番号の打ち間違い（a020_white と a020_silver）で
+        # 商品が引けないことがあるので、引き直しに使う
+        "asin": (o.get("asin") or "").strip(),
+        "fnsku": (o.get("fnsku") or "").strip(),
         "state": o.get("state"),
         "state_label": ORDER_STATES.get(o.get("state"), ""),
         "title": o.get("goods_name"),

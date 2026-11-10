@@ -1549,15 +1549,15 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
             if k:
                 component_offers.add(k)
 
+    by_fnsku, by_asin = _id_tables(prods)
+
     found, qty_of, unknown, odd = [], {}, [], []
     for r in d.get("rows") or []:
-        sku = (r.get("customer_memo") or "").strip()
         offer = _normalize_1688_url(r.get("buy_url") or "")
         # 付属品のURLなら、管理番号が本体になっていても数えない
         if offer and offer in component_offers:
             continue
-        if sku not in prods:
-            sku = by_url.get(offer, "")
+        sku, _how = _sku_from_row(r, prods, by_fnsku, by_asin, by_url, offer)
         p = prods.get(sku)
         if p is not None and not p.is_component:
             if sku not in found:
@@ -1584,6 +1584,42 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
             "skus": found, "qty": qty_of, "unknown": unknown,
             # 入数で割り切れなかったもの
             "odd": odd}
+
+
+def _sku_from_row(r: dict, prods: dict, by_fnsku: dict, by_asin: dict,
+                  by_url: dict, offer: str = None) -> tuple:
+    """配送依頼の1行から自社SKUを引く。引けた理由も返す。
+
+    管理番号（out_id）が本筋。ただし手で入れるものなので打ち間違いが
+    ある（a020_silver を a020_white と入れてあった）。そういう行は
+    FNSKU・ASINで引き直す。この2つは商品に1対1で付くので、
+    URLで引くより確実（色違いは同じURLを共有していて引けない）。
+    """
+    sku = (r.get("customer_memo") or "").strip()
+    if sku in prods:
+        return sku, "管理番号"
+    for key, table, how in (("fnsku", by_fnsku, "FNSKU"),
+                            ("asin", by_asin, "ASIN")):
+        v = (r.get(key) or "").strip()
+        if v and v in table:
+            return table[v], how
+    if offer is None:
+        offer = _normalize_1688_url(r.get("buy_url") or "")
+    return by_url.get(offer, ""), "仕入先URL"
+
+
+def _id_tables(prods: dict) -> tuple:
+    """FNSKU・ASINからSKUを引く表。同じ値が2つ以上の商品に付いて
+    いたら引かない（取り違えるほうが困る）。"""
+    fn, asin = {}, {}
+    for pp in prods.values():
+        for v, t in (((pp.fnsku or "").strip(), fn),
+                     ((pp.asin or "").strip(), asin)):
+            if not v:
+                continue
+            t[v] = None if v in t else pp.sku
+    return ({k: v for k, v in fn.items() if v},
+            {k: v for k, v in asin.items() if v})
 
 
 # ---------- 商品ラベル（FNSKU） ----------
@@ -1614,13 +1650,19 @@ def send_order_labels(sid: int, skip: int = 0, db: Session = Depends(get_db)):
         if key and oh.sku:
             by_url.setdefault(key, oh.sku)
 
-    items, missing = [], []
+    by_fnsku, by_asin = _id_tables(prods)
+
+    items, missing, renamed = [], [], []
     for r in d.get("rows") or []:
-        sku = (r.get("customer_memo") or "").strip()
-        if sku not in prods:
-            sku = by_url.get(_normalize_1688_url(r.get("buy_url") or ""), "")
+        sku, how = _sku_from_row(r, prods, by_fnsku, by_asin, by_url)
         p = prods.get(sku)
         qty = int(r.get("units") or 0)
+        # 管理番号では引けず、FNSKUやASINで引けた＝管理番号が違っている。
+        # 直さないと毎回ここで引っかかるので、どれを直すか出しておく
+        memo = (r.get("customer_memo") or "").strip()
+        if p is not None and how in ("FNSKU", "ASIN") and memo and memo != sku:
+            renamed.append(f"注文{r.get('order_no') or ''}："
+                           f"{memo} → {sku}（{how}で引き直し）")
         if p is None:
             missing.append(f"{r.get('name_cn') or ''}（SKU不明）")
             continue
@@ -1658,7 +1700,8 @@ def send_order_labels(sid: int, skip: int = 0, db: Session = Depends(get_db)):
     import urllib.parse
     report = urllib.parse.quote(json.dumps(
         {"刷った": [f"{x['sku']} × {x['qty']}" for x in items],
-         "刷れなかった": missing}, ensure_ascii=False))
+         "刷れなかった": missing,
+         "管理番号が違う": renamed}, ensure_ascii=False))
     return StreamingResponse(
         io.BytesIO(pdf), media_type="application/pdf",
         headers={"Content-Disposition":
