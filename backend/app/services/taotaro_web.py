@@ -127,3 +127,84 @@ def check(cookie: str) -> Optional[str]:
         return None
     except WebError as e:
         return str(e)
+
+
+# ---------- 注文のASIN・FNSKU・管理番号 ----------
+#
+# 公式API（api.yiwutaro.com）には注文を作る口とキャンセルする口しかなく、
+# 作ったあとでASIN・FNSKU・管理番号を書き換えられない。
+# 会員画面には1件ずつの入力欄があり、その裏が updateOrder なので、
+# FBA指示書と同じやり方（貼ってもらったクッキー）で叩く。
+#
+#   updateOrder(oid: Int!, remark: String, ASIN: String,
+#               FNSKU: String, outId: String): String
+#
+# 初回発注の時点では、その商品をまだAmazonに出品していないので
+# FNSKUはこの世に存在しない。だから発注時には入れようがなく、
+# 出品してFNSKUが出てから後追いで入れるしかない。
+
+_LIST_ORDER = (
+    "query($c:OrderListInput){ listOrder(conditions:$c){ has_more_pages "
+    "data{ oid outId ASIN FNSKU FBA state goodsName goodsUrl skuId "
+    "goodsRemark createdAt } } }"
+)
+
+_UPDATE_ORDER = (
+    "mutation($oid:Int!,$remark:String,$ASIN:String,$FNSKU:String,"
+    "$outId:String){ updateOrder(oid:$oid,remark:$remark,ASIN:$ASIN,"
+    "FNSKU:$FNSKU,outId:$outId) }"
+)
+
+
+def list_orders(cookie: str, states: Optional[list] = None,
+                pages: int = 4, limit: int = 100) -> list:
+    """注文を新しいほうから読む。ASIN・FNSKU・管理番号の今の中身つき。
+
+    公式APIの一覧にはこの3つが入っていないので、こちらで読む。
+    states を渡すと、そのステータスのものだけ返す。
+    備考（goodsRemark）も読む。書き込みのときに元のまま送り返すため。
+    """
+    out: list = []
+    for page in range(1, max(1, int(pages)) + 1):
+        d = _graphql(cookie, _LIST_ORDER,
+                     {"c": {"limit": int(limit), "page": page}})
+        got = (d.get("listOrder") or {})
+        rows = got.get("data") or []
+        for o in rows:
+            if states and o.get("state") not in states:
+                continue
+            out.append({
+                "oid": o.get("oid"),
+                "out_id": (o.get("outId") or "").strip(),
+                "asin": (o.get("ASIN") or "").strip(),
+                "fnsku": (o.get("FNSKU") or "").strip(),
+                "remark": o.get("goodsRemark") or "",
+                "fba": str(o.get("FBA") or "").strip(),
+                "state": o.get("state"),
+                "title": o.get("goodsName") or "",
+                "url": o.get("goodsUrl") or "",
+                "sku_id": str(o.get("skuId") or ""),
+                "created_at": o.get("createdAt"),
+            })
+        if not got.get("has_more_pages"):
+            break
+    return out
+
+
+def update_order(cookie: str, oid: int, asin: str, fnsku: str,
+                 out_id: str, remark: str) -> None:
+    """注文1件のASIN・FNSKU・管理番号・備考を入れ替える。
+
+    4つとも必ず送る。送らなかった項目を向こうが「変更しない」と
+    扱うのか「空にする」と扱うのかが分からないため。
+    変えないものは今入っている値をそのまま送り返す。
+    備考には「楽天用」「船便用」のような大事な指示が入っているので、
+    うっかり消すと現場が止まる。
+    """
+    _graphql(cookie, _UPDATE_ORDER, {
+        "oid": int(oid),
+        "ASIN": (asin or "").strip(),
+        "FNSKU": (fnsku or "").strip(),
+        "outId": (out_id or "").strip(),
+        "remark": remark or "",
+    })

@@ -26,6 +26,131 @@ const td = { padding: '6px 8px', borderTop: `1px solid ${C.line}`, fontSize: 12,
 const th = { padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap',
   fontSize: 12, color: C.sub, background: '#f8fafc' }
 
+/**
+ * タオタロウの注文に、ASIN・FNSKU・管理番号を後から入れる。
+ *
+ * 初回発注のときは、その商品をまだAmazonに出品していないので
+ * FNSKUもASINも存在しない。発注画面では入れようがなく、空のまま
+ * 注文が作られる。出品してFNSKUが出たあとに、ここで入れる。
+ *
+ * 空いている欄だけ埋める。すでに入っているものは触らない。
+ * 出荷してしまったあとの注文は、もうラベルを貼り終わっているので対象外。
+ */
+function IdFiller() {
+  const [plan, setPlan] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [msg, setMsg] = useState('')
+
+  const preview = async () => {
+    setBusy(true); setErr(''); setMsg(''); setPlan(null)
+    try {
+      const r = await api.get('/taotaro/ids/preview')
+      setPlan(r.data)
+      if (!(r.data.fill || []).length) {
+        setMsg(`入れるものはありませんでした（${r.data.scanned}件みました）`)
+      }
+    } catch (e) {
+      setErr(e?.response?.data?.detail || '下見できませんでした')
+    } finally { setBusy(false) }
+  }
+
+  const apply = async () => {
+    const n = (plan?.fill || []).length
+    if (!n) return
+    if (!confirm(`タオタロウの注文 ${n}件 に、ASIN・FNSKU・管理番号を入れます。
+空いている欄だけ埋めます（入っているものは触りません）。
+
+よろしいですか？`)) return
+    setBusy(true); setErr(''); setMsg('')
+    try {
+      const r = await api.post('/taotaro/ids/apply', {})
+      setMsg(`${r.data.done_count}件に入れました`
+        + (r.data.failed_count ? `／${r.data.failed_count}件は入りませんでした` : ''))
+      await preview()
+    } catch (e) {
+      setErr(e?.response?.data?.detail || '入れられませんでした')
+    } finally { setBusy(false) }
+  }
+
+  const fill = plan?.fill || []
+  const skip = plan?.skip || []
+  const label = { asin: 'ASIN', fnsku: 'FNSKU', out_id: '管理番号' }
+
+  return (
+    <div style={{ marginBottom: 12, padding: 10, borderRadius: 6,
+      background: '#f8fafc', border: `1px solid ${C.line}` }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center',
+        flexWrap: 'wrap' }}>
+        <b style={{ fontSize: 13 }}>ASIN・FNSKU・管理番号をタオタロウに入れる</b>
+        <button onClick={preview} disabled={busy}
+          style={{ fontSize: 12, padding: '4px 10px' }}>
+          {busy ? '…' : '下見する'}
+        </button>
+        {!!fill.length && (
+          <button onClick={apply} disabled={busy}
+            style={{ fontSize: 12, padding: '4px 10px', fontWeight: 700,
+              background: C.key, color: '#fff', border: 'none',
+              borderRadius: 4, cursor: 'pointer' }}>
+            {fill.length}件に入れる
+          </button>
+        )}
+        <span style={{ fontSize: 11, color: C.sub }}>
+          空いている欄だけ埋めます。出荷済みの注文は触りません
+        </span>
+      </div>
+
+      {err && <div style={{ color: C.bad, fontSize: 12, marginTop: 6 }}>{err}</div>}
+      {msg && <div style={{ color: C.good, fontSize: 12, marginTop: 6 }}>{msg}</div>}
+
+      {!!fill.length && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 8 }}>
+          <thead>
+            <tr>
+              <th style={th}>注文No.</th>
+              <th style={th}>SKU</th>
+              <th style={th}>入れるもの</th>
+              <th style={th}>どう突き合わせたか</th>
+              <th style={th}>足りないもの</th>
+            </tr>
+          </thead>
+          <tbody>
+            {fill.map(x => (
+              <tr key={x.oid}>
+                <td style={td}>{x.oid}</td>
+                <td style={td}>{x.sku}</td>
+                <td style={td}>
+                  {Object.entries(x.put).map(([k, v]) => (
+                    <div key={k}>{label[k] || k}: <b>{v}</b></div>
+                  ))}
+                </td>
+                <td style={{ ...td, color: C.sub }}>{x.matched_by}</td>
+                <td style={{ ...td, color: C.warn }}>{x.note}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {!!skip.length && (
+        <details style={{ marginTop: 8 }}>
+          <summary style={{ fontSize: 12, color: C.sub, cursor: 'pointer' }}>
+            入れられなかったもの {skip.length}件
+          </summary>
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 4 }}>
+            {skip.map(x => (
+              <div key={x.oid}>
+                {x.oid}　{x.title?.slice(0, 28)}　— {x.reason}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  )
+}
+
+
 export default function CreateSendOrder() {
   const [opts, setOpts] = useState(null)
   const [rows, setRows] = useState([])
@@ -113,6 +238,8 @@ export default function CreateSendOrder() {
 
   return (
     <div>
+      <IdFiller />
+
       {result && (
         <div style={{ marginBottom: 12, padding: 10, borderRadius: 6,
           background: '#f0fdf4', border: `1px solid ${C.good}`, fontSize: 13 }}>

@@ -756,3 +756,168 @@ def send_order_raw(sid: int):
     仕様書と実物が食い違うことがあるので、加工前を見られるようにしておく。
     """
     return _call(taotaro.get_send_order, sid, True)
+
+
+# ---------- 注文のASIN・FNSKU・管理番号を後から入れる ----------
+#
+# 初回発注の時点では、その商品をまだAmazonに出品していないので
+# FNSKUもASINも存在しない。だから発注時には入れようがなく、
+# 空のまま注文が作られる。公式APIに注文を更新する口が無いので、
+# 会員画面の updateOrder（FBA指示書と同じクッキーで叩く）で後から入れる。
+#
+# 消す方向には絶対に動かさない。すでに何か入っている欄は触らない。
+
+# 入れてよいステータス。出荷してしまったあと（配送依頼提出済み以降）は
+# もう商品ラベルを貼り終わっているので対象にしない
+_FILLABLE_STATES = [1, 2, 3, 4, 7]
+
+
+def _offer_no(url: str) -> str:
+    """1688・タオバオのURLから商品番号だけ取る。
+
+    同じ商品でもURLに付くパラメータが毎回違うので、番号で見る
+    （fba_plan の取り込みと同じ基準）。
+    """
+    import re
+    m = re.search(r"(\d{10,})", url or "")
+    return m.group(1) if m else ""
+
+
+def _id_plan(db: Session, cookie: str, states: list) -> dict:
+    """何をどう埋めるかを組み立てる。ここでは書き込まない。"""
+    from app.models.rakuten_product import RakutenProduct
+    from app.services import taotaro_web
+
+    orders = taotaro_web.list_orders(cookie, states=states)
+
+    # 自社の商品。Amazonの商品はASIN・FNSKUを持ち、楽天の商品は持たない。
+    # 楽天用の発注にFNSKUを入れてはいけないので、持っているものだけ入れる
+    by_sku, by_skuid, by_offer = {}, {}, {}
+    for p in db.query(Product).all():
+        rec = {"sku": p.sku, "asin": (p.asin or "").strip(),
+               "fnsku": (p.fnsku or "").strip()}
+        if p.sku:
+            by_sku[p.sku] = rec
+        if (p.taotaro_sku_id or "").strip():
+            by_skuid.setdefault(str(p.taotaro_sku_id).strip(), []).append(rec)
+        no = _offer_no(p.buy_url or "")
+        if no:
+            by_offer.setdefault(no, []).append(rec)
+    for r in db.query(RakutenProduct).all():
+        rec = {"sku": r.sku, "asin": "", "fnsku": ""}
+        if r.sku and r.sku not in by_sku:
+            by_sku[r.sku] = rec
+        if (getattr(r, "taotaro_sku_id", "") or "").strip():
+            by_skuid.setdefault(str(r.taotaro_sku_id).strip(), []).append(rec)
+        no = _offer_no(r.buy_url or "")
+        if no:
+            by_offer.setdefault(no, []).append(rec)
+
+    fill, skip = [], []
+    for o in orders:
+        # どの商品かを決める。管理番号が入っていればそれが確実。
+        # 入っていなければ、覚えてあるタオタロウのSKU番号 → 商品番号の順に探す
+        rec, how = None, ""
+        if o["out_id"] and o["out_id"] in by_sku:
+            rec, how = by_sku[o["out_id"]], "管理番号"
+        if rec is None and o["sku_id"]:
+            cand = by_skuid.get(o["sku_id"]) or []
+            if len(cand) == 1:
+                rec, how = cand[0], "タオタロウのSKU番号"
+        if rec is None:
+            cand = by_offer.get(_offer_no(o["url"])) or []
+            if len(cand) == 1:
+                rec, how = cand[0], "仕入先URL"
+            elif len(cand) > 1:
+                skip.append({**o, "reason":
+                             f"同じURLの商品が{len(cand)}件あり、どれか決められません"})
+                continue
+        if rec is None:
+            skip.append({**o, "reason": "うちの商品と紐づきません"})
+            continue
+
+        # 空いている欄だけ埋める
+        put = {}
+        if not o["out_id"] and rec["sku"]:
+            put["out_id"] = rec["sku"]
+        if not o["asin"] and rec["asin"]:
+            put["asin"] = rec["asin"]
+        if not o["fnsku"] and rec["fnsku"]:
+            put["fnsku"] = rec["fnsku"]
+        if not put:
+            continue
+
+        want = []
+        if not o["fnsku"] and not rec["fnsku"] and rec["asin"]:
+            want.append("FNSKUがマスタに入っていません")
+        if not o["asin"] and not rec["asin"]:
+            want.append("まだAmazonに出品していません")
+        fill.append({**o, "sku": rec["sku"], "matched_by": how,
+                     "put": put, "note": "／".join(want)})
+
+    return {"fill": fill, "skip": skip, "scanned": len(orders)}
+
+
+@router.get("/ids/preview")
+def ids_preview(db: Session = Depends(get_db)):
+    """タオタロウの注文に入れるASIN・FNSKU・管理番号の下見。書き込まない。"""
+    from app.models.settings import OrderSettings
+    from app.services import taotaro_web
+
+    row = db.query(OrderSettings).first()
+    cookie = (getattr(row, "taotaro_web_cookie", "") or "").strip()
+    if not cookie:
+        raise HTTPException(
+            400, "タオタロウのログイン情報が入っていません（Amazon設定で貼ってください）")
+    try:
+        return _id_plan(db, cookie, _FILLABLE_STATES)
+    except taotaro_web.WebError as e:
+        raise HTTPException(400, str(e))
+
+
+class IdsApplyIn(BaseModel):
+    # 下見で出た注文番号のうち、入れてよいもの。省くと下見の全部
+    oids: Optional[List[int]] = None
+
+
+@router.post("/ids/apply")
+def ids_apply(body: IdsApplyIn = IdsApplyIn(), db: Session = Depends(get_db)):
+    """下見の内容をタオタロウへ書き込む。空いている欄だけ埋める。"""
+    from app.models.settings import OrderSettings
+    from app.services import taotaro_web
+
+    row = db.query(OrderSettings).first()
+    cookie = (getattr(row, "taotaro_web_cookie", "") or "").strip()
+    if not cookie:
+        raise HTTPException(
+            400, "タオタロウのログイン情報が入っていません（Amazon設定で貼ってください）")
+
+    try:
+        plan = _id_plan(db, cookie, _FILLABLE_STATES)
+    except taotaro_web.WebError as e:
+        raise HTTPException(400, str(e))
+
+    only = set(body.oids or [])
+    done, failed = [], []
+    for item in plan["fill"]:
+        if only and item["oid"] not in only:
+            continue
+        # 変えない欄は今の値をそのまま送り返す。送らなかった項目を
+        # 向こうが空にしてしまうと、備考の「楽天用」などが消える
+        try:
+            taotaro_web.update_order(
+                cookie, item["oid"],
+                asin=item["put"].get("asin", item["asin"]),
+                fnsku=item["put"].get("fnsku", item["fnsku"]),
+                out_id=item["put"].get("out_id", item["out_id"]),
+                remark=item["remark"])
+        except taotaro_web.WebError as e:
+            # 途中で止めない。1件の失敗で残り全部を落とすほうが困る
+            failed.append({"oid": item["oid"], "sku": item.get("sku"),
+                           "error": str(e)})
+            continue
+        done.append({"oid": item["oid"], "sku": item.get("sku"),
+                     "put": item["put"]})
+
+    return {"done": done, "failed": failed,
+            "done_count": len(done), "failed_count": len(failed)}
