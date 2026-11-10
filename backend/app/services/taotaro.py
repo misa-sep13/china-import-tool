@@ -340,6 +340,10 @@ def send_order_rows(sid: int) -> dict:
             "remaining_units": None,
             # ここが肝。発注時に自社SKUを入れておけば照合が要らなくなる
             "customer_memo": str(o.get("out_id") or "").strip(),
+            # 管理番号が合わないときの引き直し用。手で入れるものなので
+            # 打ち間違いがある（a020_silver を a020_white と入れてあった）
+            "asin": o.get("asin") or "",
+            "fnsku": o.get("fnsku") or "",
             # Excelには無い情報。原価計算や進捗表示に使える
             "arrived_at": o.get("arrived_at"),
             "state": o.get("state"),
