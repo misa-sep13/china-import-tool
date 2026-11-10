@@ -212,6 +212,27 @@ def _match_product(row: dict, by_url_spec: dict, unique_url: dict,
     if memo and by_sku and memo in by_sku:
         return by_sku[memo], "out_id"
 
+    # 管理番号は手で入れるものなので、注記が足してあったり
+    # （a021_stand_tube_squeezer（付属品））、打ち間違えていたりする
+    # （a020_silver を a020_white）。かっこを落として引き直す
+    if memo and by_sku:
+        bare = re.sub(r"[（(][^（）()]*[）)]", "", memo).strip()
+        if bare and bare in by_sku:
+            return by_sku[bare], "out_id"
+
+    # それでも駄目なら FNSKU・ASIN で引く。この2つは商品に1対1で付くので、
+    # URLや色から推測するより確実（色違いは同じURLを共有している）。
+    # 同じ値が2商品に付いていたら引かない。取り違えるほうが困る
+    if by_sku:
+        for key, attr in (("fnsku", "fnsku"), ("asin", "asin")):
+            v = str(row.get(key) or "").strip()
+            if not v:
+                continue
+            hits = {p.sku: p for p in by_sku.values()
+                    if str(getattr(p, attr, "") or "").strip() == v}
+            if len(hits) == 1:
+                return next(iter(hits.values())), key
+
     url = _norm_url(row.get("buy_url"))
     spec = (row.get("supplier_spec") or "").strip()
     size = (row.get("size") or "").strip()

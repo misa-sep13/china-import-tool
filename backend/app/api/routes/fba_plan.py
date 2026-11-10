@@ -10,6 +10,7 @@ import uuid
 import time
 import threading
 import logging
+import re
 import shutil
 import tempfile
 
@@ -1598,6 +1599,12 @@ def _sku_from_row(r: dict, prods: dict, by_fnsku: dict, by_asin: dict,
     sku = (r.get("customer_memo") or "").strip()
     if sku in prods:
         return sku, "管理番号"
+    # 管理番号に注記が足してあることがある（a021_stand_tube_squeezer（付属品））。
+    # 中身は合っているので、かっこを落として引き直す。
+    # これを「管理番号が違う」と言うと、直しようのない注意が毎回出る
+    bare = re.sub(r"[（(][^（）()]*[）)]", "", sku).strip()
+    if bare and bare in prods:
+        return bare, "管理番号"
     for key, table, how in (("fnsku", by_fnsku, "FNSKU"),
                             ("asin", by_asin, "ASIN")):
         v = (r.get(key) or "").strip()
