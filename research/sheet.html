@@ -7781,10 +7781,10 @@ if(FIREBASE_CONFIG.databaseURL){
       // しかなかった。移ってから書こうとすると忘れるので、ここで書いて
       // 「商品マスタに登録」で一緒に持っていく
       const nRow = el('div', 'an-row reg-line');
-      nRow.appendChild(el('span', 'reg-lead', '備考'));
+      nRow.appendChild(el('span', 'reg-lead', '① 発注時の指示（仕入先へ）'));
       const note = document.createElement('textarea');
       note.className = 'reg-note';
-      note.placeholder = '買付のときの注意';
+      note.placeholder = '発注するときに仕入先へ伝えること（例: グレーでお願いします／ロゴなし発注OKもらってます）。検品は下のチェックで選びます';
       note.value = data.master_note || '';
       note.addEventListener('input', () => put('master_note', note.value));
       nRow.appendChild(note);
@@ -7793,19 +7793,64 @@ if(FIREBASE_CONFIG.databaseURL){
       // 買付の指示は納品の段階では終わっている。FBA指示書に残ると
       // 現場が迷うので、納品のときの指示は別に持つ
       const dnRow = el('div', 'an-row reg-line');
-      dnRow.appendChild(el('span', 'reg-lead', '納品時の備考'));
+      dnRow.appendChild(el('span', 'reg-lead', '② 納品時の指示（FBA納品へ）'));
       const dnote = document.createElement('textarea');
       dnote.className = 'reg-note';
-      dnote.placeholder = 'FBA再梱包用指示';
+      dnote.placeholder = 'FBAへ送るときの作業（例: a021_squeezer とセット組み／2個1セットにまとめる／袋を折らない）';
       dnote.value = data.delivery_note || '';
       dnote.addEventListener('input', () => put('delivery_note', dnote.value));
       dnRow.appendChild(dnote);
       panel.appendChild(dnRow);
 
+      // タオタロウの検品オプション。発注の備考に「全量開封検品」と
+      // 書いていたのを、チェックで選べるようにする。❷で全SKUのマスタに入り、
+      // 発注画面では最初からチェックが入った状態になる
+      {
+        const INSPECT = [
+          ['var10', '全量開封検品'], ['var1', 'オプション検品＆アパレル検品'],
+          ['var2', 'OPP袋取り替え'], ['var3', '織ネーム取り外し'],
+          ['var4', '織ネーム縫い付け'], ['var5', '下げ札取り付け'],
+          ['var6', '下げ札取り外し'],
+        ];
+        let cur = {};
+        try{ cur = JSON.parse(data.taotaro_inspect || '{}') || {}; }catch(e){ cur = {}; }
+        const save = () => put('taotaro_inspect', JSON.stringify(cur));
+        const iRow = el('div', 'an-row reg-line');
+        iRow.appendChild(el('span', 'reg-lead', 'タオタロウの検品オプション'));
+        const box = el('div', '');
+        box.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;font-size:12px;';
+        INSPECT.forEach(([k, label]) => {
+          const lb = document.createElement('label');
+          lb.style.cssText = 'display:inline-flex;align-items:center;gap:4px;cursor:pointer;';
+          const cb = document.createElement('input');
+          cb.type = 'checkbox'; cb.checked = !!cur[k]; cb.dataset.writes = '1';
+          cb.addEventListener('change', () => {
+            if(cb.checked) cur[k] = '1'; else delete cur[k];
+            save();
+          });
+          lb.appendChild(cb);
+          lb.appendChild(document.createTextNode(label));
+          box.appendChild(lb);
+        });
+        const other = document.createElement('input');
+        other.type = 'text'; other.placeholder = 'その他のご要望（例: 動画撮影）';
+        other.value = cur.var7 || ''; other.dataset.writes = '1';
+        other.style.cssText = 'width:240px;padding:3px 7px;font-size:12px;border:1px solid var(--line-2);border-radius:5px;';
+        other.addEventListener('input', () => {
+          const v = other.value.trim();
+          if(v) cur.var7 = v; else delete cur.var7;
+          save();
+        });
+        box.appendChild(other);
+        iRow.appendChild(box);
+        panel.appendChild(iRow);
+      }
+
       panel.appendChild(el('div', 'an-note',
-        '❷「📦 商品マスタに登録」で、全SKUの備考に入ります。'
-        + '買付の備考はタオタロウの発注書に、'
-        + '納品時の備考はFBA指示書に出ます'));
+        '❷「📦 商品マスタに登録」で、全SKUの商品マスタに入ります。'
+        + '①と検品オプションはタオタロウの発注に、'
+        + '②はFBA指示書（配送依頼のとき）に出ます。'
+        + 'タオタロウの「FBA」オプションはツールからは送れないので、配送依頼のときに付けてください'));
 
       // --- 商品画像 ---
       panel.appendChild(el('div', 'reg-sec', '商品画像'));
@@ -9017,6 +9062,8 @@ if(FIREBASE_CONFIG.databaseURL){
             selling_price: r.selling_price, cost_jpy: r.cost_jpy,
             fba_fee: r.fba_fee, asin: r.asin || '',
             note: r.note || '',
+            // 送っていなかったので、納品時の指示がマスタに入っていなかった
+            delivery_note: r.delivery_note || '',
           })),
           components: p.components || [],
         };
@@ -10347,7 +10394,8 @@ if(FIREBASE_CONFIG.databaseURL){
         };
         // SKUが無いと、タオタロウへの発注行に番号が入らず紐づけられない。
         // 本体のSKUに用途を足した形にする（例: a09_1_tape）
-        mk('SKU（例: a09_1_tape）', a.sku, v => { research.accessories[i].sku = v.trim(); });
+        // 空なら❷で自動で付ける（例: a021_acc1）。分かりやすくしたいときだけ入れる
+        mk('SKU（空なら自動。例: a021_squeezer）', a.sku, v => { research.accessories[i].sku = v.trim(); });
         // 商品名は日本語。中国語名は仕入先の言い方で、人が読む名前ではない。
         // これが無いと、商品マスタに中国語のまま並ぶ
         mk('商品名（例: 替えシール）', a.jp_name, v => { research.accessories[i].jp_name = v; });
