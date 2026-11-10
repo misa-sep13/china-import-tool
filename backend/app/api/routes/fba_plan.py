@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import io
-import re
+import json
 import uuid
 import time
 import threading
@@ -1258,6 +1258,58 @@ class _NoteMatcher:
         self.by_fnsku = self._unique(prods, "fnsku")
         self.by_asin = self._unique(prods, "asin")
 
+        # セット組みの指示を、付属品の登録から作るための表。
+        # 以前は初回発注でASINが無く、タオタロウの注文番号で
+        # 「5856609とセット組み」と備考に書いていた。注文番号は毎回変わるので、
+        # 2回目以降は誤った指示になる。SKU（管理番号）なら初回から変わらない
+        comps = (db.query(Product)
+                 .filter(Product.is_active == True)
+                 .filter(Product.is_component == True)
+                 .all())
+        self.comp_by_spec = {}
+        for c in comps:
+            k = _norm_spec(c.spec)
+            if k:
+                self.comp_by_spec.setdefault(k, c)
+        spec_of = {c.sku: (c.spec or "").strip() for c in comps}
+        self.comps_of, self.parents_of = {}, {}
+        for p in prods:
+            try:
+                lst = json.loads(p.purchase_components or "[]") or []
+            except (ValueError, TypeError):
+                lst = []
+            for x in lst if isinstance(lst, list) else []:
+                csku = str((x or {}).get("sku") or "").strip()
+                if not csku:
+                    continue
+                spec = (x.get("supplier_spec") or spec_of.get(csku) or "").strip()
+                self.comps_of.setdefault(p.sku, []).append(
+                    (csku, int(x.get("qty") or 1), spec))
+                self.parents_of.setdefault(csku, [])
+                if p.sku not in self.parents_of[csku]:
+                    self.parents_of[csku].append(p.sku)
+
+    def find_component(self, info: str):
+        """付属品の行を、仕様の文字で部材に当てる（本体の候補とは別に探す）。"""
+        return self.comp_by_spec.get(_norm_spec(info))
+
+    def set_note(self, p) -> str:
+        """本体の行に出す、セット組みの指示。付属品が無ければ空。"""
+        items = self.comps_of.get(p.sku) or []
+        if not items:
+            return ""
+        body = "、".join(f"{s}（{spec}）×{q}" if spec else f"{s}×{q}"
+                         for s, q, spec in items)
+        return f"セット組み：本体1つに {body} を付けて、1つにまとめる"
+
+    def comp_note(self, c) -> str:
+        """付属品の行に出す指示。どの本体と組むかを書く。"""
+        parents = self.parents_of.get(c.sku) or []
+        if not parents:
+            return ""
+        return (f"{'・'.join(parents)} の付属品（{c.sku}）。"
+                "本体と1つにまとめる。単体では納品しない")
+
     @staticmethod
     def _unique(prods, field):
         seen = {}
@@ -1334,11 +1386,20 @@ async def fill_taotaro_note(file: UploadFile = File(...),
         # マスタの納品時の指示が空でも消してはいけない
         keep = _keep_set_notes(_cell(r, c_note))
         if p is None:
-            missed.append(f"{r}行目 {tid or info[:24]}")
-            # 当たらなかった行（付属品など）も、買付の中国語は残さない
-            ws.cell(r, c_note).value = keep or None
+            # 付属品の行。登録から「どの本体と組むか」を書く。
+            # 登録が無いときだけ、元の備考のセット組みの記述を残す
+            c = matcher.find_component(info)
+            auto = matcher.comp_note(c) if c is not None else ""
+            if c is None:
+                missed.append(f"{r}行目 {tid or info[:24]}")
+            # 当たらなかった行も、買付の中国語は残さない
+            ws.cell(r, c_note).value = (auto or keep) or None
             continue
-        note = _join_notes((p.delivery_note or "").strip(), keep)
+        auto = matcher.set_note(p)
+        dn = (p.delivery_note or "").strip()
+        # 付属品の登録から作れたら、注文番号で書いた古い記述（keep）は使わない。
+        # 注文番号は毎回変わるので、2回目以降は誤った指示になる
+        note = _join_notes(dn, auto) if auto else _join_notes(dn, keep)
         ws.cell(r, c_note).value = note or None
         (filled if note else cleared).append(p.sku)
     db.commit()          # 当たった行の商品IDを覚えておく
@@ -1861,11 +1922,20 @@ def _fill_notes_in_workbook(wb, db: Session) -> dict:
         # マスタの納品時の指示が空でも消してはいけない
         keep = _keep_set_notes(_cell(r, c_note))
         if p is None:
-            missed.append(f"{r}行目 {tid or info[:24]}")
-            # 当たらなかった行（付属品など）も、買付の中国語は残さない
-            ws.cell(r, c_note).value = keep or None
+            # 付属品の行。登録から「どの本体と組むか」を書く。
+            # 登録が無いときだけ、元の備考のセット組みの記述を残す
+            c = matcher.find_component(info)
+            auto = matcher.comp_note(c) if c is not None else ""
+            if c is None:
+                missed.append(f"{r}行目 {tid or info[:24]}")
+            # 当たらなかった行も、買付の中国語は残さない
+            ws.cell(r, c_note).value = (auto or keep) or None
             continue
-        note = _join_notes((p.delivery_note or "").strip(), keep)
+        auto = matcher.set_note(p)
+        dn = (p.delivery_note or "").strip()
+        # 付属品の登録から作れたら、注文番号で書いた古い記述（keep）は使わない。
+        # 注文番号は毎回変わるので、2回目以降は誤った指示になる
+        note = _join_notes(dn, auto) if auto else _join_notes(dn, keep)
         ws.cell(r, c_note).value = note or None
         (filled if note else cleared).append(p.sku)
     db.commit()          # 当たった行の商品IDを覚えておく
