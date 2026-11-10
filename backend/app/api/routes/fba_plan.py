@@ -1294,13 +1294,25 @@ class _NoteMatcher:
         return self.comp_by_spec.get(_norm_spec(info))
 
     def set_note(self, p) -> str:
-        """本体の行に出す、セット組みの指示。付属品が無ければ空。"""
-        items = self.comps_of.get(p.sku) or []
-        if not items:
-            return ""
-        body = "、".join(f"{s}（{spec}）×{q}" if spec else f"{s}×{q}"
-                         for s, q, spec in items)
-        return f"セット組み：本体1つに {body} を付けて、1つにまとめる"
+        """本体の行に出す、セット組みの指示。商品マスタの登録から作る。
+
+        外注さんが「② 納品時の指示」に書き忘れても漏れないよう、
+        付属品の登録と入数（set_size）から必ず出す。
+          ・付属品があれば「本体1つに ○○×N を付けて1つにまとめる」
+          ・入数が2以上なら「N個で1セットにまとめる」
+        納品時の指示に同じことが書いてあれば重ねない。
+        """
+        dn = (getattr(p, "delivery_note", "") or "")
+        out = []
+        n = int(getattr(p, "set_size", 1) or 1)
+        if n > 1 and "セット" not in dn:
+            out.append(f"{n}個で1セットにまとめる（FBAラベルは1セットに1枚）")
+        items = [x for x in (self.comps_of.get(p.sku) or []) if x[0] not in dn]
+        if items:
+            body = "、".join(f"{s}（{spec}）×{q}" if spec else f"{s}×{q}"
+                             for s, q, spec in items)
+            out.append(f"セット組み：本体1つに {body} を付けて、1つにまとめる")
+        return "。".join(out)
 
     def comp_note(self, c) -> str:
         """付属品の行に出す指示。どの本体と組むかを書く。"""
