@@ -153,11 +153,15 @@ def create_send_order(data: SendOrderIn):
         import hashlib
         seed = ",".join(sorted(str(x) for x in data.oids)) + "|" + data.way
         key = "cit-" + hashlib.sha1(seed.encode()).hexdigest()[:24]
-    return _call(taotaro.create_send_order,
-                 oids=data.oids, way=data.way, address_id=data.address_id,
-                 made_in_china_flag=data.made_in_china_flag,
-                 importer_address_id=data.importer_address_id,
-                 extra_note=data.note, client_order_id=key)
+    res = _call(taotaro.create_send_order,
+                oids=data.oids, way=data.way, address_id=data.address_id,
+                made_in_china_flag=data.made_in_china_flag,
+                importer_address_id=data.importer_address_id,
+                extra_note=data.note, client_order_id=key)
+    # 便に入った注文を、確かめるときに倉庫の在庫として数えないよう覚えを捨てる
+    from app.services import restock_split as rs
+    rs._orders_cache.clear()
+    return res
 
 
 @router.get("/send-orders/{sid:int}")

@@ -24,6 +24,23 @@ FREE_DAYS = 90
 WARN_DAYS = 20
 
 
+# タオタロウの注文一覧は1ページ取るのに数秒かかる。配送依頼の画面では
+# チェックを付け外すたびに確かめるので、毎回取り直すと1回50秒かかっていた。
+# 少しの間だけ覚えておく（倉庫に着いた・便に入ったはすぐには変わらない）
+_ORDERS_TTL = 90
+_orders_cache = {}
+
+
+def _list_orders_cached(page: int) -> dict:
+    import time
+    hit = _orders_cache.get(page)
+    if hit and time.time() - hit[0] < _ORDERS_TTL:
+        return hit[1]
+    d = taotaro.list_orders(page=page, limit=100)
+    _orders_cache[page] = (time.time(), d)
+    return d
+
+
 def _days_since(iso: Optional[str]) -> Optional[int]:
     if not iso:
         return None
@@ -47,7 +64,7 @@ def warehouse_stock(db, pages: int = 5) -> dict:
 
     rows = {}
     for page in range(1, max(1, pages) + 1):
-        d = taotaro.list_orders(page=page, limit=100)
+        d = _list_orders_cached(page)
         for o in d.get("items") or []:
             if o.get("state") != 4:
                 continue
@@ -185,7 +202,7 @@ def send_check(db, oids: list, pages: int = 5) -> dict:
 
     kinds, arrived, coming = {}, [], {}
     for page in range(1, max(1, pages) + 1):
-        d = taotaro.list_orders(page=page, limit=100)
+        d = _list_orders_cached(page)
         for o in d.get("items") or []:
             if o.get("sid"):
                 continue                       # もう便に入っている
@@ -304,7 +321,7 @@ def set_check(db, pages: int = 5) -> list:
 
     body_pcs, have, coming, wrongs = {}, {}, {}, {}
     for page in range(1, max(1, pages) + 1):
-        d = taotaro.list_orders(page=page, limit=100)
+        d = _list_orders_cached(page)
         for o in d.get("items") or []:
             if o.get("sid"):
                 continue                       # もう便に入っている
