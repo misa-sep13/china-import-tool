@@ -121,10 +121,22 @@ def set_tables(db):
             if c in comps:
                 comps_of.setdefault(p.sku, []).append((c, int(x.get("qty") or 1)))
 
+    # 楽天のマスタにある管理番号も「正しい番号」として扱う
+    rk_skus = set()
+    for r in db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all():
+        for k in (r.sku, r.rakuten_sku_id):
+            if (k or "").strip():
+                rk_skus.add(k.strip())
+
     def as_component(o):
         sku = str(o.get("out_id") or "").strip()
         if sku in comps:
             return sku
+        # 管理番号がどちらかのマスタの本体を指していれば、それを信じる。
+        # 同じフックを別の商品（y141）でも使っていることがあり、
+        # 仕様だけで当てると他の商品の注文を付属品に数えてしまう
+        if sku and "（" not in sku and (sku in prods or sku in rk_skus):
+            return None
         offer = _offer(o.get("url") or "")
         vals = _norm("".join(str(v.get("value") or "") for v in (o.get("sku_props") or [])))
         for c in comps.values():
@@ -180,17 +192,29 @@ def send_check(db, oids: list, pages: int = 5) -> dict:
             st = o.get("state")
             c = as_component(o)
             sku = str(o.get("out_id") or "").strip()
+            # 「y127（付属品）」はツールが付けた付属品の名前（本体SKU＋（付属品））
+            base = sku.split("（")[0].strip() if "（付属品）" in sku else ""
             if c:
                 kind, key = "component", c
+            elif base and (base in prods or base in rk):
+                kind, key = "component", sku
+                parent_of.setdefault(sku, base)
             elif sku in prods:
                 kind, key = ("body" if sku in comps_of else "other"), sku
             elif sku in rk:
                 kind, key = "other", sku
+            elif not sku:
+                # 管理番号の無い注文（梱包資材・管理番号を入れ忘れた注文）。
+                # Amazon・楽天のどちらの画面にも混ぜず、「すべて」の最後にまとめる
+                kind, key = "noid", ""
             else:
                 kind, key = "unknown", sku
             if st == 4:
                 p = prods.get(key)
                 name = (p.name if p else "") or ((rk[key].name if key in rk else "") or "")
+                if kind == "component" and not name and parent_of.get(key):
+                    pp = prods.get(parent_of[key]) or rk.get(parent_of[key])
+                    name = f"付属品（{(pp.name if pp else '') or parent_of[key]}）"
                 kinds[o.get("oid")] = {
                     "kind": kind, "sku": key, "name": name,
                     "channel": channel(key) if kind != "component"
@@ -216,8 +240,12 @@ def send_check(db, oids: list, pages: int = 5) -> dict:
             have[s] = have.get(s, 0) + q
         elif k == "unknown":
             problems.append({"level": "warn", "add_oids": [], "text":
-                f"注文{o.get('oid')}：管理番号「{s or '空'}」が商品マスタにありません。"
-                "何の商品か確かめてください（取り込みで照合できません）"})
+                f"注文{o.get('oid')}：管理番号「{s}」が商品マスタにありません。"
+                "打ち間違いでないか確かめてください（取り込みで照合できません）"})
+        elif k == "noid":
+            problems.append({"level": "warn", "add_oids": [], "text":
+                f"注文{o.get('oid')}：管理番号が空です。梱包資材などならそのままで構いません。"
+                "商品なら、下の「ASIN・FNSKU・管理番号をタオタロウに入れる」で入れてください"})
 
     need, users = {}, {}
     for b, pcs in body_pcs.items():

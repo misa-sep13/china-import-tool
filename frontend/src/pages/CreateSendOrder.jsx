@@ -303,19 +303,26 @@ export default function CreateSendOrder() {
   const [chan, setChan] = useState('amazon')
   const kindOf = (r) => (check.kinds || {})[r.oid] || {}
   const chanOf = (r) => {
-    const c = kindOf(r).channel
-    if (c === 'both') return 'both'
-    return c || (kindOf(r).kind === 'unknown' ? 'unknown' : '')
+    const k = kindOf(r)
+    if (k.kind === 'noid') return 'noid'
+    if (k.channel === 'both') return 'both'
+    return k.channel || (k.kind === 'unknown' ? 'unknown' : '')
   }
-  const inChan = (r, c) => c === 'all' || chanOf(r) === c || chanOf(r) === 'both'
-    || chanOf(r) === 'unknown'          // 何か分からないものはどのタブにも出す
+  // 確認が返ってくるまでは振り分けられないので、全部出しておく
+  const kindsReady = Object.keys(check.kinds || {}).length > 0
+  const inChan = (r, c) => !kindsReady || c === 'all' || chanOf(r) === c || chanOf(r) === 'both'
+    || chanOf(r) === 'unknown'          // 打ち間違いらしいものはどのタブにも出す
+  // 管理番号の無い注文（梱包資材など）は「すべて」の最後にだけ出す
   const countOf = (c) => rows.filter(r => inChan(r, c)).length
+  const noidCount = rows.filter(r => chanOf(r) === 'noid').length
   const shown = rows
     .filter(r => inChan(r, chan))
     .filter(r => !q.trim()
       || matchesQuery(q, [r.out_id, r.title, r.title_trans, kindOf(r).name, kindOf(r).sku]))
     // 本体のすぐ下に付属品が来るよう、本体のSKUでまとめて並べる
     .sort((a, b) => {
+      const na = chanOf(a) === 'noid' ? 1 : 0, nb = chanOf(b) === 'noid' ? 1 : 0
+      if (na !== nb) return na - nb
       const ga = kindOf(a).group || a.out_id || '', gb = kindOf(b).group || b.out_id || ''
       if (ga !== gb) return ga < gb ? -1 : 1
       const ca = kindOf(a).kind === 'component' ? 1 : 0
@@ -472,6 +479,8 @@ export default function CreateSendOrder() {
             borderRadius: 6, fontSize: 13, width: 200 }} />
         <span style={{ fontSize: 12, color: C.sub }}>
           選択中 <b style={{ color: C.text }}>{picked.size}</b>件
+          {!kindsReady && rows.length > 0 && '　（Amazon・楽天を見分けています…）'}
+          {kindsReady && noidCount > 0 && chan !== 'all' && `　管理番号の無い注文 ${noidCount}件は「すべて」の最後にあります`}
         </span>
         {chan === 'amazon' && (
           <button onClick={pickByPlan} disabled={!way || !!splitMsg}
@@ -506,7 +515,8 @@ export default function CreateSendOrder() {
             const k = kindOf(r)
             const tag = { body: ['本体', '#dbeafe', '#1d4ed8'],
               component: ['付属品', '#fef3c7', '#92400e'],
-              unknown: ['マスタに無い', '#fee2e2', '#b91c1c'] }[k.kind]
+              unknown: ['マスタに無い', '#fee2e2', '#b91c1c'],
+              noid: ['管理番号なし', '#f1f5f9', '#64748b'] }[k.kind]
             const ch = { amazon: 'Amazon', rakuten: '楽天', both: 'Amazon・楽天' }[k.channel]
             const isComp = k.kind === 'component'
             const rec = !isComp ? splitBySku[k.sku || r.out_id] : null
