@@ -3379,6 +3379,22 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
     acc = src.get("accessories") or []
 
     warnings = []
+    # 「単品」と「単品＋おまけ」のように、片方の中国語名がもう片方の名前に
+    # 何かを足しただけのとき（a021：不锈钢收纳筒 と 不锈钢收纳筒、不锈钢挤牙膏器）、
+    # 足した分は別に頼む品物。1つの欄に2つ書くと発注で選択肢を決められないうえ、
+    # 付属品の登録が無いので、FBA指示書のセット組みも出ない
+    if not acc:
+        cn = {k: v for k, v in (src.get("cn_names") or {}).items() if v}
+        for k1, v1 in cn.items():
+            for k2, v2 in cn.items():
+                if k1 != k2 and len(v2) > len(v1) and v2.startswith(v1):
+                    extra = v2[len(v1):].lstrip("、，,+＋ ")
+                    if extra:
+                        warnings.append(
+                            f"「{k2}」の中国語名が「{k1}」＋「{extra}」になっています。"
+                            f"「{extra}」は別に頼む品物なので、「{k2}」の中国語名は"
+                            f"「{v1}」だけにして、「{extra}」は付属品に入れてください"
+                            "（入れないと発注で選択肢が決まらず、FBA指示書のセット組みも出ません）")
     # 仕入URLの決め方。候補が1本だけなら迷いようがないので入れておく。
     # 2本以上あるときは選んでもらう。黙って先頭を採ると、選んでいない
     # 仕入先に発注してしまう
