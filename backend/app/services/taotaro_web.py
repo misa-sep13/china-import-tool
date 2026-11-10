@@ -8,11 +8,24 @@ GraphQL に exportFBA があるので、そちらを叩く。
       mutation exportFBA($sid: Int){ exportFile: exportFBA(sid: $sid){ url msg } }
     → 署名付きのxlsxのURL（期限つき）
 
-ログインは画像認証があるので自動ではできない。ブラウザでログインした
-ときのクッキーを設定に貼ってもらい、それを送る。1か月ほどで切れるので、
-切れたら貼り直す。公式の口ではないので、タオタロウ側の作りが変われば
-黙って動かなくなる。そのときは今までどおり手で落とせるようにしてある。
+ログインには画像の確認コード（CAPTCHA）があるので、自動ではできない。
+ブラウザでログインしたときのクッキーを設定に貼ってもらい、それを送る。
+
+ただし貼ったものをそのまま使い続けると、すぐ「切れた（419）」になる。
+419 は Laravel の CSRF ずれで、ログアウトとは限らない。貼った
+XSRF-TOKEN は貼った瞬間のもので、向こうが作り直すと合わなくなる。
+
+そこで毎回、使う直前に /sanctum/csrf-cookie を叩いて今の
+XSRF-TOKEN と laravel_session をもらい直し、それで送る。もらい直した
+クッキーは設定に書き戻す（Session クラス）。こうすると、ログインの
+証（ログイン画面の「1ヶ月間ログインしたままにする」で入る
+remember_web_… のクッキー）が生きているかぎり、向こうが勝手に
+入り直してくれるので、貼り直す回数がぐっと減る。
+
+公式の口ではないので、タオタロウ側の作りが変われば黙って動かなく
+なる。そのときは今までどおり手で落とせるようにしてある。
 """
+import contextlib
 import json
 import urllib.error
 import urllib.parse
@@ -20,6 +33,11 @@ import urllib.request
 from typing import Optional
 
 SITE = "https://www.yiwutaro.com"
+# これを叩くと、今の XSRF-TOKEN と laravel_session をくれる。
+# ログインが切れていても remember のクッキーがあれば入り直してくれる
+CSRF_PATH = "/sanctum/csrf-cookie"
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 _EXPORT_FBA = (
     "mutation exportFBA($sid: Int){ exportFile: exportFBA(sid: $sid)"
     "{ url msg } }"
@@ -30,57 +48,141 @@ class WebError(Exception):
     pass
 
 
-def _xsrf(cookie: str) -> str:
+LOGIN_EXPIRED = (
+    "タオタロウのログインが切れています。"
+    "Chromeで www.yiwutaro.com にログインし直して"
+    "（ログイン画面の「1ヶ月間ログインしたままにする」に"
+    "チェックを入れてください）、Amazon設定にCookieを貼り直して"
+    "ください")
+
+
+def _parse(cookie: str) -> dict:
+    """貼られたクッキーの文字列を名前→値の辞書にする。"""
+    out = {}
     for part in (cookie or "").split(";"):
-        k, _, v = part.strip().partition("=")
-        if k == "XSRF-TOKEN":
-            return urllib.parse.unquote(v)
-    return ""
+        k, sep, v = part.strip().partition("=")
+        if k and sep:
+            out[k] = v
+    return out
 
 
-def _graphql(cookie: str, query: str, variables: dict) -> dict:
-    token = _xsrf(cookie)
-    if not token:
-        # 長いので途中までしか貼られていないことが多い。
-        # 何が入っていて何が足りないかまで言う
-        got = [p.strip().split("=")[0] for p in (cookie or "").split(";")
-               if p.strip()]
-        raise WebError(
-            "クッキーに XSRF-TOKEN が入っていません"
-            f"（入っていたのは {len(got)}個："
-            f"{'、'.join(got[:4])}…）。"
-            "途中で切れている可能性があります。"
-            "Cookie の中身を最後まで丸ごと貼り直してください")
+def _join(jar: dict) -> str:
+    return "; ".join(f"{k}={v}" for k, v in jar.items())
 
+
+def _merge_set_cookie(jar: dict, res) -> None:
+    """返ってきた Set-Cookie を手元のクッキーに重ねる。"""
+    for line in res.headers.get_all("Set-Cookie") or []:
+        head, _, rest = line.partition(";")
+        k, sep, v = head.strip().partition("=")
+        if not k or not sep:
+            continue
+        low = rest.lower()
+        # 消しにきている行（Max-Age=0 や過去の expires）は消す
+        if "max-age=0" in low.replace(" ", ""):
+            jar.pop(k, None)
+            continue
+        jar[k] = v
+
+
+class Session:
+    """貼られたクッキーを持ち回しつつ、向こうの最新に追従する。
+
+    使う側は、終わったあと cookie が変わっていたら設定に書き戻す。
+    書き戻さないと、せっかくもらい直した laravel_session を毎回
+    捨てることになり、また「切れた」と言われる。
+    """
+
+    def __init__(self, cookie: str):
+        self.jar = _parse(cookie)
+        self._refreshed = False
+
+    @property
+    def cookie(self) -> str:
+        return _join(self.jar)
+
+    @property
+    def xsrf(self) -> str:
+        return urllib.parse.unquote(self.jar.get("XSRF-TOKEN", ""))
+
+    def refresh(self) -> None:
+        """今の XSRF-TOKEN と laravel_session をもらい直す。"""
+        req = urllib.request.Request(
+            SITE + CSRF_PATH,
+            headers={"Cookie": self.cookie, "User-Agent": UA,
+                     "Referer": f"{SITE}/member"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as res:
+                _merge_set_cookie(self.jar, res)
+                res.read()
+        except urllib.error.HTTPError as e:
+            _merge_set_cookie(self.jar, e)
+        except Exception as e:
+            raise WebError(f"タオタロウに繋がりませんでした（{e}）")
+        self._refreshed = True
+
+
+def _as_session(cookie) -> Session:
+    return cookie if isinstance(cookie, Session) else Session(cookie)
+
+
+def _post(sess: Session, query: str, variables: dict):
     req = urllib.request.Request(
         f"{SITE}/graphql/member",
         data=json.dumps({"query": query, "variables": variables}).encode(),
         method="POST",
         headers={
             "Content-Type": "application/json",
-            "X-XSRF-TOKEN": token,
-            "Cookie": cookie,
+            "X-XSRF-TOKEN": sess.xsrf,
+            "Cookie": sess.cookie,
             # 画面からの通信に見えるようにしておく
             "Origin": SITE,
             "Referer": f"{SITE}/member/send-order",
-            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                           "AppleWebKit/537.36 (KHTML, like Gecko) "
-                           "Chrome/131.0.0.0 Safari/537.36"),
+            "User-Agent": UA,
         },
     )
+    with urllib.request.urlopen(req, timeout=30) as res:
+        _merge_set_cookie(sess.jar, res)
+        return res.read()
+
+
+def _graphql(cookie, query: str, variables: dict) -> dict:
+    sess = _as_session(cookie)
+    if not sess.jar:
+        raise WebError(
+            "タオタロウのクッキーが入っていません。"
+            "Amazon設定に貼ってください")
+
+    # 貼られた XSRF-TOKEN は貼った瞬間のもの。先にもらい直す
+    if not sess._refreshed:
+        sess.refresh()
+    if not sess.xsrf:
+        got = list(sess.jar)
+        raise WebError(
+            "XSRF-TOKEN をもらえませんでした"
+            f"（手元にあるのは {len(got)}個："
+            f"{'、'.join(got[:4])}…）。"
+            "クッキーが途中で切れているか、ログインが切れています。"
+            "Cookie の中身を最後まで丸ごと貼り直してください")
+
     try:
-        with urllib.request.urlopen(req, timeout=30) as res:
-            body = res.read()
+        body = _post(sess, query, variables)
     except urllib.error.HTTPError as e:
         if e.code == 419:
-            # Laravel の CSRF 切れ。クッキーが古いか、
-            # 貼り付けが途中で切れて XSRF-TOKEN が合っていない
-            raise WebError(
-                "タオタロウのログインが切れています（419）。"
-                "Chromeで www.yiwutaro.com を開いてログインし直し、"
-                "Cookie を貼り直してください。"
-                "（クッキーは1か月ほどで切れます）")
-        raise WebError(f"タオタロウが HTTP {e.code} を返しました")
+            # CSRF ずれ。もらい直してもう一度だけ試す
+            _merge_set_cookie(sess.jar, e)
+            e.read()
+            sess.refresh()
+            try:
+                body = _post(sess, query, variables)
+            except urllib.error.HTTPError as e2:
+                if e2.code == 419:
+                    raise WebError(LOGIN_EXPIRED + "（419）")
+                raise WebError(f"タオタロウが HTTP {e2.code} を返しました")
+            except Exception as e2:
+                raise WebError(f"タオタロウに繋がりませんでした（{e2}）")
+        else:
+            raise WebError(f"タオタロウが HTTP {e.code} を返しました")
     except Exception as e:
         raise WebError(f"タオタロウに繋がりませんでした（{e}）")
 
@@ -92,11 +194,41 @@ def _graphql(cookie: str, query: str, variables: dict) -> dict:
 
     errs = data.get("errors") or []
     if errs:
-        raise WebError(str(errs[0].get("message") or "エラーが返りました"))
+        msg = str(errs[0].get("message") or "エラーが返りました")
+        # ログインしていないと中国語で「鉴权失败（認証に失敗）」が返る。
+        # そのまま出しても何をすればいいか分からないので言い換える
+        if any(w in msg for w in ("鉴权失败", "未登录", "Unauthenticated")):
+            raise WebError(LOGIN_EXPIRED)
+        raise WebError(msg)
     return data.get("data") or {}
 
 
-def fba_instruction_url(cookie: str, sid: int) -> str:
+@contextlib.contextmanager
+def logged_in(db, row):
+    """設定のクッキーで開き、終わったら新しいクッキーを書き戻す。
+
+    書き戻しを忘れると、もらい直した laravel_session を毎回捨てる
+    ことになるので、使う側は必ずこれを通す。
+    """
+    cookie = (getattr(row, "taotaro_web_cookie", "") or "").strip()
+    if not cookie:
+        raise WebError(
+            "タオタロウのログイン情報が入っていません"
+            "（Amazon設定で貼ってください）")
+    sess = Session(cookie)
+    try:
+        yield sess
+    finally:
+        new = sess.cookie
+        if new and new != cookie:
+            try:
+                row.taotaro_web_cookie = new
+                db.commit()
+            except Exception:
+                db.rollback()
+
+
+def fba_instruction_url(cookie, sid: int) -> str:
     """配送依頼1件のFBA指示書のURLを返す（署名つき・期限あり）。"""
     d = _graphql(cookie, _EXPORT_FBA, {"sid": int(sid)})
     f = d.get("exportFile") or {}
@@ -106,7 +238,7 @@ def fba_instruction_url(cookie: str, sid: int) -> str:
     return url
 
 
-def fba_instruction_file(cookie: str, sid: int) -> tuple:
+def fba_instruction_file(cookie, sid: int) -> tuple:
     """FBA指示書を落として (ファイル名, 中身) で返す。"""
     url = fba_instruction_url(cookie, sid)
     try:
@@ -120,10 +252,16 @@ def fba_instruction_file(cookie: str, sid: int) -> tuple:
     return name, raw
 
 
-def check(cookie: str) -> Optional[str]:
+def who(cookie) -> dict:
+    """ログインできているなら、誰で入っているかを返す。"""
+    d = _graphql(cookie, "query{ getUserInfo { uid uname } }", {})
+    return d.get("getUserInfo") or {}
+
+
+def check(cookie) -> Optional[str]:
     """クッキーが生きているかだけ見る。生きていればNone。"""
     try:
-        _graphql(cookie, "query{ userInfo { id } }", {})
+        _graphql(cookie, "query{ getUserInfo { uid } }", {})
         return None
     except WebError as e:
         return str(e)
@@ -156,7 +294,7 @@ _UPDATE_ORDER = (
 )
 
 
-def list_orders(cookie: str, states: Optional[list] = None,
+def list_orders(cookie, states: Optional[list] = None,
                 pages: int = 4, limit: int = 100) -> list:
     """注文を新しいほうから読む。ASIN・FNSKU・管理番号の今の中身つき。
 
@@ -191,7 +329,7 @@ def list_orders(cookie: str, states: Optional[list] = None,
     return out
 
 
-def update_order(cookie: str, oid: int, asin: str, fnsku: str,
+def update_order(cookie, oid: int, asin: str, fnsku: str,
                  out_id: str, remark: str) -> None:
     """注文1件のASIN・FNSKU・管理番号・備考を入れ替える。
 

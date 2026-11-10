@@ -238,20 +238,29 @@ export default function SettingsPage() {
         <div className="card">
           <h2>タオタロウのログイン情報</h2>
           <p style={{ fontSize: 13, color: '#555', marginTop: 0, lineHeight: 1.9 }}>
-            FBA指示書は公式APIに無いので、タオタロウの画面と同じ入口から取ります。
-            そのためにログインした状態が要ります。<b>画像認証があるので自動ではログインできません。</b>
+            FBA指示書や、注文へのASIN・FNSKU・管理番号の書き込みは公式APIに無いので、
+            タオタロウの画面と同じ入口から行います。そのためにログインした状態が要ります。
+            <b>ログイン画面に画像の確認コードがあるので、自動ではログインできません。</b>
+            <br />
+            <b style={{ color: '#b45309' }}>
+              ログインするとき「1ヶ月間ログインしたままにする」に必ずチェックを入れてください。
+            </b>
+            これを入れずに貼ると、数時間で切れます。
             <br />
             Chromeで <b>www.yiwutaro.com</b> にログインした状態で F12 →
             <b>Network</b> → 何か操作して出てきた行をクリック →
             <b>Request Headers</b> の <b>Cookie:</b> の中身をまるごとコピーして貼ってください。
-            1か月ほどで切れます。切れたら貼り直してください。
+            <br />
+            貼ったあとは、ツールが使うたびに期限をもらい直して更新します。
+            下の「今つながるか見る」を押すだけでも期限が延びます。
           </p>
           <div className="form-group">
             <label>Cookie</label>
             <textarea rows={3} {...f('taotaro_web_cookie')}
-              placeholder="XSRF-TOKEN=...; laravel_session=..."
+              placeholder="XSRF-TOKEN=...; laravel_session=...; remember_web_...=..."
               style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }} />
           </div>
+          <TaotaroWebCheck />
         </div>
 
         <div className="card">
@@ -542,6 +551,38 @@ export default function SettingsPage() {
           </p>
         </div>
       </div>
+    </div>
+  )
+}
+
+function TaotaroWebCheck() {
+  // 押すと会員画面に入れるか見るだけ。入れたらクッキーの期限も延びる
+  const [state, setState] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const run = async () => {
+    setBusy(true); setState(null)
+    try {
+      const r = await api.get('/taotaro/web/check')
+      setState(r.data)
+    } catch (e) {
+      setState({ ok: false, error: e?.response?.data?.detail || 'つながりませんでした' })
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <button type="button" className="btn" onClick={run} disabled={busy}>
+        {busy ? '見ています…' : '今つながるか見る'}
+      </button>
+      {state && (
+        <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.8,
+                      color: state.ok ? '#15803d' : '#b91c1c' }}>
+          {state.ok
+            ? `つながりました（${state.uname || state.uid}）。期限も延ばしました`
+            : state.error}
+        </div>
+      )}
     </div>
   )
 }

@@ -783,7 +783,7 @@ def _offer_no(url: str) -> str:
     return m.group(1) if m else ""
 
 
-def _id_plan(db: Session, cookie: str, states: list) -> dict:
+def _id_plan(db: Session, cookie, states: list) -> dict:
     """何をどう埋めるかを組み立てる。ここでは書き込まない。"""
     from app.models.rakuten_product import RakutenProduct
     from app.services import taotaro_web
@@ -858,6 +858,25 @@ def _id_plan(db: Session, cookie: str, states: list) -> dict:
     return {"fill": fill, "skip": skip, "scanned": len(orders)}
 
 
+@router.get("/web/check")
+def web_check(db: Session = Depends(get_db)):
+    """貼ってあるクッキーで会員画面に入れるかを見るだけ。
+
+    入れたら、もらい直した新しいクッキーを設定に書き戻す。
+    つまりここを押すだけで期限が延びる。
+    """
+    from app.models.settings import OrderSettings
+    from app.services import taotaro_web
+
+    row = db.query(OrderSettings).first()
+    try:
+        with taotaro_web.logged_in(db, row) as sess:
+            u = taotaro_web.who(sess)
+    except taotaro_web.WebError as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "uid": u.get("uid"), "uname": u.get("uname")}
+
+
 @router.get("/ids/preview")
 def ids_preview(db: Session = Depends(get_db)):
     """タオタロウの注文に入れるASIN・FNSKU・管理番号の下見。書き込まない。"""
@@ -865,12 +884,11 @@ def ids_preview(db: Session = Depends(get_db)):
     from app.services import taotaro_web
 
     row = db.query(OrderSettings).first()
-    cookie = (getattr(row, "taotaro_web_cookie", "") or "").strip()
-    if not cookie:
-        raise HTTPException(
-            400, "タオタロウのログイン情報が入っていません（Amazon設定で貼ってください）")
     try:
-        return _id_plan(db, cookie, _FILLABLE_STATES)
+        # logged_in が、使う直前にXSRF-TOKENをもらい直し、
+        # 新しくなったクッキーを設定に書き戻す
+        with taotaro_web.logged_in(db, row) as sess:
+            return _id_plan(db, sess, _FILLABLE_STATES)
     except taotaro_web.WebError as e:
         raise HTTPException(400, str(e))
 
@@ -887,37 +905,34 @@ def ids_apply(body: IdsApplyIn = IdsApplyIn(), db: Session = Depends(get_db)):
     from app.services import taotaro_web
 
     row = db.query(OrderSettings).first()
-    cookie = (getattr(row, "taotaro_web_cookie", "") or "").strip()
-    if not cookie:
-        raise HTTPException(
-            400, "タオタロウのログイン情報が入っていません（Amazon設定で貼ってください）")
-
-    try:
-        plan = _id_plan(db, cookie, _FILLABLE_STATES)
-    except taotaro_web.WebError as e:
-        raise HTTPException(400, str(e))
-
     only = set(body.oids or [])
     done, failed = [], []
-    for item in plan["fill"]:
-        if only and item["oid"] not in only:
-            continue
-        # 変えない欄は今の値をそのまま送り返す。送らなかった項目を
-        # 向こうが空にしてしまうと、備考の「楽天用」などが消える
-        try:
-            taotaro_web.update_order(
-                cookie, item["oid"],
-                asin=item["put"].get("asin", item["asin"]),
-                fnsku=item["put"].get("fnsku", item["fnsku"]),
-                out_id=item["put"].get("out_id", item["out_id"]),
-                remark=item["remark"])
-        except taotaro_web.WebError as e:
-            # 途中で止めない。1件の失敗で残り全部を落とすほうが困る
-            failed.append({"oid": item["oid"], "sku": item.get("sku"),
-                           "error": str(e)})
-            continue
-        done.append({"oid": item["oid"], "sku": item.get("sku"),
-                     "put": item["put"]})
+
+    try:
+        with taotaro_web.logged_in(db, row) as sess:
+            plan = _id_plan(db, sess, _FILLABLE_STATES)
+
+            for item in plan["fill"]:
+                if only and item["oid"] not in only:
+                    continue
+                # 変えない欄は今の値をそのまま送り返す。送らなかった項目を
+                # 向こうが空にしてしまうと、備考の「楽天用」などが消える
+                try:
+                    taotaro_web.update_order(
+                        sess, item["oid"],
+                        asin=item["put"].get("asin", item["asin"]),
+                        fnsku=item["put"].get("fnsku", item["fnsku"]),
+                        out_id=item["put"].get("out_id", item["out_id"]),
+                        remark=item["remark"])
+                except taotaro_web.WebError as e:
+                    # 途中で止めない。1件の失敗で残り全部を落とすほうが困る
+                    failed.append({"oid": item["oid"], "sku": item.get("sku"),
+                                   "error": str(e)})
+                    continue
+                done.append({"oid": item["oid"], "sku": item.get("sku"),
+                             "put": item["put"]})
+    except taotaro_web.WebError as e:
+        raise HTTPException(400, str(e))
 
     return {"done": done, "failed": failed,
             "done_count": len(done), "failed_count": len(failed)}

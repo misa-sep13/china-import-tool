@@ -1723,13 +1723,9 @@ def fetch_instruction(sid: int, fill: bool = True,
     from app.services import taotaro_web
 
     row = db.query(OrderSettings).first()
-    cookie = (getattr(row, "taotaro_web_cookie", "") or "").strip()
-    if not cookie:
-        raise HTTPException(
-            400, "タオタロウのログイン情報が入っていません（Amazon設定で貼ってください）")
-
     try:
-        name, raw = taotaro_web.fba_instruction_file(cookie, sid)
+        with taotaro_web.logged_in(db, row) as sess:
+            name, raw = taotaro_web.fba_instruction_file(sess, sid)
     except taotaro_web.WebError as e:
         raise HTTPException(400, str(e))
 
