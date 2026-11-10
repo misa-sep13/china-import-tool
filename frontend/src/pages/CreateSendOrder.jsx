@@ -218,6 +218,11 @@ export default function CreateSendOrder() {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
+  // 選んだ注文の確認結果。タオタロウの配送依頼は、セット組みの付属品が
+  // 入っていなくても通ってしまうので、ここで止める
+  const [check, setCheck] = useState({ kinds: {}, problems: [] })
+  const [checking, setChecking] = useState(false)
+  const [override, setOverride] = useState(false)
 
   const load = useCallback(async () => {
     setErr('')
@@ -235,6 +240,31 @@ export default function CreateSendOrder() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // 選び直すたびに確かめる（少し待ってから。連続でチェックしたときに何度も呼ばない）
+  useEffect(() => {
+    if (!rows.length) return
+    setChecking(true)
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.post('/taotaro/send-check', { oids: [...picked] })
+        setCheck(r.data || { kinds: {}, problems: [] })
+      } catch (e) {
+        setCheck({ kinds: {}, problems: [{ level: 'warn', add_oids: [],
+          text: '確認できませんでした：' + (e?.response?.data?.detail || e.message) }] })
+      } finally { setChecking(false) }
+    }, 400)
+    setOverride(false)
+    return () => clearTimeout(t)
+  }, [picked, rows])
+
+  const errors = (check.problems || []).filter(p => p.level === 'error')
+  const blocked = errors.length > 0 && !override
+  const addOids = (oids) => setPicked(s => {
+    const n = new Set(s)
+    oids.forEach(o => n.add(o))
+    return n
+  })
 
   const shown = rows.filter(r => !q.trim()
     || matchesQuery(q, [r.out_id, r.title, r.title_trans]))
@@ -261,7 +291,7 @@ export default function CreateSendOrder() {
     .filter(Boolean).join('　')
 
   const submit = async () => {
-    if (!picked.size || !way || !addrId) return
+    if (!picked.size || !way || !addrId || blocked || checking) return
     const msg = '配送依頼を出します。\n\n'
       + `便　　：${wayDef.delivery_name}\n`
       + `届け先：${addrDef.consignee}\n`
@@ -368,16 +398,57 @@ export default function CreateSendOrder() {
         <span style={{ fontSize: 12, color: C.sub }}>
           入庫済み {rows.length}件　／　選択中 <b style={{ color: C.text }}>{picked.size}</b>件
         </span>
-        <button onClick={submit}
-          disabled={busy || !picked.size || !way || !addrId}
-          style={{ marginLeft: 'auto', padding: '7px 16px', fontSize: 13,
-            border: 'none', borderRadius: 6, fontWeight: 600,
-            background: (busy || !picked.size || !way || !addrId) ? '#cbd5e1' : C.key,
-            color: '#fff',
-            cursor: (busy || !picked.size || !way || !addrId) ? 'default' : 'pointer' }}>
-          {busy ? '出しています…' : '🚢 この内容で配送依頼を出す'}
-        </button>
+        {(() => {
+          const off = busy || checking || blocked || !picked.size || !way || !addrId
+          const why = !picked.size ? '注文を選んでください'
+            : !way ? '便を選んでください'
+            : !addrId ? '届け先を選んでください'
+            : checking ? '確かめています…'
+            : blocked ? '下の赤い問題を直してください' : ''
+          return (
+            <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              {why && <span style={{ fontSize: 12, color: blocked ? C.bad : C.sub }}>{why}</span>}
+              <button onClick={submit} disabled={off}
+                style={{ padding: '7px 16px', fontSize: 13,
+                  border: 'none', borderRadius: 6, fontWeight: 600,
+                  background: off ? '#cbd5e1' : C.key, color: '#fff',
+                  cursor: off ? 'default' : 'pointer' }}>
+                {busy ? '出しています…' : '🚢 この内容で配送依頼を出す'}
+              </button>
+            </span>
+          )
+        })()}
       </div>
+
+      {(check.problems || []).length > 0 && (
+        <div style={{ marginBottom: 10, padding: '10px 12px', borderRadius: 8, fontSize: 13,
+          lineHeight: 1.7, border: `2px solid ${errors.length ? C.bad : '#f59e0b'}`,
+          background: errors.length ? '#fef2f2' : '#fffbeb' }}>
+          {check.problems.map((p, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start',
+              padding: '3px 0', borderTop: i ? '1px dashed #fecaca' : 'none' }}>
+              <span style={{ fontWeight: 700, color: p.level === 'error' ? C.bad : C.warn,
+                whiteSpace: 'nowrap' }}>{p.level === 'error' ? '⛔ 送れません' : '⚠ 確認'}</span>
+              <span style={{ flex: 1 }}>{p.text}</span>
+              {p.add_oids?.length > 0 && (
+                <button onClick={() => addOids(p.add_oids)}
+                  style={{ whiteSpace: 'nowrap', fontSize: 12, padding: '3px 10px',
+                    border: `1px solid ${C.key}`, color: C.key, background: '#fff',
+                    borderRadius: 5, cursor: 'pointer' }}>
+                  ＋ 付属品の注文（{p.add_oids.length}件）を入れる
+                </button>
+              )}
+            </div>
+          ))}
+          {errors.length > 0 && (
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6,
+              fontSize: 12, color: C.sub }}>
+              <input type="checkbox" checked={override} onChange={e => setOverride(e.target.checked)} />
+              承知のうえで送る（付属品は別の便で送る・セット組みしない など）
+            </label>
+          )}
+        </div>
+      )}
 
       <table style={{ width: '100%', borderCollapse: 'collapse',
         background: '#fff', border: `1px solid ${C.line}` }}>
@@ -401,7 +472,24 @@ export default function CreateSendOrder() {
                   onChange={() => toggle(r.oid)} />
               </td>
               <td style={{ ...td, fontWeight: 600, whiteSpace: 'nowrap' }}>
-                {r.out_id || '—'}
+                {(() => {
+                  // 本体か付属品か。付属品は管理番号が違っていても仕様で見分けた結果
+                  const k = (check.kinds || {})[r.oid] || {}
+                  const tag = { body: ['本体', '#dbeafe', '#1d4ed8'],
+                    component: ['付属品', '#fef3c7', '#92400e'],
+                    unknown: ['マスタに無い', '#fee2e2', '#b91c1c'] }[k.kind]
+                  return (
+                    <>
+                      {tag && <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4,
+                        background: tag[1], color: tag[2], marginRight: 5 }}>{tag[0]}</span>}
+                      {r.out_id || '—'}
+                      {k.kind === 'component' && k.sku && k.sku !== r.out_id && (
+                        <div style={{ fontSize: 10, color: C.warn, fontWeight: 400 }}>→ {k.sku} とみなしました</div>
+                      )}
+                      {k.name && <div style={{ fontSize: 10, color: C.sub, fontWeight: 400 }}>{k.name.slice(0, 24)}</div>}
+                    </>
+                  )
+                })()}
               </td>
               <td style={td}>{(r.title_trans || r.title || '').slice(0, 40)}</td>
               <td style={{ ...td, color: C.sub }}>

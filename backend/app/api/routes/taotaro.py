@@ -120,6 +120,26 @@ class SendOrderIn(BaseModel):
     client_order_id: Optional[str] = None
 
 
+class SendCheckIn(BaseModel):
+    oids: List[int] = []
+
+
+@router.post("/send-check")
+def send_check(data: SendCheckIn, db: Session = Depends(get_db)):
+    """配送依頼に入れる注文を確かめる（読むだけ）。
+
+    セット組みの付属品が足りない・付属品だけ入っている・管理番号が
+    商品マスタに無い、を返す。各注文が本体か付属品かの札も返す。
+    """
+    from app.services import restock_split as rs
+    if not taotaro.is_configured():
+        raise HTTPException(400, "タオタロウのトークンが未設定です")
+    try:
+        return rs.send_check(db, data.oids)
+    except Exception as e:
+        raise HTTPException(502, f"確かめられませんでした（{str(e)[:200]}）")
+
+
 @router.post("/send-orders")
 def create_send_order(data: SendOrderIn):
     """配送依頼を作る。

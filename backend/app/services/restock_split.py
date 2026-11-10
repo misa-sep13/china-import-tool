@@ -95,16 +95,12 @@ def _norm(s: str) -> str:
 _ON_THE_WAY = {1, 2, 3, 7, 9}
 
 
-def set_check(db, pages: int = 5) -> list:
-    """倉庫にある本体に対して、セット組みの付属品が揃っているかを見る。
+def set_tables(db):
+    """セット組みを見るための表。
 
-    本体と付属品は別の注文で発注するので、届く日がずれる。
-    タオタロウの配送依頼は、付属品が入っていなくても通ってしまう
-    （a017_1 のフックが遅れて、本体だけ送りそうになった）。
-    配送依頼をかける前に、足りないものと、まだ届いていない注文を出す。
-
-    付属品の注文は管理番号で見分ける。管理番号が違う・空の古い注文もあるので、
-    付属品の仕入先ページと仕様の文字でも当てる。
+    戻り値: (全商品{SKU:商品}, 付属品{SKU:商品},
+             本体→[(付属品SKU, 本体1個あたりの数)], 注文→付属品SKU を返す関数)
+    付属品の注文は管理番号で見分け、違っていれば仕入先ページ＋仕様の文字で当てる。
     """
     import json
     from app.services.accessories import _offer
@@ -112,7 +108,6 @@ def set_check(db, pages: int = 5) -> list:
     prods = {p.sku: p for p in
              db.query(Product).filter(Product.is_active == True).all()}
     comps = {s: p for s, p in prods.items() if p.is_component}
-    # 本体 → [(付属品SKU, 本体1個あたりの数)]
     comps_of = {}
     for p in prods.values():
         if p.is_component:
@@ -125,8 +120,6 @@ def set_check(db, pages: int = 5) -> list:
             c = str((x or {}).get("sku") or "").strip()
             if c in comps:
                 comps_of.setdefault(p.sku, []).append((c, int(x.get("qty") or 1)))
-    if not comps_of:
-        return []
 
     def as_component(o):
         sku = str(o.get("out_id") or "").strip()
@@ -140,6 +133,118 @@ def set_check(db, pages: int = 5) -> list:
                     spec in vals or vals in spec):
                 return c.sku
         return None
+
+    return prods, comps, comps_of, as_component
+
+
+def send_check(db, oids: list, pages: int = 5) -> dict:
+    """配送依頼に入れようとしている注文を確かめる。
+
+    タオタロウの配送依頼は、セット組みの付属品が入っていなくても通る。
+    選んだ本体に対して付属品が足りなければ止め、倉庫にある付属品の注文が
+    あれば「これを足せば揃う」と返す。届いていなければその注文を出す。
+
+    戻り値:
+      kinds    {oid: {kind: body/component/other/unknown, sku, name}}（画面の札）
+      problems [{level: error/warn, text, add_oids}]
+    """
+    prods, comps, comps_of, as_component = set_tables(db)
+    picked = {int(x) for x in (oids or [])}
+
+    kinds, arrived, coming = {}, [], {}
+    for page in range(1, max(1, pages) + 1):
+        d = taotaro.list_orders(page=page, limit=100)
+        for o in d.get("items") or []:
+            if o.get("sid"):
+                continue                       # もう便に入っている
+            st = o.get("state")
+            c = as_component(o)
+            sku = str(o.get("out_id") or "").strip()
+            if c:
+                kind, key = "component", c
+            elif sku in prods:
+                kind, key = ("body" if sku in comps_of else "other"), sku
+            else:
+                kind, key = "unknown", sku
+            if st == 4:
+                p = prods.get(key)
+                kinds[o.get("oid")] = {"kind": kind, "sku": key,
+                                       "name": (p.name if p else "") or ""}
+                arrived.append((o, kind, key))
+            elif st in _ON_THE_WAY and kind == "component":
+                coming.setdefault(key, []).append(
+                    f"注文{o.get('oid')} {int(o.get('quantity') or 0)}個（{o.get('state_label') or ''}）")
+        if not d.get("has_more_pages"):
+            break
+
+    problems = []
+    sel = [(o, k, s) for (o, k, s) in arrived if o.get("oid") in picked]
+    body_pcs, have = {}, {}
+    for o, k, s in sel:
+        q = int(o.get("quantity") or 0)
+        if k == "body":
+            body_pcs[s] = body_pcs.get(s, 0) + q
+        elif k == "component":
+            have[s] = have.get(s, 0) + q
+        elif k == "unknown":
+            problems.append({"level": "warn", "add_oids": [], "text":
+                f"注文{o.get('oid')}：管理番号「{s or '空'}」が商品マスタにありません。"
+                "何の商品か確かめてください（取り込みで照合できません）"})
+
+    need, users = {}, {}
+    for b, pcs in body_pcs.items():
+        for c, q in comps_of.get(b, []):
+            need[c] = need.get(c, 0) + pcs * q
+            users.setdefault(c, []).append(f"{b} {pcs}個×{q}")
+    for c, n in need.items():
+        h = have.get(c, 0)
+        if h >= n:
+            continue
+        cp = comps[c]
+        label = f"{c}（{cp.name or cp.spec or ''}）"
+        # 倉庫に着いていて、まだ選んでいない付属品の注文で埋められるか
+        add, more = [], h
+        for o, k, s in arrived:
+            if k == "component" and s == c and o.get("oid") not in picked and more < n:
+                add.append(o.get("oid"))
+                more += int(o.get("quantity") or 0)
+        text = (f"セット組みの付属品 {label} が足りません：{h}/{n}個"
+                f"（使う本体：{'、'.join(users[c])}）。")
+        if more >= n:
+            text += "倉庫にある付属品の注文を一緒に入れれば揃います。"
+        else:
+            arriving = coming.get(c) or []
+            text += ("まだ届いていない注文：" + "、".join(arriving) + "。届くまで本体は送らないでください"
+                     if arriving else "届く予定の注文もありません。発注漏れの可能性があります")
+        problems.append({"level": "error", "add_oids": add if more >= n else add,
+                         "text": text})
+
+    # 付属品だけ選んで、使う本体が入っていない
+    for c, h in have.items():
+        if c in need:
+            continue
+        parents = [b for b, lst in comps_of.items() if any(x[0] == c for x in lst)]
+        problems.append({"level": "warn", "add_oids": [], "text":
+            f"付属品 {c} が{h}個入っていますが、使う本体（{'・'.join(parents) or '不明'}）が入っていません。"
+            "本体を先に送った分の追加なら、そのままで構いません"})
+
+    return {"kinds": kinds, "problems": problems}
+
+
+def set_check(db, pages: int = 5) -> list:
+    """倉庫にある本体に対して、セット組みの付属品が揃っているかを見る。
+
+    本体と付属品は別の注文で発注するので、届く日がずれる。
+    タオタロウの配送依頼は、付属品が入っていなくても通ってしまう
+    （a017_1 のフックが遅れて、本体だけ送りそうになった）。
+    配送依頼をかける前に、足りないものと、まだ届いていない注文を出す。
+
+    付属品の注文は管理番号で見分ける。管理番号が違う・空の古い注文もあるので、
+    付属品の仕入先ページと仕様の文字でも当てる。
+    """
+    prods, comps, comps_of, as_component = set_tables(db)
+    if not comps_of:
+        return []
 
     body_pcs, have, coming, wrongs = {}, {}, {}, {}
     for page in range(1, max(1, pages) + 1):
