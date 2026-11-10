@@ -1554,8 +1554,9 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
     offers_of, suspect = {}, []
     for r in d.get("rows") or []:
         offer = _normalize_1688_url(r.get("buy_url") or "")
-        # 付属品のURLなら、管理番号が本体になっていても数えない
-        if offer and offer in component_offers:
+        # 付属品の行は数えない。本体の箱に入るもので、単独では売らない
+        if ((offer and offer in component_offers)
+                or _memo_is_component(r.get("customer_memo") or "")):
             continue
         sku, _how = _sku_from_row(r, prods, by_fnsku, by_asin, by_url, offer)
         p = prods.get(sku)
@@ -1661,11 +1662,12 @@ def _sku_from_row(r: dict, prods: dict, by_fnsku: dict, by_asin: dict,
     if sku in prods:
         return sku, "管理番号"
     if _memo_is_component(sku):
-        # 「（付属品）」の行は本体の箱に入るもの。本体のFNSKU・
-        # ASINで引き直すと本体に足されて、納品数が倍になる
-        if offer is None:
-            offer = _normalize_1688_url(r.get("buy_url") or "")
-        return by_url.get(offer, ""), "仕入先URL"
+        # 「（付属品）」の行は本体の箱に入るもの。本体のFNSKU・ASINが
+        # 入っているので引き直すと本体に足される。仕入先URLも駄目で、
+        # 発注履歴のURLは本体のSKUを指していることがある
+        # （付属品を本体のSKUで発注しているため）。a021の挤牙膏器が
+        # これで a021_stand に30個＋40個と足されていた
+        return "", "付属品"
     # 管理番号に注記が足してあることがある。付属品以外の注記なら
     # 中身は合っているので、かっこを落として引き直す
     bare = re.sub(r"[（(][^（）()]*[）)]", "", sku).strip()
@@ -1731,7 +1733,8 @@ def send_order_labels(sid: int, skip: int = 0, db: Session = Depends(get_db)):
         offer = _normalize_1688_url(r.get("buy_url") or "")
         # 付属品の行はラベルを刷らない。本体の箱に入るものなので、
         # 刷ると本体のぶんが倍になる
-        if offer and offer in component_offers:
+        if ((offer and offer in component_offers)
+                or _memo_is_component(r.get("customer_memo") or "")):
             continue
         sku, how = _sku_from_row(r, prods, by_fnsku, by_asin, by_url, offer)
         p = prods.get(sku)
