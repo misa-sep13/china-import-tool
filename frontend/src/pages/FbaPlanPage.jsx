@@ -119,6 +119,8 @@ export default function FbaPlanPage() {
   const [allItems, setAllItems] = useState([])
   // 入数で割り切れなかった行。切り上げているので注意を促す
   const [oddQty, setOddQty] = useState([])
+  // 同じSKUに別のページから2行来たもの。付属品の取りこぼしの疑い
+  const [suspect, setSuspect] = useState([])
 
   const pickPlanSendOrder = async (sid) => {
     setSkuMsg('配送依頼を読んでいます…')
@@ -128,6 +130,7 @@ export default function FbaPlanPage() {
       setPlanSkus(data.skus)
       setSendQty(data.qty || {})
       setOddQty(data.odd || [])
+      setSuspect(data.suspect || [])
       setSkuMsg(`便 ${data.sn || data.sid}　${data.skus.length}商品`
         + (data.unknown.length
           ? `（${data.unknown.length}件はSKUが分かりませんでした）` : ''))
@@ -974,6 +977,24 @@ export default function FbaPlanPage() {
               </>
             )}
           </div>
+
+          {suspect.length > 0 && (
+            <div style={{ marginTop: 10, padding: '10px 14px', background: '#fef2f2',
+              border: '1px solid #fca5a5', borderRadius: 6, fontSize: 13,
+              color: '#991b1b', lineHeight: 1.9 }}>
+              <b>⚠ 同じSKUに、別の仕入先ページから2行来ています</b>
+              <div style={{ fontSize: 12, marginTop: 2 }}>
+                片方が付属品の行だと、納品数が倍になります。付属品なら
+                商品マスタの「発注用付属品」に登録してください
+              </div>
+              {suspect.map(x => (
+                <div key={x.sku + x.order_no} style={{ fontSize: 12, marginTop: 3 }}>
+                  <b>{x.sku}</b>：注文{x.order_no}（{x.memo || '管理番号なし'}）
+                  {x.qty}個を足しています
+                </div>
+              ))}
+            </div>
+          )}
 
           {oddQty.length > 0 && (
             <div style={{ marginTop: 10, padding: '10px 14px', background: '#fffbeb',

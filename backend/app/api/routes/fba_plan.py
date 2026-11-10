@@ -1536,23 +1536,22 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
         if key and oh.sku:
             by_url.setdefault(key, oh.sku)
 
-    # 付属品の1688 URL。付属品を本体のSKUで発注してしまうことがあり
-    # （a09_1のテープを a09_1 で発注）、そのままだと本体に足される。
+    # 付属品を本体のSKUで発注してしまうことがあり（a09_1のテープを
+    # a09_1 で発注）、そのままだと本体に足される。
     #
     # ただし「URLでSKUを引く」のは間違い。色違いは同じURLを共有して
     # いるので（a05_black / a05_black_meisai / a05_black_stripe など）、
     # 全部が1つの色にまとめられて消える。
     # そこでURLは「付属品かどうか」の判定にだけ使う。
-    component_offers = set()
-    for pp in prods.values():
-        if getattr(pp, "is_component", False):
-            k = _normalize_1688_url(getattr(pp, "buy_url", "") or "")
-            if k:
-                component_offers.add(k)
+    component_offers = _component_offers(prods)
 
     by_fnsku, by_asin = _id_tables(prods)
 
     found, qty_of, unknown, odd = [], {}, [], []
+    # SKUごとに、どのページから来た行なのか。同じSKUに別のページから
+    # 2行来たら、片方は付属品の行の可能性が高い（本体と付属品を別々に
+    # 発注するため）。黙って足すと納品数が倍になるので、出しておく
+    offers_of, suspect = {}, []
     for r in d.get("rows") or []:
         offer = _normalize_1688_url(r.get("buy_url") or "")
         # 付属品のURLなら、管理番号が本体になっていても数えない
@@ -1570,6 +1569,15 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
             n = int(getattr(p, "set_size", 1) or 1)
             units = int(r.get("units") or 0)
             qty_of[sku] = qty_of.get(sku, 0) + (units // n if n > 1 else units)
+            seen_offers = offers_of.setdefault(sku, [])
+            if offer and offer not in seen_offers:
+                seen_offers.append(offer)
+                if len(seen_offers) == 2:
+                    suspect.append({"sku": sku,
+                                    "order_no": r.get("order_no") or "",
+                                    "memo": (r.get("customer_memo")
+                                             or "").strip(),
+                                    "qty": units})
             if n > 1 and units % n:
                 odd.append({"sku": sku, "units": units, "set_size": n,
                             "sets": units // n, "left": units % n})
@@ -1584,7 +1592,9 @@ def send_order_skus(sid: int, db: Session = Depends(get_db)):
             "state_label": d.get("state_label") or "",
             "skus": found, "qty": qty_of, "unknown": unknown,
             # 入数で割り切れなかったもの
-            "odd": odd}
+            "odd": odd,
+            # 同じSKUが別のページから2行来た＝付属品の取りこぼしの疑い
+            "suspect": suspect}
 
 
 def _memo_is_component(memo: str) -> bool:
@@ -1596,6 +1606,46 @@ def _memo_is_component(memo: str) -> bool:
     """
     return any("付属品" in m for m in
                re.findall(r"[（(]([^（）()]*)[）)]", memo or ""))
+
+
+def _component_offers(prods: dict) -> set:
+    """付属品として頼んでいる1688ページのURL。
+
+    付属品の見分けを管理番号の文字（「（付属品）」）だけに頼ると取り
+    こぼす。手でタオタロウに発注したぶんには付かないし、本体と同じ
+    管理番号で入れてあることもある。商品マスタの作りから引く：
+      ・is_component の商品の仕入先URL
+      ・どれかの商品の purchase_components に挙げてあるURL
+
+    ただし「1つの1688ページに本体と収納袋が入っている」商品があり、
+    付属品のURLが本体のURLと同じことがある。そのURLを付属品扱いに
+    すると本体の行まで数えなくなるので、本体として登録してある
+    URLは外す。
+    """
+    import json
+    out, body = set(), set()
+    for pp in prods.values():
+        k = _normalize_1688_url(getattr(pp, "buy_url", "") or "")
+        if getattr(pp, "is_component", False):
+            if k:
+                out.add(k)
+        elif k:
+            body.add(k)
+        try:
+            comps = json.loads(
+                getattr(pp, "purchase_components", None) or "[]") or []
+        except (ValueError, TypeError):
+            comps = []
+        for c in comps:
+            if not isinstance(c, dict):
+                continue
+            ck = _normalize_1688_url((c.get("buy_url") or "").strip())
+            if not ck:
+                sub = prods.get((c.get("sku") or "").strip())
+                ck = _normalize_1688_url(getattr(sub, "buy_url", "") or "")
+            if ck:
+                out.add(ck)
+    return out - body
 
 
 def _sku_from_row(r: dict, prods: dict, by_fnsku: dict, by_asin: dict,
@@ -1674,10 +1724,16 @@ def send_order_labels(sid: int, skip: int = 0, db: Session = Depends(get_db)):
             by_url.setdefault(key, oh.sku)
 
     by_fnsku, by_asin = _id_tables(prods)
+    component_offers = _component_offers(prods)
 
     items, missing, renamed = [], [], []
     for r in d.get("rows") or []:
-        sku, how = _sku_from_row(r, prods, by_fnsku, by_asin, by_url)
+        offer = _normalize_1688_url(r.get("buy_url") or "")
+        # 付属品の行はラベルを刷らない。本体の箱に入るものなので、
+        # 刷ると本体のぶんが倍になる
+        if offer and offer in component_offers:
+            continue
+        sku, how = _sku_from_row(r, prods, by_fnsku, by_asin, by_url, offer)
         p = prods.get(sku)
         qty = int(r.get("units") or 0)
         # 管理番号では引けず、FNSKUやASINで引けた＝管理番号が違っている。
