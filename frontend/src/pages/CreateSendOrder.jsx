@@ -41,17 +41,24 @@ function IdFiller() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
+  const [failed, setFailed] = useState([])
 
-  const preview = async () => {
-    setBusy(true); setErr(''); setMsg(''); setPlan(null)
+  // keep=true のときは、直前に出した結果の文を消さない。
+  // 書き込みのあと自動で下見し直すが、そこで「○件入れました」が
+  // 消えてしまうと、何が起きたのか分からなくなる
+  const preview = async (keep = false) => {
+    setBusy(true); setPlan(null)
+    if (!keep) { setErr(''); setMsg(''); setFailed([]) }
     try {
       const r = await api.get('/taotaro/ids/preview')
       setPlan(r.data)
-      if (!(r.data.fill || []).length) {
+      if (!keep && !(r.data.fill || []).length) {
         setMsg(`入れるものはありませんでした（${r.data.scanned}件みました）`)
       }
     } catch (e) {
-      setErr(e?.response?.data?.detail || '下見できませんでした')
+      const d = e?.response?.data?.detail || '下見できませんでした'
+      // 書き込みの結果を消さないよう、あとから足す
+      setErr(p => (keep && p) ? p : d)
     } finally { setBusy(false) }
   }
 
@@ -62,12 +69,15 @@ function IdFiller() {
 空いている欄だけ埋めます（入っているものは触りません）。
 
 よろしいですか？`)) return
-    setBusy(true); setErr(''); setMsg('')
+    setBusy(true); setErr(''); setMsg(''); setFailed([])
     try {
       const r = await api.post('/taotaro/ids/apply', {})
       setMsg(`${r.data.done_count}件に入れました`
         + (r.data.failed_count ? `／${r.data.failed_count}件は入りませんでした` : ''))
-      await preview()
+      setFailed(r.data.failed || [])
+      // ログインが切れて止まったときは、理由をそのまま出す
+      if (r.data.stopped) setErr(r.data.stopped)
+      await preview(true)
     } catch (e) {
       setErr(e?.response?.data?.detail || '入れられませんでした')
     } finally { setBusy(false) }
@@ -100,7 +110,20 @@ function IdFiller() {
         </span>
       </div>
 
-      {err && <div style={{ color: C.bad, fontSize: 12, marginTop: 6 }}>{err}</div>}
+      {err && (
+        <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 5,
+          background: '#fef2f2', border: '1px solid #fca5a5',
+          color: '#b91c1c', fontSize: 12, lineHeight: 1.8 }}>
+          {err}
+          {err.includes('ログイン') && (
+            <div style={{ marginTop: 4 }}>
+              <a href="#/settings" style={{ color: '#b91c1c', fontWeight: 700 }}>
+                → Amazon設定でCookieを貼り直す
+              </a>
+            </div>
+          )}
+        </div>
+      )}
       {msg && <div style={{ color: C.good, fontSize: 12, marginTop: 6 }}>{msg}</div>}
 
       {!!fill.length && (
@@ -130,6 +153,38 @@ function IdFiller() {
             ))}
           </tbody>
         </table>
+      )}
+
+      {!!failed.length && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 12, color: C.bad, fontWeight: 700 }}>
+            入らなかったもの {failed.length}件
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={th}>注文No.</th>
+                <th style={th}>SKU</th>
+                <th style={th}>入れようとしたもの</th>
+                <th style={th}>理由</th>
+              </tr>
+            </thead>
+            <tbody>
+              {failed.map(x => (
+                <tr key={x.oid}>
+                  <td style={td}>{x.oid}</td>
+                  <td style={td}>{x.sku}</td>
+                  <td style={td}>
+                    {Object.entries(x.put || {}).map(([k, v]) => (
+                      <div key={k}>{label[k] || k}: <b>{v}</b></div>
+                    ))}
+                  </td>
+                  <td style={{ ...td, color: C.bad }}>{x.error}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {!!skip.length && (

@@ -252,6 +252,15 @@ def fba_instruction_file(cookie, sid: int) -> tuple:
     return name, raw
 
 
+def is_login_error(e) -> bool:
+    """「ログインが切れている」系のエラーかどうか。
+
+    これが出たら、残りの注文も全部同じ理由で失敗する。
+    何十回も叩かずその場で止めるために使う。
+    """
+    return "ログインが切れています" in str(e)
+
+
 def who(cookie) -> dict:
     """ログインできているなら、誰で入っているかを返す。"""
     d = _graphql(cookie, "query{ getUserInfo { uid uname } }", {})

@@ -907,6 +907,7 @@ def ids_apply(body: IdsApplyIn = IdsApplyIn(), db: Session = Depends(get_db)):
     row = db.query(OrderSettings).first()
     only = set(body.oids or [])
     done, failed = [], []
+    stopped = ""
 
     try:
         with taotaro_web.logged_in(db, row) as sess:
@@ -927,12 +928,17 @@ def ids_apply(body: IdsApplyIn = IdsApplyIn(), db: Session = Depends(get_db)):
                 except taotaro_web.WebError as e:
                     # 途中で止めない。1件の失敗で残り全部を落とすほうが困る
                     failed.append({"oid": item["oid"], "sku": item.get("sku"),
-                                   "error": str(e)})
+                                   "put": item["put"], "error": str(e)})
+                    # ただしログイン切れだけは別。残りも全部同じ結果に
+                    # なるので、そこで止めて理由を返す
+                    if taotaro_web.is_login_error(e):
+                        stopped = str(e)
+                        break
                     continue
                 done.append({"oid": item["oid"], "sku": item.get("sku"),
                              "put": item["put"]})
     except taotaro_web.WebError as e:
         raise HTTPException(400, str(e))
 
-    return {"done": done, "failed": failed,
+    return {"done": done, "failed": failed, "stopped": stopped,
             "done_count": len(done), "failed_count": len(failed)}
