@@ -947,11 +947,34 @@ def _id_plan(db: Session, cookie, states: list) -> dict:
     def _n(s):
         return _re.sub(r"[\s　、,，;；/／~～【】()（）]", "", str(s or "")).lower()
 
+    def _channel_hint(o):
+        """注文に残っている印から、Amazon用か楽天用かを読む。分からなければ空。
+
+        タオタロウのサイトで直接発注すると管理番号が空になり、同じ商品を
+        Amazonと楽天で別SKUにしていると決められない。人が選ぶと取り違えるので、
+        FBAオプション・備考の言葉で決められるものは決める。
+        """
+        rm = str(o.get("remark") or "")
+        fba = str(o.get("fba") or "").strip().lower()
+        if "楽天" in rm:
+            return "楽天"
+        if (fba and fba not in ("0", "false", "none")) or _re.search(r"fba|amazon|アマゾン", rm, _re.I):
+            return "Amazon"
+        return ""
+
     still = []
     for o in skip:
         cands, props = o.get("candidates") or [], _n(o.get("props"))
+        # Amazonと楽天の候補が混ざっていて、注文に印があれば、その側だけに絞る
+        hint = _channel_hint(o)
+        if hint and len({str(c.get("channel", ""))[:2] for c in cands}) > 1:
+            narrowed = [c for c in cands if str(c.get("channel", "")).startswith(hint)]
+            if narrowed:
+                cands = narrowed
         hit = [c for c in cands
                if props and _n(c.get("spec")) and (_n(c["spec"]) in props or props in _n(c["spec"]))]
+        if not hit and len(cands) == 1:
+            hit = cands
         if len(hit) != 1:
             still.append(o)
             continue
@@ -966,7 +989,8 @@ def _id_plan(db: Session, cookie, states: list) -> dict:
         if not put:
             continue
         fill.append({**{k: v for k, v in o.items() if k not in ("candidates", "reason")},
-                     "sku": rec["sku"], "matched_by": "仕入先URL＋仕様",
+                     "sku": rec["sku"],
+                     "matched_by": ("仕入先URL＋仕様" + (f"＋{hint}の印（FBA・備考）" if hint else "")),
                      "name": rec.get("name", ""), "channel": rec.get("channel", ""),
                      "put": put, "note": "" if rec.get("asin") else "まだAmazonに出品していません"
                      if rec.get("channel", "").startswith("Amazon") else ""})
