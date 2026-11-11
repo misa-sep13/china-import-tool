@@ -124,6 +124,21 @@ class SendCheckIn(BaseModel):
     oids: List[int] = []
 
 
+class ClassifyIn(BaseModel):
+    orders: List[dict] = []
+
+
+@router.post("/classify")
+def classify_orders(data: ClassifyIn, db: Session = Depends(get_db)):
+    """画面が持っている注文を、商品マスタだけで見分ける（タオタロウは呼ばない）。
+
+    Amazon／楽天の振り分けと自社の商品名をすぐ出すため。
+    セット組みの確かめ（send-check）はタオタロウの一覧を読むので時間がかかる。
+    """
+    from app.services import restock_split as rs
+    return {"kinds": rs.classify_orders(db, data.orders)}
+
+
 @router.post("/send-check")
 def send_check(data: SendCheckIn, db: Session = Depends(get_db)):
     """配送依頼に入れる注文を確かめる（読むだけ）。

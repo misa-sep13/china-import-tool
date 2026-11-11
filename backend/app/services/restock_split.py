@@ -166,19 +166,14 @@ def set_tables(db):
     return prods, comps, comps_of, as_component
 
 
-def send_check(db, oids: list, pages: int = 5) -> dict:
-    """配送依頼に入れようとしている注文を確かめる。
+def make_classifier(db):
+    """注文1件が「何か」を、商品マスタだけで見分ける関数を作る（タオタロウは呼ばない）。
 
-    タオタロウの配送依頼は、セット組みの付属品が入っていなくても通る。
-    選んだ本体に対して付属品が足りなければ止め、倉庫にある付属品の注文が
-    あれば「これを足せば揃う」と返す。届いていなければその注文を出す。
-
-    戻り値:
-      kinds    {oid: {kind: body/component/other/unknown, sku, name}}（画面の札）
-      problems [{level: error/warn, text, add_oids}]
+    戻り値: (全商品, 付属品, 本体→付属品, classify)
+    classify(o) → (kind, key, 画面用の情報)
+      kind: body（付属品のある本体）/ component / other / unknown（マスタに無い）/ noid（管理番号なし）
     """
     prods, comps, comps_of, as_component = set_tables(db)
-    picked = {int(x) for x in (oids or [])}
     # 楽天の商品も同じ倉庫に入る。Amazonのマスタに無いからといって
     # 「マスタに無い」と出すと、楽天の商品が全部そう見えてしまう
     rk = {}
@@ -200,6 +195,67 @@ def send_check(db, oids: list, pages: int = 5) -> dict:
         rak = sku in rk
         return "both" if (amz and rak) else "amazon" if amz else "rakuten" if rak else ""
 
+    def classify(o):
+        c = as_component(o)
+        sku = str(o.get("out_id") or "").strip()
+        # 「y127（付属品）」はツールが付けた付属品の名前（本体SKU＋（付属品））
+        base = sku.split("（")[0].strip() if "（付属品）" in sku else ""
+        if c:
+            kind, key = "component", c
+        elif base and (base in prods or base in rk):
+            kind, key = "component", sku
+            parent_of.setdefault(sku, base)
+        elif sku in prods:
+            kind, key = ("body" if sku in comps_of else "other"), sku
+        elif sku in rk:
+            kind, key = "other", sku
+        elif not sku:
+            # 管理番号の無い注文（梱包資材・管理番号を入れ忘れた注文）。
+            # Amazon・楽天のどちらの画面にも混ぜず、「すべて」の最後にまとめる
+            kind, key = "noid", ""
+        else:
+            kind, key = "unknown", sku
+        p = prods.get(key)
+        name = (p.name if p else "") or ((rk[key].name if key in rk else "") or "")
+        if kind == "component" and not name and parent_of.get(key):
+            pp = prods.get(parent_of[key]) or rk.get(parent_of[key])
+            name = f"付属品（{(pp.name if pp else '') or parent_of[key]}）"
+        info = {
+            "kind": kind, "sku": key, "name": name,
+            "channel": (channel(key) if kind != "component"
+                        else channel(parent_of.get(key, key)) or "amazon"),
+            # 付属品は本体のすぐ下に並べる
+            "group": parent_of.get(key, key) if kind == "component" else key,
+        }
+        return kind, key, info
+
+    return prods, comps, comps_of, classify
+
+
+def classify_orders(db, orders: list) -> dict:
+    """画面が持っている注文を、商品マスタだけで見分けて返す（すぐ返る）。"""
+    _p, _c, _co, classify = make_classifier(db)
+    out = {}
+    for o in orders or []:
+        if isinstance(o, dict) and o.get("oid") is not None:
+            out[o["oid"]] = classify(o)[2]
+    return out
+
+
+def send_check(db, oids: list, pages: int = 5) -> dict:
+    """配送依頼に入れようとしている注文を確かめる。
+
+    タオタロウの配送依頼は、セット組みの付属品が入っていなくても通る。
+    選んだ本体に対して付属品が足りなければ止め、倉庫にある付属品の注文が
+    あれば「これを足せば揃う」と返す。届いていなければその注文を出す。
+
+    戻り値:
+      kinds    {oid: {kind: body/component/other/unknown, sku, name}}（画面の札）
+      problems [{level: error/warn, text, add_oids}]
+    """
+    prods, comps, comps_of, classify = make_classifier(db)
+    picked = {int(x) for x in (oids or [])}
+
     kinds, arrived, coming = {}, [], {}
     for page in range(1, max(1, pages) + 1):
         d = _list_orders_cached(page)
@@ -207,38 +263,9 @@ def send_check(db, oids: list, pages: int = 5) -> dict:
             if o.get("sid"):
                 continue                       # もう便に入っている
             st = o.get("state")
-            c = as_component(o)
-            sku = str(o.get("out_id") or "").strip()
-            # 「y127（付属品）」はツールが付けた付属品の名前（本体SKU＋（付属品））
-            base = sku.split("（")[0].strip() if "（付属品）" in sku else ""
-            if c:
-                kind, key = "component", c
-            elif base and (base in prods or base in rk):
-                kind, key = "component", sku
-                parent_of.setdefault(sku, base)
-            elif sku in prods:
-                kind, key = ("body" if sku in comps_of else "other"), sku
-            elif sku in rk:
-                kind, key = "other", sku
-            elif not sku:
-                # 管理番号の無い注文（梱包資材・管理番号を入れ忘れた注文）。
-                # Amazon・楽天のどちらの画面にも混ぜず、「すべて」の最後にまとめる
-                kind, key = "noid", ""
-            else:
-                kind, key = "unknown", sku
+            kind, key, info = classify(o)
             if st == 4:
-                p = prods.get(key)
-                name = (p.name if p else "") or ((rk[key].name if key in rk else "") or "")
-                if kind == "component" and not name and parent_of.get(key):
-                    pp = prods.get(parent_of[key]) or rk.get(parent_of[key])
-                    name = f"付属品（{(pp.name if pp else '') or parent_of[key]}）"
-                kinds[o.get("oid")] = {
-                    "kind": kind, "sku": key, "name": name,
-                    "channel": channel(key) if kind != "component"
-                               else channel(parent_of.get(key, key)) or "amazon",
-                    # 付属品は本体のすぐ下に並べる
-                    "group": parent_of.get(key, key) if kind == "component" else key,
-                }
+                kinds[o.get("oid")] = info
                 arrived.append((o, kind, key))
             elif st in _ON_THE_WAY and kind == "component":
                 coming.setdefault(key, []).append(

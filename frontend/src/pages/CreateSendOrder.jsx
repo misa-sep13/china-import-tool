@@ -233,7 +233,16 @@ export default function CreateSendOrder() {
       ])
       setOpts(o.data)
       // 入庫済み（state 4）だけが配送依頼に入れられる
-      setRows((list.data.items || []).filter(x => x.state === 4))
+      const arrived = (list.data.items || []).filter(x => x.state === 4)
+      // Amazon／楽天の振り分けと自社の商品名は、商品マスタだけで決まるので先に取る。
+      // セット組みの確かめ（タオタロウを読むので遅い）を待たずに出す
+      try {
+        const c = await api.post('/taotaro/classify', {
+          orders: arrived.map(x => ({ oid: x.oid, out_id: x.out_id, url: x.url, sku_props: x.sku_props })),
+        })
+        setCheck(prev => ({ ...prev, kinds: c.data.kinds || {} }))
+      } catch { /* 取れなければ send-check の結果を待つ */ }
+      setRows(arrived)
     } catch (e) {
       setErr(e?.response?.data?.detail || '読み込めませんでした')
     }
@@ -248,10 +257,12 @@ export default function CreateSendOrder() {
     const t = setTimeout(async () => {
       try {
         const r = await api.post('/taotaro/send-check', { oids: [...picked] })
-        setCheck(r.data || { kinds: {}, problems: [] })
+        // 見分け（kinds）は先に取ってあるので、上書きではなく足す
+        setCheck(prev => ({ kinds: { ...(prev.kinds || {}), ...((r.data || {}).kinds || {}) },
+          problems: (r.data || {}).problems || [] }))
       } catch (e) {
-        setCheck({ kinds: {}, problems: [{ level: 'warn', add_oids: [],
-          text: '確認できませんでした：' + (e?.response?.data?.detail || e.message) }] })
+        setCheck(prev => ({ kinds: prev.kinds || {}, problems: [{ level: 'warn', add_oids: [],
+          text: '確認できませんでした：' + (e?.response?.data?.detail || e.message) }] }))
       } finally { setChecking(false) }
     }, 400)
     setOverride(false)
@@ -308,9 +319,10 @@ export default function CreateSendOrder() {
     if (k.channel === 'both') return 'both'
     return k.channel || (k.kind === 'unknown' ? 'unknown' : '')
   }
-  // 確認が返ってくるまでは振り分けられないので、全部出しておく
+  // 商品マスタでの見分けが返ってきたか
   const kindsReady = Object.keys(check.kinds || {}).length > 0
-  const inChan = (r, c) => !kindsReady || c === 'all' || chanOf(r) === c || chanOf(r) === 'both'
+  // 見分けがつくまでは、Amazon・楽天のタブには何も出さない（混ざって見えるため）
+  const inChan = (r, c) => c === 'all' || (kindsReady && (chanOf(r) === c || chanOf(r) === 'both'))
     || chanOf(r) === 'unknown'          // 打ち間違いらしいものはどのタブにも出す
   // 管理番号の無い注文（梱包資材など）は「すべて」の最後にだけ出す
   const countOf = (c) => rows.filter(r => inChan(r, c)).length
@@ -582,7 +594,10 @@ export default function CreateSendOrder() {
           {!shown.length && (
             <tr><td colSpan={5} style={{ ...td, color: C.sub, textAlign: 'center',
               padding: 24 }}>
-              {rows.length ? '絞り込みに合うものがありません'
+              {rows.length && !kindsReady && chan !== 'all' ? 'Amazon・楽天を見分けています…'
+                : rows.length ? (chan === 'amazon' ? 'Amazonの商品で倉庫に着いているものはありません'
+                  : chan === 'rakuten' ? '楽天の商品で倉庫に着いているものはありません'
+                  : '絞り込みに合うものがありません')
                 : '配送依頼に入れられる注文（入庫済み）がありません'}
             </td></tr>
           )}
