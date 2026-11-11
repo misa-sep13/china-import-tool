@@ -37,6 +37,8 @@ class SupplierIn(BaseModel):
     mail_subject: Optional[str] = None
     mail_greeting: Optional[str] = None
     mail_body: Optional[str] = None
+    prepay: Optional[bool] = False         # 前入金の取引先
+    payment_note: Optional[str] = None     # 振込先など
     sort_order: Optional[int] = 0
     is_active: Optional[bool] = True
 
@@ -48,6 +50,8 @@ def _supplier_dict(s):
         "email_to": s.email_to, "email_cc": s.email_cc,
         "mail_subject": s.mail_subject, "mail_greeting": s.mail_greeting,
         "mail_body": s.mail_body, "sort_order": s.sort_order,
+        "prepay": bool(getattr(s, "prepay", False)),
+        "payment_note": getattr(s, "payment_note", None),
         "is_active": s.is_active,
     }
 
@@ -73,7 +77,9 @@ def update_supplier(sid: int, data: SupplierIn, db: Session = Depends(get_db)):
     s = db.query(WholesaleSupplier).filter(WholesaleSupplier.id == sid).first()
     if not s:
         raise HTTPException(404, "取引先が見つかりません")
-    for k, v in data.model_dump().items():
+    # 送ってきた項目だけ変える。全部入れ替えると、送らなかった項目
+    # （前入金の印など）が既定値に戻ってしまう
+    for k, v in data.model_dump(exclude_unset=True).items():
         setattr(s, k, v)
     db.commit()
     return _supplier_dict(s)

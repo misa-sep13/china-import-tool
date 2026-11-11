@@ -136,11 +136,18 @@ export default function WholesalePage() {
 
   const send = async () => {
     const m = preview.editing
-    if (!window.confirm(`${m.to} へ発注書を送信します。よろしいですか？`)) return
+    // 前入金の取引先は、送っただけでは出荷されない。送る前と送ったあとに念を押す
+    const payLine = supplier?.prepay
+      ? `\n\n※ ${supplier.name}は前入金です。送信したら、合計 ${yen(preview.order.total)} 円（税込）を振り込んでください。入金されるまで出荷されません。`
+      : ''
+    if (!window.confirm(`${m.to} へ発注書を送信します。よろしいですか？${payLine}`)) return
     setBusy(true); setErr('')
     try {
       await api.post(`/wholesale/orders/${preview.order.id}/send`, m)
-      alert('送信しました')
+      alert(supplier?.prepay
+        ? `送信しました。\n\n【入金を忘れずに】${supplier.name}は前入金です。\n合計 ${yen(preview.order.total)} 円（税込）を振り込んでください。`
+          + (supplier.payment_note ? `\n\n${supplier.payment_note}` : '')
+        : '送信しました')
       setPreview(null); setQty({})
       const r = await api.get(`/wholesale/orders?supplier_id=${supplierId}`)
       setOrders(r.data)
@@ -346,6 +353,10 @@ export default function WholesalePage() {
             </div>
           )}
 
+          {supplier?.prepay && (
+            <PrepayNotice supplier={supplier} total={chosen.length ? total : null} />
+          )}
+
           <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end',
             alignItems: 'center', gap: 20 }}>
             <div style={{ color: '#64748b', fontSize: 13 }}>
@@ -453,6 +464,32 @@ export default function WholesalePage() {
   )
 }
 
+/**
+ * 前入金の取引先（リビックなど）への案内。発注書を送っても、
+ * 入金するまで出荷されないので、発注の画面と送信前の確認で目立たせる。
+ */
+function PrepayNotice({ supplier, total }) {
+  const yen = n => (n || 0).toLocaleString('ja-JP')
+  return (
+    <div style={{ marginTop: 14, padding: '14px 16px', borderRadius: 8,
+      background: '#fef2f2', border: '2px solid #dc2626', color: '#7f1d1d' }}>
+      <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 4 }}>
+        💴 {supplier.name}は<span style={{ color: '#dc2626' }}>前入金</span>です
+      </div>
+      <div style={{ fontSize: 14, lineHeight: 1.8 }}>
+        発注書を送ったら、<b>すぐに{total != null ? <>合計 <span style={{ fontSize: 18 }}>{yen(total)}</span> 円（税込）を</> : '代金を'}振り込んでください</b>。
+        入金が確認されるまで出荷されません。
+      </div>
+      {supplier.payment_note && (
+        <div style={{ marginTop: 6, fontSize: 13, whiteSpace: 'pre-wrap',
+          background: '#fff', borderRadius: 6, padding: '8px 10px' }}>
+          {supplier.payment_note}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** 送信前の確認。ここで見た内容がそのまま送られる。 */
 function PreviewDialog({ p, supplier, busy, onChange, onDownload, onSend, onClose }) {
   const m = p.editing
@@ -493,6 +530,8 @@ function PreviewDialog({ p, supplier, busy, onChange, onDownload, onSend, onClos
             </div>
           )}
         </div>
+
+        {supplier?.prepay && <PrepayNotice supplier={supplier} total={p.order.total} />}
 
         <div style={{ display: 'grid', gap: 10 }}>
           <label style={{ fontSize: 13 }}>宛先

@@ -29,6 +29,10 @@ class WholesaleSupplier(Base):
     mail_subject = Column(String, default="発注書になります")
     mail_greeting = Column(String)                 # ご担当者様 / 乾様
     mail_body = Column(Text)                       # 本文（署名の前まで）
+    # 前入金の取引先（リビックなど）。発注書を送っても、入金するまで出荷されない。
+    # 発注の画面で入金を忘れないよう、目立つ案内を出す
+    prepay = Column(Boolean, default=False)
+    payment_note = Column(Text)                    # 振込先など、案内に添える文
     sort_order = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
