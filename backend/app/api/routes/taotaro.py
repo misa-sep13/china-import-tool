@@ -863,6 +863,14 @@ def _id_plan(db: Session, cookie, states: list) -> dict:
         if no:
             by_offer.setdefault(no, []).append(rec)
 
+    # Amazonと楽天の両方に同じSKUがある商品
+    shared = {p.sku for p in db.query(Product).filter(Product.is_active == True).all()
+              if p.sku} & rk_skus
+
+    def _fba_mark(o):
+        f = str(o.get("fba") or "").strip().lower()
+        return bool(f and f not in ("0", "false", "none"))
+
     fill, skip = [], []
     for o in orders:
         # どの商品かを決める。管理番号が入っていればそれが確実。
@@ -896,9 +904,12 @@ def _id_plan(db: Session, cookie, states: list) -> dict:
         put = {}
         if not o["out_id"] and rec["sku"]:
             put["out_id"] = rec["sku"]
-        if not o["asin"] and rec["asin"]:
+        # 同じSKUをAmazonと楽天の両方で使っている商品（y127）は、FBAの印が
+        # 無い注文にASIN・FNSKUを入れない。楽天用の注文がAmazon用に見えてしまう
+        amazon_ok = rec["sku"] not in shared or _fba_mark(o)
+        if amazon_ok and not o["asin"] and rec["asin"]:
             put["asin"] = rec["asin"]
-        if not o["fnsku"] and rec["fnsku"]:
+        if amazon_ok and not o["fnsku"] and rec["fnsku"]:
             put["fnsku"] = rec["fnsku"]
         if not put:
             continue

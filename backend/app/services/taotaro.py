@@ -253,6 +253,9 @@ def _order_brief(o: dict) -> dict:
         # 商品が引けないことがあるので、引き直しに使う
         "asin": (o.get("asin") or "").strip(),
         "fnsku": (o.get("fnsku") or "").strip(),
+        # FBA納品の印。ツールからAmazon用に発注すると必ず付く。
+        # 同じSKUをAmazonと楽天の両方で使っている商品（y127）は、これで見分ける
+        "fba": str(o.get("fba") or "").strip(),
         "state": o.get("state"),
         "state_label": ORDER_STATES.get(o.get("state"), ""),
         "title": o.get("goods_name"),

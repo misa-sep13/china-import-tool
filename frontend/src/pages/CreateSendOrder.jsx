@@ -406,7 +406,9 @@ export default function CreateSendOrder({ onCreated, channel = 'amazon' } = {}) 
       // セット組みの確かめ（タオタロウを読むので遅い）を待たずに出す
       try {
         const c = await api.post('/taotaro/classify', {
-          orders: arrived.map(x => ({ oid: x.oid, out_id: x.out_id, url: x.url, sku_props: x.sku_props })),
+          // fba・asin・fnsku は、同じSKUをAmazonと楽天の両方で使っている商品の見分けに使う
+          orders: arrived.map(x => ({ oid: x.oid, out_id: x.out_id, url: x.url, sku_props: x.sku_props,
+            fba: x.fba, asin: x.asin, fnsku: x.fnsku })),
         })
         setCheck(prev => ({ ...prev, kinds: c.data.kinds || {} }))
       } catch { /* 取れなければ send-check の結果を待つ */ }

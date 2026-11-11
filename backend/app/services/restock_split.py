@@ -216,12 +216,23 @@ def make_classifier(db):
                 # 楽天の付属品は本体と同じ名前のことがある（y141）ので、仕様で呼ぶ
                 all_comps[c] = _NS(name=(getattr(rr, "supplier_spec", "") or rr.name or ""), spec="")
 
-    def channel(sku):
+    def _amazon_mark(o):
+        """注文にAmazon用の印があるか（FBAの指定・ASIN・FNSKU）。"""
+        f = str((o or {}).get("fba") or "").strip().lower()
+        return bool((f and f not in ("0", "false", "none"))
+                    or str((o or {}).get("asin") or "").strip()
+                    or str((o or {}).get("fnsku") or "").strip())
+
+    def channel(sku, o=None):
         p = prods.get(sku)
         amz = bool(p and ((p.fnsku or "").strip() or (p.asin or "").strip()
                           or p.is_component))
         rak = sku in rk
-        return "both" if (amz and rak) else "amazon" if amz else "rakuten" if rak else ""
+        if amz and rak:
+            # 同じSKUを両方で使っている。ツールからAmazon用に発注した注文には
+            # FBAの印が付くので、それで決める。印が無ければ決められない
+            return "amazon" if _amazon_mark(o) else "both"
+        return "amazon" if amz else "rakuten" if rak else ""
 
     def classify(o):
         c = as_component(o)
@@ -262,8 +273,8 @@ def make_classifier(db):
                 name = f"{name}（{parent_of[key]} の付属品{qs}）"
         info = {
             "kind": kind, "sku": key, "name": name,
-            "channel": (channel(key) if kind != "component"
-                        else channel(parent_of.get(key, key)) or "amazon"),
+            "channel": (channel(key, o) if kind != "component"
+                        else channel(parent_of.get(key, key), o) or "amazon"),
             # 付属品は本体のすぐ下に並べる
             "group": parent_of.get(key, key) if kind == "component" else key,
         }
