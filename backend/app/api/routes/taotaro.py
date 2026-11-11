@@ -1092,6 +1092,42 @@ class IdsApplyIn(BaseModel):
     choices: Optional[dict] = None
 
 
+class IdsSetIn(BaseModel):
+    oid: int
+    out_id: str
+
+
+@router.post("/ids/set")
+def ids_set(body: IdsSetIn, db: Session = Depends(get_db)):
+    """注文1件の管理番号を書き換える（入っていても上書きする）。
+
+    「空いている欄だけ埋める」では直せない間違い（楽天のフックに y141 と
+    入っていて、マスタでは y141_hook に改めた）を直すためのもの。
+    ASIN・FNSKU・備考は今の値をそのまま送り返す（送らないと消えるため）。
+    """
+    from app.models.settings import OrderSettings
+    from app.services import taotaro_web
+
+    new_id = (body.out_id or "").strip()
+    if not new_id:
+        raise HTTPException(400, "管理番号が空です")
+    row = db.query(OrderSettings).first()
+    try:
+        with taotaro_web.logged_in(db, row) as sess:
+            orders = taotaro_web.list_orders(sess, states=_FILLABLE_STATES)
+            o = next((x for x in orders if x["oid"] == body.oid), None)
+            if o is None:
+                raise HTTPException(404, f"注文{body.oid}が見つかりません（出荷済みは直せません）")
+            before = o["out_id"]
+            taotaro_web.update_order(sess, body.oid, asin=o["asin"], fnsku=o["fnsku"],
+                                     out_id=new_id, remark=o["remark"])
+    except taotaro_web.WebError as e:
+        raise HTTPException(400, str(e))
+    from app.services import restock_split as rs
+    rs._orders_cache.clear()
+    return {"ok": True, "oid": body.oid, "before": before, "after": new_id}
+
+
 @router.post("/ids/apply")
 def ids_apply(body: IdsApplyIn = IdsApplyIn(), db: Session = Depends(get_db)):
     """下見の内容をタオタロウへ書き込む。空いている欄だけ埋める。"""
