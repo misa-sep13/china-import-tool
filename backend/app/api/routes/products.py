@@ -86,6 +86,8 @@ class ProductUpdate(BaseModel):
     taotaro_inspect: Optional[str] = None
     discontinued: Optional[bool] = None
     order_lot: Optional[int] = None
+    # 非表示にした商品を戻す（作り直さずに戻せるように。作り直すと全項目が入れ替わる）
+    is_active: Optional[bool] = None
 
 class ProductOut(ProductCreate):
     id: int
