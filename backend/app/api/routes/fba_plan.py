@@ -1332,6 +1332,13 @@ class _NoteMatcher:
         return {k: v[0] for k, v in seen.items() if len(v) == 1}
 
     def find(self, tid: str, info: str, fnsku: str = "", asin: str = ""):
+        # FNSKUが1つの商品に決まるなら、それを最優先にする。
+        # 単品とセット（a021_stand と a021_stand_tube_squeezer）は同じ
+        # 仕入先ページ・同じ仕様なので、商品IDや仕様では見分けられず、
+        # 単品の行にセットの指示が入っていた。付属品の行は呼び出し側で先に除いてある
+        p = self.by_fnsku.get((fnsku or "").strip().upper())
+        if p is not None:
+            return p
         p = self.by_tid.get(str(tid or "").strip())
         if p is not None:
             return p
@@ -1392,7 +1399,11 @@ async def fill_taotaro_note(file: UploadFile = File(...),
         info = _cell(r, c_info)
         if not tid and not info:
             continue
-        p = matcher.find(tid, info, _cell(r, c_fnsku), _cell(r, c_asin))
+        # 付属品の行を先に見分ける。付属品の注文には本体と同じFNSKU・
+        # 同じ仕入先ページが入っているので、本体として当てると
+        # 付属品の行に本体の指示が入ってしまう
+        p = (None if matcher.find_component(info) is not None
+             else matcher.find(tid, info, _cell(r, c_fnsku), _cell(r, c_asin)))
         # 元の備考のうち、セット組みの指示だけは残す（買付の指示は消す）。
         # 「5856609とセット組みです」は納品のときに要る指示なので、
         # マスタの納品時の指示が空でも消してはいけない
@@ -1928,7 +1939,11 @@ def _fill_notes_in_workbook(wb, db: Session) -> dict:
         info = _cell(r, c_info)
         if not tid and not info:
             continue
-        p = matcher.find(tid, info, _cell(r, c_fnsku), _cell(r, c_asin))
+        # 付属品の行を先に見分ける。付属品の注文には本体と同じFNSKU・
+        # 同じ仕入先ページが入っているので、本体として当てると
+        # 付属品の行に本体の指示が入ってしまう
+        p = (None if matcher.find_component(info) is not None
+             else matcher.find(tid, info, _cell(r, c_fnsku), _cell(r, c_asin)))
         # 元の備考のうち、セット組みの指示だけは残す（買付の指示は消す）。
         # 「5856609とセット組みです」は納品のときに要る指示なので、
         # マスタの納品時の指示が空でも消してはいけない
