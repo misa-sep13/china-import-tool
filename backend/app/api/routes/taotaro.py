@@ -833,8 +833,11 @@ def _id_plan(db: Session, cookie, states: list) -> dict:
     # 楽天用の発注にFNSKUを入れてはいけないので、持っているものだけ入れる
     by_sku, by_skuid, by_offer = {}, {}, {}
     # 画面で「どの商品か」が分かるよう、名前・Amazon/楽天・仕様も持たせる
-    rk_skus = {(r.sku or "").strip() for r in db.query(RakutenProduct).all()}
-    for p in db.query(Product).all():
+    # 非表示にした商品（作り直す前の a28_1 など）は候補に入れない。
+    # 入れると同じURLの候補が2つになり、決められなくなる
+    rk_rows = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+    rk_skus = {(r.sku or "").strip() for r in rk_rows}
+    for p in db.query(Product).filter(Product.is_active == True).all():
         has_amz = bool((p.asin or "").strip() or (p.fnsku or "").strip())
         rec = {"sku": p.sku, "asin": (p.asin or "").strip(),
                "fnsku": (p.fnsku or "").strip(),
@@ -849,7 +852,7 @@ def _id_plan(db: Session, cookie, states: list) -> dict:
         no = _offer_no(p.buy_url or "")
         if no:
             by_offer.setdefault(no, []).append(rec)
-    for r in db.query(RakutenProduct).all():
+    for r in rk_rows:
         rec = {"sku": r.sku, "asin": "", "fnsku": "",
                "name": r.name or "", "spec": r.supplier_spec or "", "channel": "楽天"}
         if r.sku and r.sku not in by_sku:
@@ -931,6 +934,39 @@ def _id_plan(db: Session, cookie, states: list) -> dict:
             row.update(extra.get(row.get("oid"), {}))
     except Exception:
         pass
+
+    # 同じURLの候補が複数あっても、仕様（色・サイズ）の文字が合うものが1つだけなら
+    # それに決める（洗濯ネットの 40*40 と 50*50 など）。合うものが2つ以上なら決めない
+    # （Amazonと楽天で同じ商品を別SKUにしているときは仕様も同じなので、人に選んでもらう）
+    import re as _re
+
+    def _n(s):
+        return _re.sub(r"[\s　、,，;；/／~～【】()（）]", "", str(s or "")).lower()
+
+    still = []
+    for o in skip:
+        cands, props = o.get("candidates") or [], _n(o.get("props"))
+        hit = [c for c in cands
+               if props and _n(c.get("spec")) and (_n(c["spec"]) in props or props in _n(c["spec"]))]
+        if len(hit) != 1:
+            still.append(o)
+            continue
+        rec = by_sku.get(hit[0]["sku"]) or {"sku": hit[0]["sku"], "asin": "", "fnsku": ""}
+        put = {}
+        if not o["out_id"]:
+            put["out_id"] = rec["sku"]
+        if not o["asin"] and rec.get("asin"):
+            put["asin"] = rec["asin"]
+        if not o["fnsku"] and rec.get("fnsku"):
+            put["fnsku"] = rec["fnsku"]
+        if not put:
+            continue
+        fill.append({**{k: v for k, v in o.items() if k not in ("candidates", "reason")},
+                     "sku": rec["sku"], "matched_by": "仕入先URL＋仕様",
+                     "name": rec.get("name", ""), "channel": rec.get("channel", ""),
+                     "put": put, "note": "" if rec.get("asin") else "まだAmazonに出品していません"
+                     if rec.get("channel", "").startswith("Amazon") else ""})
+    skip = still
 
     return {"fill": fill, "skip": skip, "scanned": len(orders), "_by_sku": by_sku}
 
