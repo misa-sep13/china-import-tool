@@ -187,6 +187,21 @@ def make_classifier(db):
     for b, lst in comps_of.items():
         for c, _q in lst:
             parent_of.setdefault(c, b)
+    # 楽天の付属品。楽天の商品マスタの「発注用付属品」に挙がっているSKU
+    # （石鹸置き y141_1 のフック y141 ×2 など）。Amazonの付属品しか見ていなかったので、
+    # 楽天の付属品が本体と同じ名前の商品として出ていた
+    import json as _json
+    rk_qty = {}
+    for r in {id(v): v for v in rk.values()}.values():
+        try:
+            lst = _json.loads(r.purchase_components or "[]") or []
+        except (ValueError, TypeError):
+            lst = []
+        for x in lst if isinstance(lst, list) else []:
+            c = str((x or {}).get("sku") or "").strip()
+            if c and c != r.sku and c in rk:
+                parent_of.setdefault(c, r.sku)
+                rk_qty.setdefault(c, int(x.get("qty") or 1))
 
     def channel(sku):
         p = prods.get(sku)
@@ -205,6 +220,8 @@ def make_classifier(db):
         elif base and (base in prods or base in rk):
             kind, key = "component", sku
             parent_of.setdefault(sku, base)
+        elif sku in rk and sku in rk_qty:
+            kind, key = "component", sku       # 楽天の付属品（y141 など）
         elif sku in prods:
             kind, key = ("body" if sku in comps_of else "other"), sku
         elif sku in rk:
@@ -217,9 +234,18 @@ def make_classifier(db):
             kind, key = "unknown", sku
         p = prods.get(key)
         name = (p.name if p else "") or ((rk[key].name if key in rk else "") or "")
-        if kind == "component" and not name and parent_of.get(key):
+        if kind == "component" and parent_of.get(key) and (not name or key in rk_qty):
             pp = prods.get(parent_of[key]) or rk.get(parent_of[key])
-            name = f"付属品（{(pp.name if pp else '') or parent_of[key]}）"
+            pname = (pp.name if pp else "") or parent_of[key]
+            q = rk_qty.get(key)
+            qs = f"×{q}" if q else ""
+            if not name or name.strip() == pname.strip():
+                # 楽天の付属品は本体と同じ名前で登録されていることがある（y141）。
+                # そのままだと本体と見分けられないので「付属品×2（本体）」と出す
+                name = f"付属品{qs}（{pname}）"
+            else:
+                # 自分の名前がある付属品（ストラップなど）は名前を残し、何の付属品かを足す
+                name = f"{name}（{parent_of[key]} の付属品{qs}）"
         info = {
             "kind": kind, "sku": key, "name": name,
             "channel": (channel(key) if kind != "component"
