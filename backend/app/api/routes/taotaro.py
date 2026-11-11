@@ -979,5 +979,9 @@ def ids_apply(body: IdsApplyIn = IdsApplyIn(), db: Session = Depends(get_db)):
     except taotaro_web.WebError as e:
         raise HTTPException(400, str(e))
 
+    # 管理番号が変わったので、配送依頼の確かめが古い一覧を使わないようにする
+    if done:
+        from app.services import restock_split as rs
+        rs._orders_cache.clear()
     return {"done": done, "failed": failed, "stopped": stopped,
             "done_count": len(done), "failed_count": len(failed)}

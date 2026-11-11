@@ -36,7 +36,7 @@ const th = { padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap',
  * 空いている欄だけ埋める。すでに入っているものは触らない。
  * 出荷してしまったあとの注文は、もうラベルを貼り終わっているので対象外。
  */
-function IdFiller() {
+function IdFiller({ onApplied } = {}) {
   const [plan, setPlan] = useState(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -78,6 +78,8 @@ function IdFiller() {
       // ログインが切れて止まったときは、理由をそのまま出す
       if (r.data.stopped) setErr(r.data.stopped)
       await preview(true)
+      // 管理番号が入ったので、下の一覧の見分けをやり直す
+      if (r.data.done_count && onApplied) onApplied()
     } catch (e) {
       setErr(e?.response?.data?.detail || '入れられませんでした')
     } finally { setBusy(false) }
@@ -206,7 +208,8 @@ function IdFiller() {
 }
 
 
-export default function CreateSendOrder() {
+// onCreated(sid)：配送依頼ができたら呼ぶ。納品プランの画面がその便を選ぶのに使う
+export default function CreateSendOrder({ onCreated } = {}) {
   const [opts, setOpts] = useState(null)
   const [rows, setRows] = useState([])
   const [picked, setPicked] = useState(() => new Set())
@@ -384,6 +387,7 @@ export default function CreateSendOrder() {
         made_in_china_flag: Number(flag), note,
       })
       setResult(r.data)
+      if (r.data?.sid && onCreated) onCreated(r.data.sid)
       setPicked(new Set())
       load()
     } catch (e) {
@@ -420,7 +424,14 @@ export default function CreateSendOrder() {
 
       {err && <div style={{ color: C.bad, fontSize: 12, marginBottom: 8 }}>{err}</div>}
 
-      <div style={{ fontSize: 14, fontWeight: 700, margin: '4px 0 6px' }}>① 便と届け先を選ぶ</div>
+      {/* 先に管理番号を入れておく。空のままだとAmazon・楽天の見分けや
+          付属品のチェックができず、取り込みでも照合できない */}
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '4px 0 6px' }}>
+        はじめに：管理番号の空いている注文があれば入れる
+      </div>
+      <IdFiller onApplied={load} />
+
+      <div style={{ fontSize: 14, fontWeight: 700, margin: '16px 0 6px' }}>① 便と届け先を選ぶ</div>
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end',
         flexWrap: 'wrap', marginBottom: 12, padding: 10,
         background: '#f8fafc', borderRadius: 6 }}>
@@ -668,10 +679,6 @@ export default function CreateSendOrder() {
         )
       })()}
 
-      {/* タオタロウの注文に ASIN・FNSKU・管理番号を後から入れる道具。配送依頼の手順とは別なので下に置く */}
-      <div style={{ marginTop: 24 }}>
-        <IdFiller />
-      </div>
     </div>
   )
 }

@@ -675,14 +675,21 @@ export default function FbaPlanPage() {
         </div>
         <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 2 }}>
           <li>
-            下の<b>⓪ で配送依頼を出す</b>
-            <span style={{ color: '#64748b' }}>　（何個・どの便かのおすすめと、付属品のチェック付き。FBA送付先は未定のままでOK）</span>
+            <b>⓪ の「はじめに」</b>で、管理番号の空いている注文があれば入れる
+            <span style={{ color: '#64748b' }}>　→ Amazon・楽天の見分けと付属品のチェックに使う</span>
           </li>
-          <li>この画面の上で<b>その便を選ぶ</b>　→ 以下はすべてその便が対象</li>
+          <li>
+            <b>⓪ で配送依頼を出す</b>：便と届け先を選び、おすすめを見て注文を選んで送る
+            <span style={{ color: '#64748b' }}>　（付属品が足りないと止まります。FBA送付先は未定のままでOK）</span>
+          </li>
+          <li>
+            出した便が<b>「どの便を納品しますか」で自動で選ばれる</b>　→ 以下はすべてその便が対象
+            <span style={{ color: '#64748b' }}>（タオタロウのサイトで出した便は、ここで手で選ぶ）</span>
+          </li>
           <li><b>① 商品ラベル</b>を刷る</li>
           <li>
-            タオタロウから<b>FBA指示書</b>を落として<b>② 備考を入れる</b>
-            <span style={{ color: '#64748b' }}>　→ 買付の指示が消え、納品の指示だけが入る</span>
+            <b>② 「便から指示書を取ってくる」</b>でFBA指示書を作る
+            <span style={{ color: '#64748b' }}>　→ 買付の指示が消え、納品の指示とセット組みの指示が入る</span>
           </li>
           <li><b>ラベルと指示書を一緒に</b><b>WeChat</b>へ送る</li>
           <li>下の表で納品数を決めて<b>③ Amazonに納品プランを作成</b></li>
@@ -727,7 +734,11 @@ export default function FbaPlanPage() {
             倉庫に着いた注文から、いまの売れ行きで何個・どの便で送るかを見て、タオタロウへ配送依頼を出します
           </span>
         </div>
-        <CreateSendOrder />
+        {/* 出した便を、下の「どの便を納品しますか」で自動で選ぶ */}
+        <CreateSendOrder onCreated={async (sid) => {
+          await loadSendOrders()
+          await pickPlanSendOrder(sid)
+        }} />
       </div>
 
       {/* 便はここで1回だけ選ぶ。以前はカードごとに選び直していた */}
