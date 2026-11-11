@@ -832,9 +832,16 @@ def _id_plan(db: Session, cookie, states: list) -> dict:
     # 自社の商品。Amazonの商品はASIN・FNSKUを持ち、楽天の商品は持たない。
     # 楽天用の発注にFNSKUを入れてはいけないので、持っているものだけ入れる
     by_sku, by_skuid, by_offer = {}, {}, {}
+    # 画面で「どの商品か」が分かるよう、名前・Amazon/楽天・仕様も持たせる
+    rk_skus = {(r.sku or "").strip() for r in db.query(RakutenProduct).all()}
     for p in db.query(Product).all():
+        has_amz = bool((p.asin or "").strip() or (p.fnsku or "").strip())
         rec = {"sku": p.sku, "asin": (p.asin or "").strip(),
-               "fnsku": (p.fnsku or "").strip()}
+               "fnsku": (p.fnsku or "").strip(),
+               "name": p.name or "", "spec": p.spec or "",
+               "channel": ("Amazon・楽天" if (has_amz and p.sku in rk_skus)
+                           else "Amazon" if has_amz
+                           else "楽天" if p.sku in rk_skus else "Amazon（未出品）")}
         if p.sku:
             by_sku[p.sku] = rec
         if (p.taotaro_sku_id or "").strip():
@@ -843,7 +850,8 @@ def _id_plan(db: Session, cookie, states: list) -> dict:
         if no:
             by_offer.setdefault(no, []).append(rec)
     for r in db.query(RakutenProduct).all():
-        rec = {"sku": r.sku, "asin": "", "fnsku": ""}
+        rec = {"sku": r.sku, "asin": "", "fnsku": "",
+               "name": r.name or "", "spec": r.supplier_spec or "", "channel": "楽天"}
         if r.sku and r.sku not in by_sku:
             by_sku[r.sku] = rec
         if (getattr(r, "taotaro_sku_id", "") or "").strip():
@@ -868,8 +876,14 @@ def _id_plan(db: Session, cookie, states: list) -> dict:
             if len(cand) == 1:
                 rec, how = cand[0], "仕入先URL"
             elif len(cand) > 1:
-                skip.append({**o, "reason":
-                             f"同じURLの商品が{len(cand)}件あり、どれか決められません"})
+                # 画面で選べるよう候補を返す（同じ商品が二重に入らないようSKUで重複を除く）
+                seen, cands = set(), []
+                for c in cand:
+                    if c["sku"] and c["sku"] not in seen:
+                        seen.add(c["sku"])
+                        cands.append({k: c.get(k, "") for k in ("sku", "name", "spec", "channel")})
+                skip.append({**o, "candidates": cands, "reason":
+                             f"同じURLの商品が{len(cands)}件あり、どれか決められません"})
                 continue
         if rec is None:
             skip.append({**o, "reason": "うちの商品と紐づきません"})
@@ -892,9 +906,33 @@ def _id_plan(db: Session, cookie, states: list) -> dict:
         if not o["asin"] and not rec["asin"]:
             want.append("まだAmazonに出品していません")
         fill.append({**o, "sku": rec["sku"], "matched_by": how,
+                     "name": rec.get("name", ""), "channel": rec.get("channel", ""),
                      "put": put, "note": "／".join(want)})
 
-    return {"fill": fill, "skip": skip, "scanned": len(orders)}
+    # 写真と仕様（色・サイズ）。会員画面の一覧には無いので、公式APIの一覧から足す
+    # （配送依頼の画面と同じ一覧を使う。少しの間覚えているので速い）
+    try:
+        from app.services import restock_split as rs
+        extra = {}
+        for page in range(1, 6):
+            d = rs._list_orders_cached(page)
+            for x in d.get("items") or []:
+                img = str(x.get("image") or "")
+                if img.startswith("//"):
+                    img = "https:" + img
+                extra[x.get("oid")] = {
+                    "image": img,
+                    "props": " / ".join(str(v.get("value") or "")
+                                        for v in (x.get("sku_props") or [])),
+                }
+            if not d.get("has_more_pages"):
+                break
+        for row in fill + skip:
+            row.update(extra.get(row.get("oid"), {}))
+    except Exception:
+        pass
+
+    return {"fill": fill, "skip": skip, "scanned": len(orders), "_by_sku": by_sku}
 
 
 @router.get("/web/check")
@@ -927,7 +965,9 @@ def ids_preview(db: Session = Depends(get_db)):
         # logged_in が、使う直前にXSRF-TOKENをもらい直し、
         # 新しくなったクッキーを設定に書き戻す
         with taotaro_web.logged_in(db, row) as sess:
-            return _id_plan(db, sess, _FILLABLE_STATES)
+            plan = _id_plan(db, sess, _FILLABLE_STATES)
+            plan.pop("_by_sku", None)
+            return plan
     except taotaro_web.WebError as e:
         raise HTTPException(400, str(e))
 
@@ -935,6 +975,9 @@ def ids_preview(db: Session = Depends(get_db)):
 class IdsApplyIn(BaseModel):
     # 下見で出た注文番号のうち、入れてよいもの。省くと下見の全部
     oids: Optional[List[int]] = None
+    # 同じURLの商品が複数あって決められなかった注文に、画面で選んだSKU {注文番号: SKU}。
+    # これを渡したときは、選んだ注文だけを入れる
+    choices: Optional[dict] = None
 
 
 @router.post("/ids/apply")
@@ -951,8 +994,32 @@ def ids_apply(body: IdsApplyIn = IdsApplyIn(), db: Session = Depends(get_db)):
     try:
         with taotaro_web.logged_in(db, row) as sess:
             plan = _id_plan(db, sess, _FILLABLE_STATES)
+            items = plan["fill"]
+            if body.choices:
+                # 画面で選んだ商品で入れる。候補に無いSKUは受け付けない
+                by_sku = plan.get("_by_sku") or {}
+                items = []
+                for o in plan["skip"]:
+                    pick = str((body.choices or {}).get(str(o["oid"]))
+                               or (body.choices or {}).get(o["oid"]) or "").strip()
+                    if not pick:
+                        continue
+                    if pick not in {c["sku"] for c in (o.get("candidates") or [])}:
+                        failed.append({"oid": o["oid"], "sku": pick, "put": {},
+                                       "error": "候補に無い商品です"})
+                        continue
+                    rec = by_sku.get(pick) or {"sku": pick, "asin": "", "fnsku": ""}
+                    put = {}
+                    if not o["out_id"]:
+                        put["out_id"] = pick
+                    if not o["asin"] and rec.get("asin"):
+                        put["asin"] = rec["asin"]
+                    if not o["fnsku"] and rec.get("fnsku"):
+                        put["fnsku"] = rec["fnsku"]
+                    if put:
+                        items.append({**o, "sku": pick, "put": put})
 
-            for item in plan["fill"]:
+            for item in items:
                 if only and item["oid"] not in only:
                     continue
                 # 変えない欄は今の値をそのまま送り返す。送らなかった項目を

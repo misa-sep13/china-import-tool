@@ -89,6 +89,49 @@ function IdFiller({ onApplied } = {}) {
   const skip = plan?.skip || []
   const label = { asin: 'ASIN', fnsku: 'FNSKU', out_id: '管理番号' }
 
+  // 同じURLの商品が複数あって決められなかった注文で、選んだ商品 {注文番号: SKU}
+  const [choice, setChoice] = useState({})
+  const applyChoice = async (oid) => {
+    const sku = choice[oid]
+    if (!sku) return
+    if (!confirm(`注文${oid} に、管理番号「${sku}」を入れます。よろしいですか？`)) return
+    setBusy(true); setErr(''); setMsg(''); setFailed([])
+    try {
+      const r = await api.post('/taotaro/ids/apply', { choices: { [oid]: sku } })
+      setMsg(r.data.done_count ? `注文${oid} に ${sku} を入れました` : '')
+      setFailed(r.data.failed || [])
+      if (r.data.stopped) setErr(r.data.stopped)
+      await preview(true)
+      if (r.data.done_count && onApplied) onApplied()
+    } catch (e) {
+      setErr(e?.response?.data?.detail || '入れられませんでした')
+    } finally { setBusy(false) }
+  }
+
+  // 注文の写真と、自社の商品名・Amazon/楽天の札。注文番号と中国語の名前だけでは
+  // どの商品か分からない
+  const Item = ({ x, name, channel }) => (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+      {x.image
+        ? <img src={x.image} alt="" referrerPolicy="no-referrer" loading="lazy"
+            onError={e => { e.currentTarget.style.visibility = 'hidden' }}
+            style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4,
+              border: `1px solid ${C.line}`, flex: '0 0 40px' }} />
+        : <span style={{ width: 40, height: 40, background: '#f1f5f9', borderRadius: 4, flex: '0 0 40px' }} />}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>
+          {channel && <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4, marginRight: 5,
+            background: channel.startsWith('楽天') ? '#fee2e2' : '#dbeafe',
+            color: channel.startsWith('楽天') ? '#b91c1c' : '#1d4ed8' }}>{channel}</span>}
+          {name || (x.title || '').slice(0, 40)}
+        </div>
+        <div style={{ fontSize: 11, color: C.sub }}>
+          注文{x.oid}{x.props ? `　${x.props}` : ''}
+        </div>
+      </div>
+    </div>
+  )
+
   return (
     <div style={{ marginBottom: 12, padding: 10, borderRadius: 6,
       background: '#f8fafc', border: `1px solid ${C.line}` }}>
@@ -132,7 +175,7 @@ function IdFiller({ onApplied } = {}) {
         <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 8 }}>
           <thead>
             <tr>
-              <th style={th}>注文No.</th>
+              <th style={th}>注文</th>
               <th style={th}>SKU</th>
               <th style={th}>入れるもの</th>
               <th style={th}>どう突き合わせたか</th>
@@ -142,8 +185,8 @@ function IdFiller({ onApplied } = {}) {
           <tbody>
             {fill.map(x => (
               <tr key={x.oid}>
-                <td style={td}>{x.oid}</td>
-                <td style={td}>{x.sku}</td>
+                <td style={td}><Item x={x} name={x.name} channel={x.channel} /></td>
+                <td style={{ ...td, fontWeight: 600 }}>{x.sku}</td>
                 <td style={td}>
                   {Object.entries(x.put).map(([k, v]) => (
                     <div key={k}>{label[k] || k}: <b>{v}</b></div>
@@ -190,17 +233,47 @@ function IdFiller({ onApplied } = {}) {
       )}
 
       {!!skip.length && (
-        <details style={{ marginTop: 8 }}>
+        <details style={{ marginTop: 8 }} open>
           <summary style={{ fontSize: 12, color: C.sub, cursor: 'pointer' }}>
-            入れられなかったもの {skip.length}件
+            自動では入れられなかったもの {skip.length}件
+            （候補があるものは、選んで「この商品で入れる」を押してください）
           </summary>
-          <div style={{ fontSize: 11, color: C.sub, marginTop: 4 }}>
-            {skip.map(x => (
-              <div key={x.oid}>
-                {x.oid}　{x.title?.slice(0, 28)}　— {x.reason}
-              </div>
-            ))}
-          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 4 }}>
+            <tbody>
+              {skip.map(x => (
+                <tr key={x.oid}>
+                  <td style={{ ...td, width: '45%' }}><Item x={x} /></td>
+                  <td style={td}>
+                    {x.candidates?.length ? (
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <select value={choice[x.oid] || ''}
+                          onChange={e => setChoice(c => ({ ...c, [x.oid]: e.target.value }))}
+                          style={{ fontSize: 12, padding: '3px 6px', maxWidth: 420 }}>
+                          <option value="">どの商品？（{x.candidates.length}件）</option>
+                          {x.candidates.map(c => (
+                            <option key={c.sku} value={c.sku}>
+                              [{c.channel}] {c.sku}　{(c.name || '').slice(0, 24)}{c.spec ? `（${c.spec.slice(0, 20)}）` : ''}
+                            </option>
+                          ))}
+                        </select>
+                        <button onClick={() => applyChoice(x.oid)} disabled={busy || !choice[x.oid]}
+                          style={{ fontSize: 12, padding: '3px 10px', borderRadius: 4,
+                            border: `1px solid ${C.key}`, background: '#fff', color: C.key,
+                            cursor: choice[x.oid] ? 'pointer' : 'default',
+                            opacity: choice[x.oid] ? 1 : 0.5 }}>
+                          この商品で入れる
+                        </button>
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: 11, color: C.sub }}>
+                        {x.reason}（商品マスタに無い商品です。梱包資材などならそのままで構いません）
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </details>
       )}
     </div>
