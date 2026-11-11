@@ -9,6 +9,7 @@ import PriceAdjustPage from './pages/PriceAdjustPage'
 import StockPage from './pages/StockPage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import RakutenOrderPage from './pages/RakutenOrderPage'
+import RakutenShipPage from './pages/RakutenShipPage'
 import RakutenProductsPage from './pages/RakutenProductsPage'
 import RakutenStockPage from './pages/RakutenStockPage'
 import RakutenSettingsPage from './pages/RakutenSettingsPage'
@@ -208,6 +209,9 @@ function App() {
         <NavLink to="/rakuten/orders" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📦 発注管理
         </NavLink>
+        <NavLink to="/rakuten/ship" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          🚚 配送依頼
+        </NavLink>
         <NavLink to="/wholesale" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🏭 卸発注
         </NavLink>
@@ -295,6 +299,7 @@ function App() {
           <Route path="/price-adjust" element={<PriceAdjustPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/rakuten/orders" element={<RakutenOrderPage />} />
+          <Route path="/rakuten/ship" element={<RakutenShipPage />} />
           <Route path="/rakuten/stock" element={<RakutenStockPage />} />
           <Route path="/rakuten/shipping-daily" element={<RakutenShippingDailyPage />} />
           <Route path="/rakuten/sales" element={<RakutenSalesPage />} />

@@ -36,7 +36,7 @@ const th = { padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap',
  * 空いている欄だけ埋める。すでに入っているものは触らない。
  * 出荷してしまったあとの注文は、もうラベルを貼り終わっているので対象外。
  */
-function IdFiller({ onApplied } = {}) {
+function IdFiller({ onApplied, channel } = {}) {
   const [plan, setPlan] = useState(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -101,8 +101,20 @@ function IdFiller({ onApplied } = {}) {
     } finally { setBusy(false) }
   }
 
-  const fill = plan?.fill || []
-  const skip = plan?.skip || []
+  // この画面の担当（Amazon / 楽天）だけを出す。どちらか決められないもの
+  // （候補がAmazonと楽天にまたがる・候補が無い）は両方の画面に出す
+  const isMine = (ch) => {
+    if (!channel) return true
+    const c = String(ch || '')
+    if (c.includes('・')) return true                  // 「Amazon・楽天」
+    return channel === 'rakuten' ? c.startsWith('楽天') : c.startsWith('Amazon')
+  }
+  const fill = (plan?.fill || []).filter(x => isMine(x.channel))
+  const skip = (plan?.skip || []).filter(x => {
+    const chs = [...new Set((x.candidates || []).map(c => String(c.channel || '').startsWith('楽天') ? '楽天' : 'Amazon'))]
+    if (chs.length !== 1) return true
+    return isMine(chs[0])
+  })
   // 入れない行（チェックを外したもの）。Amazon用と楽天用で取り違えていそうなものを外す
   const [off, setOff] = useState(() => new Set())
   const fillOn = fill.filter(x => !off.has(x.oid))
@@ -361,7 +373,8 @@ function IdFiller({ onApplied } = {}) {
 
 
 // onCreated(sid)：配送依頼ができたら呼ぶ。納品プランの画面がその便を選ぶのに使う
-export default function CreateSendOrder({ onCreated } = {}) {
+// channel：'amazon'（配送依頼・納品プラン）か 'rakuten'（楽天の配送依頼）。その担当の注文だけを出す
+export default function CreateSendOrder({ onCreated, channel = 'amazon' } = {}) {
   const [opts, setOpts] = useState(null)
   const [rows, setRows] = useState([])
   const [picked, setPicked] = useState(() => new Set())
@@ -429,6 +442,8 @@ export default function CreateSendOrder({ onCreated } = {}) {
   const [splitBySku, setSplitBySku] = useState({})
   const [splitMsg, setSplitMsg] = useState('計算中…')
   useEffect(() => {
+    // FBAへ何個送るかのおすすめはAmazonだけ
+    if (channel !== 'amazon') { setSplitMsg('楽天'); return }
     api.get('/fba-plan/restock-split')
       .then(r => {
         const m = {}
@@ -465,8 +480,9 @@ export default function CreateSendOrder({ onCreated } = {}) {
     return n
   })
 
-  // Amazon と楽天は同じ倉庫に入るが、送り先も作業も違う。まず分けて出す
-  const [chan, setChan] = useState('amazon')
+  // Amazon と楽天は同じ倉庫に入るが、送り先も作業も違うので画面を分けた。
+  // この画面はどちらか一方だけを出す
+  const chan = channel
   const kindOf = (r) => (check.kinds || {})[r.oid] || {}
   const chanOf = (r) => {
     const k = kindOf(r)
@@ -477,9 +493,10 @@ export default function CreateSendOrder({ onCreated } = {}) {
   // 商品マスタでの見分けが返ってきたか
   const kindsReady = Object.keys(check.kinds || {}).length > 0
   // 見分けがつくまでは、Amazon・楽天のタブには何も出さない（混ざって見えるため）
-  const inChan = (r, c) => c === 'all' || (kindsReady && (chanOf(r) === c || chanOf(r) === 'both'))
-    || chanOf(r) === 'unknown'          // 打ち間違いらしいものはどのタブにも出す
-  // 管理番号の無い注文（梱包資材など）は「すべて」の最後にだけ出す
+  // 両方で売っている（both）・マスタに無い（unknown）・管理番号なし（noid）は、
+  // どちらの担当か決められないので両方の画面に出す（noid は一番下）
+  const inChan = (r, c) => kindsReady && (chanOf(r) === c
+    || ['both', 'unknown', 'noid'].includes(chanOf(r)))
   const countOf = (c) => rows.filter(r => inChan(r, c)).length
   const noidCount = rows.filter(r => chanOf(r) === 'noid').length
   const shown = rows
@@ -581,7 +598,7 @@ export default function CreateSendOrder({ onCreated } = {}) {
       <div style={{ fontSize: 14, fontWeight: 700, margin: '4px 0 6px' }}>
         はじめに：管理番号の空いている注文があれば入れる
       </div>
-      <IdFiller onApplied={load} />
+      <IdFiller onApplied={load} channel={channel} />
 
       <div style={{ fontSize: 14, fontWeight: 700, margin: '16px 0 6px' }}>① 便と届け先を選ぶ</div>
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end',
@@ -630,24 +647,27 @@ export default function CreateSendOrder({ onCreated } = {}) {
       </div>
 
       <div style={{ fontSize: 14, fontWeight: 700, margin: '14px 0 2px' }}>② 送る注文を選ぶ</div>
-      <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>
-        右の「おすすめ」は、いまの売れ行きとFBA在庫から計算した数です（航空便＝欠品しそうな分だけ、船便＝目標日数までの残り）。
-        便を選んでから「おすすめで選ぶ」を押すと、その便で送る商品と付属品にチェックが入ります。
-        注文は1件まるごと送るので、おすすめより多い注文は数を見て判断してください。
-        付属品が足りないなどの問題は、③の上に赤で出ます。
-      </div>
+      {chan === 'amazon' ? (
+        <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>
+          右の「おすすめ」は、いまの売れ行きとFBA在庫から計算した数です（航空便＝欠品しそうな分だけ、船便＝目標日数までの残り）。
+          便を選んでから「おすすめで選ぶ」を押すと、その便で送る商品と付属品にチェックが入ります。
+          注文は1件まるごと送るので、おすすめより多い注文は数を見て判断してください。
+          付属品が足りないなどの問題は、③の上に赤で出ます。
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>
+          倉庫に着いている楽天の注文です。送るものにチェックを入れてください。
+          Amazonの注文はここには出ません（「配送依頼・納品プラン」で出します）。
+          どちら用か決められない注文（管理番号が無いものなど）は、両方の画面に出ます。
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 10, alignItems: 'center',
         flexWrap: 'wrap', marginBottom: 8 }}>
-        <div style={{ display: 'inline-flex', border: `1px solid ${C.line}`, borderRadius: 6, overflow: 'hidden' }}>
-          {[['amazon', 'Amazon'], ['rakuten', '楽天'], ['all', 'すべて']].map(([k, label]) => (
-            <button key={k} onClick={() => setChan(k)}
-              style={{ padding: '6px 12px', fontSize: 13, border: 'none', cursor: 'pointer',
-                background: chan === k ? C.key : '#fff', color: chan === k ? '#fff' : C.text,
-                fontWeight: chan === k ? 700 : 400 }}>
-              {label}（{countOf(k)}）
-            </button>
-          ))}
-        </div>
+        <span style={{ fontSize: 13, fontWeight: 700, padding: '5px 12px', borderRadius: 6,
+          background: chan === 'rakuten' ? '#fee2e2' : '#dbeafe',
+          color: chan === 'rakuten' ? '#b91c1c' : '#1d4ed8' }}>
+          {chan === 'rakuten' ? '楽天' : 'Amazon'}の注文（{countOf(chan)}件）
+        </span>
         <input value={q} onChange={e => setQ(e.target.value)}
           placeholder="SKU・商品名で絞り込み"
           style={{ padding: '6px 10px', border: `1px solid ${C.line}`,
@@ -655,7 +675,7 @@ export default function CreateSendOrder({ onCreated } = {}) {
         <span style={{ fontSize: 12, color: C.sub }}>
           選択中 <b style={{ color: C.text }}>{picked.size}</b>件
           {!kindsReady && rows.length > 0 && '　（Amazon・楽天を見分けています…）'}
-          {kindsReady && noidCount > 0 && chan !== 'all' && `　管理番号の無い注文 ${noidCount}件は「すべて」の最後にあります`}
+          {kindsReady && noidCount > 0 && `　管理番号の無い注文 ${noidCount}件は一番下にあります（どちら用か決められないため両方の画面に出ます）`}
         </span>
         {chan === 'amazon' && (
           <button onClick={pickByPlan} disabled={!way || !!splitMsg}
@@ -679,8 +699,8 @@ export default function CreateSendOrder({ onCreated } = {}) {
             <th style={{ ...th, textAlign: 'right' }}>数</th>
             <th style={th}>倉庫に来て</th>
             <th style={th}>
-              おすすめ（いまの売れ行きで計算）
-              {splitMsg && <span style={{ fontWeight: 400, marginLeft: 6 }}>{splitMsg}</span>}
+              {chan === 'amazon' ? 'おすすめ（いまの売れ行きで計算）' : ''}
+              {chan === 'amazon' && splitMsg && <span style={{ fontWeight: 400, marginLeft: 6 }}>{splitMsg}</span>}
             </th>
           </tr>
         </thead>
@@ -720,7 +740,7 @@ export default function CreateSendOrder({ onCreated } = {}) {
                       <div style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>
                         {tag && <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4,
                           background: tag[1], color: tag[2], marginRight: 5 }}>{tag[0]}</span>}
-                        {ch && chan === 'all' && <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4,
+                        {ch && k.channel === 'both' && <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4,
                           background: '#f1f5f9', marginRight: 5 }}>{ch}</span>}
                         <b style={{ color: C.text }}>{r.out_id || '—'}</b>
                         {isComp && k.sku && k.sku !== r.out_id && (
@@ -757,7 +777,7 @@ export default function CreateSendOrder({ onCreated } = {}) {
           {!shown.length && (
             <tr><td colSpan={5} style={{ ...td, color: C.sub, textAlign: 'center',
               padding: 24 }}>
-              {rows.length && !kindsReady && chan !== 'all' ? 'Amazon・楽天を見分けています…'
+              {rows.length && !kindsReady ? 'Amazon・楽天を見分けています…'
                 : rows.length ? (chan === 'amazon' ? 'Amazonの商品で倉庫に着いているものはありません'
                   : chan === 'rakuten' ? '楽天の商品で倉庫に着いているものはありません'
                   : '絞り込みに合うものがありません')
