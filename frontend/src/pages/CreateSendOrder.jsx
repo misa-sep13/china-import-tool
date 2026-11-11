@@ -77,7 +77,9 @@ function IdFiller({ onApplied } = {}) {
   }
 
   const apply = async () => {
-    const n = (plan?.fill || []).length
+    // チェックを外した行は入れない
+    const oids = (plan?.fill || []).filter(x => !off.has(x.oid)).map(x => x.oid)
+    const n = oids.length
     if (!n) return
     if (!confirm(`タオタロウの注文 ${n}件 に、ASIN・FNSKU・管理番号を入れます。
 空いている欄だけ埋めます（入っているものは触りません）。
@@ -85,7 +87,7 @@ function IdFiller({ onApplied } = {}) {
 よろしいですか？`)) return
     setBusy(true); setErr(''); setMsg(''); setFailed([])
     try {
-      const r = await api.post('/taotaro/ids/apply', {})
+      const r = await api.post('/taotaro/ids/apply', { oids })
       setMsg(`${r.data.done_count}件に入れました`
         + (r.data.failed_count ? `／${r.data.failed_count}件は入りませんでした` : ''))
       setFailed(r.data.failed || [])
@@ -101,6 +103,9 @@ function IdFiller({ onApplied } = {}) {
 
   const fill = plan?.fill || []
   const skip = plan?.skip || []
+  // 入れない行（チェックを外したもの）。Amazon用と楽天用で取り違えていそうなものを外す
+  const [off, setOff] = useState(() => new Set())
+  const fillOn = fill.filter(x => !off.has(x.oid))
   const label = { asin: 'ASIN', fnsku: 'FNSKU', out_id: '管理番号' }
 
   // 同じURLの商品が複数あって決められなかった注文で、選んだ商品 {注文番号: SKU}
@@ -140,7 +145,10 @@ function IdFiller({ onApplied } = {}) {
           {name || (x.title || '').slice(0, 40)}
         </div>
         <div style={{ fontSize: 11, color: C.sub }}>
-          注文{x.oid}{x.props ? `　${x.props}` : ''}
+          注文{x.oid}
+          {x.qty != null && <b style={{ color: C.text, marginLeft: 6 }}>{x.qty}個</b>}
+          {x.ordered_at && <span style={{ marginLeft: 6 }}>{String(x.ordered_at).slice(5, 10).replace('-', '/')} 発注</span>}
+          {x.props ? `　${x.props}` : ''}
         </div>
       </div>
     </div>
@@ -157,11 +165,11 @@ function IdFiller({ onApplied } = {}) {
           {busy ? '…' : '下見する'}
         </button>
         {!!fill.length && (
-          <button onClick={apply} disabled={busy}
+          <button onClick={apply} disabled={busy || !fillOn.length}
             style={{ fontSize: 12, padding: '4px 10px', fontWeight: 700,
-              background: C.key, color: '#fff', border: 'none',
-              borderRadius: 4, cursor: 'pointer' }}>
-            {fill.length}件に入れる
+              background: fillOn.length ? C.key : '#cbd5e1', color: '#fff', border: 'none',
+              borderRadius: 4, cursor: fillOn.length ? 'pointer' : 'default' }}>
+            チェックした{fillOn.length}件に入れる
           </button>
         )}
         <span style={{ fontSize: 11, color: C.sub }}>
@@ -189,16 +197,24 @@ function IdFiller({ onApplied } = {}) {
         <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 8 }}>
           <thead>
             <tr>
+              <th style={th}></th>
               <th style={th}>注文</th>
               <th style={th}>SKU</th>
               <th style={th}>入れるもの</th>
-              <th style={th}>どう突き合わせたか</th>
+              <th style={th}>どう突き合わせたか・最近の発注</th>
               <th style={th}>足りないもの</th>
             </tr>
           </thead>
           <tbody>
             {fill.map(x => (
-              <tr key={x.oid}>
+              <tr key={x.oid} style={{ opacity: off.has(x.oid) ? 0.45 : 1 }}>
+                <td style={td}>
+                  <input type="checkbox" checked={!off.has(x.oid)}
+                    title="外すと、この注文には入れません（Amazon用と楽天用を取り違えていそうなとき）"
+                    onChange={() => setOff(s => {
+                      const n = new Set(s); n.has(x.oid) ? n.delete(x.oid) : n.add(x.oid); return n
+                    })} />
+                </td>
                 <td style={td}><Item x={x} name={x.name} channel={x.channel} /></td>
                 <td style={{ ...td, fontWeight: 600 }}>{x.sku}</td>
                 <td style={td}>
@@ -206,7 +222,12 @@ function IdFiller({ onApplied } = {}) {
                     <div key={k}>{label[k] || k}: <b>{v}</b></div>
                   ))}
                 </td>
-                <td style={{ ...td, color: C.sub }}>{x.matched_by}</td>
+                <td style={{ ...td, color: C.sub }}>
+                  {x.matched_by}
+                  {x.history?.length > 0 && (
+                    <div style={{ fontSize: 11, marginTop: 2 }}>{x.history.join('　')}</div>
+                  )}
+                </td>
                 <td style={{ ...td, color: C.warn }}>{x.note}</td>
               </tr>
             ))}
@@ -266,7 +287,8 @@ function IdFiller({ onApplied } = {}) {
                           <option value="">どの商品？（{x.candidates.length}件）</option>
                           {x.candidates.map(c => (
                             <option key={c.sku} value={c.sku}>
-                              [{c.channel}] {c.sku}　{(c.name || '').slice(0, 24)}{c.spec ? `（${c.spec.slice(0, 20)}）` : ''}
+                              [{c.channel}] {c.sku}　{(c.name || '').slice(0, 20)}{c.spec ? `（${c.spec.slice(0, 16)}）` : ''}
+                              {c.history?.length ? `　／ ${c.history[0]}` : ''}
                             </option>
                           ))}
                         </select>
@@ -277,6 +299,15 @@ function IdFiller({ onApplied } = {}) {
                             opacity: choice[x.oid] ? 1 : 0.5 }}>
                           この商品で入れる
                         </button>
+                        {/* 候補ごとの最近の発注。注文の数・日付と照らして、Amazon用か楽天用かを決める */}
+                        <div style={{ width: '100%', fontSize: 11, color: C.sub, lineHeight: 1.6 }}>
+                          {x.candidates.map(c => (
+                            <div key={c.sku}>
+                              <b style={{ color: C.text }}>{c.sku}</b>：
+                              {c.history?.length ? c.history.join('　') : '最近の発注記録なし'}
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     ) : (
                       <span style={{ fontSize: 11, color: C.sub }}>

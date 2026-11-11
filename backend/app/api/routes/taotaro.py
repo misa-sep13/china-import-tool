@@ -927,6 +927,10 @@ def _id_plan(db: Session, cookie, states: list) -> dict:
                     "image": img,
                     "props": " / ".join(str(v.get("value") or "")
                                         for v in (x.get("sku_props") or [])),
+                    # 同じ商品をAmazon用と楽天用で別々に発注していると、
+                    # 数と日付でしか見分けられない
+                    "qty": x.get("quantity"),
+                    "ordered_at": x.get("created_at"),
                 }
             if not d.get("has_more_pages"):
                 break
@@ -967,6 +971,43 @@ def _id_plan(db: Session, cookie, states: list) -> dict:
                      "put": put, "note": "" if rec.get("asin") else "まだAmazonに出品していません"
                      if rec.get("channel", "").startswith("Amazon") else ""})
     skip = still
+
+    # 各SKUを最近いつ何個発注したか（ツールの発注記録）。注文の数・日付と
+    # 照らせば、Amazon用か楽天用かが分かる
+    try:
+        from datetime import datetime, timedelta, timezone
+        from app.models.order_history import OrderHistory
+        from app.models.rakuten_order import RakutenOrderHistory
+        want = set()
+        for row in fill:
+            want.add(row.get("sku"))
+        for row in skip:
+            for c in row.get("candidates") or []:
+                want.add(c["sku"])
+        want.discard(None)
+        since = datetime.now(timezone.utc) - timedelta(days=120)
+        hist = {}
+        for h in (db.query(OrderHistory)
+                  .filter(OrderHistory.sku.in_(list(want)),
+                          OrderHistory.is_deleted == False,
+                          OrderHistory.ordered_at >= since)
+                  .order_by(OrderHistory.ordered_at.desc()).all()):
+            hist.setdefault(h.sku, []).append(
+                f"Amazon発注 {h.qty}個 {h.ordered_at.strftime('%m/%d') if h.ordered_at else ''}")
+        for h in (db.query(RakutenOrderHistory)
+                  .filter(RakutenOrderHistory.sku.in_(list(want)),
+                          RakutenOrderHistory.is_deleted == False,
+                          RakutenOrderHistory.ordered_at >= since.date())
+                  .order_by(RakutenOrderHistory.ordered_at.desc()).all()):
+            hist.setdefault(h.sku, []).append(
+                f"楽天発注 {h.qty}個 {h.ordered_at.strftime('%m/%d') if h.ordered_at else ''}")
+        for row in fill:
+            row["history"] = hist.get(row.get("sku"), [])[:4]
+        for row in skip:
+            for c in row.get("candidates") or []:
+                c["history"] = hist.get(c["sku"], [])[:4]
+    except Exception:
+        pass
 
     return {"fill": fill, "skip": skip, "scanned": len(orders), "_by_sku": by_sku}
 
