@@ -166,7 +166,7 @@ function App() {
           📦 発注管理
         </NavLink>
         <NavLink to="/fba-plan" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-          🚢 納品プラン
+          🚢 配送依頼・納品プラン
         </NavLink>
         <NavLink to="/stock" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📊 全在庫一覧

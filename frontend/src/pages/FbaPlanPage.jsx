@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import api from '../api/client'
+import CreateSendOrder from './CreateSendOrder'
 
 const STATUS_LABELS = { ordered: '発注済', arrived: '到着済', shipped: '配送依頼済' }
 const STATUS_COLORS = { ordered: '#f59e0b', arrived: '#22c55e', shipped: '#6b7280' }
@@ -664,7 +665,7 @@ export default function FbaPlanPage() {
 
   return (
     <div>
-      <h1>🚢 FBA納品プラン</h1>
+      <h1>🚢 配送依頼・納品プラン</h1>
 
       {/* やること。番号は下のカードと合わせる。
           タオタロウ側は手作業、Amazon側はこのツールで完結させる */}
@@ -674,8 +675,8 @@ export default function FbaPlanPage() {
         </div>
         <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 2 }}>
           <li>
-            タオタロウで<b>配送依頼を出す</b>
-            <span style={{ color: '#64748b' }}>　（FBA送付先は未定のままでOK）</span>
+            下の<b>⓪ で配送依頼を出す</b>
+            <span style={{ color: '#64748b' }}>　（何個・どの便かのおすすめと、付属品のチェック付き。FBA送付先は未定のままでOK）</span>
           </li>
           <li>この画面の上で<b>その便を選ぶ</b>　→ 以下はすべてその便が対象</li>
           <li><b>① 商品ラベル</b>を刷る</li>
@@ -716,133 +717,17 @@ export default function FbaPlanPage() {
         </div>
       </div>
 
-      {/* 配送依頼をかける前に、いまの売れ行きで計算し直す。
-          発注時に必要だった数より減っていることがある */}
+      {/* ⓪ 配送依頼。発注管理にあったが、発注ではなく「倉庫に届いたものを送る」作業なので
+          ここへ移した。何個・どの便で送るかのおすすめと、付属品が揃っているかの確かめが付く */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center',
-          flexWrap: 'wrap' }}>
-          <b style={{ fontSize: 15 }}>⓪ 何を何個送るか計算し直す</b>
+          flexWrap: 'wrap', marginBottom: 8 }}>
+          <b style={{ fontSize: 15 }}>⓪ 配送依頼を出す</b>
           <span style={{ fontSize: 12, color: '#64748b' }}>
-            タオタロウの倉庫にある在庫を、いまの売れ行きで振り分けます
+            倉庫に着いた注文から、いまの売れ行きで何個・どの便で送るかを見て、タオタロウへ配送依頼を出します
           </span>
-          <button className="btn btn-primary" style={{ marginLeft: 'auto', fontSize: 13 }}
-            onClick={loadSplit} disabled={splitting}>
-            {splitting ? '計算中…' : '🧮 計算する'}
-          </button>
         </div>
-        <div style={{ fontSize: 12, color: '#64748b', marginTop: 8, lineHeight: 1.8 }}>
-          <b>航空便</b>は船便が届く日までに欠品する分だけ、
-          <b>船便</b>は目標在庫日数に足りない残り、
-          のこりは<b>倉庫に残します</b>。
-          同じSKUで<b>楽天にも出している商品</b>は、中国の在庫が1つの山なので、
-          先に楽天ぶんを取り置いてから残りを振り分けます。
-          FNSKUもASINも無い商品は、楽天ぶんとして発注したものなので<b>出しません</b>。
-          無料保管は入庫から90日なので、期限が近いものには印を付けます。
-          <b>配送依頼を出す前</b>に使ってください。
-        </div>
-        {splitErr && (
-          <div style={{ fontSize: 12, color: '#b91c1c', marginTop: 8 }}>{splitErr}</div>
-        )}
-        {split && split.items?.length === 0 && (
-          <div style={{ fontSize: 13, color: '#92400e', marginTop: 10 }}>
-            {split.note || '振り分ける在庫がありません'}
-          </div>
-        )}
-        {/* 本体と付属品は別の注文なので届く日がずれる。タオタロウの配送依頼は
-            付属品が無くても通ってしまうので、揃っていないものをここで止める */}
-        {split?.set_short?.length > 0 && (
-          <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8,
-            border: '2px solid #dc2626', background: '#fef2f2', fontSize: 13, lineHeight: 1.7 }}>
-            <div style={{ fontWeight: 700, color: '#b91c1c', marginBottom: 4 }}>
-              ⚠ セット組みの付属品が倉庫に揃っていません。この本体は配送依頼に入れないでください
-            </div>
-            {split.set_short.map((s, i) => s.error ? (
-              <div key={i} style={{ color: '#b91c1c' }}>{s.error}</div>
-            ) : (
-              <div key={i} style={{ borderTop: i ? '1px dashed #fecaca' : 'none', paddingTop: i ? 6 : 0, marginTop: i ? 6 : 0 }}>
-                <div>
-                  <b>{s.component}</b>（{s.name}{s.spec ? `／${s.spec}` : ''}）：
-                  倉庫に <b>{s.have}</b> 個 ／ 必要 <b>{s.need}</b> 個（<b style={{ color: '#b91c1c' }}>{s.short}個足りない</b>）
-                </div>
-                <div style={{ fontSize: 12, color: '#475569' }}>
-                  使う本体：{s.parents.map(p => `${p.sku} ${p.pieces}個×${p.per}`).join('、')}
-                </div>
-                <div style={{ fontSize: 12, color: '#475569' }}>
-                  {s.coming?.length
-                    ? <>まだ届いていない注文：{s.coming.map(c => `注文${c.oid} ${c.qty}個（${c.state}）`).join('、')}</>
-                    : <span style={{ color: '#b91c1c' }}>届く予定の注文がありません。発注漏れの可能性があります</span>}
-                </div>
-                {s.wrong_out_id?.length > 0 && (
-                  <div style={{ fontSize: 12, color: '#92400e' }}>
-                    管理番号が違う注文：{s.wrong_out_id.map(w => `注文${w.oid}（${w.out_id}）`).join('、')}
-                    → タオタロウで管理番号を「{s.component}」に直してください
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        {split && split.items?.length > 0 && (
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>
-              目標 {split.target_days}日分　／　船便 {split.lt_sea}日　航空便 {split.lt_air}日
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
-                <thead><tr style={{ background: '#f8fafc' }}>
-                  {['SKU', '商品名', '日販', 'FBA', '残日数', '中国在庫',
-                    '楽天に取り置き', '航空便', '船便', '倉庫に残す',
-                    '入庫から'].map(h => (
-                    <th key={h} style={{ ...thStyle, textAlign: 'left' }}>{h}</th>
-                  ))}
-                </tr></thead>
-                <tbody>
-                  {split.items.map(x => (
-                    <tr key={x.sku} style={{ borderBottom: '1px solid #f1f5f9',
-                      background: x.warn_storage ? '#fffbeb' : 'transparent' }}>
-                      <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 12 }}>
-                        {x.sku}
-                      </td>
-                      <td style={{ ...tdStyle, maxWidth: 240, overflow: 'hidden',
-                        textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={x.name}>
-                        {x.name}
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: 'right' }}>{x.daily}</td>
-                      <td style={{ ...tdStyle, textAlign: 'right' }}>{x.fba_available}</td>
-                      <td style={{ ...tdStyle, textAlign: 'right' }}>
-                        {x.fba_days === null ? '—' : `${x.fba_days}日`}
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: 'right' }}>{x.china_pieces}</td>
-                      <td style={{ ...tdStyle, textAlign: 'right',
-                        color: x.rakuten_reserve ? '#9d174d' : '#cbd5e1' }}
-                        title={x.rakuten_daily !== null && x.rakuten_daily !== undefined
-                          ? `楽天 日販${x.rakuten_daily} / 在庫${x.rakuten_stock}`
-                          : '楽天には出していません'}>
-                        {x.rakuten_daily === null || x.rakuten_daily === undefined
-                          ? '—' : x.rakuten_reserve}
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700,
-                        color: x.air_pieces ? '#b91c1c' : '#cbd5e1' }}>{x.air_pieces}</td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700,
-                        color: x.sea_pieces ? '#1d4ed8' : '#cbd5e1' }}>{x.sea_pieces}</td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700,
-                        color: x.keep_pieces ? '#334155' : '#cbd5e1' }}>{x.keep_pieces}</td>
-                      <td style={{ ...tdStyle, textAlign: 'right',
-                        color: x.warn_storage ? '#b45309' : '#64748b' }}>
-                        {x.oldest_days === null ? '—' : `${x.oldest_days}日`}
-                        {x.warn_storage && (
-                          <span title="無料保管が切れます。残すなら保管料がかかります">
-                            　⚠ 残り{x.free_days_left}日
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+        <CreateSendOrder />
       </div>
 
       {/* 便はここで1回だけ選ぶ。以前はカードごとに選び直していた */}

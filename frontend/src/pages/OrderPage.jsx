@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
-import CreateSendOrder from './CreateSendOrder'
 import { normalizeSearch } from '../searchUtil'
 
 const SORT_OPTIONS = { numeric: true, sensitivity: 'base' }
@@ -405,15 +404,13 @@ export default function OrderPage() {
           className={`btn ${tab === 'history' ? 'btn-primary' : 'btn-secondary'}`}
           onClick={() => setTab('history')}
         >発注済みリスト</button>
-        <button
-          className={`btn ${tab === 'newship' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setTab('newship')}
-        >配送依頼を出す</button>
+        {/* 配送依頼は発注ではなく「倉庫に届いたものを送る」作業なので、
+            納品プランの画面（配送依頼・納品プラン）へ移した */}
+        <a href="#/fba-plan" className="btn btn-secondary"
+          style={{ textDecoration: 'none', marginLeft: 'auto', fontSize: 13 }}>
+          🚢 配送依頼は「配送依頼・納品プラン」へ →
+        </a>
       </div>
-
-      {/* 入庫済みの注文を選んで、タオタロウへ配送依頼を出す。
-          FBAへ送るのが主なので、楽天ではなくこちらに置く */}
-      {tab === 'newship' && <CreateSendOrder />}
 
       {tab === 'order' && (
         <>
