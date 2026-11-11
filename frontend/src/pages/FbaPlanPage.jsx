@@ -448,7 +448,7 @@ export default function FbaPlanPage() {
         ? `備考を入れた ${rep['入れた'].length}件`
           + ` / 空にした ${rep['空にした'].length}件`
           + (rep['当たらなかった'].length
-            ? ['', '当たらなかった行（触っていません）：']
+            ? ['', '商品マスタに当たらなかった行（元の備考のセット組みの記述だけ残しました）：']
               .concat(rep['当たらなかった']).join('\n') : '')
         : '書き換えたファイルを保存しました')
     } catch (e) {
@@ -479,7 +479,7 @@ export default function FbaPlanPage() {
         ? `備考を入れた ${rep['入れた'].length}件`
           + ` / 空にした ${rep['空にした'].length}件`
           + (rep['当たらなかった'].length
-            ? ['', '当たらなかった行（触っていません）：']
+            ? ['', '商品マスタに当たらなかった行（元の備考のセット組みの記述だけ残しました）：']
               .concat(rep['当たらなかった']).join('\n') : '')
         : '指示書を保存しました')
     } catch (e) {
@@ -929,37 +929,40 @@ export default function FbaPlanPage() {
           <span style={{ fontSize: 12, color: '#64748b' }}>
             選んだ便の指示書をタオタロウから取ってきて、備考を入れ替えて返します
           </span>
-          <button className="btn btn-primary" style={{ marginLeft: 'auto', fontSize: 13 }}
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <button className="btn btn-primary" style={{ fontSize: 13 }}
             onClick={fetchInstruction} disabled={filling || !planSid}>
             {filling ? '取得中…' : '📄 便から指示書を取ってくる'}
           </button>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center',
           flexWrap: 'wrap', marginTop: 10 }}>
+          <input type="file" accept=".xlsx,.xlsm" disabled={filling}
+            onChange={e => { fillNote(e.target.files?.[0]); e.target.value = '' }}
+            style={{ fontSize: 12 }} />
           <span style={{ fontSize: 12, color: '#64748b' }}>
             取ってこれないときは、手で落とした指示書を選んでください
           </span>
-          <input type="file" accept=".xlsx,.xlsm" disabled={filling}
-            onChange={e => { fillNote(e.target.files?.[0]); e.target.value = '' }}
-            style={{ marginLeft: 'auto', fontSize: 12 }} />
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center',
           flexWrap: 'wrap', marginTop: 10, paddingTop: 10,
           borderTop: '1px solid #e2e8f0' }}>
-          <b style={{ fontSize: 13 }}>逆に、書いてある備考をマスタに覚えさせる</b>
-          <span style={{ fontSize: 12, color: '#64748b' }}>
-            手で書き込んだ依頼書を選ぶと、備考を「納品時の備考」に入れます
-          </span>
+          <b style={{ fontSize: 13, width: '100%' }}>逆に、書いてある備考をマスタに覚えさせる</b>
           <input type="file" accept=".xlsx,.xlsm" disabled={filling}
             onChange={e => { readNote(e.target.files?.[0]); e.target.value = '' }}
-            style={{ marginLeft: 'auto', fontSize: 12 }} />
+            style={{ fontSize: 12 }} />
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            手で書き込んだ依頼書を選ぶと、備考を「② 納品時の指示」に入れます
+          </span>
         </div>
         <div style={{ fontSize: 12, color: '#64748b', marginTop: 8,
           lineHeight: 1.8 }}>
           買付のときの指示（全量開封検品・写真撮影など）は消して、
-          商品マスタの<b>「納品時の備考」</b>だけを入れます。
-          突き合わせはタオタロウの商品IDで行い、無ければ商品情報（仕様）で当てます。
-          当たらなかった行は<b>触りません</b>。
+          商品マスタの<b>「② 納品時の指示」</b>と、付属品・入数から作るセット組みの指示を入れます。
+          商品への当て方は FNSKU → タオタロウの商品ID → 商品情報（仕様）の順です。
+          付属品の行は仕様で見分けて「○○の付属品。本体と1つにまとめる」を入れます。
+          商品マスタに当たらなかった行は、元の備考のうちセット組みの記述だけを残します。
         </div>
         {fillMsg && (
           <div style={{ fontSize: 12, marginTop: 8, whiteSpace: 'pre-wrap',

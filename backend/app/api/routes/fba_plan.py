@@ -1290,8 +1290,21 @@ class _NoteMatcher:
                     self.parents_of[csku].append(p.sku)
 
     def find_component(self, info: str):
-        """付属品の行を、仕様の文字で部材に当てる（本体の候補とは別に探す）。"""
-        return self.comp_by_spec.get(_norm_spec(info))
+        """付属品の行を、仕様の文字で部材に当てる（本体の候補とは別に探す）。
+
+        商品情報に項目が2つあると（「颜色: 黑色绳; 尺码: 23*40」）完全一致しないので、
+        部材の仕様が商品情報の中に含まれていれば当たりとする（短すぎる仕様は除く）。
+        """
+        hit = self.comp_by_spec.get(_norm_spec(info))
+        if hit is not None:
+            return hit
+        whole = str(info or "")
+        for a in ("：", ":", "；", ";", "、", ",", "　", " "):
+            whole = whole.replace(a, "")
+        for k, c in self.comp_by_spec.items():
+            if len(k) >= 6 and k in whole:
+                return c
+        return None
 
     def set_note(self, p) -> str:
         """本体の行に出す、セット組みの指示。商品マスタの登録から作る。
