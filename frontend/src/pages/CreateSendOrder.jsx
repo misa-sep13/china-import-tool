@@ -52,6 +52,20 @@ function IdFiller({ onApplied } = {}) {
     try {
       const r = await api.get('/taotaro/ids/preview')
       setPlan(r.data)
+      // 候補のうち、仕様（色・サイズ）の文字が注文と合うものが1つだけなら先に選んでおく
+      // （32*48 の袋 → z_bag_dp_3248）。入れるのはボタンを押したときだけ
+      const norm = s => String(s || '').replace(/[\s　、,，;；/／~～【】()（）]/g, '').toLowerCase()
+      const pre = {}
+      ;(r.data.skip || []).forEach(x => {
+        const p = norm(x.props)
+        if (!p || !x.candidates?.length) return
+        const hit = x.candidates.filter(c => {
+          const s = norm(c.spec)
+          return s && (p.includes(s) || s.includes(p))
+        })
+        if (hit.length === 1) pre[x.oid] = hit[0].sku
+      })
+      setChoice(c => ({ ...pre, ...c }))
       if (!keep && !(r.data.fill || []).length) {
         setMsg(`入れるものはありませんでした（${r.data.scanned}件みました）`)
       }
