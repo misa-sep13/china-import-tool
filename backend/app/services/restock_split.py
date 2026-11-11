@@ -280,6 +280,15 @@ def make_classifier(db):
         }
         return kind, key, info
 
+    def set_size_of(sku):
+        """本体の入数（1販売単位の個数）。Amazon・楽天どちらのマスタでも引く。"""
+        p = prods.get(sku) or rk.get(sku)
+        try:
+            return max(1, int(getattr(p, "set_size", 1) or 1))
+        except (TypeError, ValueError):
+            return 1
+    classify.set_size_of = set_size_of
+
     # 付属品・本体→付属品は、Amazonと楽天をまとめたものを返す
     return prods, all_comps, all_comps_of, classify
 
@@ -345,9 +354,14 @@ def send_check(db, oids: list, pages: int = 5) -> dict:
 
     need, users = {}, {}
     for b, pcs in body_pcs.items():
+        # 倉庫の数は個数（6足セットなら1セット6個）、付属品の数は販売単位あたり。
+        # 個数のまま掛けると、y60（6足セット）で袋が6倍要ることになっていた
+        ss = classify.set_size_of(b)
+        units = -(-pcs // ss)
         for c, q in comps_of.get(b, []):
-            need[c] = need.get(c, 0) + pcs * q
-            users.setdefault(c, []).append(f"{b} {pcs}個×{q}")
+            need[c] = need.get(c, 0) + units * q
+            users.setdefault(c, []).append(
+                f"{b} {units}セット（{pcs}個）×{q}" if ss > 1 else f"{b} {pcs}個×{q}")
     for c, n in need.items():
         h = have.get(c, 0)
         if h >= n:
@@ -433,9 +447,12 @@ def set_check(db, pages: int = 5) -> list:
     # （a019_bag のように4つの本体が同じ付属品を使うことがある）
     need, parents = {}, {}
     for b, pcs in body_pcs.items():
+        # 倉庫の数は個数、付属品の数は販売単位あたり（入数で割ってから掛ける）
+        ss = max(1, int(getattr(prods.get(b), "set_size", 1) or 1))
+        units = -(-pcs // ss)
         for c, q in comps_of.get(b, []):
-            need[c] = need.get(c, 0) + pcs * q
-            parents.setdefault(c, []).append({"sku": b, "pieces": pcs, "per": q})
+            need[c] = need.get(c, 0) + units * q
+            parents.setdefault(c, []).append({"sku": b, "pieces": units, "per": q})
 
     out = []
     for c, n in need.items():
