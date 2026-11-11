@@ -191,10 +191,10 @@ def make_classifier(db):
     # （石鹸置き y141_1 のフック y141 ×2 など）。Amazonの付属品しか見ていなかったので、
     # 楽天の付属品が本体と同じ名前の商品として出ていた
     import json as _json
-    rk_qty = {}
+    rk_qty, rk_comps_of = {}, {}
     for r in {id(v): v for v in rk.values()}.values():
         try:
-            lst = _json.loads(r.purchase_components or "[]") or []
+            lst = _json.loads(getattr(r, "purchase_components", None) or "[]") or []
         except (ValueError, TypeError):
             lst = []
         for x in lst if isinstance(lst, list) else []:
@@ -202,6 +202,19 @@ def make_classifier(db):
             if c and c != r.sku and c in rk:
                 parent_of.setdefault(c, r.sku)
                 rk_qty.setdefault(c, int(x.get("qty") or 1))
+                # 配送依頼の確かめ（付属品が足りるか）に使う。楽天の本体 → 付属品
+                rk_comps_of.setdefault(r.sku, []).append((c, int(x.get("qty") or 1)))
+    # Amazonと楽天の付属品をまとめた表。付属品の名前・仕様は画面の案内に使う
+    from types import SimpleNamespace as _NS
+    all_comps_of = dict(comps_of)
+    all_comps = dict(comps)
+    for b, lst in rk_comps_of.items():
+        all_comps_of.setdefault(b, lst)
+        for c, _q in lst:
+            if c not in all_comps:
+                rr = rk[c]
+                # 楽天の付属品は本体と同じ名前のことがある（y141）ので、仕様で呼ぶ
+                all_comps[c] = _NS(name=(getattr(rr, "supplier_spec", "") or rr.name or ""), spec="")
 
     def channel(sku):
         p = prods.get(sku)
@@ -225,7 +238,8 @@ def make_classifier(db):
         elif sku in prods:
             kind, key = ("body" if sku in comps_of else "other"), sku
         elif sku in rk:
-            kind, key = "other", sku
+            # 付属品のある楽天の本体（y141_1 など）は、付属品が揃っているかを確かめる
+            kind, key = ("body" if sku in rk_comps_of else "other"), sku
         elif not sku:
             # 管理番号の無い注文（梱包資材・管理番号を入れ忘れた注文）。
             # Amazon・楽天のどちらの画面にも混ぜず、「すべて」の最後にまとめる
@@ -255,7 +269,8 @@ def make_classifier(db):
         }
         return kind, key, info
 
-    return prods, comps, comps_of, classify
+    # 付属品・本体→付属品は、Amazonと楽天をまとめたものを返す
+    return prods, all_comps, all_comps_of, classify
 
 
 def classify_orders(db, orders: list) -> dict:
