@@ -334,7 +334,16 @@ def send_check(db, oids: list, pages: int = 5) -> dict:
         if not d.get("has_more_pages"):
             break
 
-    problems = []
+    problems, noid = [], []
+
+    def _what(o):
+        """注文が何の商品かを短く。注文番号だけでは分からない。"""
+        name = str(o.get("title_trans") or o.get("title") or "").strip()
+        props = " / ".join(str(v.get("value") or "") for v in (o.get("sku_props") or []))
+        return (f"{name[:18]}{'…' if len(name) > 18 else ''}"
+                f"{'（' + props + '）' if props else ''} {int(o.get('quantity') or 0)}個"
+                f"［注文{o.get('oid')}］")
+
     sel = [(o, k, s) for (o, k, s) in arrived if o.get("oid") in picked]
     body_pcs, have = {}, {}
     for o, k, s in sel:
@@ -345,12 +354,17 @@ def send_check(db, oids: list, pages: int = 5) -> dict:
             have[s] = have.get(s, 0) + q
         elif k == "unknown":
             problems.append({"level": "warn", "add_oids": [], "text":
-                f"注文{o.get('oid')}：管理番号「{s}」が商品マスタにありません。"
+                f"{_what(o)}：管理番号「{s}」が商品マスタにありません。"
                 "打ち間違いでないか確かめてください（取り込みで照合できません）"})
         elif k == "noid":
-            problems.append({"level": "warn", "add_oids": [], "text":
-                f"注文{o.get('oid')}：管理番号が空です。梱包資材などならそのままで構いません。"
-                "商品なら、下の「ASIN・FNSKU・管理番号をタオタロウに入れる」で入れてください"})
+            noid.append(_what(o))
+    # 管理番号が空の注文は、1件ずつ出すと何の注文か分からないまま並ぶので、
+    # 何の商品か（名前・仕様・数）を添えて1つにまとめる
+    if noid:
+        problems.append({"level": "warn", "add_oids": [], "text":
+            f"管理番号が空の注文 {len(noid)}件：" + "／".join(noid)
+            + "。梱包資材などならそのままで構いません。商品なら、上の"
+              "「ASIN・FNSKU・管理番号をタオタロウに入れる」で入れてください"})
 
     need, users = {}, {}
     for b, pcs in body_pcs.items():
