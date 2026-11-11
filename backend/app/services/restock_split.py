@@ -268,6 +268,9 @@ def make_classifier(db):
                 # 楽天の付属品は本体と同じ名前で登録されていることがある（y141）。
                 # そのままだと本体と見分けられないので「付属品×2（本体）」と出す
                 name = f"付属品{qs}（{pname}）"
+            elif parent_of[key] in name:
+                # 名前にもう本体のSKUが書いてある（y141_hook）。重ねずに数だけ足す
+                name = f"{name}{qs}"
             else:
                 # 自分の名前がある付属品（ストラップなど）は名前を残し、何の付属品かを足す
                 name = f"{name}（{parent_of[key]} の付属品{qs}）"
