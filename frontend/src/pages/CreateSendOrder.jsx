@@ -127,6 +127,28 @@ function IdFiller({ onApplied } = {}) {
     } finally { setBusy(false) }
   }
 
+  // 選んだものをまとめて入れる。1件ずつ押すと、候補の多い便では手間がかかる
+  const chosenAll = skip.filter(x => choice[x.oid] && (x.candidates || []).some(c => c.sku === choice[x.oid]))
+  const applyAllChoices = async () => {
+    if (!chosenAll.length) return
+    const list = chosenAll.map(x => `注文${x.oid}（${x.qty ?? '?'}個）→ ${choice[x.oid]}`).join('\n')
+    if (!confirm(`次の ${chosenAll.length}件に管理番号を入れます。よろしいですか？\n\n${list}`)) return
+    setBusy(true); setErr(''); setMsg(''); setFailed([])
+    try {
+      const choices = {}
+      chosenAll.forEach(x => { choices[x.oid] = choice[x.oid] })
+      const r = await api.post('/taotaro/ids/apply', { choices })
+      setMsg(`${r.data.done_count}件に入れました`
+        + (r.data.failed_count ? `／${r.data.failed_count}件は入りませんでした` : ''))
+      setFailed(r.data.failed || [])
+      if (r.data.stopped) setErr(r.data.stopped)
+      await preview(true)
+      if (r.data.done_count && onApplied) onApplied()
+    } catch (e) {
+      setErr(e?.response?.data?.detail || '入れられませんでした')
+    } finally { setBusy(false) }
+  }
+
   // 注文の写真と、自社の商品名・Amazon/楽天の札。注文番号と中国語の名前だけでは
   // どの商品か分からない
   const Item = ({ x, name, channel }) => (
@@ -271,8 +293,20 @@ function IdFiller({ onApplied } = {}) {
         <details style={{ marginTop: 8 }} open>
           <summary style={{ fontSize: 12, color: C.sub, cursor: 'pointer' }}>
             自動では入れられなかったもの {skip.length}件
-            （候補があるものは、選んで「この商品で入れる」を押してください）
+            （候補があるものは選んで、1件ずつ「この商品で入れる」か、下の「まとめて入れる」を押してください）
           </summary>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '6px 0' }}>
+            <button onClick={applyAllChoices} disabled={busy || !chosenAll.length}
+              style={{ fontSize: 12, padding: '4px 12px', fontWeight: 700, borderRadius: 4,
+                border: 'none', color: '#fff',
+                background: chosenAll.length ? C.key : '#cbd5e1',
+                cursor: chosenAll.length ? 'pointer' : 'default' }}>
+              選んだ{chosenAll.length}件をまとめて入れる
+            </button>
+            <span style={{ fontSize: 11, color: C.sub }}>
+              「どの商品？」で選んだものだけ入れます。選んでいないものは触りません
+            </span>
+          </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 4 }}>
             <tbody>
               {skip.map(x => (
