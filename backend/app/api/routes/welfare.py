@@ -33,8 +33,29 @@ def _norm_url(url: str | None) -> str:
     return str(url).strip().split("?")[0].strip().rstrip("/").lower()
 
 
+def _is_multi_spec_set(product: RakutenProduct) -> bool:
+    """発注構成に色（仕様）が2種類以上あるセットか。
+
+    「キッチンタオル4枚 4色セット」のように、違う色を1枚ずつ詰めるもの。
+    同じ色を4枚入れる「4枚セット ブラウン」とは数え方が逆になる
+    """
+    try:
+        comps = json.loads(getattr(product, "purchase_components", None) or "[]")
+    except (ValueError, TypeError):
+        return False
+    specs = {(c.get("supplier_spec") or "").strip()
+             for c in comps if isinstance(c, dict)}
+    specs.discard("")
+    return len(specs) >= 2
+
+
 def _unit_per_set(product: RakutenProduct | None) -> int:
     if not product:
+        return 1
+    # 色違いを1つずつ詰めるセットは、荷受けの1行が1色ぶん。
+    # セットの枚数で割ってはいけない（4色セットの灰色30枚は、
+    # 他の3色も30枚ずつ来るので30セットぶんになる）
+    if _is_multi_spec_set(product):
         return 1
     if product.set_size and product.set_size > 1:
         return int(product.set_size)
