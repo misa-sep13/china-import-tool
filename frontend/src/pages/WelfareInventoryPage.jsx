@@ -60,7 +60,12 @@ const workDateSortValue = (date) => {
   return -1
 }
 
-const workRemainingQty = (row) => row.remaining_qty ?? 0
+// 画面の「残」は個数で書く（すぐ左の入荷数と並べて見るため）。
+// 保存も個数で送り、セット数（◯個で1）への割り算はサーバーに任せる。
+// 以前はここがセット数だったので、4個で1のタオルに「50」と入れると
+// 50セット＝200個として在庫化されていた
+const workRemainingUnits = (row) =>
+  row.remaining_units ?? ((row.remaining_qty ?? 0) * (row.unit_per_set || 1))
 
 const WORK_INSTRUCTION_OPTIONS = ['作業保管', '保管', '戻し', '一部戻し']
 
@@ -198,7 +203,7 @@ export default function WelfareInventoryPage() {
       name_jp: draft.name_jp ?? (row.name_jp || ''),
       source_product_name: draft.source_product_name ?? fallbackName,
       instruction: draft.instruction ?? row.instruction ?? '',
-      remaining_qty: draft.remaining_qty ?? workRemainingQty(row),
+      remaining_units: draft.remaining_units ?? workRemainingUnits(row),
       note: draft.note ?? row.note ?? '',
     }
   }
@@ -410,7 +415,7 @@ export default function WelfareInventoryPage() {
           (current.name_jp !== vars.payload.name_jp ||
             current.source_product_name !== vars.payload.source_product_name ||
             current.instruction !== vars.payload.instruction ||
-            current.remaining_qty !== vars.payload.remaining_qty ||
+            current.remaining_units !== vars.payload.remaining_units ||
             current.note !== vars.payload.note)
         ) {
           return prev
@@ -537,7 +542,7 @@ export default function WelfareInventoryPage() {
         value.name_jp !== base.name_jp ||
         value.source_product_name !== base.source_product_name ||
         value.instruction !== base.instruction ||
-        value.remaining_qty !== base.remaining_qty ||
+        value.remaining_units !== base.remaining_units ||
         value.note !== base.note
 
       if (!dirty) return
@@ -994,8 +999,8 @@ export default function WelfareInventoryPage() {
               const unreflected = activeWorkInstructions.filter(r => !r.is_reflected && r.product_id)
               const returnRows = unreflected.filter(r => isFullReturn(getWorkDraftValue(r, workDrafts[r.id] || {}).instruction))
               const rest = unreflected.filter(r => !returnRows.includes(r))
-              const keepRows = rest.filter(r => (getWorkDraftValue(r, workDrafts[r.id] || {}).remaining_qty || 0) > 0)
-              const zeroRows = rest.filter(r => (getWorkDraftValue(r, workDrafts[r.id] || {}).remaining_qty || 0) <= 0)
+              const keepRows = rest.filter(r => (getWorkDraftValue(r, workDrafts[r.id] || {}).remaining_units || 0) > 0)
+              const zeroRows = rest.filter(r => (getWorkDraftValue(r, workDrafts[r.id] || {}).remaining_units || 0) <= 0)
               if (unreflected.length === 0) return null
               return (
                 <div style={{ border: '1px solid #fcd34d', background: '#fffbeb', borderRadius: 8, padding: 12, marginBottom: 10 }}>
@@ -1015,10 +1020,10 @@ export default function WelfareInventoryPage() {
                     className="btn btn-primary"
                     disabled={reflectMutation.isPending}
                     onClick={() => {
-                      const total = keepRows.reduce((s, r) => s + (getWorkDraftValue(r, workDrafts[r.id] || {}).remaining_qty || 0), 0)
+                      const total = keepRows.reduce((s, r) => s + (getWorkDraftValue(r, workDrafts[r.id] || {}).remaining_units || 0), 0)
                       if (!window.confirm(
                         `就労支援在庫に反映します。\n\n`
-                        + `在庫化する行: ${keepRows.length}件（合計 ${total}）\n`
+                        + `在庫化する行: ${keepRows.length}件（合計 ${total}個）\n`
                         + `戻しで在庫化しない行: ${returnRows.length}件\n`
                         + (zeroRows.length > 0 ? `残0で在庫化しない行: ${zeroRows.length}件\n` : '')
                         + `\nよろしいですか？`
@@ -1086,7 +1091,7 @@ export default function WelfareInventoryPage() {
                 <tbody>
                   {visibleWorkInstructions.map(row => {
                     const draft = workDrafts[row.id] || {}
-                    const { source_product_name: productName, instruction, remaining_qty: remaining, note } = getWorkDraftValue(row, draft)
+                    const { source_product_name: productName, instruction, remaining_units: remaining, note } = getWorkDraftValue(row, draft)
                     return (
                       <tr key={row.id}>
                         <td style={{ whiteSpace: 'nowrap' }}>
@@ -1118,7 +1123,7 @@ export default function WelfareInventoryPage() {
                           type="number"
                           min="0"
                           value={remaining}
-                            onChange={e => updateWorkDraft(row, { remaining_qty: Number(e.target.value) })}
+                            onChange={e => updateWorkDraft(row, { remaining_units: Number(e.target.value) })}
                             title={isPartialReturn(instruction)
                               && (returnQtyOf(instruction) ?? 0) + Number(remaining) !== row.units
                               ? `戻し${returnQtyOf(instruction)}個＋残${remaining}個が、入荷の${row.units}個と合いません`
@@ -1165,7 +1170,7 @@ export default function WelfareInventoryPage() {
                               // とりあえず全量を戻す形にして、数を直せるようにする
                               if (v === '一部戻し') {
                                 updateWorkDraft(row, {
-                                  instruction: `${row.units}個戻し`, remaining_qty: 0 })
+                                  instruction: `${row.units}個戻し`, remaining_units: 0 })
                                 return
                               }
                               // 「5個戻し」から「保管」に変えると、残が戻す前の数（5）の
@@ -1173,7 +1178,7 @@ export default function WelfareInventoryPage() {
                               // そのままだと施設に置く数が足りなくなる
                               if (isPartialReturn(e.target.dataset.prev || '')
                                   && (v === '保管' || v === '作業保管')) {
-                                updateWorkDraft(row, { instruction: v, remaining_qty: row.units })
+                                updateWorkDraft(row, { instruction: v, remaining_units: row.units })
                                 return
                               }
                               updateWorkDraft(row, { instruction: v })
@@ -1192,7 +1197,7 @@ export default function WelfareInventoryPage() {
                                   const n = Math.max(0, Math.min(Number(e.target.value) || 0, row.units))
                                   updateWorkDraft(row, {
                                     instruction: `${n}個戻し`,
-                                    remaining_qty: row.units - n })
+                                    remaining_units: row.units - n })
                                 }}
                                 style={{ width: 52, textAlign: 'right', fontWeight: 700 }} />
                               <span style={{ fontSize: 11, color: '#92400e' }}>
