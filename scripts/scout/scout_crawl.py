@@ -50,6 +50,9 @@ import scout_db as db
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 STATUS_PATH = os.path.join(BASE, "run_status.json")
+# 画面に出すだけだと、落ちたときに原因が窓の外へ流れて消える。
+# 1,900社の走行は何時間もかかるので、後から読めるように控えを残す
+LOG_PATH = os.path.join(BASE, "scout_crawl.log")
 STOP_PATH = os.path.join(BASE, "STOP")      # このファイルを作ると走行を止める
 
 # ブラウザのプロファイルは OneDrive の外へ。中に置くと起動のたびにキャッシュが
@@ -113,7 +116,19 @@ EXTRACT_JS = r"""
 
 
 def log(msg):
-    print(f"{datetime.datetime.now():%H:%M:%S} {msg}", flush=True)
+    now = datetime.datetime.now()
+    print(f"{now:%H:%M:%S} {msg}", flush=True)
+    try:
+        # 10MBを超えたら1つ前に送る。際限なく太らせない
+        if os.path.exists(LOG_PATH) and os.path.getsize(LOG_PATH) > 10_000_000:
+            old = LOG_PATH + ".1"
+            if os.path.exists(old):
+                os.remove(old)
+            os.replace(LOG_PATH, old)
+        with io.open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{now:%Y-%m-%d %H:%M:%S} {msg}\n")
+    except OSError:
+        pass
 
 
 def nap(lo, hi):
@@ -179,6 +194,26 @@ class Crawler:
         if not self.warm:
             log(f"  ! トップページが {st} でした")
         return self.warm
+
+    def recover(self):
+        """ページが使えなくなったときに作り直す。
+
+        読み込みが60秒を超えたくらいなら同じページを使い回せるが、タブごと
+        落ちていることもある。ブラウザまで落ちていたら False を返して、
+        呼び出し側に走行をたたんでもらう（続きは --resume で拾える）。
+        """
+        for _ in range(2):
+            try:
+                if self.pg.is_closed():
+                    self.pg = self.ctx.new_page()
+                self.pg.goto(TOP, wait_until="domcontentloaded", timeout=60000)
+                return True
+            except Exception:
+                try:
+                    self.pg = self.ctx.new_page()
+                except Exception:
+                    return False
+        return False
 
     def cool_down(self, attempt):
         """弾かれたときに退く。回を追うごとに長く待つ"""
@@ -513,8 +548,22 @@ def main():
 
             status, items, reason, npages = "", [], None, 0
             t_seller = time.time()
+            dead = False
             for attempt in range(a.max_block_retry + 1):
-                status, items, reason, npages = c.crawl_seller(sid, name)
+                try:
+                    status, items, reason, npages = c.crawl_seller(sid, name)
+                except Exception as e:
+                    # 1社でつまずいただけで、1,900社の走行ごと落とさない。
+                    # ページの読み込みが60秒を超えるのは珍しくないので、
+                    # ブロックと同じように退いて、駄目ならその社だけ飛ばす
+                    status, items, reason, npages = "error", [], None, 0
+                    first = (str(e).splitlines() or [""])[0]
+                    log(f"  ! 失敗: {type(e).__name__}: {first[:300]}")
+                    if not c.recover():
+                        log("!! ブラウザごと落ちました。ここで走行を止めます。"
+                            "--resume で続きから再開してください")
+                        dead = True
+                        break
                 if status in ("ok", "empty"):
                     break
                 if status == "captcha":
@@ -530,9 +579,25 @@ def main():
                             break
                     continue
                 if attempt < a.max_block_retry:
-                    c.cool_down(attempt)
+                    try:
+                        c.cool_down(attempt)
+                    except Exception as e:
+                        log(f"  ! 温め直しに失敗: {type(e).__name__}")
+                        if not c.recover():
+                            dead = True
+                            break
                     if os.path.exists(STOP_PATH):
                         break
+
+            if dead:
+                # このセラーは run_items を pending のまま残す。
+                # --resume でここから拾えるように
+                con.execute("UPDATE runs SET status='stopped', finished_at=?,"
+                            " note=? WHERE run_id=?",
+                            (db.now(), "ブラウザが落ちたため中断", run_id))
+                con.commit()
+                errors += 1
+                break
 
             if status == "empty":
                 # 撤退したセラー。過去に集めた商品は消さずに残す(いつまで見えていたかが分かる)
@@ -607,4 +672,12 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception:
+        # 控えに残しておかないと、窓を閉じた時点で原因が分からなくなる
+        import traceback
+        log("!! 想定外の失敗で止まりました:\n" + traceback.format_exc())
+        raise
