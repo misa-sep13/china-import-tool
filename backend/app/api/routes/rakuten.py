@@ -4406,6 +4406,77 @@ async def sync_sku_mapping_from_rms(db: Session = Depends(get_db)):
     return {"ok": True, "fetched_variants": len(sku_map), "updated": updated}
 
 
+@router.get("/rms/item-lookup")
+async def rms_item_lookup(prefix: str, db: Session = Depends(get_db)):
+    """商品マスタに無い楽天の商品を、商品番号の頭文字で楽天から直接読む。
+
+    店に出ているのにツールへ登録していない商品（昔売っていたものなど）は、
+    在庫も売価もツール側から見えない。発注数を決めるときに毎回RMSの画面を
+    開いて写すのは続かないので、読み取りだけできる口を用意する。
+
+    何も書き換えない。返すのは 商品番号・商品名・SKU・売価・在庫数 だけ。
+    """
+    import base64, httpx
+    settings = _get_or_create_settings(db)
+    if not settings.rms_service_secret or not settings.rms_license_key:
+        raise HTTPException(400, "RMS APIキーが設定されていません。")
+    prefix = (prefix or "").strip()
+    if not prefix:
+        raise HTTPException(400, "商品番号の頭文字を指定してください")
+
+    token = base64.b64encode(
+        f"{settings.rms_service_secret}:{settings.rms_license_key}".encode()).decode()
+    headers = {"Authorization": f"ESA {token}", "Content-Type": "application/json"}
+
+    found: list[dict] = []
+    async with httpx.AsyncClient(timeout=60) as client:
+        offset, limit = 0, 100
+        while offset < 2000:
+            r = await client.get(f"{RMS_ITEMS_BASE}/items/search",
+                                 headers=headers,
+                                 params={"offset": offset, "limit": limit})
+            if r.status_code != 200:
+                raise HTTPException(502, f"楽天の商品検索が失敗しました: {r.status_code} {r.text[:200]}")
+            body = r.json()
+            results = body.get("results") or []
+            for row in results:
+                item = row.get("item") or {}
+                mn = item.get("manageNumber") or ""
+                if not mn.startswith(prefix):
+                    continue
+                for vid, v in (item.get("variants") or {}).items():
+                    found.append({
+                        "manage_number": mn,
+                        "title": item.get("title"),
+                        "variant_id": vid,
+                        "price": v.get("standardPrice"),
+                        "hidden": bool(v.get("hidden")),
+                        "hide_item": bool(item.get("hideItem")),
+                    })
+            if len(results) < limit or offset + limit >= (body.get("numFound") or 0):
+                break
+            offset += limit
+
+        # 在庫はbulk-getで別に聞く。1回に送れる数に限りがあるので小分けにする
+        stock: dict[tuple, int] = {}
+        pairs = [(f["manage_number"], f["variant_id"]) for f in found]
+        for i in range(0, len(pairs), 50):
+            chunk = pairs[i:i + 50]
+            r = await client.post(
+                f"{RMS_ITEMS_BASE}/inventories/bulk-get", headers=headers,
+                json={"inventories": [{"manageNumber": m, "variantId": v}
+                                      for m, v in chunk]})
+            if r.status_code != 200:
+                continue
+            for inv in (r.json() or {}).get("inventories") or []:
+                stock[(inv.get("manageNumber"), inv.get("variantId"))] = inv.get("quantity")
+
+    for f in found:
+        f["stock"] = stock.get((f["manage_number"], f["variant_id"]))
+    found.sort(key=lambda f: (f["manage_number"], f["variant_id"]))
+    return {"prefix": prefix, "count": len(found), "items": found}
+
+
 @router.get("/rms/item-sample")
 async def rms_item_sample(db: Session = Depends(get_db)):
     """Item API 2.0のレスポンス構造確認用（先頭1件取得）"""
