@@ -383,6 +383,11 @@ export default function FbaPlanPage() {
   const [placeOpts, setPlaceOpts] = useState([])
   const [placeMsg, setPlaceMsg] = useState('')
   const [placeResult, setPlaceResult] = useState(null)
+  // ③で確定した納品の一覧。⑥のFBA番号はここから選ぶ
+  const fbaChoices = (placeResult?.shipments || [])
+    .map(sh => ({ id: sh.confirmation_id || sh.shipment_id,
+                  destination: sh.destination }))
+    .filter(c => c.id)
   const [loadingPlace, setLoadingPlace] = useState(false)
 
   const loadPlacement = async () => {
@@ -412,6 +417,12 @@ export default function FbaPlanPage() {
         plan_id: createResult.inbound_plan_id, placement_option_id: optId,
       })
       setPlaceResult(data)
+      // ③で出たFBA番号をそのまま⑥へ渡す。手で写していたので、
+      // 納品が2つに割れたときに別の納品へ追跡番号を入れてしまう事故があり得た
+      const ids = (data.shipments || [])
+        .map(sh => sh.confirmation_id || sh.shipment_id)
+        .filter(Boolean)
+      if (ids.length) setTrackFba(ids[0])
       setPlaceMsg('')
     } catch (e) {
       setPlaceMsg(e.response?.data?.detail || '確定できませんでした')
@@ -1312,16 +1323,38 @@ export default function FbaPlanPage() {
         <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center',
           flexWrap: 'wrap' }}>
           <span style={{ fontSize: 13 }}>FBA番号</span>
-          <input value={trackFba} onChange={e => setTrackFba(e.target.value)}
-            placeholder="FBA15GKPKN8B"
-            style={{ padding: '5px 8px', border: '1px solid #cbd5e1', borderRadius: 4,
-              fontSize: 13, fontFamily: 'monospace', width: 180 }} />
+          {/* ③で納品先を確定していれば、その番号から選ぶ。
+              画面を読み直すと消えるので、そのときは手入力に戻す */}
+          {fbaChoices.length > 0 ? (
+            <select value={trackFba} onChange={e => setTrackFba(e.target.value)}
+              style={{ padding: '5px 8px', border: '1px solid #cbd5e1', borderRadius: 4,
+                fontSize: 13, fontFamily: 'monospace' }}>
+              {fbaChoices.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.id}{c.destination ? `（${c.destination}）` : ''}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input value={trackFba} onChange={e => setTrackFba(e.target.value)}
+              placeholder="FBA15GKPKN8B"
+              style={{ padding: '5px 8px', border: '1px solid #cbd5e1', borderRadius: 4,
+                fontSize: 13, fontFamily: 'monospace', width: 180 }} />
+          )}
           <button className="btn btn-primary" style={{ fontSize: 13 }}
             onClick={() => sendTracking(planSid)}
             disabled={trackBusy || !planSid || !track?.tracking_id}>
             Amazonに入れる
           </button>
         </div>
+
+        {/* 納品が複数に割れると、箱もそれぞれに付く。1回では片方にしか入らない */}
+        {fbaChoices.length > 1 && (
+          <div style={{ marginTop: 6, fontSize: 12, color: '#b45309' }}>
+            納品が{fbaChoices.length}つに分かれています。
+            1つずつ選んで、{fbaChoices.length}回押してください
+          </div>
+        )}
 
         {trackMsg && (
           <div style={{ marginTop: 8, fontSize: 12, color: '#334155' }}>{trackMsg}</div>
