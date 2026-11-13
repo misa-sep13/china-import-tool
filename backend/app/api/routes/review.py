@@ -497,6 +497,9 @@ async def fetch_inquiries(
                         f"（{res.status_code}）: {res.text[:300]}",
                     )
                 data = res.json()
+        except HTTPException:
+            # 上で作った説明つきのエラーは、そのまま画面へ出す
+            raise
         except Exception as e:
             raise HTTPException(500, f"RMS問い合わせ取得失敗: {e}")
 
