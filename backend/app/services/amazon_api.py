@@ -2989,13 +2989,28 @@ def get_box_labels(shipment_confirmation_id: str, box_ids: List[str],
     セラーセントラルの「輸送箱ラベルを印刷」と同じもの。箱ごとに違う
     ラベル（UNIQUE）なので、箱の番号を渡す。
     """
-    q = {"PageType": page_type, "LabelType": "UNIQUE",
-         "PackageLabelsToPrint": ",".join(box_ids)}
-    data = _call_sp_api(
-        f"/fba/inbound/v0/shipments/{shipment_confirmation_id}/labels?"
-        + urllib.parse.urlencode(q))
-    payload = data.get("payload") or data
-    return payload.get("DownloadURL") or payload.get("downloadURL") or ""
+    # ラベルが取れないと出荷できないので、紙の大きさ・種類を変えて何度か試す。
+    # A4に4枚 → A4に2枚 → 普通紙 → 箱数だけ指定（UNIQUEが通らないとき）の順
+    tries = []
+    for pt in dict.fromkeys([page_type, "PackageLabel_A4_2", "PackageLabel_Plain_Paper"]):
+        tries.append({"PageType": pt, "LabelType": "UNIQUE",
+                      "PackageLabelsToPrint": ",".join(box_ids)})
+    tries.append({"PageType": page_type, "LabelType": "BARCODE_2D",
+                  "NumberOfPackages": len(box_ids)})
+    last = ""
+    for q in tries:
+        try:
+            data = _call_sp_api(
+                f"/fba/inbound/v0/shipments/{shipment_confirmation_id}/labels?"
+                + urllib.parse.urlencode(q))
+        except Exception as e:
+            last = str(e)
+            continue
+        payload = data.get("payload") or data
+        url = payload.get("DownloadURL") or payload.get("downloadURL") or ""
+        if url:
+            return url
+    raise Exception(last or "Amazonからラベルが返りませんでした")
 
 
 # 商品タイプの全一覧。ほとんど変わらないので一度引いたら使い回す
