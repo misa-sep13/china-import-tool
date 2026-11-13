@@ -56,14 +56,24 @@ jobs:
           echo "移行元のテーブル数: $(psql "$SRC" -tAc "select count(*) from information_schema.tables where table_schema='public'")"
           echo "移行先のテーブル数: $(psql "$DST" -tAc "select count(*) from information_schema.tables where table_schema='public'")"
 
-      - name: 移行先を空にする（指定したときだけ）
-        if: ${{ inputs.wipe_target }}
+      - name: 移行先を空にする
         env:
           DST: ${{ secrets.RENDER_DB_URL }}
+          WIPE: ${{ inputs.wipe_target }}
         run: |
           set -e
-          psql "$DST" -c 'drop schema if exists public cascade; create schema public;'
-          echo "移行先のpublicスキーマを作り直しました"
+          # 中身のある移行先を黙って消さない。つなぎ先を間違えたときの保険
+          n=$(psql "$DST" -tAc "select count(*) from information_schema.tables
+              where table_schema='public' and table_type='BASE TABLE'")
+          echo "移行先のテーブル数: $n"
+          if [ "$n" -gt 0 ] && [ "$WIPE" != "true" ]; then
+            echo "移行先に既にテーブルがあります。やり直すなら wipe_target をONにしてください"
+            exit 1
+          fi
+          # 作り直さず消すだけ。ダンプの中に CREATE SCHEMA public が入っていて、
+          # ここで作ると pg_restore が「already exists」で止まる
+          psql "$DST" -c 'drop schema if exists public cascade;'
+          echo "移行先のpublicスキーマを消しました"
 
       - name: 吸い出して流し込む
         env:
@@ -79,12 +89,13 @@ jobs:
             --format=custom --file=dump.pgc
           ls -lh dump.pgc
 
-          # 拡張はSupabaseでは別スキーマに居るので、移行先に手で用意する
-          psql "$DST" -c 'create extension if not exists pgcrypto;'
-          psql "$DST" -c 'create extension if not exists "uuid-ossp";'
-
           pg_restore --no-owner --no-privileges --exit-on-error \
             --dbname="$DST" dump.pgc
+
+          # 拡張はSupabaseでは別スキーマに居るので、移行先に手で用意する。
+          # publicはpg_restoreが作るので、流し込んだ後でないと置き場所が無い
+          psql "$DST" -c 'create extension if not exists pgcrypto;'
+          psql "$DST" -c 'create extension if not exists "uuid-ossp";'
 
       - name: 行数を突き合わせる
         env:
