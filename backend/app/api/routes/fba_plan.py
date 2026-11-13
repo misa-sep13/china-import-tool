@@ -489,6 +489,21 @@ class PrepDetailsIn(BaseModel):
     category: str = "NONE"
 
 
+def _mskus_not_available(msg: str) -> set:
+    """Amazonが「出品していないので使えない」と名指ししたSKUを拾う。
+
+    例: ERROR: The following MSKUs are not available for inbound.
+        If these were recently added, please try again later. MSKUs: [y127].
+    """
+    out = set()
+    for m in re.findall(r"MSKUs:\s*\[([^\]]*)\]", msg):
+        for s in m.split(","):
+            s = s.strip().strip("'\"")
+            if s:
+                out.add(s)
+    return out
+
+
 @router.post("/prep-details")
 def set_prep_details(req: PrepDetailsIn, db: Session = Depends(get_db)):
     """SKUの梱包カテゴリーをまとめて設定する。
@@ -507,16 +522,29 @@ def set_prep_details(req: PrepDetailsIn, db: Session = Depends(get_db)):
     if not skus:
         raise HTTPException(400, "対象のSKUがありません")
 
-    done, errors = 0, []
+    done, errors, dropped = 0, [], []
     for i in range(0, len(skus), 20):          # 1回に送れる数に合わせる
         chunk = skus[i:i + 20]
-        try:
-            amazon_api.set_prep_details(chunk, "A1VC38T7YXB528", req.category)
-            done += len(chunk)
-        except Exception as e:
-            errors.append(f"{chunk[0]}ほか{len(chunk)}件: {e}")
+        for attempt in (1, 2):
+            try:
+                amazon_api.set_prep_details(
+                    chunk, "A1VC38T7YXB528", req.category)
+                done += len(chunk)
+                break
+            except Exception as e:
+                # Amazonに出していないSKUが1つ混じると、その回の20件が
+                # まるごと落ちる。名指しされたものを外して1度だけやり直す
+                # （楽天専用のy127が混ざって41件すべてが入らなかった）
+                bad = _mskus_not_available(str(e))
+                rest = [s for s in chunk if s not in bad]
+                if attempt == 1 and bad and rest:
+                    dropped += sorted(bad)
+                    chunk = rest
+                    continue
+                errors.append(f"{chunk[0]}ほか{len(chunk)}件: {e}")
+                break
     return {"ok": not errors, "done": done, "total": len(skus),
-            "errors": errors[:3]}
+            "skipped": dropped, "errors": errors[:3]}
 
 
 # ---------- 追跡番号をAmazonに入れる ----------

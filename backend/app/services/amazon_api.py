@@ -2684,8 +2684,14 @@ def set_prep_details(mskus: List[str], marketplace: str,
     先へ進めない（セラーセントラルでも数量欄がグレーのまま）。
     新しい商品を出すたびに設定が要るので、こちらから入れる。
     """
+    # 2026-11にAmazonが prepTypes を必須にした。空で送ると
+    # 「Expected one of the following prep type lists: [[ITEM_NO_PREP]]」
+    # で全件弾かれ、梱包カテゴリーが入らないまま納品プランが
+    # 読み取り専用になって③から先へ進めなくなる
+    prep_types = ["ITEM_NO_PREP"] if (category or "NONE") == "NONE" else []
     details = [{"msku": m,
                 "prepCategory": category,
+                "prepTypes": prep_types,
                 "prepOwner": prep_owner,
                 "labelOwner": label_owner}
                for m in dict.fromkeys(mskus) if m]
