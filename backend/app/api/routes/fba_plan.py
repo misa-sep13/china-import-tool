@@ -1037,6 +1037,12 @@ def _packing_from_api(sid: int, db: Session) -> Optional[dict]:
         if key and oh.sku:
             by_url.setdefault(key, oh.sku)
 
+    # 管理番号が商品マスタと違っていても、FNSKU・ASINが合えば同じ商品。
+    # ラベル作成では既にそうしている。箱の読み取りだけ抜けていて、
+    # タオタロウに a020_white で入れた銀色のポーチ（マスタは a020_silver）が
+    # 「納品プランに無い商品」になり、その箱が送れなかった
+    by_fnsku, by_asin = _id_tables(prods)
+
     out_boxes, unknown = [], []
     for b in d["boxes"]:
         rows = []
@@ -1045,6 +1051,10 @@ def _packing_from_api(sid: int, db: Session) -> Optional[dict]:
             if sku not in prods:
                 # 自社SKUを入れずに発注した古い注文。URLで引く
                 sku = by_url.get(_normalize_1688_url(it["buy_url"]), "")
+            if sku not in prods:
+                sku = (by_fnsku.get((it.get("fnsku") or "").strip())
+                       or by_asin.get((it.get("asin") or "").strip())
+                       or sku)
             p = prods.get(sku)
             # qtyはバラの数（仕入単位）。Amazonに入れるのは
             # セット数なので、入数で割った数も持たせる
