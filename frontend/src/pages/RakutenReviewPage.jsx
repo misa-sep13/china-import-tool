@@ -237,6 +237,18 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
         {inquiriesMut.data && (
           <span style={{ fontSize: 13, color: '#16a34a', fontWeight: 600 }}>
             {inquiriesMut.data.total}件（完了は除く）
+            {/* 0件のときは、楽天に無いのか・全部完了済みなのか・
+                「レビュー関連のみ」で消えたのかが分からないと直しようがない */}
+            {inquiriesMut.data.total === 0 && (
+              <span style={{ marginLeft: 8, color: '#64748b', fontWeight: 400 }}>
+                {inquiriesMut.data.fetched === 0
+                  ? '／この期間の問い合わせが楽天に1件もありません'
+                  : `／楽天から${inquiriesMut.data.fetched}件・うち完了済み${inquiriesMut.data.completed}件`
+                    + (inquiriesMut.data.fetched > inquiriesMut.data.completed
+                      ? '。残りは「レビュー関連のみ」で除外されています'
+                      : '')}
+              </span>
+            )}
           </span>
         )}
         {inquiriesMut.error && (

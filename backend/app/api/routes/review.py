@@ -488,8 +488,14 @@ async def fetch_inquiries(
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 res = await client.get(url, headers=headers)
+                # ここで黙ってbreakすると、鍵切れもAPI変更も画面には
+                # 「0件」としか出ない。原因が分かるように上げる
                 if not res.is_success:
-                    break
+                    raise HTTPException(
+                        502,
+                        f"R-Messeの問い合わせ取得に失敗しました"
+                        f"（{res.status_code}）: {res.text[:300]}",
+                    )
                 data = res.json()
         except Exception as e:
             raise HTTPException(500, f"RMS問い合わせ取得失敗: {e}")
@@ -542,9 +548,11 @@ async def fetch_inquiries(
             pass
 
     results = []
+    completed_count = 0
     for inq in all_inquiries:
         # R-Messeで完了済みのものだけ表示しない（未返信・返信済は表示する）
         if inq.get("isCompleted", False):
+            completed_count += 1
             continue
 
         message = inq.get("message") or ""
@@ -627,7 +635,14 @@ async def fetch_inquiries(
 
     results.sort(key=lambda x: x.get("reg_date") or "", reverse=True)
 
-    return {"inquiries": results, "total": len(results)}
+    # 0件のときに「楽天に無い」のか「全部完了済み」のか「絞り込みで消えた」のか
+    # 画面で言い分けられるようにする
+    return {
+        "inquiries": results,
+        "total": len(results),
+        "fetched": len(all_inquiries),
+        "completed": completed_count,
+    }
 
 
 # ── 問い合わせ詳細（やり取り全体） ───────────────────────
