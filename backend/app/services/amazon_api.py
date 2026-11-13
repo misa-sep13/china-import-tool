@@ -2863,10 +2863,19 @@ def set_packing_information(plan_id: str, groups: List[dict]) -> None:
     for g in groups:
         boxes = []
         for b in g.get("boxes") or []:
-            items = [{"msku": it["sku"], "quantity": int(it["qty"]),
+            # 同じSKUが1箱に2行あるとAmazonが弾く
+            # （「Items in box must be distinct」）。別々の注文から来た
+            # 同じ商品が1箱に入ることは普通にあるので、足してから送る
+            merged: dict = {}
+            for it in (b.get("items") or []):
+                sku = it.get("sku")
+                qty = int(it.get("qty") or 0)
+                if not sku or qty <= 0:
+                    continue
+                merged[sku] = merged.get(sku, 0) + qty
+            items = [{"msku": sku, "quantity": qty,
                       "labelOwner": "SELLER", "prepOwner": "SELLER"}
-                     for it in (b.get("items") or [])
-                     if it.get("sku") and int(it.get("qty") or 0) > 0]
+                     for sku, qty in merged.items()]
             if not items:
                 continue
             boxes.append({
