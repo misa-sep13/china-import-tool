@@ -1577,9 +1577,15 @@ def send_packing(req: SendPackingIn, db: Session = Depends(get_db)):
     parts = {p.sku for p in db.query(Product)
              .filter(Product.is_component == True).all()}
     for b in boxes:
+        # 付属品は本体の箱に入るものなので、納品数には数えない。
+        # 商品マスタの is_component だけでは取りこぼす：ツールが配送依頼に
+        # 付ける「<本体SKU>（付属品）」は商品マスタに無いSKUなので、
+        # 「納品プランに無い商品」と判定されて箱ごと送れなくなっていた
+        # （a019_230235（付属品）の収納袋80個で、6箱すべてが止まった）
         items = [it for it in (b.get("items") or [])
                  if it.get("sku") and (it.get("units", it.get("qty")) or 0) > 0
-                 and it["sku"] not in parts]   # 付属品は本体に含まれる
+                 and it["sku"] not in parts
+                 and not _memo_is_component(it["sku"])]
         if not items:
             skipped += 1
             continue
