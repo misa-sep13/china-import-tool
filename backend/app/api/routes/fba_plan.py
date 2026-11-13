@@ -1043,11 +1043,38 @@ def _packing_from_api(sid: int, db: Session) -> Optional[dict]:
     # 「納品プランに無い商品」になり、その箱が送れなかった
     by_fnsku, by_asin = _id_tables(prods)
 
+    # 付属品を本体と同じ管理番号・同じFNSKUで発注していると、箱の中身では
+    # 本体と見分けられない（a021 のチューブ絞り40個が a021_stand に数えられ、
+    # 納品数が 30→70 になっていた）。仕入先ページと仕様の文字が付属品と合い、
+    # 本体の仕様とは合わない行は、付属品として扱う
+    from app.services.accessories import _offer
+    from app.services.restock_split import _norm as _nspec
+    comps = [p for p in prods.values() if p.is_component and (p.spec or "").strip()]
+
+    def _as_component(it, body_sku):
+        vals = _nspec(it.get("spec"))
+        offer = _offer(it.get("buy_url") or "")
+        if not vals or not offer:
+            return None
+        body = prods.get(body_sku)
+        if body is not None and not body.is_component:
+            bs = _nspec(body.spec)
+            if bs and (bs in vals or vals in bs):
+                return None          # 本体の仕様と合う＝本体の行
+        for c in comps:
+            cs = _nspec(c.spec)
+            if _offer(c.buy_url) == offer and cs and (cs in vals or vals in cs):
+                return c.sku
+        return None
+
     out_boxes, unknown = [], []
     for b in d["boxes"]:
         rows = []
         for it in b["items"]:
             sku = it["sku"]
+            comp_sku = _as_component(it, sku)
+            if comp_sku:
+                sku = comp_sku
             if sku not in prods:
                 # 自社SKUを入れずに発注した古い注文。URLで引く
                 sku = by_url.get(_normalize_1688_url(it["buy_url"]), "")

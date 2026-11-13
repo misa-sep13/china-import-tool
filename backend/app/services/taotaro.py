@@ -1221,6 +1221,11 @@ def send_order_boxes(sid: int) -> dict:
                 "name_cn": o.get("goods_name") or "",
                 "asin": (o.get("asin") or "").strip(),
                 "fnsku": (o.get("fnsku") or "").strip(),
+                # 仕様（色・サイズ）。付属品を本体と同じ管理番号で発注していると、
+                # 管理番号・FNSKUでは本体と見分けられず、ここでしか分からない
+                # （a021 のチューブ絞りが a021_stand として数えられていた）
+                "spec": " / ".join(str(p.get("value") or "")
+                                   for p in (o.get("good_skus") or [])),
                 "qty": n,
             })
 
