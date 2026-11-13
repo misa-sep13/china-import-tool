@@ -2883,7 +2883,10 @@ def set_packing_information(plan_id: str, groups: List[dict]) -> None:
     if not payload_groups:
         raise ValueError("送る箱がありません")
 
-    op = _put_sp_api(
+    # setPackingInformation は POST。PUTで送ると存在しないルート扱いで
+    # 403「Access to requested resource is denied」が返る
+    # （trackingDetails のほうは仕様どおりPUT）
+    op = _post_sp_api(
         f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}/packingInformation",
         {"packageGroupings": payload_groups})
     wait_inbound_operation(op.get("operationId") or "")
