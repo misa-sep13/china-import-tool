@@ -10,13 +10,16 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
+      # 商品が増えて全件のSP-API取得が5分を超えるようになったため、
+      # --max-time 300 で毎回切れていた（実行#23 が exit 28 で失敗）。
+      # --retry は諦めた後に同じPOSTをやり直すだけで、サーバー側では
+      # 前の取得が走り続けるので重い処理が重なる。だから外した。
       - name: Trigger refresh-fees API
         run: |
           curl -X POST "${{ secrets.BACKEND_URL }}/api/products/refresh-fees" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${{ secrets.AUTH_SERVICE_TOKEN }}" \
-            --max-time 300 \
-            --retry 2 \
+            --max-time 1800 \
             -f
 
       - name: Trigger price adjustment suggestions
@@ -24,6 +27,5 @@ jobs:
           curl -X POST "${{ secrets.BACKEND_URL }}/api/price-adjustments/suggest" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${{ secrets.AUTH_SERVICE_TOKEN }}" \
-            --max-time 300 \
-            --retry 2 \
+            --max-time 1800 \
             -f || true
