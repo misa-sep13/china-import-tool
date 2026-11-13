@@ -1075,10 +1075,16 @@ def _packing_from_api(sid: int, db: Session) -> Optional[dict]:
             comp_sku = _as_component(it, sku)
             if comp_sku:
                 sku = comp_sku
-            if sku not in prods:
+            elif _memo_is_component(sku):
+                # 「本体SKU（付属品）」と書いてある行は付属品。仕入先URLで
+                # 引き直すと、本体と同じページなので本体に化ける
+                # （a021_stand_tube_squeezer（付属品）の40個が a021_stand に数えられていた）
+                pass
+            elif sku not in prods:
                 # 自社SKUを入れずに発注した古い注文。URLで引く
                 sku = by_url.get(_normalize_1688_url(it["buy_url"]), "")
-            if sku not in prods:
+            # 付属品の行は本体と同じFNSKUを持っているので、FNSKUでも引き直さない
+            if sku not in prods and not _memo_is_component(sku):
                 sku = (by_fnsku.get((it.get("fnsku") or "").strip())
                        or by_asin.get((it.get("asin") or "").strip())
                        or sku)
