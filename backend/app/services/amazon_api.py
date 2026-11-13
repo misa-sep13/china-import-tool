@@ -2645,6 +2645,28 @@ def list_packing_options(plan_id: str) -> List[dict]:
     return (_call_sp_api(path).get("packingOptions") or [])
 
 
+def peek_inbound_plan(plan_id: str) -> dict:
+    """納品プランの今の状態を、作らずに読むだけ。
+
+    packingOptions は「無ければ作る」作りのヘルパーしか無く、
+    作れないプランだとエラーになって中が見られない。
+    詰まったときに何が起きているのか確かめるためのもの。
+    """
+    base = f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+    out: dict = {"plan_id": plan_id}
+    for key, path in (
+        ("plan", base),
+        ("items", f"{base}/items?pageSize=100"),
+        ("packing_options", f"{base}/packingOptions"),
+        ("placement_options", f"{base}/placementOptions"),
+    ):
+        try:
+            out[key] = _call_sp_api(path)
+        except Exception as e:
+            out[key + "_error"] = str(e)[:400]
+    return out
+
+
 def confirm_packing_option(plan_id: str, packing_option_id: str) -> None:
     op = _post_sp_api(
         f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"

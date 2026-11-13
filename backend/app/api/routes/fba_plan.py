@@ -461,6 +461,13 @@ def confirm_placement(req: ConfirmPlacementIn):
     return {"ok": True, "shipments": shipments}
 
 
+@router.get("/debug/plan/{plan_id}")
+def debug_plan(plan_id: str):
+    """納品プランの今の状態をそのまま返す。読むだけで何も作らない。"""
+    from app.services import amazon_api
+    return amazon_api.peek_inbound_plan(plan_id)
+
+
 @router.get("/debug/shipments/{plan_id}")
 def debug_shipments(plan_id: str):
     """納品先を確定したあとの納品をそのまま返す（確かめ用）。"""
