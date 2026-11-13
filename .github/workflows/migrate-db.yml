@@ -144,8 +144,11 @@ jobs:
               where s.relkind = 'S' and n.nspname = 'public'
             loop
               execute format('select coalesce(max(%I),0) from public.%I', r.col, r.tbl) into mx;
+              -- 真偽値をそのまま %s に入れると t / f という裸の語になり、
+              -- 列名と解釈されて落ちる。文字列として書き出す
               execute format('select setval(%L, %s, %s)', 'public.' || r.seq,
-                             greatest(mx, 1), mx > 0);
+                             greatest(mx, 1),
+                             case when mx > 0 then 'true' else 'false' end);
             end loop;
           end $$;
           SQL
