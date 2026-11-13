@@ -1,0 +1,146 @@
+name: Migrate DB (Supabase -> Render)
+
+# 1回きりの引っ越し用。手で起こしたときだけ動く。
+#
+# なぜGitHub Actionsでやるか:
+#   - 手元のWindowsに pg_dump が無く、Supabaseと同じ17系を入れるのが手間
+#   - 接続文字列をSecretsに置けば、画面にもログにも出さずに済む
+#
+# このリポジトリは公開なので、ログに接続先を出さないこと。
+# ダンプしたファイルもアーティファクトに上げない（中身は本番データ）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: '実行するなら MIGRATE と入力'
+        required: true
+        default: ''
+      wipe_target:
+        description: '移行先のpublicスキーマを先に消す（やり直すとき true）'
+        type: boolean
+        default: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 合言葉の確認
+        run: |
+          if [ "${{ inputs.confirm }}" != "MIGRATE" ]; then
+            echo "confirm に MIGRATE と入れてください"
+            exit 1
+          fi
+
+      - name: PostgreSQL 17 クライアントを入れる
+        run: |
+          set -e
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          pg_dump --version
+
+      - name: つながるか確かめる
+        env:
+          SRC: ${{ secrets.SUPABASE_DB_URL }}
+          DST: ${{ secrets.RENDER_DB_URL }}
+        run: |
+          set -e
+          echo "移行元: $(psql "$SRC" -tAc 'select version()' | cut -c1-30)"
+          echo "移行先: $(psql "$DST" -tAc 'select version()' | cut -c1-30)"
+          echo "移行元のテーブル数: $(psql "$SRC" -tAc "select count(*) from information_schema.tables where table_schema='public'")"
+          echo "移行先のテーブル数: $(psql "$DST" -tAc "select count(*) from information_schema.tables where table_schema='public'")"
+
+      - name: 移行先を空にする（指定したときだけ）
+        if: ${{ inputs.wipe_target }}
+        env:
+          DST: ${{ secrets.RENDER_DB_URL }}
+        run: |
+          set -e
+          psql "$DST" -c 'drop schema if exists public cascade; create schema public;'
+          echo "移行先のpublicスキーマを作り直しました"
+
+      - name: 吸い出して流し込む
+        env:
+          SRC: ${{ secrets.SUPABASE_DB_URL }}
+          DST: ${{ secrets.RENDER_DB_URL }}
+        run: |
+          set -e
+          # publicスキーマだけ。auth / storage / vault などSupabase固有のものは
+          # 移行先に無いので持っていかない（アプリはpublicしか使っていない）
+          pg_dump "$SRC" \
+            --schema=public \
+            --no-owner --no-privileges --no-publications --no-subscriptions \
+            --format=custom --file=dump.pgc
+          ls -lh dump.pgc
+
+          # 拡張はSupabaseでは別スキーマに居るので、移行先に手で用意する
+          psql "$DST" -c 'create extension if not exists pgcrypto;'
+          psql "$DST" -c 'create extension if not exists "uuid-ossp";'
+
+          pg_restore --no-owner --no-privileges --exit-on-error \
+            --dbname="$DST" dump.pgc
+
+      - name: 行数を突き合わせる
+        env:
+          SRC: ${{ secrets.SUPABASE_DB_URL }}
+          DST: ${{ secrets.RENDER_DB_URL }}
+        run: |
+          set -e
+          # 1行でも違えば失敗にする。見落として本番を切り替えるのがいちばん怖い
+          q="select table_name from information_schema.tables
+             where table_schema='public' and table_type='BASE TABLE' order by table_name"
+          bad=0
+          for t in $(psql "$SRC" -tAc "$q"); do
+            a=$(psql "$SRC" -tAc "select count(*) from public.\"$t\"")
+            b=$(psql "$DST" -tAc "select count(*) from public.\"$t\"")
+            if [ "$a" = "$b" ]; then
+              printf 'OK   %-40s %s\n' "$t" "$a"
+            else
+              printf 'NG   %-40s 移行元=%s 移行先=%s\n' "$t" "$a" "$b"
+              bad=1
+            fi
+          done
+          if [ "$bad" = "1" ]; then
+            echo "行数が合わないテーブルがあります。切り替えないでください"
+            exit 1
+          fi
+          echo "全テーブルの行数が一致しました"
+
+      - name: シーケンスを進める
+        env:
+          DST: ${{ secrets.RENDER_DB_URL }}
+        run: |
+          set -e
+          # 連番の現在値がずれていると、次のINSERTで主キーが衝突する。
+          # pg_restoreでも普通は移るが、ずれていた事故が多いので明示的に直す
+          psql "$DST" -v ON_ERROR_STOP=1 <<'SQL'
+          do $$
+          declare r record; mx bigint;
+          begin
+            for r in
+              select s.relname as seq, t.relname as tbl, a.attname as col
+              from pg_class s
+              join pg_depend d on d.objid = s.oid and d.deptype = 'a'
+              join pg_class t on t.oid = d.refobjid
+              join pg_attribute a on a.attrelid = t.oid and a.attnum = d.refobjsubid
+              join pg_namespace n on n.oid = s.relnamespace
+              where s.relkind = 'S' and n.nspname = 'public'
+            loop
+              execute format('select coalesce(max(%I),0) from public.%I', r.col, r.tbl) into mx;
+              execute format('select setval(%L, %s, %s)', 'public.' || r.seq,
+                             greatest(mx, 1), mx > 0);
+            end loop;
+          end $$;
+          SQL
+          echo "連番を直しました"
+
+      - name: おわり
+        run: |
+          echo "移行できました。"
+          echo "次: Render のバックエンドの DATABASE_URL を、移行先の Internal Database URL に差し替えて再デプロイ"
