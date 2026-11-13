@@ -390,6 +390,58 @@ export default function FbaPlanPage() {
     .filter(c => c.id)
   const [loadingPlace, setLoadingPlace] = useState(false)
 
+  // ---- まとめてAmazonへ（箱の中身が出てから一度に） ----
+  // ③プラン→④箱→⑤納品先→配送（SPD・自社手配）→納品予定の期間→輸送箱ラベル。
+  // ③だけ先に作るとセラーセントラルでLTL/FTLしか選べなくなるので、この順に一度で行う
+  const tomorrow = () => {
+    const d = new Date(Date.now() + 86400000)
+    return d.toISOString().slice(0, 10)
+  }
+  const [shipDate, setShipDate] = useState(tomorrow())
+  const [shipPreview, setShipPreview] = useState(null)
+  const [shipJob, setShipJob] = useState(null)   // {status, steps, result, error, plan_id}
+  const [shipBusy, setShipBusy] = useState(false)
+  const previewShipAll = async () => {
+    if (!planSid) return
+    setShipBusy(true); setShipPreview(null); setShipJob(null)
+    try {
+      const { data } = await api.post('/fba-plan/ship-all/preview', { sid: planSid, ready_date: shipDate })
+      setShipPreview(data)
+    } catch (e) {
+      setShipPreview({ problems: [e.response?.data?.detail || e.message], items: [] })
+    } finally { setShipBusy(false) }
+  }
+  const startShipAll = async () => {
+    if (!shipPreview || shipPreview.problems?.length) return
+    if (!confirm(`この便をAmazonへ送ります（${shipPreview.box_count}箱・${shipPreview.units}個・出荷日 ${shipDate}）。\n\n`
+      + '納品プラン作成 → 箱の中身 → 納品先の確定 → 個口配送（SPD）・自社手配の配送業者 → 輸送箱ラベル まで一度に進めます。\n'
+      + '途中で確定したものは取り消しにくいので、内容を確かめてから押してください。')) return
+    setShipBusy(true)
+    try {
+      const { data } = await api.post('/fba-plan/ship-all/start', { sid: planSid, ready_date: shipDate })
+      setShipJob({ status: 'running', steps: [] })
+      const poll = setInterval(async () => {
+        try {
+          const { data: st } = await api.get(`/fba-plan/ship-all/status/${data.job_id}`)
+          setShipJob(st)
+          if (st.status !== 'running') {
+            clearInterval(poll)
+            setShipBusy(false)
+            if (st.status === 'done' && st.result) {
+              // できた納品（FBA番号）を⑥へ渡す
+              setPlaceResult({ shipments: st.result.shipments })
+              const first = (st.result.shipments || []).map(s => s.confirmation_id).find(Boolean)
+              if (first) setTrackFba(first)
+            }
+          }
+        } catch { /* 次の回で取り直す */ }
+      }, 4000)
+    } catch (e) {
+      setShipJob({ status: 'error', error: e.response?.data?.detail || e.message, steps: [] })
+      setShipBusy(false)
+    }
+  }
+
   const loadPlacement = async () => {
     const planId = createResult?.inbound_plan_id
     if (!planId) return
@@ -703,16 +755,20 @@ export default function FbaPlanPage() {
             <span style={{ color: '#64748b' }}>　→ 買付の指示が消え、納品の指示とセット組みの指示が入る</span>
           </li>
           <li><b>ラベルと指示書を一緒に</b><b>WeChat</b>へ送る</li>
-          <li>下の表で納品数を決めて<b>③ Amazonに納品プランを作成</b></li>
           <li>インボイス作成完了のお知らせ → <b>支払い</b></li>
-          <li>配送ラベル（納品先FCの住所）を<b>WeChat</b>へ送る</li>
           <li>
-            梱包が終わったら<b>④ 箱の中身をAmazonに入れる</b>
-            <span style={{ color: '#64748b' }}>　→ セラーセントラルに貼る作業は要りません</span>
+            <b>「③〜⑤ まとめてAmazonへ」</b>で出荷日を入れ、中身を確かめてから送る
+            <span style={{ color: '#64748b' }}>
+              　→ 納品プラン・箱の中身・納品先・個口配送（SPD）＋自社手配の配送業者・輸送箱ラベルまで一度に。FBA番号もここでできます
+            </span>
           </li>
           <li>
-            <b>⑤ 納品先を決める</b>
-            <span style={{ color: '#64748b' }}>　→ ここで納品番号（FBA…）ができます</span>
+            できた<b>輸送箱ラベル（PDF）</b>を<b>WeChat</b>へ送る
+            <span style={{ color: '#64748b' }}>　（ラベルが取れなかったときはセラーセントラルの「輸送箱ラベルを印刷」から）</span>
+          </li>
+          <li style={{ color: '#64748b' }}>
+            うまくいかないときだけ、下の ③ 納品プラン作成 → ④ 箱の中身 → ⑤ 納品先 を1つずつ押す
+            （③を箱の中身より先に作ると、セラーセントラルでは個口配送が選べなくなるので注意）
           </li>
           <li>
             出荷済みのお知らせが来たら<b>⑥ 追跡番号を入れる</b>
@@ -879,6 +935,89 @@ export default function FbaPlanPage() {
         )}
       </div>
 
+
+      {/* まとめてAmazonへ。箱の中身（インボイス）が出たら、これ1つで輸送箱ラベルまで進む */}
+      <div className="card" style={{ marginBottom: 16, border: '2px solid #2563eb' }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 15 }}>③〜⑤ まとめてAmazonへ（おすすめ）</b>
+          <span style={{ fontSize: 12, color: '#64748b' }}>
+            インボイスで箱の中身が出たら押します。納品プラン作成・箱の中身・納品先・
+            個口配送（SPD）＋自社手配の配送業者・輸送箱ラベルまで一度に進めます
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
+          <label style={{ fontSize: 13 }}>出荷日
+            <input type="date" value={shipDate} onChange={e => setShipDate(e.target.value)}
+              style={{ marginLeft: 6, fontSize: 13, padding: '3px 6px' }} />
+          </label>
+          <button className="btn btn-secondary" style={{ fontSize: 13 }}
+            onClick={previewShipAll} disabled={!planSid || shipBusy}>
+            {shipBusy && !shipJob ? '確認しています…' : '1. 中身を確かめる'}
+          </button>
+          <button className="btn btn-primary" style={{ fontSize: 13 }}
+            onClick={startShipAll}
+            disabled={!shipPreview || shipPreview.problems?.length > 0 || shipBusy}>
+            2. この内容でAmazonへ送る
+          </button>
+          {!planSid && <span style={{ fontSize: 12, color: '#b45309' }}>上で便を選ぶと押せます</span>}
+        </div>
+
+        {shipPreview && (
+          <div style={{ marginTop: 10, fontSize: 13 }}>
+            {shipPreview.problems?.length > 0 ? (
+              <div style={{ padding: '8px 12px', borderRadius: 6, background: '#fef2f2',
+                border: '1px solid #fecaca', color: '#b91c1c', lineHeight: 1.7 }}>
+                {shipPreview.problems.map((p, i) => <div key={i}>⛔ {p}</div>)}
+              </div>
+            ) : (
+              <div style={{ color: '#334155' }}>
+                <b>{shipPreview.box_count}箱・{shipPreview.items.length}商品・{shipPreview.units}個</b>
+                （出荷日 {shipPreview.ready_date}）
+                <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+                  {shipPreview.items.map(x => `${x.sku} ${x.qty}`).join('　')}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {shipJob && (
+          <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 6, fontSize: 13, lineHeight: 1.8,
+            background: shipJob.status === 'error' ? '#fef2f2' : shipJob.status === 'done' ? '#f0fdf4' : '#f8fafc',
+            border: `1px solid ${shipJob.status === 'error' ? '#fecaca' : shipJob.status === 'done' ? '#bbf7d0' : '#e2e8f0'}` }}>
+            {(shipJob.steps || []).map((s, i) => <div key={i}>✓ {s}</div>)}
+            {shipJob.status === 'running' && <div style={{ color: '#64748b' }}>⏳ 進めています…（数分かかります。このままお待ちください）</div>}
+            {shipJob.status === 'error' && (
+              <div style={{ color: '#b91c1c', fontWeight: 700 }}>
+                ⛔ 止まりました：{shipJob.error}
+                {shipJob.plan_id && (
+                  <div style={{ fontWeight: 400, fontSize: 12 }}>
+                    納品プラン {shipJob.plan_id} までは作られています。セラーセントラルの「納品を管理」で続きを確認してください。
+                  </div>
+                )}
+              </div>
+            )}
+            {shipJob.status === 'done' && shipJob.result && (
+              <div style={{ marginTop: 6 }}>
+                {(shipJob.result.shipments || []).map(s => (
+                  <div key={s.shipment_id} style={{ marginBottom: 6 }}>
+                    <b>{s.confirmation_id}</b>　納品先 {s.destination}
+                    {s.window && <>　納品予定 {s.window}</>}
+                    {s.label_url
+                      ? <> 　<a href={s.label_url} target="_blank" rel="noreferrer"
+                          style={{ fontWeight: 700 }}>📄 輸送箱ラベル（{s.boxes}箱）を開く</a></>
+                      : <span style={{ color: '#b45309' }}>　輸送箱ラベルはセラーセントラルで印刷してください</span>}
+                    {s.note && <div style={{ fontSize: 12, color: '#b45309' }}>{s.note}</div>}
+                  </div>
+                ))}
+                <div style={{ fontSize: 12, color: '#64748b' }}>
+                  ラベルをWeChatへ送ってください。出荷後は下の⑥で追跡番号を入れます（FBA番号は入れてあります）。
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 配送依頼を出した商品のFBA納品プラン。
           到着済が1件も無くても、便を選べるように常に出す */}

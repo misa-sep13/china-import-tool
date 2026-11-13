@@ -1578,13 +1578,233 @@ class SendPackingIn(BaseModel):
     sid: int
 
 
+# ---------- まとめてAmazonへ（箱の中身が出てから一度に） ----------
+#
+# これまでは ③ 納品プラン作成 → ④ 箱の中身 → ⑤ 納品先 を別々に押し、
+# 配送モードはセラーセントラルで選んでいた。③ で箱の中身を持たないプランを
+# 作ると、セラーセントラルでは「パレット輸送（LTL）かトラック配送（FTL）のみ」
+# になり、個口配送（SPD）が選べない（11/13 に納品を一度キャンセルした）。
+#
+# 箱の中身（インボイス）が出たあとに、プラン作成 → 箱の中身 → 納品先 →
+# 配送（SPD・自社手配の配送業者）→ 納品予定の期間 → 輸送箱ラベル までを
+# この順に一度で行う。途中で止まったら、どこまで済んだかを返す。
+
+def _ship_all_items(sid: int, db: Session) -> dict:
+    """便の箱から、納品プランに入れるSKUと数（セット数）を組み立てる。"""
+    packed = packing(sid, "auto", db)
+    boxes = packed.get("boxes") or []
+    prods = {p.sku: p for p in db.query(Product).filter(Product.is_active == True).all()}
+    totals, unknown, no_fnsku = {}, [], []
+    for b in boxes:
+        for it in (b.get("items") or []):
+            sku = it.get("sku") or ""
+            n = int(it.get("units", it.get("qty")) or 0)
+            if n <= 0:
+                continue
+            p = prods.get(sku)
+            # 付属品は本体の箱に入るもので、納品数には数えない
+            if (p is not None and p.is_component) or _memo_is_component(sku):
+                continue
+            if p is None:
+                unknown.append(f"箱{b.get('box_no')}：{sku or '（SKU不明）'} {n}")
+                continue
+            if not (p.fnsku or "").strip():
+                if sku not in no_fnsku:
+                    no_fnsku.append(sku)
+                continue
+            totals[sku] = totals.get(sku, 0) + n
+    return {"boxes": boxes, "items": [{"sku": k, "qty": v} for k, v in totals.items()],
+            "unknown": unknown, "no_fnsku": no_fnsku,
+            "box_count": len(boxes),
+            "missing_size": [b.get("box_no") for b in boxes
+                             if not all([b.get("length_cm"), b.get("width_cm"),
+                                         b.get("height_cm"), b.get("weight_kg")])]}
+
+
+class ShipAllIn(BaseModel):
+    sid: int
+    ready_date: str   # 出荷できる日（YYYY-MM-DD）
+
+
+@router.post("/ship-all/preview")
+def ship_all_preview(req: ShipAllIn, db: Session = Depends(get_db)):
+    """まとめて送る前の確認。何をいくつ・何箱で送るか。Amazonには何もしない。"""
+    d = _ship_all_items(req.sid, db)
+    problems = []
+    if not d["boxes"]:
+        problems.append("インボイスから箱が読めませんでした（まだインボイスができていないかもしれません）")
+    if d["unknown"]:
+        problems.append("商品マスタに無い商品が箱に入っています：" + "、".join(d["unknown"]))
+    if d["no_fnsku"]:
+        problems.append("FNSKUが入っていない商品があります：" + "、".join(d["no_fnsku"]))
+    if d["missing_size"]:
+        problems.append("3辺か重量が入っていない箱があります：箱" + "・".join(map(str, d["missing_size"])))
+    return {"items": sorted(d["items"], key=lambda x: x["sku"]),
+            "units": sum(x["qty"] for x in d["items"]),
+            "box_count": d["box_count"], "problems": problems,
+            "ready_date": req.ready_date}
+
+
+def _run_ship_all(job_id: str, sid: int, ready_date: str):
+    from app.services import amazon_api as amz
+    db = SessionLocal()
+    steps = []
+
+    def step(msg):
+        steps.append(msg)
+        with _jobs_lock:
+            _jobs[job_id]["steps"] = list(steps)
+
+    def fail(msg, **extra):
+        with _jobs_lock:
+            _jobs[job_id].update(status="error", error=msg, steps=list(steps), **extra)
+
+    plan_id = ""
+    try:
+        d = _ship_all_items(sid, db)
+        if not d["boxes"] or not d["items"]:
+            return fail("送る箱・商品がありません（インボイスを確認してください）")
+        if d["unknown"] or d["no_fnsku"] or d["missing_size"]:
+            return fail("確認画面の問題を直してから押してください")
+        step(f"箱 {d['box_count']}個・{len(d['items'])}商品・{sum(x['qty'] for x in d['items'])}個を読みました")
+
+        # 梱包カテゴリーが未設定だとプランが読み取り専用になる。未設定のものだけ入れる
+        mp = "A1VC38T7YXB528"
+        try:
+            known = amz.fetch_prep_owners([x["sku"] for x in d["items"]], mp)
+            unset = [x["sku"] for x in d["items"]
+                     if (known.get(x["sku"]) or {}).get("category", "")
+                     in ("", "UNKNOWN", "NONE_REQUIRED_UNKNOWN")]
+            if unset:
+                amz.set_prep_details(unset, mp, "NONE")
+                step("梱包カテゴリーを入れました：" + "、".join(unset))
+        except Exception as e:
+            step(f"（梱包カテゴリーの確認はできませんでした：{str(e)[:120]}）")
+
+        source = amz.fetch_default_source_address()
+        if not source:
+            return fail("発送元住所が読めませんでした")
+        r = amz.create_inbound_plan(d["items"], source_address=source,
+                                    name=f"FBA納品 便{sid} {date.today().strftime('%Y/%m/%d')}")
+        plan_id = r["inbound_plan_id"]
+        amz.wait_inbound_operation(r["operation_id"], timeout_sec=180)
+        with _jobs_lock:
+            _jobs[job_id]["plan_id"] = plan_id
+        step(f"納品プランを作りました（{plan_id}）")
+
+        res = _send_packing(plan_id, sid, db, boxes=d["boxes"])
+        if not res.get("ok"):
+            return fail("箱の中身を入れられませんでした（同じ箱に別グループの商品・プランに無い商品）",
+                        detail={"unknown": res.get("unknown"), "split": res.get("split")},
+                        plan_id=plan_id)
+        step(f"箱の中身を入れました（{res.get('sent_boxes')}箱）")
+
+        options = amz.list_placement_options(plan_id)
+        if not options:
+            return fail("納品先の候補がありません", plan_id=plan_id)
+        options.sort(key=lambda o: (_fee_total(o)[0], len(o.get("shipmentIds") or [])))
+        chosen = options[0]
+        pid = chosen.get("placementOptionId") or ""
+        fee, cur = _fee_total(chosen)
+        amz.confirm_placement_option(plan_id, pid)
+        shipments = amz.list_plan_shipments(plan_id)
+        ids = [s.get("shipmentId") for s in shipments if s.get("shipmentId")]
+        step(f"納品先を確定しました（{len(ids)}納品・配置手数料 {fee} {cur}）")
+
+        amz.generate_transportation_options(plan_id, pid, ids, ready_date)
+        selections, modes = [], []
+        for s in ids:
+            opts = amz.list_transportation_options(plan_id, pid, s)
+            o = amz.pick_spd_own_carrier(opts)
+            if o is None:
+                modes = sorted({f"{x.get('shippingMode')}/{x.get('shippingSolution')}" for x in opts})
+                return fail("個口配送（SPD）・自社手配の配送業者の候補がありませんでした。出てきた候補："
+                            + ("、".join(modes) or "なし"), plan_id=plan_id)
+            selections.append({"shipmentId": s,
+                               "transportationOptionId": o.get("transportationOptionId")})
+        amz.confirm_transportation_options(plan_id, selections)
+        step("配送を個口配送（SPD）・自社手配の配送業者で確定しました")
+
+        out = []
+        for sh in amz.list_plan_shipments(plan_id):
+            s = sh.get("shipmentId") or ""
+            conf = sh.get("shipmentConfirmationId") or ""
+            row = {"shipment_id": s, "confirmation_id": conf,
+                   "destination": ((sh.get("destination") or {}).get("warehouseId") or ""),
+                   "window": "", "label_url": "", "note": ""}
+            try:
+                row["window"] = amz.confirm_delivery_window(plan_id, s)
+            except Exception as e:
+                row["note"] = f"納品予定の期間を確定できませんでした（{str(e)[:150]}）"
+            try:
+                box_ids = [b.get("boxId") for b in amz.list_shipment_boxes(plan_id, s)
+                           if b.get("boxId")]
+                row["label_url"] = amz.get_box_labels(conf, box_ids)
+                row["boxes"] = len(box_ids)
+            except Exception as e:
+                row["note"] = (row["note"] + "／" if row["note"] else "") + \
+                    f"輸送箱ラベルを取れませんでした（{str(e)[:150]}）"
+            out.append(row)
+        step("輸送箱ラベルを用意しました" if all(r["label_url"] for r in out)
+             else "輸送箱ラベルの一部が取れませんでした（セラーセントラルで印刷してください）")
+
+        with _jobs_lock:
+            _jobs[job_id].update(status="done", steps=list(steps),
+                                 result={"plan_id": plan_id, "shipments": out})
+    except HTTPException as e:
+        fail(str(e.detail), plan_id=plan_id)
+    except Exception as e:
+        fail(str(e)[:500], plan_id=plan_id)
+    finally:
+        db.close()
+
+
+@router.post("/ship-all/start")
+def ship_all_start(req: ShipAllIn, background_tasks: BackgroundTasks):
+    """まとめてAmazonへ送る。数分かかるので裏で動かし、状態は /ship-all/status で見る。"""
+    try:
+        datetime.strptime(req.ready_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, "出荷日は YYYY-MM-DD で入れてください")
+    _prune_jobs()
+    job_id = str(uuid.uuid4())
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "running", "result": None, "error": None,
+                         "steps": [], "started_at": time.time()}
+    background_tasks.add_task(_run_ship_all, job_id, req.sid, req.ready_date)
+    return {"job_id": job_id}
+
+
+@router.get("/ship-all/status/{job_id}")
+def ship_all_status(job_id: str):
+    with _jobs_lock:
+        job = dict(_jobs.get(job_id) or {})
+    if not job:
+        return {"status": "not_found"}
+    return {"status": job.get("status"), "steps": job.get("steps") or [],
+            "result": job.get("result"), "error": job.get("error"),
+            "detail": job.get("detail"), "plan_id": job.get("plan_id") or "",
+            "elapsed": round(time.time() - job.get("started_at", time.time()), 1)}
+
+
 @router.post("/packing/send")
 def send_packing(req: SendPackingIn, db: Session = Depends(get_db)):
     """インボイスの箱情報を、そのまま納品プランへ登録する。"""
+    return _send_packing(req.plan_id, req.sid, db)
+
+
+def _send_packing(plan_id: str, sid: int, db: Session, boxes=None) -> dict:
+    """箱の中身を納品プランへ登録する（④ と「まとめてAmazonへ」で共通）。"""
     from app.services import amazon_api
 
-    packed = packing(req.sid, "auto", db)
-    boxes = packed.get("boxes") or []
+    class _R:  # 元の処理が req.plan_id / req.sid を読むので合わせる
+        pass
+    req = _R()
+    req.plan_id, req.sid = plan_id, sid
+
+    if boxes is None:
+        packed = packing(req.sid, "auto", db)
+        boxes = packed.get("boxes") or []
     if not boxes:
         raise HTTPException(400, "インボイスから箱が読めませんでした")
 

@@ -2901,6 +2901,103 @@ def set_packing_information(plan_id: str, groups: List[dict]) -> None:
     wait_inbound_operation(op.get("operationId") or "")
 
 
+# ---------- 配送モード・配送業者（transportation） ----------
+#
+# これまではツールが何も指定せず、セラーセントラルで選んでいた。
+# 箱の中身を入れる前に納品プランを作った流れだと、セラーセントラルでは
+# パレット輸送（LTL）かトラック配送（FTL）しか選べなくなる。
+# 箱の中身を入れてから、ここで個口配送（SPD）＋自社手配の配送業者を指定する。
+
+def generate_transportation_options(plan_id: str, placement_option_id: str,
+                                    shipment_ids: List[str],
+                                    ready_date: str) -> None:
+    """配送の候補を作らせる。ready_date は出荷できる日（YYYY-MM-DD）。"""
+    start = f"{ready_date}T00:00:00Z"
+    op = _post_sp_api(
+        f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}/transportationOptions",
+        {"placementOptionId": placement_option_id,
+         "shipmentTransportationConfigurations": [
+             {"shipmentId": sid, "readyToShipWindow": {"start": start}}
+             for sid in shipment_ids]})
+    wait_inbound_operation(op.get("operationId") or "")
+
+
+def list_transportation_options(plan_id: str, placement_option_id: str = "",
+                                shipment_id: str = "") -> List[dict]:
+    rows, token = [], None
+    while True:
+        q = {"pageSize": 20}
+        if placement_option_id:
+            q["placementOptionId"] = placement_option_id
+        if shipment_id:
+            q["shipmentId"] = shipment_id
+        if token:
+            q["paginationToken"] = token
+        data = _call_sp_api(
+            f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}/transportationOptions?"
+            + urllib.parse.urlencode(q))
+        rows.extend(data.get("transportationOptions") or [])
+        token = (data.get("pagination") or {}).get("nextToken")
+        if not token:
+            break
+    return rows
+
+
+def pick_spd_own_carrier(options: List[dict]) -> Optional[dict]:
+    """個口配送（SPD）で、Amazonパートナーキャリアではない（自社手配の）候補を選ぶ。"""
+    for o in options:
+        mode = (o.get("shippingMode") or "").upper()
+        sol = (o.get("shippingSolution") or "").upper()
+        if mode == "GROUND_SMALL_PARCEL" and sol == "USE_YOUR_OWN_CARRIER":
+            return o
+    return None
+
+
+def confirm_transportation_options(plan_id: str, selections: List[dict]) -> None:
+    """selections: [{"shipmentId": ..., "transportationOptionId": ...}, ...]"""
+    op = _post_sp_api(
+        f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+        f"/transportationOptions/confirmation",
+        {"transportationSelections": selections})
+    wait_inbound_operation(op.get("operationId") or "")
+
+
+def confirm_delivery_window(plan_id: str, shipment_id: str) -> str:
+    """自社手配の配送業者のときに要る「納品予定の期間」を作って、最初の候補で確定する。
+
+    要らない納品（Amazonが候補を返さない）なら何もしない。確定した期間の説明を返す。
+    """
+    base = (f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
+            f"/shipments/{shipment_id}/deliveryWindowOptions")
+    options = _call_sp_api(base).get("deliveryWindowOptions") or []
+    if not options:
+        op = _post_sp_api(base, {})
+        wait_inbound_operation(op.get("operationId") or "")
+        options = _call_sp_api(base).get("deliveryWindowOptions") or []
+    if not options:
+        return ""
+    o = options[0]
+    op = _post_sp_api(f"{base}/{o.get('deliveryWindowOptionId')}/confirmation", {})
+    wait_inbound_operation(op.get("operationId") or "")
+    return f"{(o.get('startDate') or '')[:10]}〜{(o.get('endDate') or '')[:10]}"
+
+
+def get_box_labels(shipment_confirmation_id: str, box_ids: List[str],
+                   page_type: str = "PackageLabel_A4_4") -> str:
+    """輸送箱ラベル（PDF）のダウンロードURLを返す。
+
+    セラーセントラルの「輸送箱ラベルを印刷」と同じもの。箱ごとに違う
+    ラベル（UNIQUE）なので、箱の番号を渡す。
+    """
+    q = {"PageType": page_type, "LabelType": "UNIQUE",
+         "PackageLabelsToPrint": ",".join(box_ids)}
+    data = _call_sp_api(
+        f"/fba/inbound/v0/shipments/{shipment_confirmation_id}/labels?"
+        + urllib.parse.urlencode(q))
+    payload = data.get("payload") or data
+    return payload.get("DownloadURL") or payload.get("downloadURL") or ""
+
+
 # 商品タイプの全一覧。ほとんど変わらないので一度引いたら使い回す
 _PT_ALL_CACHE = {"names": None}
 
