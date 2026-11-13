@@ -7,6 +7,41 @@ const STATUS_COLORS = { ordered: '#f59e0b', arrived: '#22c55e', shipped: '#6b728
 const SHIP_LABELS = { air: '航空便', sea: '船便', hold: '保留' }
 const SHIP_COLORS = { air: '#ef4444', sea: '#3b82f6', hold: '#9ca3af' }
 
+/** できている納品（FBA番号）の輸送箱ラベルを取る。セラーセントラルで作った納品にも使える */
+function LabelFetcher() {
+  const [fba, setFba] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [res, setRes] = useState(null)
+  const get = async () => {
+    const id = fba.trim().toUpperCase()
+    if (!id) return
+    setBusy(true); setRes(null)
+    try {
+      const { data } = await api.get(`/fba-plan/box-labels/${encodeURIComponent(id)}`)
+      setRes(data)
+    } catch (e) {
+      setRes({ error: e.response?.data?.detail || e.message })
+    } finally { setBusy(false) }
+  }
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 10,
+      paddingTop: 10, borderTop: '1px dashed #e2e8f0', fontSize: 13 }}>
+      <span style={{ color: '#475569' }}>できている納品の輸送箱ラベルだけ取る：</span>
+      <input value={fba} onChange={e => setFba(e.target.value)} placeholder="FBA番号（例: FBA15GLM3JWB）"
+        style={{ fontSize: 13, padding: '3px 8px', width: 210 }} />
+      <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={get} disabled={busy || !fba.trim()}>
+        {busy ? '取っています…' : 'ラベルを取る'}
+      </button>
+      {res?.error && <span style={{ color: '#b91c1c' }}>{res.error}</span>}
+      {res?.label_url && (
+        <a href={res.label_url} target="_blank" rel="noreferrer" style={{ fontWeight: 700 }}>
+          📄 輸送箱ラベル（{res.boxes}箱・{res.destination}）を開く
+        </a>
+      )}
+    </div>
+  )
+}
+
 export default function FbaPlanPage() {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
@@ -961,6 +996,9 @@ export default function FbaPlanPage() {
           </button>
           {!planSid && <span style={{ fontSize: 12, color: '#b45309' }}>上で便を選ぶと押せます</span>}
         </div>
+
+        {/* できている納品の輸送箱ラベルだけを取る（セラーセントラルで作った納品にも使える） */}
+        <LabelFetcher />
 
         {shipPreview && (
           <div style={{ marginTop: 10, fontSize: 13 }}>

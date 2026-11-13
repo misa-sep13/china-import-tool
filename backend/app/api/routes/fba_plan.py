@@ -1775,6 +1775,30 @@ def ship_all_start(req: ShipAllIn, background_tasks: BackgroundTasks):
     return {"job_id": job_id}
 
 
+@router.get("/box-labels/{confirmation_id}")
+def box_labels(confirmation_id: str):
+    """できている納品（FBA番号）の輸送箱ラベルを取る。読むだけで何も変えない。
+
+    セラーセントラルの「輸送箱ラベルを印刷」と同じPDF。
+    """
+    from app.services import amazon_api as amz
+    sh = amz.find_shipment(confirmation_id)
+    if not sh:
+        raise HTTPException(404, f"{confirmation_id} の納品が見つかりません")
+    try:
+        boxes = amz.list_shipment_boxes(sh["inbound_plan_id"], sh["shipment_id"])
+        box_ids = [b.get("boxId") for b in boxes if b.get("boxId")]
+        if not box_ids:
+            raise HTTPException(400, "この納品には箱がまだありません（箱の中身が入っていません）")
+        url = amz.get_box_labels(confirmation_id.strip().upper(), box_ids)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"輸送箱ラベルを取れませんでした（{str(e)[:300]}）")
+    return {"confirmation_id": confirmation_id, "boxes": len(box_ids),
+            "destination": sh.get("destination"), "label_url": url}
+
+
 @router.get("/ship-all/status/{job_id}")
 def ship_all_status(job_id: str):
     with _jobs_lock:
