@@ -1076,6 +1076,16 @@ export default function FbaPlanPage() {
         )}
       </div>
 
+      {/* 手動の③④⑤。「まとめてAmazonへ」がうまくいかないときだけ使うので畳んでおく */}
+      <details className="card" style={{ marginBottom: 16 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 700 }}>
+          手動で1つずつ進める（③ 納品プラン作成・④ 箱の中身・⑤ 納品先）— うまくいかないときだけ
+        </summary>
+        <div style={{ fontSize: 12, color: '#b45309', margin: '8px 0 12px' }}>
+          ふだんは上の「③〜⑤ まとめてAmazonへ」を使ってください。
+          ③を箱の中身より先に作ると、セラーセントラルで個口配送（SPD）が選べなくなります。
+        </div>
+
       {/* 配送依頼を出した商品のFBA納品プラン。
           到着済が1件も無くても、便を選べるように常に出す */}
       {true && (
@@ -1488,6 +1498,8 @@ export default function FbaPlanPage() {
       </div>
       )}
 
+      </details>
+
       {/* 出荷されたあと。追跡番号は配送依頼の sn そのもので、
           便ごとに1つ。Amazonは箱ごとに欲しがるので全箱に同じ番号を入れる */}
       <div className="card" style={{ marginBottom: 16 }}>
@@ -1573,7 +1585,7 @@ export default function FbaPlanPage() {
           </button>
           <span style={{ fontSize: 12, color: '#64748b' }}>
             未設定の商品に「梱包不要」を入れます。
-            ③で自動に入るので、通常は使いません
+            「まとめてAmazonへ」で自動に入るので、通常は使いません
           </span>
           {prepMsg && <span style={{ fontSize: 12, color: '#166534' }}>{prepMsg}</span>}
         </div>
