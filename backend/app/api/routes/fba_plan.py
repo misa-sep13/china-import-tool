@@ -1804,7 +1804,8 @@ def _ship_rest(plan_id, pid, ids, ready_date, step, fail, job_id):
         # 納品予定の期間が先（「requires confirmed delivery windows」で弾かれるため）
         for s in ids:
             try:
-                windows[s] = amz.confirm_delivery_window(plan_id, s)
+                # 出荷日の11日後以降に始まる期間（中国からの輸送日数ぶん）
+                windows[s] = amz.confirm_delivery_window(plan_id, s, ready_date, 11)
             except Exception as e:
                 return fail(f"納品予定の期間を確定できませんでした（{str(e)[:300]}）", plan_id=plan_id)
         if windows:
@@ -1926,6 +1927,28 @@ def box_labels(confirmation_id: str):
         raise HTTPException(400, f"輸送箱ラベルを取れませんでした（{str(e)[:300]}）")
     return {"confirmation_id": confirmation_id, "boxes": len(box_ids),
             "destination": sh.get("destination"), "label_url": url}
+
+
+class DeliveryWindowIn(BaseModel):
+    plan_id: str
+    ship_date: str           # 出荷日（YYYY-MM-DD）
+    lead_days: int = 11      # 出荷日から何日後以降に着く期間にするか
+
+
+@router.post("/delivery-window")
+def set_delivery_window(req: DeliveryWindowIn):
+    """納品プランの各納品の「納品予定の期間」を、出荷日の lead_days 日後以降で確定し直す。"""
+    from app.services import amazon_api as amz
+    out = []
+    for sh in amz.list_plan_shipments(req.plan_id.strip()):
+        s = sh.get("shipmentId") or ""
+        try:
+            w = amz.confirm_delivery_window(req.plan_id.strip(), s, req.ship_date, req.lead_days)
+            out.append({"confirmation_id": sh.get("shipmentConfirmationId") or "", "window": w})
+        except Exception as e:
+            out.append({"confirmation_id": sh.get("shipmentConfirmationId") or "",
+                        "error": str(e)[:300]})
+    return {"shipments": out}
 
 
 @router.get("/ship-all/status/{job_id}")

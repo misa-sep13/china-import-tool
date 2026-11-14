@@ -2962,21 +2962,39 @@ def confirm_transportation_options(plan_id: str, selections: List[dict]) -> None
     wait_inbound_operation(op.get("operationId") or "")
 
 
-def confirm_delivery_window(plan_id: str, shipment_id: str) -> str:
-    """自社手配の配送業者のときに要る「納品予定の期間」を作って、最初の候補で確定する。
+def confirm_delivery_window(plan_id: str, shipment_id: str,
+                            ship_date: str = "", lead_days: int = 11) -> str:
+    """自社手配の配送業者のときに要る「納品予定の期間」を作って確定する。
 
-    要らない納品（Amazonが候補を返さない）なら何もしない。確定した期間の説明を返す。
+    中国から船便・航空便で日本へ送るので、出荷日からFCに着くまで日数がかかる。
+    最初の候補（出荷日の直後の3日間）だと短すぎて、期間内に着かない。
+    出荷日の lead_days 日後以降に始まる候補のうち、一番早いものを選ぶ。
+    無ければ一番遅く始まる候補を選ぶ。確定した期間の説明を返す。
     """
+    from datetime import date as _d, timedelta as _td
     base = (f"/inbound/fba/2024-03-20/inboundPlans/{plan_id}"
             f"/shipments/{shipment_id}/deliveryWindowOptions")
-    options = _call_sp_api(base).get("deliveryWindowOptions") or []
-    if not options:
+    # 前に作った候補が残っていても、日付を変えたいことがあるので作り直す
+    try:
         op = _post_sp_api(base, {})
         wait_inbound_operation(op.get("operationId") or "")
-        options = _call_sp_api(base).get("deliveryWindowOptions") or []
+    except Exception:
+        pass
+    options = _call_sp_api(base).get("deliveryWindowOptions") or []
     if not options:
         return ""
-    o = options[0]
+    target = ""
+    if ship_date:
+        try:
+            target = (_d.fromisoformat(ship_date[:10]) + _td(days=lead_days)).isoformat()
+        except ValueError:
+            target = ""
+    options = sorted(options, key=lambda x: (x.get("startDate") or ""))
+    o = None
+    if target:
+        o = next((x for x in options if (x.get("startDate") or "")[:10] >= target), None)
+    if o is None:
+        o = options[-1] if target else options[0]
     op = _post_sp_api(f"{base}/{o.get('deliveryWindowOptionId')}/confirmation", {})
     wait_inbound_operation(op.get("operationId") or "")
     return f"{(o.get('startDate') or '')[:10]}〜{(o.get('endDate') or '')[:10]}"
