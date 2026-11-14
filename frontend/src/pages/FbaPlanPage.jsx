@@ -454,7 +454,28 @@ export default function FbaPlanPage() {
     setShipBusy(true)
     try {
       const { data } = await api.post('/fba-plan/ship-all/start', { sid: planSid, ready_date: shipDate })
-      setShipJob({ status: 'running', steps: [] })
+      pollShip(data.job_id)
+    } catch (e) {
+      setShipJob({ status: 'error', error: e.response?.data?.detail || e.message, steps: [] })
+      setShipBusy(false)
+    }
+  }
+  // 途中で止まった納品プランを、配送の確定から続ける（作り直すと納品が二重になるため）
+  const resumeShipAll = async (planId) => {
+    if (!confirm(`納品プラン ${planId} の続き（納品予定の期間・個口配送の確定・輸送箱ラベル）を進めます。`)) return
+    setShipBusy(true)
+    try {
+      const { data } = await api.post('/fba-plan/ship-all/resume', { plan_id: planId, ready_date: shipDate })
+      pollShip(data.job_id)
+    } catch (e) {
+      setShipJob({ status: 'error', error: e.response?.data?.detail || e.message, steps: [], plan_id: planId })
+      setShipBusy(false)
+    }
+  }
+  const pollShip = (jobId) => {
+    setShipJob({ status: 'running', steps: [] })
+    {
+      const data = { job_id: jobId }
       const poll = setInterval(async () => {
         try {
           const { data: st } = await api.get(`/fba-plan/ship-all/status/${data.job_id}`)
@@ -471,9 +492,6 @@ export default function FbaPlanPage() {
           }
         } catch { /* 次の回で取り直す */ }
       }, 4000)
-    } catch (e) {
-      setShipJob({ status: 'error', error: e.response?.data?.detail || e.message, steps: [] })
-      setShipBusy(false)
     }
   }
 
@@ -1030,7 +1048,12 @@ export default function FbaPlanPage() {
                 ⛔ 止まりました：{shipJob.error}
                 {shipJob.plan_id && (
                   <div style={{ fontWeight: 400, fontSize: 12 }}>
-                    納品プラン {shipJob.plan_id} までは作られています。セラーセントラルの「納品を管理」で続きを確認してください。
+                    納品プラン {shipJob.plan_id} までは作られています。
+                    納品先まで確定していれば、作り直さずに続きから進められます。
+                    <button className="btn btn-primary" style={{ fontSize: 12, marginLeft: 8, padding: '3px 10px' }}
+                      onClick={() => resumeShipAll(shipJob.plan_id)} disabled={shipBusy}>
+                      続きから進める（配送・輸送箱ラベル）
+                    </button>
                   </div>
                 )}
               </div>

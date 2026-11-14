@@ -1744,6 +1744,24 @@ def _run_ship_all(job_id: str, sid: int, ready_date: str):
         ids = [s.get("shipmentId") for s in shipments if s.get("shipmentId")]
         step(f"納品先を確定しました（{len(ids)}納品・配置手数料 {fee} {cur}）")
 
+        _ship_rest(plan_id, pid, ids, ready_date, step, fail, job_id)
+    except HTTPException as e:
+        fail(str(e.detail), plan_id=plan_id)
+    except Exception as e:
+        fail(str(e)[:500], plan_id=plan_id)
+    finally:
+        db.close()
+
+
+def _ship_rest(plan_id, pid, ids, ready_date, step, fail, job_id):
+    """納品先の確定より後（配送・納品予定の期間・輸送箱ラベル）。
+
+    「続きから」でも使う。Amazonの決まりで、自社手配の配送業者は
+    納品予定の期間を先に確定しないと、配送の確定が通らない。
+    """
+    from app.services import amazon_api as amz
+    windows = {}
+    if True:
         amz.generate_transportation_options(plan_id, pid, ids, ready_date)
         selections, modes = [], []
         for s in ids:
@@ -1755,6 +1773,14 @@ def _run_ship_all(job_id: str, sid: int, ready_date: str):
                             + ("、".join(modes) or "なし"), plan_id=plan_id)
             selections.append({"shipmentId": s,
                                "transportationOptionId": o.get("transportationOptionId")})
+        # 納品予定の期間が先（「requires confirmed delivery windows」で弾かれるため）
+        for s in ids:
+            try:
+                windows[s] = amz.confirm_delivery_window(plan_id, s)
+            except Exception as e:
+                return fail(f"納品予定の期間を確定できませんでした（{str(e)[:300]}）", plan_id=plan_id)
+        if windows:
+            step("納品予定の期間を確定しました（" + "、".join(w for w in windows.values() if w) + "）")
         amz.confirm_transportation_options(plan_id, selections)
         step("配送を個口配送（SPD）・自社手配の配送業者で確定しました")
 
@@ -1764,11 +1790,7 @@ def _run_ship_all(job_id: str, sid: int, ready_date: str):
             conf = sh.get("shipmentConfirmationId") or ""
             row = {"shipment_id": s, "confirmation_id": conf,
                    "destination": ((sh.get("destination") or {}).get("warehouseId") or ""),
-                   "window": "", "label_url": "", "note": ""}
-            try:
-                row["window"] = amz.confirm_delivery_window(plan_id, s)
-            except Exception as e:
-                row["note"] = f"納品予定の期間を確定できませんでした（{str(e)[:150]}）"
+                   "window": windows.get(s, ""), "label_url": "", "note": ""}
             try:
                 box_ids = [b.get("boxId") for b in amz.list_shipment_boxes(plan_id, s)
                            if b.get("boxId")]
@@ -1782,14 +1804,60 @@ def _run_ship_all(job_id: str, sid: int, ready_date: str):
              else "輸送箱ラベルの一部が取れませんでした（セラーセントラルで印刷してください）")
 
         with _jobs_lock:
-            _jobs[job_id].update(status="done", steps=list(steps),
+            _jobs[job_id].update(status="done",
                                  result={"plan_id": plan_id, "shipments": out})
-    except HTTPException as e:
-        fail(str(e.detail), plan_id=plan_id)
+
+
+def _run_ship_resume(job_id: str, plan_id: str, ready_date: str):
+    """納品先の確定まで済んだ納品プランの続き（配送・納品予定の期間・ラベル）。"""
+    from app.services import amazon_api as amz
+    steps = []
+
+    def step(msg):
+        steps.append(msg)
+        with _jobs_lock:
+            _jobs[job_id]["steps"] = list(steps)
+
+    def fail(msg, **extra):
+        with _jobs_lock:
+            _jobs[job_id].update(status="error", error=msg, steps=list(steps), **extra)
+
+    try:
+        opts = amz.list_placement_options(plan_id)
+        chosen = next((o for o in opts
+                       if (o.get("status") or "").upper() in ("ACCEPTED", "CONFIRMED")), None)
+        if chosen is None:
+            return fail("この納品プランは納品先がまだ確定していません。最初から「まとめてAmazonへ」を押してください",
+                        plan_id=plan_id)
+        pid = chosen.get("placementOptionId") or ""
+        ids = list(chosen.get("shipmentIds") or [])
+        with _jobs_lock:
+            _jobs[job_id]["plan_id"] = plan_id
+        step(f"納品プラン {plan_id} の続きから進めます（{len(ids)}納品）")
+        _ship_rest(plan_id, pid, ids, ready_date, step, fail, job_id)
     except Exception as e:
         fail(str(e)[:500], plan_id=plan_id)
-    finally:
-        db.close()
+
+
+class ShipResumeIn(BaseModel):
+    plan_id: str
+    ready_date: str
+
+
+@router.post("/ship-all/resume")
+def ship_all_resume(req: ShipResumeIn, background_tasks: BackgroundTasks):
+    """止まった納品プランを、配送の確定から続ける。"""
+    try:
+        datetime.strptime(req.ready_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, "出荷日は YYYY-MM-DD で入れてください")
+    _prune_jobs()
+    job_id = str(uuid.uuid4())
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "running", "result": None, "error": None,
+                         "steps": [], "started_at": time.time(), "plan_id": req.plan_id}
+    background_tasks.add_task(_run_ship_resume, job_id, req.plan_id.strip(), req.ready_date)
+    return {"job_id": job_id}
 
 
 @router.post("/ship-all/start")
