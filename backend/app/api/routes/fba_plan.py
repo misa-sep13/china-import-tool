@@ -1714,16 +1714,44 @@ def _run_ship_all(job_id: str, sid: int, ready_date: str):
         except Exception as e:
             step(f"（梱包カテゴリーの確認はできませんでした：{str(e)[:120]}）")
 
-        source = amz.fetch_default_source_address()
-        if not source:
-            return fail("発送元住所が読めませんでした")
-        r = amz.create_inbound_plan(d["items"], source_address=source,
-                                    name=f"FBA納品 便{sid} {date.today().strftime('%Y/%m/%d')}")
-        plan_id = r["inbound_plan_id"]
-        amz.wait_inbound_operation(r["operation_id"], timeout_sec=180)
-        with _jobs_lock:
-            _jobs[job_id]["plan_id"] = plan_id
-        step(f"納品プランを作りました（{plan_id}）")
+        # 同じ便で前に押して途中で止まった納品プランがあれば、作り直さずに続きから進める。
+        # 作り直すと同じ中身の納品が二重にできる
+        prev = None
+        try:
+            for pl in amz.list_inbound_plans(20):
+                if ((pl.get("status") or "").upper() == "ACTIVE"
+                        and f"便{sid} " in (pl.get("name") or "")):
+                    prev = pl.get("inboundPlanId")
+                    break
+        except Exception:
+            prev = None
+        if prev:
+            plan_id = prev
+            with _jobs_lock:
+                _jobs[job_id]["plan_id"] = plan_id
+            done = None
+            try:
+                done = next((o for o in amz.list_placement_options(plan_id)
+                             if (o.get("status") or "").upper() in ("ACCEPTED", "CONFIRMED")), None)
+            except Exception:
+                done = None
+            if done is not None:
+                step(f"前回の納品プラン（{plan_id}）が納品先まで済んでいるので、続きから進めます")
+                _ship_rest(plan_id, done.get("placementOptionId") or "",
+                           list(done.get("shipmentIds") or []), ready_date, step, fail, job_id)
+                return
+            step(f"前回の納品プラン（{plan_id}）を使って続けます")
+        else:
+            source = amz.fetch_default_source_address()
+            if not source:
+                return fail("発送元住所が読めませんでした")
+            r = amz.create_inbound_plan(d["items"], source_address=source,
+                                        name=f"FBA納品 便{sid} {date.today().strftime('%Y/%m/%d')}")
+            plan_id = r["inbound_plan_id"]
+            amz.wait_inbound_operation(r["operation_id"], timeout_sec=180)
+            with _jobs_lock:
+                _jobs[job_id]["plan_id"] = plan_id
+            step(f"納品プランを作りました（{plan_id}）")
 
         res = _send_packing(plan_id, sid, db, boxes=d["boxes"])
         if not res.get("ok"):

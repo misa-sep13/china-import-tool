@@ -436,7 +436,6 @@ export default function FbaPlanPage() {
   const [shipPreview, setShipPreview] = useState(null)
   const [shipJob, setShipJob] = useState(null)   // {status, steps, result, error, plan_id}
   const [shipBusy, setShipBusy] = useState(false)
-  const [resumeId, setResumeId] = useState('')
   const previewShipAll = async () => {
     if (!planSid) return
     setShipBusy(true); setShipPreview(null); setShipJob(null)
@@ -1019,18 +1018,6 @@ export default function FbaPlanPage() {
         {/* できている納品の輸送箱ラベルだけを取る（セラーセントラルで作った納品にも使える） */}
         <LabelFetcher />
 
-        {/* 途中で止まった納品プランの続き。画面を読み込み直すと続きのボタンが消えるので、IDで続けられるようにする */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8, fontSize: 13 }}>
-          <span style={{ color: '#475569' }}>止まった納品プランの続きから進める：</span>
-          <input value={resumeId} onChange={e => setResumeId(e.target.value)}
-            placeholder="納品プランID（wf…）" style={{ fontSize: 13, padding: '3px 8px', width: 300 }} />
-          <button className="btn btn-secondary" style={{ fontSize: 12 }}
-            onClick={() => resumeShipAll(resumeId.trim())} disabled={shipBusy || !resumeId.trim()}>
-            続きから進める（配送・輸送箱ラベル）
-          </button>
-          <span style={{ fontSize: 11, color: '#94a3b8' }}>出荷日は上の欄の日付を使います</span>
-        </div>
-
         {shipPreview && (
           <div style={{ marginTop: 10, fontSize: 13 }}>
             {shipPreview.problems?.length > 0 ? (
@@ -1062,11 +1049,7 @@ export default function FbaPlanPage() {
                 {shipJob.plan_id && (
                   <div style={{ fontWeight: 400, fontSize: 12 }}>
                     納品プラン {shipJob.plan_id} までは作られています。
-                    納品先まで確定していれば、作り直さずに続きから進められます。
-                    <button className="btn btn-primary" style={{ fontSize: 12, marginLeft: 8, padding: '3px 10px' }}
-                      onClick={() => resumeShipAll(shipJob.plan_id)} disabled={shipBusy}>
-                      続きから進める（配送・輸送箱ラベル）
-                    </button>
+                    原因を直したあと、もう一度「2. この内容でAmazonへ送る」を押すと、このプランの続きから進みます（作り直しません）。
                   </div>
                 )}
               </div>
