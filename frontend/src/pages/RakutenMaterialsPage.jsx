@@ -39,10 +39,25 @@ const today = () => {
 const IMG = (sku) =>
   `${api.defaults.baseURL}/materials/items/${encodeURIComponent(sku)}/image`
 
-function Thumb({ sku, has, alt, size = 56 }) {
+// 資材の並び。宅配袋 → プチプチ → OPP の順に見たい（棚の並びと同じ）。
+// SKUでは分けられない：宅小中とA4宅大は中身が宅配袋なのにSKUが opp
+const group = (it) => {
+  const n = it.name || ''
+  if (n.startsWith('OPP')) return 2
+  if (n.includes('プチプチ')) return 1
+  return 0
+}
+// 大きさ。仕入れ仕様か名前にある「17*30」「5×8」から拾う。
+// 宅小（仕入れ仕様が「打包袋」だけ）は拾えないので0＝いちばん小さい扱い
+const size = (it) => {
+  const m = `${it.supplier_spec || ''} ${it.name || ''}`.match(/(\d+)\s*[*×x]\s*(\d+)/)
+  return m ? Number(m[1]) * 1000 + Number(m[2]) : 0
+}
+
+function Thumb({ sku, has, alt, size: boxSize = 56 }) {
   const [err, setErr] = useState(false)
   const box = {
-    width: size, height: size, borderRadius: 6, objectFit: 'cover',
+    width: boxSize, height: boxSize, borderRadius: 6, objectFit: 'cover',
     border: `1px solid ${C.line}`, background: C.soft, flexShrink: 0,
   }
   if (!has || err) {
@@ -85,9 +100,14 @@ export default function RakutenMaterialsPage() {
 
   const shown = useMemo(() => {
     const list = items.filter(i => i.kind === tab)
-    // しばらく頼んでいないものを上に。一度も頼んでいないものが最上位
+    if (tab !== 'material') {
+      // プレゼントは色違いが隣に並ぶよう名前順
+      return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'))
+    }
+    // 資材は棚の並びと同じ 宅配袋 → プチプチ → OPP。中はサイズの小さい順
     return [...list].sort((a, b) =>
-      (a.last_ordered_at || '').localeCompare(b.last_ordered_at || ''))
+      (group(a) - group(b)) || (size(a) - size(b))
+      || (a.name || '').localeCompare(b.name || '', 'ja'))
   }, [items, tab])
 
   // レ点が付いていて数量が入っているものだけが発注の対象
