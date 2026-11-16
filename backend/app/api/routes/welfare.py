@@ -336,6 +336,9 @@ def _image_url(kind: str, row, has_image=None) -> Optional[str]:
     return f"/api/welfare/{kind}/{row.id}/image" if ok else None
 
 
+_REMOTE_IMG_CACHE: dict = {}
+
+
 def _image_response(data_url: Optional[str]):
     """data:URL を画像そのものとして返す。
 
@@ -344,6 +347,33 @@ def _image_response(data_url: Optional[str]):
     """
     if not data_url:
         raise HTTPException(status_code=404, detail="画像がありません")
+
+    # タオタロウから取り込んだ行は、data:URLではなく仕入先の画像URLを持つ。
+    # 仕入先（cbu01.alicdn.com）はよそから直接読むと画像をくれないので、
+    # こちらで取ってきて渡す。一度取れたものは覚えておく
+    src = str(data_url).strip()
+    if src.startswith("http://") or src.startswith("https://"):
+        hit = _REMOTE_IMG_CACHE.get(src)
+        if hit:
+            return Response(content=hit[0], media_type=hit[1],
+                            headers={"Cache-Control": IMAGE_CACHE})
+        import httpx
+        try:
+            r = httpx.get(src, timeout=20, follow_redirects=True, headers={
+                "Referer": "https://detail.1688.com/",
+                "User-Agent": "Mozilla/5.0",
+            })
+        except Exception:
+            raise HTTPException(status_code=404, detail="画像を取れませんでした")
+        if r.status_code != 200 or not r.content:
+            raise HTTPException(status_code=404, detail="画像を取れませんでした")
+        mime = r.headers.get("content-type", "image/jpeg").split(";")[0]
+        if len(_REMOTE_IMG_CACHE) >= 300:
+            _REMOTE_IMG_CACHE.clear()
+        _REMOTE_IMG_CACHE[src] = (r.content, mime)
+        return Response(content=r.content, media_type=mime,
+                        headers={"Cache-Control": IMAGE_CACHE})
+
     head, _, b64 = str(data_url).partition(",")
     if not b64:
         raise HTTPException(status_code=404, detail="画像がありません")
@@ -483,6 +513,58 @@ def inventory_image(item_id: int, db: Session = Depends(get_db)):
     row = (db.query(WelfareInventoryItem.image_data_url)
            .filter(WelfareInventoryItem.id == item_id).first())
     return _image_response(row[0] if row else None)
+
+
+@router.post("/backfill-images")
+async def backfill_images(limit: int = 100, db: Session = Depends(get_db)):
+    """写真が無い行に、仕入先の画像URLを入れる。
+
+    タオタロウから取り込んだ行は、以前は画像を持たせていなかったので
+    写真の欄が「-」のままになっている（Excel取込の行は貼られた画像が入る）。
+    仕入先URLから取り直して埋める。仕様（色）が合うものを選ぶ。
+    """
+    import asyncio
+    from app.services import taotaro
+
+    rows = [r for r in db.query(WelfareInventoryItem).all()
+            if not (r.image_data_url or "").strip() and (r.buy_url or "").strip()]
+    rows = rows[:max(1, min(limit, 500))]
+
+    done, failed, cache = 0, [], {}
+    for r in rows:
+        url = (r.buy_url or "").strip()
+        try:
+            if url not in cache:
+                cache[url] = taotaro.goods_detail(url)
+                await asyncio.sleep(1.0)   # 続けて叩くと止められる
+            d = cache[url]
+        except Exception as e:
+            failed.append(f"{r.sku}: {type(e).__name__}")
+            continue
+        img = ""
+        spec = (r.supplier_spec or "").strip()
+        if spec:
+            for sk in d.get("skus") or []:
+                for key in ("label", "label_raw", "label_ja"):
+                    v = str(sk.get(key) or "")
+                    if v and (v in spec or spec in v):
+                        img = sk.get("image") or ""
+                        break
+                if img:
+                    break
+        if not img:
+            pics = d.get("images") or []
+            img = pics[0] if pics else ""
+        img = str(img or "").strip()
+        if img.startswith("//"):
+            img = "https:" + img
+        if not img:
+            failed.append(f"{r.sku}: 画像なし")
+            continue
+        r.image_data_url = img
+        done += 1
+    db.commit()
+    return {"ok": not failed, "done": done, "total": len(rows), "failed": failed[:10]}
 
 
 @router.get("/inventory")

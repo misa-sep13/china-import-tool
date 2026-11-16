@@ -335,7 +335,10 @@ def send_order_rows(sid: int) -> dict:
             "supplier_spec": color,
             "size": size,
             "buy_url": (o.get("url") or "").strip(),
-            "image_data_url": "",          # 画像はURLで来るので取り込み時は持たない
+            # タオタロウはURLで画像をくれる。data:URLではないが、
+            # 受け取る側（welfare の画像配信）がURLも読めるようにしてある。
+            # 空のままだと取込んだ行だけ写真が出ない（Excel取込は出る）
+            "image_data_url": (o.get("image") or "").strip(),
             "unit_price": str(o.get("unit_price") or ""),
             "units": int(o.get("quantity") or 0),
             "instruction": "",
