@@ -9,6 +9,9 @@ class RakutenProduct(Base):
     sku          = Column(String, unique=True, index=True)  # 商品管理番号（URL）: 楽天URLキー・ITEM-001形式
     name         = Column(String)
     jan_code     = Column(String)               # JANコード
+    # 発注画面に出す商品画像。仕入先（1688・淘宝）の画像URLをそのまま持つ。
+    # 資材や販促品は名前だけでは見分けられない（袋のサイズ違いなど）
+    photo_url    = Column(String)
     buy_url      = Column(String)               # 仕入れURL（タオタロウ発注URL）
     supplier_spec = Column(String)              # 仕入れ仕様（中国語：タオタロウB列）
     price        = Column(Float)                # 仕入れ値（元）

@@ -21,6 +21,7 @@ import RakutenAdsPage from './pages/RakutenAdsPage'
 import MercariConvertPage from './pages/MercariConvertPage'
 import ImportPermitPage from './pages/ImportPermitPage'
 import WholesalePage from './pages/WholesalePage'
+import RakutenMaterialsPage from './pages/RakutenMaterialsPage'
 import RakutenSalesPage from './pages/RakutenSalesPage'
 import RakutenReviewPage from './pages/RakutenReviewPage'
 import KeywordAnalysisPage from './pages/KeywordAnalysisPage'
@@ -215,6 +216,9 @@ function App() {
         <NavLink to="/wholesale" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           🏭 卸発注
         </NavLink>
+        <NavLink to="/rakuten/materials" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          📦 資材・プレゼント
+        </NavLink>
         <NavLink to="/rakuten/stock" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📊 在庫・損益
         </NavLink>
@@ -309,6 +313,7 @@ function App() {
           <Route path="/rakuten/invoices" element={<RakutenInvoicePage />} />
           <Route path="/import-permits" element={<ImportPermitPage />} />
           <Route path="/wholesale" element={<WholesalePage />} />
+          <Route path="/rakuten/materials" element={<RakutenMaterialsPage />} />
           <Route path="/rakuten/settings" element={<RakutenSettingsPage />} />
           <Route path="/rakuten/inventory-reflections" element={<InventoryReflectionLogsPage />} />
           <Route path="/rakuten/ads" element={<RakutenAdsPage />} />

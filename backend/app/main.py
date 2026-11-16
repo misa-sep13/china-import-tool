@@ -7,6 +7,7 @@ from app.api.routes import keep_claims
 from app.api.routes import image_requests
 from app.api.routes import work_status
 from app.api.routes import mercari
+from app.api.routes import materials
 from app.api.routes import rakuten_shipping_daily
 from app.api.routes import amazon_sales
 from app.api.routes import season as season_routes
@@ -77,10 +78,12 @@ def _migrate():
     logger = logging.getLogger("migrate")
 
     import app.models.inventory_event  # noqa: F401
+    import app.models.material_order   # noqa: F401
     Base.metadata.create_all(bind=engine)
 
     migrations = [
         ("rakuten_products","orphan_ok",      "ALTER TABLE rakuten_products ADD COLUMN orphan_ok BOOLEAN DEFAULT FALSE"),
+        ("rakuten_products","photo_url",      "ALTER TABLE rakuten_products ADD COLUMN photo_url VARCHAR"),
         ("import_permits","kind",                "ALTER TABLE import_permits ADD COLUMN kind VARCHAR DEFAULT 'permit'"),
         ("products",      "delivery_note",       "ALTER TABLE products ADD COLUMN delivery_note TEXT"),
         ("amazon_listings", "delivery_note",     "ALTER TABLE amazon_listings ADD COLUMN delivery_note TEXT"),
@@ -1875,6 +1878,7 @@ app.include_router(keep_claims.router, prefix="/api")
 app.include_router(image_requests.router, prefix="/api")
 app.include_router(work_status.router, prefix="/api")
 app.include_router(mercari.router, prefix="/api")
+app.include_router(materials.router, prefix="/api")
 app.include_router(rakuten_shipping_daily.router, prefix="/api")
 app.include_router(amazon_sales.router, prefix="/api")
 app.include_router(season_routes.router, prefix="/api")
