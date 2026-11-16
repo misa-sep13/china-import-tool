@@ -1825,6 +1825,11 @@ async def auth_middleware(request: _StarletteRequest, call_next):
             and path.endswith("/image")):
         return await call_next(request)
 
+    # 資材・販促品の画像も同じ（imgタグからは認証ヘッダを付けられない）
+    if (request.method == "GET" and path.startswith("/api/materials/")
+            and path.endswith("/image")):
+        return await call_next(request)
+
     auth_header = request.headers.get("authorization", "")
     token = auth_header[7:] if auth_header.lower().startswith("bearer ") else ""
 

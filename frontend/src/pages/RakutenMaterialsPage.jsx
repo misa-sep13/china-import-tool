@@ -39,6 +39,10 @@ const today = () => {
 // 「残り2袋」はもう危ない。プレゼントは1個単位なので桁が違う
 const lowLimit = (kind) => (kind === 'material' ? 3 : 20)
 
+// 仕入先の画像は直リンクでは弾かれるので、サーバー経由で読む
+const IMG = (sku) =>
+  `${api.defaults.baseURL}/materials/items/${encodeURIComponent(sku)}/image`
+
 function Thumb({ src, alt, size = 56 }) {
   const [err, setErr] = useState(false)
   const box = {
@@ -193,7 +197,7 @@ export default function RakutenMaterialsPage() {
                 <tbody>
                   {orders.map(o => (
                     <tr key={o.id}>
-                      <td style={td}><Thumb src={o.photo_url} alt={o.name} size={40} /></td>
+                      <td style={td}><Thumb src={o.photo_url ? IMG(o.sku) : ''} alt={o.name} size={40} /></td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>{o.ordered_at || '—'}</td>
                       <td style={td}>
                         {o.name}
@@ -249,7 +253,7 @@ export default function RakutenMaterialsPage() {
                   const low = (it.stock || 0) <= lowLimit(it.kind)
                   return (
                     <tr key={it.sku} style={low ? { background: '#fff7ed' } : undefined}>
-                      <td style={td}><Thumb src={it.photo_url} alt={it.name} /></td>
+                      <td style={td}><Thumb src={it.photo_url ? IMG(it.sku) : ''} alt={it.name} /></td>
                       <td style={{ ...td, minWidth: 260 }}>
                         <div style={{ fontWeight: 600 }}>{it.name || it.sku}</div>
                         <div style={{ fontSize: 11, color: C.sub }}>

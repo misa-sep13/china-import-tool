@@ -10,7 +10,7 @@
 from datetime import date, datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -262,3 +262,43 @@ def set_photo(sku: str, data: PhotoIn, db: Session = Depends(get_db)):
     p.photo_url = (data.photo_url or "").strip()
     db.commit()
     return {"ok": True, "photo_url": p.photo_url}
+
+
+# 仕入先の画像は cbu01.alicdn.com にあり、よそのサイトからそのまま読むと
+# 弾かれる（33件中31件が表示できなかった）。サーバーで取ってきて渡す。
+# 何度も取りに行かないよう、取れたものはメモリに置いておく
+_IMG_CACHE: dict = {}
+_IMG_CACHE_MAX = 200
+
+
+@router.get("/items/{sku}/image")
+def item_image(sku: str, db: Session = Depends(get_db)):
+    """資材・販促品の画像を中継して返す。認証なしで開ける（画像だけ）。"""
+    import httpx
+
+    hit = _IMG_CACHE.get(sku)
+    if hit:
+        return Response(content=hit[0], media_type=hit[1],
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+    p = db.query(RakutenProduct).filter(RakutenProduct.sku == sku).first()
+    url = (p.photo_url or "").strip() if p else ""
+    if not url:
+        raise HTTPException(404, "画像がありません")
+    try:
+        r = httpx.get(url, timeout=20, follow_redirects=True, headers={
+            # 仕入先ページから開いたことにしないと画像をくれない
+            "Referer": "https://detail.1688.com/",
+            "User-Agent": "Mozilla/5.0",
+        })
+    except Exception as e:
+        raise HTTPException(502, f"画像を取れませんでした（{type(e).__name__}）")
+    if r.status_code != 200 or not r.content:
+        raise HTTPException(502, f"画像を取れませんでした（{r.status_code}）")
+
+    mime = r.headers.get("content-type", "image/jpeg").split(";")[0]
+    if len(_IMG_CACHE) >= _IMG_CACHE_MAX:
+        _IMG_CACHE.clear()
+    _IMG_CACHE[sku] = (r.content, mime)
+    return Response(content=r.content, media_type=mime,
+                    headers={"Cache-Control": "public, max-age=86400"})
