@@ -39,7 +39,6 @@ def _item_out(p: RakutenProduct, orders: List[MaterialOrder]) -> dict:
         "buy_url": p.buy_url or "",
         "supplier_spec": p.supplier_spec or "",
         "price_cny": p.price,
-        "stock": p.stock or 0,
         "pending_qty": pending,
         "last_ordered_at": last.ordered_at.isoformat() if last and last.ordered_at else None,
         "last_qty": last.qty if last else None,
@@ -111,6 +110,38 @@ def create_order(data: OrderIn, db: Session = Depends(get_db)):
     return {"ok": True, "id": o.id}
 
 
+class BulkOrderIn(BaseModel):
+    items: List[OrderIn]
+    ordered_at: Optional[str] = None     # 全部まとめて同じ日にする
+
+
+@router.post("/orders/bulk")
+def create_orders(data: BulkOrderIn, db: Session = Depends(get_db)):
+    """レ点で選んだぶんをまとめて記録する。1件ずつ押すと数が多くて押し漏らす。"""
+    rows = [i for i in (data.items or []) if (i.qty or 0) > 0]
+    if not rows:
+        raise HTTPException(400, "発注数が1以上のものがありません")
+    day = _parse_date(data.ordered_at) or date.today()
+    prods = {p.sku: p for p in db.query(RakutenProduct)
+             .filter(RakutenProduct.sku.in_([i.sku for i in rows])).all()}
+    missing = [i.sku for i in rows if i.sku not in prods]
+    if missing:
+        raise HTTPException(404, f"商品マスタにありません: {'、'.join(missing)}")
+    made = []
+    for i in rows:
+        p = prods[i.sku]
+        o = MaterialOrder(
+            sku=p.sku, name=p.name or "", qty=int(i.qty),
+            ordered_at=_parse_date(i.ordered_at) or day,
+            unit_price_cny=i.unit_price_cny if i.unit_price_cny is not None else p.price,
+            memo=(i.memo or "").strip(),
+        )
+        db.add(o)
+        made.append(p.sku)
+    db.commit()
+    return {"ok": True, "count": len(made), "skus": made}
+
+
 @router.get("/orders")
 def list_orders(sku: Optional[str] = None, limit: int = 300,
                 db: Session = Depends(get_db)):
@@ -147,31 +178,20 @@ def update_order(order_id: int, data: OrderPatch, db: Session = Depends(get_db))
     o = db.query(MaterialOrder).filter(MaterialOrder.id == order_id).first()
     if not o or o.is_deleted:
         raise HTTPException(404, "その発注はありません")
-    p = db.query(RakutenProduct).filter(RakutenProduct.sku == o.sku).first()
 
     if data.qty is not None:
         if data.qty < 0:
             raise HTTPException(400, "発注数は0以上で入れてください")
-        # 入荷済みの数を直したら、在庫も差分だけ動かす
-        if o.received_at and p:
-            p.stock = (p.stock or 0) + (int(data.qty) - (o.qty or 0))
         o.qty = int(data.qty)
     if data.ordered_at is not None:
         o.ordered_at = _parse_date(data.ordered_at) or o.ordered_at
     if data.memo is not None:
         o.memo = data.memo.strip()
     if data.received_at is not None:
-        was = o.received_at
         now = _parse_date(data.received_at)
         o.received_at = now
-        # 未入荷→入荷で在庫に足す。戻したら引く。二重に足さないよう状態で見る
-        if p:
-            if not was and now:
-                p.stock = (p.stock or 0) + (o.qty or 0)
-            elif was and not now:
-                p.stock = max(0, (p.stock or 0) - (o.qty or 0))
     db.commit()
-    return {"ok": True, "stock": (p.stock if p else None)}
+    return {"ok": True}
 
 
 @router.delete("/orders/{order_id:int}")
@@ -179,10 +199,6 @@ def delete_order(order_id: int, db: Session = Depends(get_db)):
     o = db.query(MaterialOrder).filter(MaterialOrder.id == order_id).first()
     if not o or o.is_deleted:
         raise HTTPException(404, "その発注はありません")
-    p = db.query(RakutenProduct).filter(RakutenProduct.sku == o.sku).first()
-    # 入荷済みを消すなら、足した在庫も戻す
-    if o.received_at and p:
-        p.stock = max(0, (p.stock or 0) - (o.qty or 0))
     o.is_deleted = True
     db.commit()
     return {"ok": True}

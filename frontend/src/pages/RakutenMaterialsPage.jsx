@@ -9,10 +9,10 @@ import api from '../api/client'
  * 場所がこれまで無く、気づいたときには残り1袋ということが起きていた。
  *
  * 袋はサイズ違いが多く、名前だけでは見分けられないので画像を出す。
- * 画像は仕入先（1688・淘宝）のものをタオタロウ経由で取ってきて持つ。
+ * 画像は仕入先（1688・淘宝）のもの。直リンクでは弾かれるのでサーバー経由。
  *
- * 発注の記録は商品の発注履歴とは別の表（material_orders）に入れる。
- * 混ぜると売り物の発注一覧に紛れて見づらくなるため。
+ * 在庫は持たない。棚を見ないと実数が分からず、ここで足し引きしても
+ * 実物と合わないため。代わりに「前回いつ何個頼んだか」を手がかりにする。
  */
 
 const C = {
@@ -27,7 +27,7 @@ const th = {
   padding: '8px 10px', textAlign: 'left', whiteSpace: 'nowrap',
   fontSize: 12, color: C.sub, borderBottom: `2px solid ${C.line}`,
 }
-const td = { padding: '8px 10px', borderBottom: `1px solid #f1f5f9`, fontSize: 13 }
+const td = { padding: '8px 10px', borderBottom: '1px solid #f1f5f9', fontSize: 13 }
 
 const today = () => {
   const d = new Date()
@@ -35,21 +35,17 @@ const today = () => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
-// 在庫が少ないものを上に出すための目安。袋は100枚入りで数えるので
-// 「残り2袋」はもう危ない。プレゼントは1個単位なので桁が違う
-const lowLimit = (kind) => (kind === 'material' ? 3 : 20)
-
 // 仕入先の画像は直リンクでは弾かれるので、サーバー経由で読む
 const IMG = (sku) =>
   `${api.defaults.baseURL}/materials/items/${encodeURIComponent(sku)}/image`
 
-function Thumb({ src, alt, size = 56 }) {
+function Thumb({ sku, has, alt, size = 56 }) {
   const [err, setErr] = useState(false)
   const box = {
     width: size, height: size, borderRadius: 6, objectFit: 'cover',
     border: `1px solid ${C.line}`, background: C.soft, flexShrink: 0,
   }
-  if (!src || err) {
+  if (!has || err) {
     return (
       <div style={{ ...box, display: 'flex', alignItems: 'center',
         justifyContent: 'center', fontSize: 10, color: '#94a3b8' }}>
@@ -57,7 +53,7 @@ function Thumb({ src, alt, size = 56 }) {
       </div>
     )
   }
-  return <img src={src} alt={alt || ''} style={box} onError={() => setErr(true)} />
+  return <img src={IMG(sku)} alt={alt || ''} style={box} onError={() => setErr(true)} />
 }
 
 export default function RakutenMaterialsPage() {
@@ -67,7 +63,8 @@ export default function RakutenMaterialsPage() {
   const [loading, setLoading] = useState(true)
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
-  const [qty, setQty] = useState({})           // sku -> 入力中の発注数
+  const [qty, setQty] = useState({})           // sku -> 発注数
+  const [picked, setPicked] = useState({})     // sku -> レ点
   const [orderDate, setOrderDate] = useState(today())
 
   const load = async () => {
@@ -88,19 +85,36 @@ export default function RakutenMaterialsPage() {
 
   const shown = useMemo(() => {
     const list = items.filter(i => i.kind === tab)
-    // 在庫が少ない順。切れそうなものを先に見せる
-    return [...list].sort((a, b) => (a.stock || 0) - (b.stock || 0))
+    // しばらく頼んでいないものを上に。一度も頼んでいないものが最上位
+    return [...list].sort((a, b) =>
+      (a.last_ordered_at || '').localeCompare(b.last_ordered_at || ''))
   }, [items, tab])
 
-  const submit = async (sku) => {
-    const n = Number(qty[sku] || 0)
-    if (!n || n <= 0) { setMsg('発注数を入れてください'); return }
+  // レ点が付いていて数量が入っているものだけが発注の対象
+  const ready = useMemo(
+    () => shown.filter(i => picked[i.sku] && Number(qty[i.sku] || 0) > 0),
+    [shown, picked, qty])
+
+  const toggleAll = () => {
+    const all = shown.length > 0 && shown.every(i => picked[i.sku])
+    const next = { ...picked }
+    shown.forEach(i => { next[i.sku] = !all })
+    setPicked(next)
+  }
+
+  const submitPicked = async () => {
+    if (!ready.length) { setMsg('レ点を付けて、発注数を入れてください'); return }
+    const lines = ready.map(i => `${i.name}　${qty[i.sku]}`).join('\n')
+    if (!confirm(`${ready.length}件を ${orderDate} の発注として記録します。\n\n${lines}`)) return
     setBusy(true); setMsg('')
     try {
-      await api.post('/materials/orders', { sku, qty: n, ordered_at: orderDate })
-      setQty(q => ({ ...q, [sku]: '' }))
+      const { data } = await api.post('/materials/orders/bulk', {
+        ordered_at: orderDate,
+        items: ready.map(i => ({ sku: i.sku, qty: Number(qty[i.sku]) })),
+      })
+      setQty({}); setPicked({})
       await load()
-      setMsg(`${sku} を ${n} 発注として記録しました`)
+      setMsg(`${data.count}件を記録しました`)
     } catch (e) {
       setMsg(e.response?.data?.detail || '記録できませんでした')
     }
@@ -110,12 +124,9 @@ export default function RakutenMaterialsPage() {
   const markReceived = async (o) => {
     setBusy(true); setMsg('')
     try {
-      const { data } = await api.patch(`/materials/orders/${o.id}`,
+      await api.patch(`/materials/orders/${o.id}`,
         { received_at: o.received_at ? '' : today() })
       await load()
-      setMsg(o.received_at
-        ? `${o.sku} を未入荷に戻しました（在庫 ${data.stock}）`
-        : `${o.sku} を入荷にしました（在庫 ${data.stock}）`)
     } catch (e) {
       setMsg(e.response?.data?.detail || '変えられませんでした')
     }
@@ -123,8 +134,7 @@ export default function RakutenMaterialsPage() {
   }
 
   const removeOrder = async (o) => {
-    if (!confirm(`${o.ordered_at} の ${o.name}（${o.qty}）を消しますか？`
-      + (o.received_at ? '\n入荷済みなので在庫も戻します。' : ''))) return
+    if (!confirm(`${o.ordered_at} の ${o.name}（${o.qty}）を消しますか？`)) return
     setBusy(true)
     try {
       await api.delete(`/materials/orders/${o.id}`)
@@ -174,9 +184,7 @@ export default function RakutenMaterialsPage() {
       </div>
 
       {msg && (
-        <div style={{ ...card, padding: 10, fontSize: 13, color: C.text, background: C.soft }}>
-          {msg}
-        </div>
+        <div style={{ ...card, padding: 10, fontSize: 13, background: C.soft }}>{msg}</div>
       )}
 
       {loading ? (
@@ -189,15 +197,15 @@ export default function RakutenMaterialsPage() {
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
-                  <tr>
-                    {['', '発注日', '品名', '数', '入荷', '', ''].map((h, i) =>
-                      <th key={i} style={th}>{h}</th>)}
-                  </tr>
+                  <tr>{['', '発注日', '品名', '数', '入荷', '', ''].map((h, i) =>
+                    <th key={i} style={th}>{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {orders.map(o => (
                     <tr key={o.id}>
-                      <td style={td}><Thumb src={o.photo_url ? IMG(o.sku) : ''} alt={o.name} size={40} /></td>
+                      <td style={td}>
+                        <Thumb sku={o.sku} has={!!o.photo_url} alt={o.name} size={40} />
+                      </td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>{o.ordered_at || '—'}</td>
                       <td style={td}>
                         {o.name}
@@ -232,68 +240,73 @@ export default function RakutenMaterialsPage() {
       ) : (
         <div style={card}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center',
-            marginBottom: 12, fontSize: 13 }}>
+            marginBottom: 12, fontSize: 13, flexWrap: 'wrap' }}>
             <span>発注日</span>
             <input type="date" value={orderDate}
               onChange={e => setOrderDate(e.target.value)} />
+            <button className="btn btn-primary" disabled={busy || !ready.length}
+              onClick={submitPicked}>
+              選んだ{ready.length}件を発注
+            </button>
             <span style={{ color: C.sub, fontSize: 12 }}>
-              在庫の少ない順に並んでいます。入荷したら「発注の記録」で入荷にすると在庫に足されます
+              レ点を付けて数を入れ、まとめて記録します。しばらく頼んでいないものが上に出ます
             </span>
           </div>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  {['', '品名 / 仕入れ仕様', '在庫', '発注済', '前回', '発注数', ''].map((h, i) =>
+                  <th style={th}>
+                    <input type="checkbox" onChange={toggleAll}
+                      checked={shown.length > 0 && shown.every(i => picked[i.sku])} />
+                  </th>
+                  {['', '品名 / 仕入れ仕様', '発注済', '前回の発注', '発注数'].map((h, i) =>
                     <th key={i} style={th}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>
-                {shown.map(it => {
-                  const low = (it.stock || 0) <= lowLimit(it.kind)
-                  return (
-                    <tr key={it.sku} style={low ? { background: '#fff7ed' } : undefined}>
-                      <td style={td}><Thumb src={it.photo_url ? IMG(it.sku) : ''} alt={it.name} /></td>
-                      <td style={{ ...td, minWidth: 260 }}>
-                        <div style={{ fontWeight: 600 }}>{it.name || it.sku}</div>
-                        <div style={{ fontSize: 11, color: C.sub }}>
-                          {it.sku}
-                          {it.supplier_spec ? `・${it.supplier_spec}` : ''}
-                          {it.price_cny ? `・${it.price_cny}元` : ''}
-                        </div>
-                        {it.buy_url && (
-                          <a href={it.buy_url} target="_blank" rel="noreferrer"
-                            style={{ fontSize: 11, color: C.key }}>仕入先を開く →</a>
-                        )}
-                      </td>
-                      <td style={{ ...td, textAlign: 'right', fontWeight: 700,
-                        color: low ? C.bad : C.text }}>
-                        {it.stock}
-                        {low && <div style={{ fontSize: 10, color: C.bad }}>少ない</div>}
-                      </td>
-                      <td style={{ ...td, textAlign: 'right',
-                        color: it.pending_qty ? C.warn : '#cbd5e1' }}>
-                        {it.pending_qty || '—'}
-                      </td>
-                      <td style={{ ...td, whiteSpace: 'nowrap', color: C.sub, fontSize: 12 }}>
-                        {it.last_ordered_at
-                          ? <>{it.last_ordered_at}<div>{it.last_qty} 個</div></>
-                          : '—'}
-                      </td>
-                      <td style={td}>
-                        <input type="number" min="0" style={{ width: 80 }}
-                          value={qty[it.sku] ?? ''}
-                          onChange={e => setQty(q => ({ ...q, [it.sku]: e.target.value }))}
-                          onKeyDown={e => { if (e.key === 'Enter') submit(it.sku) }} />
-                      </td>
-                      <td style={td}>
-                        <button className="btn btn-primary" disabled={busy}
-                          style={{ padding: '3px 12px', fontSize: 12 }}
-                          onClick={() => submit(it.sku)}>発注</button>
-                      </td>
-                    </tr>
-                  )
-                })}
+                {shown.map(it => (
+                  <tr key={it.sku} style={picked[it.sku] ? { background: '#eff6ff' } : undefined}>
+                    <td style={td}>
+                      <input type="checkbox" checked={!!picked[it.sku]}
+                        onChange={e => setPicked(p => ({ ...p, [it.sku]: e.target.checked }))} />
+                    </td>
+                    <td style={td}>
+                      <Thumb sku={it.sku} has={!!it.photo_url} alt={it.name} />
+                    </td>
+                    <td style={{ ...td, minWidth: 260 }}>
+                      <div style={{ fontWeight: 600 }}>{it.name || it.sku}</div>
+                      <div style={{ fontSize: 11, color: C.sub }}>
+                        {it.sku}
+                        {it.supplier_spec ? `・${it.supplier_spec}` : ''}
+                        {it.price_cny ? `・${it.price_cny}元` : ''}
+                      </div>
+                      {it.buy_url && (
+                        <a href={it.buy_url} target="_blank" rel="noreferrer"
+                          style={{ fontSize: 11, color: C.key }}>仕入先を開く →</a>
+                      )}
+                    </td>
+                    <td style={{ ...td, textAlign: 'right',
+                      color: it.pending_qty ? C.warn : '#cbd5e1' }}>
+                      {it.pending_qty || '—'}
+                    </td>
+                    <td style={{ ...td, whiteSpace: 'nowrap', color: C.sub, fontSize: 12 }}>
+                      {it.last_ordered_at
+                        ? <>{it.last_ordered_at}<div>{it.last_qty} 個</div></>
+                        : <span style={{ color: C.warn }}>発注なし</span>}
+                    </td>
+                    <td style={td}>
+                      <input type="number" min="0" style={{ width: 80 }}
+                        value={qty[it.sku] ?? ''}
+                        onChange={e => {
+                          const v = e.target.value
+                          setQty(q => ({ ...q, [it.sku]: v }))
+                          // 数を入れたらレ点も付ける（付け忘れて記録されないのを防ぐ）
+                          if (Number(v) > 0) setPicked(p => ({ ...p, [it.sku]: true }))
+                        }} />
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
