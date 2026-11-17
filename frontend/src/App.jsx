@@ -37,6 +37,7 @@ import KeepClaimsPublicPage from './pages/KeepClaimsPublicPage'
 import ImageRequestsPublicPage from './pages/ImageRequestsPublicPage'
 import WorkStatusPublicPage from './pages/WorkStatusPublicPage'
 import MonthlyAccountingDesignPage from './pages/MonthlyAccountingDesignPage'
+import DepositBreakdownPage from './pages/DepositBreakdownPage'
 import WorkStatusPage from './pages/WorkStatusPage'
 import FbaPlanPage from './pages/FbaPlanPage'
 import LoginPage from './pages/LoginPage'
@@ -251,6 +252,9 @@ function App() {
         <NavLink to="/import-permits" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📑 輸入許可書
         </NavLink>
+        <NavLink to="/accounting/deposit" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+          💰 デポジットの内訳
+        </NavLink>
         <NavLink to="/accounting-design" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
           📘 月次管理表の設計
         </NavLink>
@@ -326,6 +330,7 @@ function App() {
           <Route path="/wholesale" element={<WholesalePage />} />
           <Route path="/rakuten/materials" element={<RakutenMaterialsPage />} />
           <Route path="/rakuten/settings" element={<RakutenSettingsPage />} />
+          <Route path="/accounting/deposit" element={<DepositBreakdownPage />} />
           <Route path="/accounting-design" element={<MonthlyAccountingDesignPage />} />
           <Route path="/rakuten/inventory-reflections" element={<InventoryReflectionLogsPage />} />
           <Route path="/rakuten/ads" element={<RakutenAdsPage />} />

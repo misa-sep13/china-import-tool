@@ -8,6 +8,7 @@ from app.api.routes import image_requests
 from app.api.routes import work_status
 from app.api.routes import mercari
 from app.api.routes import materials
+from app.api.routes import accounting
 from app.api.routes import rakuten_shipping_daily
 from app.api.routes import amazon_sales
 from app.api.routes import season as season_routes
@@ -79,6 +80,7 @@ def _migrate():
 
     import app.models.inventory_event  # noqa: F401
     import app.models.material_order   # noqa: F401
+    import app.models.taotaro_transaction  # noqa: F401
     Base.metadata.create_all(bind=engine)
 
     migrations = [
@@ -1886,6 +1888,7 @@ app.include_router(image_requests.router, prefix="/api")
 app.include_router(work_status.router, prefix="/api")
 app.include_router(mercari.router, prefix="/api")
 app.include_router(materials.router, prefix="/api")
+app.include_router(accounting.router, prefix="/api")
 app.include_router(rakuten_shipping_daily.router, prefix="/api")
 app.include_router(amazon_sales.router, prefix="/api")
 app.include_router(season_routes.router, prefix="/api")
