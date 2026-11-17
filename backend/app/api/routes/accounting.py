@@ -252,3 +252,106 @@ def status(db: Session = Depends(get_db)):
         # 分類できなかった区分。ここが0でないなら CATEGORY_RULES に足す
         "unknown": unknown,
     }
+
+
+# ---------- 便ごとの送料 ----------
+#
+# 送料の「商品ごとの按分」は仕入管理（インボイスの取り込み）がすでにやっている
+# （箱の重量で按分。箱データが無い便は金額比。通関料は金額比、税は申告欄ごと）。
+# 結果は CostHistory（商品）と MaterialCost（資材）に便＝インボイス番号ごとに残る。
+# ここでは作り直さず、それを読むだけにする。
+#   ・月の運賃（実額）… タオタロウの明細の国際運賃・国内運賃（引落日の月）
+#   ・商品ごとの内訳 … 保存済みのインボイス（インボイス番号＝配送依頼の sn）
+# インボイスを取り込んでいない便は「未取り込み」と出して気づけるようにする。
+
+@router.get("/freight/months")
+def freight_months(db: Session = Depends(get_db)):
+    """運賃の引落がある月（新しい順）。"""
+    rows = (db.query(TaotaroTransaction.ym)
+            .filter(TaotaroTransaction.category == "shipping")
+            .distinct().all())
+    return {"months": sorted({r[0] for r in rows if r[0]}, reverse=True)}
+
+
+@router.get("/freight")
+def freight(ym: str, db: Session = Depends(get_db)):
+    """その月に運賃が引き落とされた便と、保存済みインボイスの按分結果。"""
+    from app.models.cost_history import CostHistory
+    from app.models.material_cost import MaterialCost
+
+    txs = (db.query(TaotaroTransaction)
+           .filter(TaotaroTransaction.category == "shipping",
+                   TaotaroTransaction.ym == ym)
+           .order_by(TaotaroTransaction.occurred_at.asc()).all())
+
+    by_ship: dict = {}
+    for t in txs:
+        key = (t.sn or "").strip() or f"sid:{t.sid or '?'}"
+        s = by_ship.setdefault(key, {
+            "sn": (t.sn or "").strip(), "sid": t.sid or "",
+            "first_at": t.occurred_at.isoformat() if t.occurred_at else None,
+            "domestic": 0.0, "international": 0.0, "other": 0.0, "lines": 0,
+        })
+        amt = -(t.money or 0)      # 引落はマイナスで入っている
+        a = t.action or ""
+        if "国内" in a:
+            s["domestic"] += amt
+        elif "国際" in a:
+            s["international"] += amt
+        else:
+            s["other"] += amt
+        s["lines"] += 1
+
+    sns = [s["sn"] for s in by_ship.values() if s["sn"]]
+    costs = (db.query(CostHistory).filter(CostHistory.invoice_no.in_(sns)).all()
+             if sns else [])
+    mats = (db.query(MaterialCost).filter(MaterialCost.invoice_no.in_(sns)).all()
+            if sns else [])
+    items_of: dict = {}
+    for c in costs:
+        items_of.setdefault(c.invoice_no, []).append({
+            "kind": "商品", "source": c.source or "", "sku": c.sku or "",
+            "qty": c.qty or 0, "goods_cny": round(c.total_price_cny or 0, 2),
+            "freight_cny": round(c.freight_alloc_cny or 0, 2),
+            "tax_jpy": round(c.tax_alloc_jpy or 0),
+            "customs_jpy": round(c.customs_fee_alloc_jpy or 0),
+            "cost_jpy": round(c.cost_jpy or 0, 1),
+            "method": c.freight_method or "",
+        })
+    for m in mats:
+        items_of.setdefault(m.invoice_no, []).append({
+            "kind": "資材", "source": m.source or "", "sku": m.sku or "",
+            "qty": m.qty or 0, "goods_cny": round(m.total_price_cny or 0, 2),
+            "freight_cny": round(m.freight_alloc_cny or 0, 2),
+            "tax_jpy": round(m.tax_alloc_jpy or 0),
+            "customs_jpy": round(m.customs_fee_alloc_jpy or 0),
+            "cost_jpy": round(m.total_cost_jpy or 0, 1),
+            "method": "",
+        })
+
+    ships = []
+    for s in by_ship.values():
+        total = round(s["domestic"] + s["international"] + s["other"], 2)
+        items = items_of.get(s["sn"], [])
+        alloc = round(sum(x["freight_cny"] for x in items), 2)
+        methods = {x["method"] for x in items if x["method"]}
+        ships.append({
+            **{k: (round(v, 2) if isinstance(v, float) else v) for k, v in s.items()},
+            "total": total,
+            "imported": bool(items),
+            "allocated_cny": alloc,
+            # 明細の運賃とインボイスで按分した送料の差（元）。大きければ見直す
+            "diff_cny": round(total - alloc, 2) if items else None,
+            "method": ("重量" if methods == {"weight"} else "金額比" if methods == {"money"}
+                       else "混在" if methods else ""),
+            "items": sorted(items, key=lambda x: -x["freight_cny"]),
+        })
+    ships.sort(key=lambda x: x["first_at"] or "")
+    return {
+        "ym": ym,
+        "total_cny": round(sum(x["total"] for x in ships), 2),
+        "ship_count": len(ships),
+        "imported_count": sum(1 for x in ships if x["imported"]),
+        "missing": [x["sn"] or x["sid"] for x in ships if not x["imported"]],
+        "ships": ships,
+    }

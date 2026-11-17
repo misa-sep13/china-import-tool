@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import DepositBreakdownPage from './DepositBreakdownPage'
+import FreightByShipmentPage from './FreightByShipmentPage'
 import MonthlyAccountingDesignPage from './MonthlyAccountingDesignPage'
 
 /**
@@ -105,21 +106,7 @@ export default function AccountingPage() {
         />
       )}
 
-      {tab === 'freight' && (
-        <Coming
-          order="2"
-          title="便ごとの送料"
-          what={[
-            '配送依頼ごとの内訳（中国国内送料・代行手数料・国際送料・通関手数料）',
-            'その便に入っていた商品への按分結果',
-            '便の出荷日で計上',
-          ]}
-          need={[
-            '配送依頼の fees をツールに取り込む（APIからは取得済み・保存が未実装）',
-            '按分の基準を決める（重量か、金額か）',
-          ]}
-        />
-      )}
+      {tab === 'freight' && <FreightByShipmentPage />}
 
       {tab === 'stock' && (
         <Coming
