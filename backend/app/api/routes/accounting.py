@@ -254,6 +254,73 @@ def status(db: Session = Depends(get_db)):
     }
 
 
+# ---------- 関税・消費税（輸入許可日で計上） ----------
+#
+# 輸入許可書は import_permits に保存済み。計上日は輸入許可日（到着日は実データが無い）。
+# 会計上の扱いが違うので分けて出す：
+#   ・関税 … 仕入原価（仕入諸掛）
+#   ・消費税・地方消費税 … 仮払消費税。原価には入れない
+# 申告番号で保存済みインボイスと結び付け、商品原価へ按分済みかも出す。
+
+@router.get("/import-tax/monthly")
+def import_tax_monthly(db: Session = Depends(get_db)):
+    """月ごと（輸入許可日の月）の関税・消費税の合計。"""
+    from app.models.import_permit import ImportPermit
+    rows = (db.query(ImportPermit)
+            .filter(ImportPermit.kind == "permit").all())
+    out: dict = {}
+    for p in rows:
+        ym = (p.permit_date or "")[:7] or "日付なし"
+        m = out.setdefault(ym, {"ym": ym, "count": 0, "customs_duty": 0,
+                                "consumption_tax": 0, "local_consumption_tax": 0,
+                                "total_tax": 0})
+        m["count"] += 1
+        m["customs_duty"] += p.customs_duty or 0
+        m["consumption_tax"] += p.consumption_tax or 0
+        m["local_consumption_tax"] += p.local_consumption_tax or 0
+        m["total_tax"] += p.total_tax or 0
+    return {"months": sorted(out.values(), key=lambda x: x["ym"], reverse=True)}
+
+
+@router.get("/import-tax")
+def import_tax(ym: str, db: Session = Depends(get_db)):
+    """その月に許可された輸入許可書の一覧と、インボイスへの按分状況。"""
+    from app.models.import_permit import ImportPermit
+    from app.models.invoice import Invoice
+    rows = (db.query(ImportPermit)
+            .filter(ImportPermit.kind == "permit",
+                    ImportPermit.permit_date.like(f"{ym}%"))
+            .order_by(ImportPermit.permit_date.asc()).all())
+    nos = [p.permit_no for p in rows if p.permit_no]
+    invs = (db.query(Invoice).filter(Invoice.declaration_no.in_(nos)).all() if nos else [])
+    inv_of = {}
+    for i in invs:
+        inv_of.setdefault(i.declaration_no, []).append(i.invoice_no or "")
+    items = [{
+        "id": p.id, "permit_no": p.permit_no or "", "permit_date": p.permit_date or "",
+        "transport": {"sea": "船便", "air": "航空便"}.get(p.transport or "", p.transport or ""),
+        "permit_cny": p.permit_cny or 0, "weight": p.cargo_weight or 0,
+        "packages": p.package_count or 0,
+        "customs_duty": p.customs_duty or 0,
+        "consumption_tax": p.consumption_tax or 0,
+        "local_consumption_tax": p.local_consumption_tax or 0,
+        "total_tax": p.total_tax or 0,
+        # 保存済みインボイス（申告番号で照合）。あれば商品原価へ按分済み
+        "invoices": inv_of.get(p.permit_no or "", []),
+        "has_pdf": bool(p.size_bytes),
+    } for p in rows]
+    tot = lambda k: sum(x[k] for x in items)
+    return {
+        "ym": ym, "count": len(items),
+        "customs_duty": tot("customs_duty"),
+        "consumption_tax": tot("consumption_tax"),
+        "local_consumption_tax": tot("local_consumption_tax"),
+        "total_tax": tot("total_tax"),
+        "not_allocated": [x["permit_no"] for x in items if not x["invoices"]],
+        "items": items,
+    }
+
+
 # ---------- 便ごとの送料 ----------
 #
 # 送料の「商品ごとの按分」は仕入管理（インボイスの取り込み）がすでにやっている

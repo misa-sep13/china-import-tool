@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import DepositBreakdownPage from './DepositBreakdownPage'
 import FreightByShipmentPage from './FreightByShipmentPage'
+import ImportTaxPage from './ImportTaxPage'
 import MonthlyAccountingDesignPage from './MonthlyAccountingDesignPage'
 
 /**
@@ -20,6 +21,7 @@ const TABS = [
   { key: 'summary',  label: '📈 月次サマリー' },
   { key: 'deposit',  label: '💰 デポジット内訳' },
   { key: 'freight',  label: '🚢 便ごとの送料' },
+  { key: 'tax',      label: '🧾 関税・消費税' },
   { key: 'stock',    label: '📦 在庫金額' },
   { key: 'docs',     label: '📑 書類' },
   { key: 'design',   label: '📘 設計' },
@@ -107,6 +109,8 @@ export default function AccountingPage() {
       )}
 
       {tab === 'freight' && <FreightByShipmentPage />}
+
+      {tab === 'tax' && <ImportTaxPage />}
 
       {tab === 'stock' && (
         <Coming
