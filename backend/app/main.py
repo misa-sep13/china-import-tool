@@ -361,6 +361,8 @@ def _migrate():
          "ALTER TABLE wholesale_suppliers ADD COLUMN prepay BOOLEAN DEFAULT FALSE"),
         ("wholesale_suppliers","payment_note",
          "ALTER TABLE wholesale_suppliers ADD COLUMN payment_note TEXT"),
+        ("wholesale_items","case_qty",
+         "ALTER TABLE wholesale_items ADD COLUMN case_qty INTEGER"),
         ("wholesale_orders","message_text",
          "ALTER TABLE wholesale_orders ADD COLUMN message_text TEXT"),
         ("product_drafts","registered_at",

@@ -60,6 +60,10 @@ class WholesaleItem(Base):
     name = Column(String)             # 発注書に出す商品名（取引先の呼び方）
     unit_price = Column(Float)        # 卸単価（税抜）
     note = Column(String)             # 備考（発注書G列）
+    # 1箱の入数。箱単位でしか頼めない商品があるので、発注数が何箱に
+    # なるのかを発注画面とLINEの文面に出すために持つ（Ciの歯ブラシは
+    # 1箱50本、Ci201系は1箱100本）
+    case_qty = Column(Integer)
 
     # 納品場所。発注書のB8とC9に入る
     deliver_zip = Column(String)

@@ -80,6 +80,13 @@ export default function WholesalePage() {
   const supplier = suppliers.find(s => s.id === supplierId)
   const yen = n => (n || 0).toLocaleString('ja-JP')
 
+  // 箱単位でしか頼めない商品があるので、入れた本数が何箱分かを出す。
+  // 割り切れないときは箱数を出さず、気づけるように印だけ出す
+  const boxText = (q, caseQty) => {
+    if (!caseQty || caseQty <= 0 || !q) return ''
+    return q % caseQty === 0 ? `${q / caseQty}箱` : '端数'
+  }
+
   // 取引先によって発注の出し方が違う。
   // エジソン等は発注書のExcel＋メール、マレフィオーレはLINEに貼る文面
   const isLine = supplier?.order_method === 'text_line'
@@ -298,10 +305,12 @@ export default function WholesalePage() {
                 {!isLine && <th style={{ width: 130 }}>JAN</th>}
                 <th style={{ width: 'auto' }} />
                 <th style={{ textAlign: 'right', width: 90, color: '#64748b' }}>単価(税抜)</th>
+                <th style={{ textAlign: 'right', width: 80, color: '#64748b' }}>入数</th>
                 <th style={{ textAlign: 'right', width: 70, borderLeft: '1px solid #e2e8f0' }}>在庫</th>
                 <th style={{ textAlign: 'right', width: 70, color: '#2563eb' }}>発注1</th>
                 <th style={{ textAlign: 'right', width: 70, color: '#2563eb' }}>発注2</th>
                 <th style={{ textAlign: 'right', width: 100 }}>発注数</th>
+                <th style={{ textAlign: 'right', width: 70, color: '#0f766e' }}>箱数</th>
                 <th style={{ textAlign: 'right', width: 100, color: '#0f766e' }}>金額</th>
                 {!isLine && <th style={{ textAlign: 'left', width: 200 }}>納品先</th>}
               </tr>
@@ -319,6 +328,11 @@ export default function WholesalePage() {
                     <td style={{ textAlign: 'right', color: '#64748b' }}>
                       {i.unit_price ? yen(i.unit_price) : '—'}
                     </td>
+                    {/* 箱単位の商品だけ入数を出す。単品で頼めるものは空 */}
+                    <td style={{ textAlign: 'right', color: '#64748b', fontSize: 12,
+                      whiteSpace: 'nowrap' }}>
+                      {i.case_qty ? `1箱${i.case_qty}本` : '—'}
+                    </td>
                     <td style={{ textAlign: 'right', fontWeight: 600,
                       color: i.stock ? '#0f172a' : '#dc2626',
                       borderLeft: '1px solid #e2e8f0' }}>
@@ -330,6 +344,10 @@ export default function WholesalePage() {
                       <input type="number" min="0" value={q || ''}
                         onChange={e => setQty({ ...qty, [i.id]: Number(e.target.value) || 0 })}
                         style={{ width: '100%', padding: '4px 6px', textAlign: 'right' }} />
+                    </td>
+                    <td style={{ textAlign: 'right', color: '#0f766e', fontWeight: 600,
+                      whiteSpace: 'nowrap' }}>
+                      {boxText(q, i.case_qty)}
                     </td>
                     <td style={{ textAlign: 'right', fontWeight: 600, color: '#0f766e' }}>
                       {q > 0 && i.unit_price ? yen(i.unit_price * q) : ''}
@@ -609,6 +627,7 @@ function WholesaleMaster({ suppliers, supplierId, items, onChanged }) {
           <tr style={{ background: '#f8fafc' }}>
             <th style={{ textAlign: 'left' }}>商品名</th><th>JAN</th>
             <th style={{ textAlign: 'right' }}>単価(税抜)</th>
+            <th style={{ textAlign: 'right' }}>入数</th>
             <th style={{ textAlign: 'left' }}>納品先</th><th></th>
           </tr>
         </thead>
@@ -618,6 +637,8 @@ function WholesaleMaster({ suppliers, supplierId, items, onChanged }) {
               <td>{i.name}</td>
               <td style={{ fontSize: 12, color: '#64748b' }}>{i.jan_code || '—'}</td>
               <td style={{ textAlign: 'right' }}>{yen(i.unit_price)}</td>
+              <td style={{ textAlign: 'right', fontSize: 12, color: '#64748b',
+                whiteSpace: 'nowrap' }}>{i.case_qty ? `1箱${i.case_qty}本` : '—'}</td>
               <td style={{ fontSize: 12 }}>{i.deliver_note || i.deliver_address || '—'}</td>
               <td><button className="btn btn-secondary" onClick={() => setEdit(i)}>編集</button></td>
             </tr>
@@ -650,6 +671,12 @@ function WholesaleMaster({ suppliers, supplierId, items, onChanged }) {
               <label style={{ fontSize: 13 }}>単価（税抜）
                 <input type="number" value={edit.unit_price || 0}
                   onChange={e => setEdit({ ...edit, unit_price: Number(e.target.value) })}
+                  style={{ width: '100%', padding: 8, marginTop: 4 }} />
+              </label>
+              {/* 箱単位でしか頼めない商品用。0のままなら箱数は出さない */}
+              <label style={{ fontSize: 13 }}>1箱の入数（箱単位で頼む商品だけ。例: 50）
+                <input type="number" min="0" value={edit.case_qty || 0}
+                  onChange={e => setEdit({ ...edit, case_qty: Number(e.target.value) || null })}
                   style={{ width: '100%', padding: 8, marginTop: 4 }} />
               </label>
             </div>
@@ -1036,6 +1063,9 @@ function MessageDialog({ m, busy, onChange, onConfirm, onClose }) {
                       {(i.unit_price || 0).toLocaleString('ja-JP')} 円
                     </td>
                     <td style={{ textAlign: 'right', width: 60 }}>{i.qty} 個</td>
+                    <td style={{ textAlign: 'right', width: 50, color: '#64748b' }}>
+                      {i.box_text || ''}
+                    </td>
                     <td style={{ textAlign: 'right', width: 90 }}>
                       {(i.amount || 0).toLocaleString('ja-JP')} 円
                     </td>

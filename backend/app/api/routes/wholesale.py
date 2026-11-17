@@ -108,6 +108,7 @@ class ItemIn(BaseModel):
     jan_code: Optional[str] = None
     name: str
     unit_price: Optional[float] = 0
+    case_qty: Optional[int] = None    # 1箱の入数
     note: Optional[str] = None
     deliver_zip: Optional[str] = None
     deliver_address: Optional[str] = None
@@ -121,7 +122,7 @@ def _item_dict(i, stock=None):
         "id": i.id, "supplier_id": i.supplier_id,
         "rakuten_product_id": i.rakuten_product_id,
         "item_code": i.item_code, "jan_code": i.jan_code, "name": i.name,
-        "unit_price": i.unit_price, "note": i.note,
+        "unit_price": i.unit_price, "case_qty": i.case_qty, "note": i.note,
         "deliver_zip": i.deliver_zip, "deliver_address": i.deliver_address,
         "deliver_note": i.deliver_note,
         "sort_order": i.sort_order, "is_active": i.is_active,
@@ -216,6 +217,19 @@ class OrderIn(BaseModel):
     items: List[OrderItemIn] = []
 
 
+def _case_text(qty, case_qty):
+    """発注数が何箱になるかを文字にする。
+
+    割り切れないときは箱数を書かず、1箱の入数だけ返す。間違った箱数を
+    相手に送るより、入数を見せて気づいてもらうほうが安全なため。
+    """
+    if not case_qty or case_qty <= 0 or not qty:
+        return ""
+    if qty % case_qty == 0:
+        return f"{qty // case_qty}箱"
+    return f"1箱{case_qty}本"
+
+
 def _order_dict(o, items=None, supplier=None):
     d = {
         "id": o.id, "supplier_id": o.supplier_id,
@@ -239,6 +253,9 @@ def _order_dict(o, items=None, supplier=None):
             "jan_code": x.jan_code, "name": x.name, "unit_price": x.unit_price,
             "qty": x.qty, "amount": x.amount, "note": x.note,
             "received_qty": x.received_qty or 0,
+            # 入数は卸商品側にある。_load が引いて付けてくる
+            "case_qty": getattr(x, "_case_qty", None),
+            "box_text": _case_text(x.qty, getattr(x, "_case_qty", None)),
             "remaining_qty": max(0, (x.qty or 0) - (x.received_qty or 0)),
         } for x in items]
         # 分納があるので「まだ来ていない数」を持たせる。
@@ -263,6 +280,15 @@ def _load(db, oid):
              .order_by(WholesaleOrderItem.sort_order, WholesaleOrderItem.id).all())
     s = (db.query(WholesaleSupplier)
          .filter(WholesaleSupplier.id == o.supplier_id).first())
+
+    # 入数は卸商品が持っている。明細にコピーして持たせると、あとで
+    # 入数を直したときに過去の発注と食い違うので、表示のときだけ引く
+    link_ids = [x.item_id for x in items if x.item_id]
+    if link_ids:
+        cases = {w.id: w.case_qty for w in db.query(WholesaleItem)
+                 .filter(WholesaleItem.id.in_(link_ids)).all()}
+        for x in items:
+            x._case_qty = cases.get(x.item_id)
     return o, items, s
 
 
@@ -1105,10 +1131,14 @@ def build_message(db, o, items):
             continue
         p = prods.get(x.item_id)
         already = ((p.inbound or 0) + (p.standard_stock or 0)) if p else 0
+        # 箱単位でしか頼めない商品は、本数だけだと相手が数え直すことに
+        # なるので箱数も書く
+        box = _case_text(x.qty, getattr(x, "_case_qty", None))
+        tail = f"（{box}）" if box else ""
         if already > 0:
-            lines.append(f"・{x.name}追加{x.qty}（計{already + x.qty}）")
+            lines.append(f"・{x.name}追加{x.qty}（計{already + x.qty}）{tail}")
         else:
-            lines.append(f"・{x.name}{x.qty}")
+            lines.append(f"・{x.name}{x.qty}{tail}")
     return "\n".join(lines)
 
 
