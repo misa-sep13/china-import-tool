@@ -79,7 +79,7 @@ export default function DepositBreakdownPage() {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <h1 style={{ margin: 0 }}>💰 デポジットの内訳</h1>
+        <h2 style={{ margin: 0, fontSize: 18 }}>デポジットの内訳</h2>
         <button className="btn btn-primary" disabled={syncMutation.isPending}
           onClick={() => { setSyncMsg(''); syncMutation.mutate() }}>
           {syncMutation.isPending ? '取り込み中...' : 'タオタロウから取り込む'}
