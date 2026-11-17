@@ -725,6 +725,11 @@ function PendingReceive({ supplierId, onDone }) {
   // 入荷ボタンが卸の発注データも消し込むようになったので、普段は要らない。
   // また必要になったら、ここにボタンを戻す
 
+  // 箱単位で届く商品は、本数だけ見ても何箱か分からないので箱数も出す。
+  // 分納の途中で割り切れないことは普通にあるので、そのときは何も出さない
+  const box = (n, caseQty) =>
+    caseQty > 0 && n > 0 && n % caseQty === 0 ? `${n / caseQty}箱` : ''
+
   const groups = (() => {
     const map = new Map()
     for (const r of rows) {
@@ -732,10 +737,11 @@ function PendingReceive({ supplierId, onDone }) {
       let g = map.get(key)
       if (!g) {
         g = { key, name: r.name, rows: [], qty: 0, received: 0, remaining: 0,
-              orders: new Set(), first: '', manual: 0 }
+              orders: new Set(), first: '', manual: 0, caseQty: null }
         map.set(key, g)
       }
       g.rows.push(r)
+      if (!g.caseQty && r.case_qty) g.caseQty = r.case_qty
       g.remaining += r.remaining_qty || 0
       if (r.source === 'order') {
         g.qty += r.qty || 0
@@ -779,7 +785,8 @@ function PendingReceive({ supplierId, onDone }) {
       const n = qty[g.key] || 0
       if (n <= 0) continue
       items.push(...allocate(g, n))
-      lines.push(`・${g.name} ${n}個`)
+      const b = box(n, g.caseQty)
+      lines.push(`・${g.name} ${n}個${b ? `（${b}）` : ''}`)
     }
     if (!items.length) return
     if (!window.confirm('次の内容で入荷します。\n' + lines.join('\n') + '\nよろしいですか？')) return
@@ -837,7 +844,7 @@ function PendingReceive({ supplierId, onDone }) {
                 <th style={{ textAlign: 'right', padding: 8 }}>発注数</th>
                 <th style={{ textAlign: 'right', padding: 8 }}>入荷済</th>
                 <th style={{ textAlign: 'right', padding: 8 }}>残り</th>
-                <th style={{ textAlign: 'right', padding: 8, width: 130 }}>今回届いた数</th>
+                <th style={{ textAlign: 'right', padding: 8, width: 170 }}>今回届いた数</th>
               </tr>
             </thead>
             <tbody>
@@ -857,9 +864,21 @@ function PendingReceive({ supplierId, onDone }) {
                     )}
                   </td>
                   <td style={{ padding: 8 }}>{g.name}</td>
-                  <td style={{ padding: 8, textAlign: 'right', color: '#64748b' }}>{g.qty || '—'}</td>
-                  <td style={{ padding: 8, textAlign: 'right', color: '#64748b' }}>{g.received}</td>
-                  <td style={{ padding: 8, textAlign: 'right', fontWeight: 700, color: '#b45309' }}>{g.remaining}</td>
+                  <td style={{ padding: 8, textAlign: 'right', color: '#64748b' }}>
+                    {g.qty || '—'}
+                    {box(g.qty, g.caseQty) &&
+                      <span style={{ fontSize: 11, marginLeft: 4 }}>（{box(g.qty, g.caseQty)}）</span>}
+                  </td>
+                  <td style={{ padding: 8, textAlign: 'right', color: '#64748b' }}>
+                    {g.received}
+                    {box(g.received, g.caseQty) &&
+                      <span style={{ fontSize: 11, marginLeft: 4 }}>（{box(g.received, g.caseQty)}）</span>}
+                  </td>
+                  <td style={{ padding: 8, textAlign: 'right', fontWeight: 700, color: '#b45309' }}>
+                    {g.remaining}
+                    {box(g.remaining, g.caseQty) &&
+                      <span style={{ fontSize: 11, marginLeft: 4, fontWeight: 400 }}>（{box(g.remaining, g.caseQty)}）</span>}
+                  </td>
                   <td style={{ padding: 8, textAlign: 'right' }}>
                     <input type="number" min="0" max={g.remaining}
                       value={qty[g.key] ?? ''} placeholder="0"
@@ -868,6 +887,12 @@ function PendingReceive({ supplierId, onDone }) {
                         setQty(q => ({ ...q, [g.key]: v }))
                       }}
                       style={{ width: 110, padding: '5px 6px', textAlign: 'right' }} />
+                    {/* 入れた数が何箱分かをその場で見せる。箱で届くものは
+                        箱数で数えたほうが数え間違いに気づきやすい */}
+                    <span style={{ fontSize: 11, color: '#0f766e', marginLeft: 6,
+                      display: 'inline-block', minWidth: 28, textAlign: 'left' }}>
+                      {box(qty[g.key] || 0, g.caseQty)}
+                    </span>
                   </td>
                 </tr>
               ))}

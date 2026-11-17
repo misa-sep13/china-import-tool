@@ -874,6 +874,14 @@ def list_pending_items(supplier_id: Optional[int] = None, db: Session = Depends(
                       WholesaleOrderItem.sort_order, WholesaleOrderItem.id).all()
 
     sup = {x.id: x.name for x in db.query(WholesaleSupplier).all()}
+
+    # 1箱の入数。箱単位でしか頼めない商品は、残りが何箱かを画面で
+    # 出せるようにしておく（50本ずつ届くのに本数だけ見ても分からない）
+    cq = db.query(WholesaleItem.id, WholesaleItem.case_qty)
+    if supplier_id:
+        cq = cq.filter(WholesaleItem.supplier_id == supplier_id)
+    cases = dict(cq.all())
+
     out = []
     pending_by_product = {}   # 卸発注として残っている数（商品ごと）
     for x, o in rows:
@@ -888,6 +896,7 @@ def list_pending_items(supplier_id: Optional[int] = None, db: Session = Depends(
             "unit_price": x.unit_price,
             "qty": x.qty or 0, "received_qty": x.received_qty or 0,
             "remaining_qty": remaining,
+            "case_qty": cases.get(x.item_id),
         })
         if x.item_id:
             pending_by_product[x.item_id] = pending_by_product.get(x.item_id, 0) + remaining
@@ -921,6 +930,7 @@ def list_pending_items(supplier_id: Optional[int] = None, db: Session = Depends(
             "item_id": w.id, "name": p_.name or w.name, "item_code": None,
             "unit_price": None,
             "qty": manual, "received_qty": 0, "remaining_qty": manual,
+            "case_qty": w.case_qty,
         })
     return out
 
