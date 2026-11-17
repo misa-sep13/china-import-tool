@@ -37,6 +37,8 @@ CATEGORY_RULES = [
     ("管理員操作", "charge"),
     ("チャージ", "charge"),
     ("入金", "charge"),
+    ("倉庫保管", "fee"),
+    ("保管料", "fee"),
     ("その他", "fee"),
 ]
 
