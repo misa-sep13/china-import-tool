@@ -26,13 +26,30 @@ const KIND_LABEL = Object.fromEntries(KINDS.map(k => [k.key, k.label]))
 // 毎月そろっているはずの種別。欠けていたら目立たせる
 const MONTHLY = ['rms', 'yamato']
 
-// 楽天の書類は2種類届く。集約版は科目ごとにまとまっていて見やすい（見る用）。
-// 店舗別内訳書は登録番号が載っている唯一の書類なので、インボイスの原本として残す
-const rakutenType = (x) => {
-  const n = String(x.filename || '')
-  if (/Billing_Summary/i.test(n)) return { order: 0, label: '集約版（見る用）', color: '#16a34a' }
-  if (/Billpay/i.test(n)) return { order: 1, label: '内訳書・詳細（インボイス原本）', color: '#64748b' }
-  return null
+// 楽天の書類。ファイル名の末尾2桁で種類が分かる。
+//   31 内訳書（最初に届く版）／32 内訳書の再掲版（入金額入り。請求額は31と同じ）
+//   61 集約版（31と対）／62 集約版の再掲版
+// 見る用は集約版。内訳書は登録番号が載っている唯一の書類なので、インボイスの原本として残す。
+// 31と32の両方があれば32は重複（なくても可）
+const rakutenInfo = (x) => {
+  const m = /_(\d{12,})(\d{2})_Shop_(Billpay|Billing_Summary)/i.exec(String(x.filename || ''))
+  if (!m) return null
+  const summary = /Summary/i.test(m[3])
+  return { base: m[1], suf: m[2], summary, order: (summary ? 0 : 2) + (m[2].endsWith('2') ? 1 : 0) }
+}
+
+const rakutenLabel = (x, list) => {
+  const r = rakutenInfo(x)
+  if (!r) return null
+  const firstSuf = r.summary ? '61' : '31'
+  const dup = r.suf !== firstSuf && list.some(y => {
+    const o = rakutenInfo(y)
+    return o && o.base === r.base && o.suf === firstSuf
+  })
+  if (dup) return { label: '再掲版（同じ請求・なくても可）', color: '#94a3b8' }
+  return r.summary
+    ? { label: '集約版（見る用）', color: '#16a34a' }
+    : { label: '内訳書・詳細（インボイス原本）', color: '#2563eb' }
 }
 
 const ymOf = (x) => {
@@ -290,7 +307,7 @@ export default function AccountingDocsPage() {
             </div>
             {KINDS.map(k => {
               const list = rows.filter(x => (x.kind || 'permit') === k.key)
-                .sort((p, q) => (rakutenType(p)?.order ?? 2) - (rakutenType(q)?.order ?? 2))
+                .sort((p, q) => (rakutenInfo(p)?.order ?? 9) - (rakutenInfo(q)?.order ?? 9))
               if (!list.length && k.key === 'other') return null
               const need = MONTHLY.includes(k.key)
               return (
@@ -298,6 +315,12 @@ export default function AccountingDocsPage() {
                   <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
                     {k.label}
                     <span style={{ fontWeight: 400, color: C.sub, marginLeft: 6 }}>{list.length}件</span>
+                    {k.key === 'rms' && list.length > 0 && (() => {
+                      const hasSum = list.some(x => rakutenInfo(x)?.summary)
+                      const hasDet = list.some(x => rakutenInfo(x) && !rakutenInfo(x).summary)
+                      const lack = [!hasSum && '集約版', !hasDet && '内訳書'].filter(Boolean)
+                      return lack.length > 0 && <span style={{ color: C.warn, fontWeight: 400, marginLeft: 8 }}>{lack.join('・')}が入っていません</span>
+                    })()}
                     {!list.length && need && <span style={{ color: C.warn, fontWeight: 400, marginLeft: 8 }}>まだ入っていません（{k.hint}）</span>}
                     {!list.length && !need && <span style={{ color: C.sub, fontWeight: 400, marginLeft: 8 }}>この月はありません</span>}
                   </div>
@@ -322,9 +345,9 @@ export default function AccountingDocsPage() {
                                     onChange={e => move(x, e.target.value)} style={{ fontSize: 12, width: 'auto', padding: '2px 4px' }} />}
                             </td>
                             <td style={{ ...td, wordBreak: 'break-all' }}>
-                              {rakutenType(x) && (
+                              {rakutenLabel(x, list) && (
                                 <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 700, marginRight: 6,
-                                  color: rakutenType(x).color }}>{rakutenType(x).label}</span>
+                                  color: rakutenLabel(x, list).color }}>{rakutenLabel(x, list).label}</span>
                               )}
                               {x.filename}
                             </td>
