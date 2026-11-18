@@ -676,6 +676,19 @@ export default function WelfareInventoryPage() {
                   <tr key={x.sid} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '6px 10px', wordBreak: 'break-all' }}>
                       <div>{x.sn || x.sid}</div>
+                      {/* 「◯◯に同梱してください」の便。荷物は1つで届くので、
+                          どちらを取り込んでも同梱分がまとめて入る */}
+                      {x.bundle_with && (
+                        <div style={{ fontSize: 11, fontWeight: 700, color: '#7c3aed' }}>
+                          📦 {x.bundle_with} に同梱（一緒に取り込まれます）
+                        </div>
+                      )}
+                      {sendOrders.some(y => y.bundle_with === x.sid) && (
+                        <div style={{ fontSize: 11, fontWeight: 700, color: '#7c3aed' }}>
+                          📦 同梱あり：{sendOrders.filter(y => y.bundle_with === x.sid).map(y => y.sid).join('、')}
+                          （一緒に取り込みます）
+                        </div>
+                      )}
                       {/* 番号と金額だけではどの便か分からないので、
                           いちばん新しい追跡を添える */}
                       {x.latest_trace && (
@@ -749,6 +762,13 @@ export default function WelfareInventoryPage() {
             {importResult.unmatched > 0 && <span style={{ color: '#d97706' }}> / 未照合 {importResult.unmatched}行</span>}
             {importResult.skipped_items?.length > 0 && <span style={{ color: '#64748b' }}> / 既取込済 {importResult.skipped_items.length}行</span>}
           </div>
+          {importResult.bundle?.length > 1 && (
+            <div style={{ fontSize: 13, color: '#5b21b6', background: '#f5f3ff', border: '1px solid #ddd6fe',
+              borderRadius: 6, padding: '6px 10px', marginBottom: 8 }}>
+              📦 同梱の配送依頼もまとめて取り込みました：
+              {importResult.bundle.map(b => `${b.sid}（${b.rows}行${b.bundled ? '・同梱分' : ''}）`).join('、')}
+            </div>
+          )}
           <div style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 6, padding: '6px 10px', marginBottom: 8 }}>
             この時点では就労支援在庫には入っていません。「就労支援荷受け」タブで指示と残を確定してから「就労支援在庫に反映」を押してください。
           </div>

@@ -737,20 +737,52 @@ def import_taotaro(data: WelfareTaotaroImportIn, db: Session = Depends(get_db)):
       ・便は配送依頼ID(sid)で一意に決まるので、二重取り込みを確実に防げる
     """
     from app.services import taotaro
+
+    # 配送依頼のあとに届いた注文は、別の配送依頼にして「723360に同梱してください」と
+    # 書いて先の便へ同梱してもらうことがある。荷物は1つで届くので、親か子の
+    # どちらを選んでも、まとめて同じ荷受けタブへ入れる（子の取りこぼしを防ぐ）
     try:
-        d = taotaro.send_order_rows(data.sid)
+        group = taotaro.bundle_group(data.sid)
+    except taotaro.TaotaroError:
+        group = {"main": data.sid, "children": []}
+    sids = [group["main"]] + [c for c in group["children"] if c != group["main"]]
+
+    try:
+        main = taotaro.send_order_rows(sids[0])
     except taotaro.TaotaroError as e:
         raise HTTPException(status_code=502, detail=e.message)
+    source_file = f"taotaro:{main.get('sn') or sids[0]}"
 
-    rows = d.get("rows") or []
-    if not rows:
+    result = None
+    parts = []
+    for i, sid in enumerate(sids):
+        try:
+            d = main if i == 0 else taotaro.send_order_rows(sid)
+        except taotaro.TaotaroError as e:
+            raise HTTPException(status_code=502,
+                                detail=f"同梱の配送依頼 {sid} を取れませんでした（{e.message}）")
+        rows = d.get("rows") or []
+        parts.append({"sid": sid, "rows": len(rows), "bundled": i > 0})
+        if not rows:
+            continue
+        r = _import_rows(rows, db, source_file=source_file)
+        if result is None:
+            result = r
+        else:
+            # 件数は足し、一覧は続けてつなぐ
+            for k, v in r.items():
+                if isinstance(v, (int, float)) and isinstance(result.get(k), (int, float)):
+                    result[k] += v
+                elif isinstance(v, list) and isinstance(result.get(k), list):
+                    result[k] += v
+    if result is None:
         raise HTTPException(status_code=404, detail="この配送依頼に明細がありません")
-    result = _import_rows(rows, db, source_file=f"taotaro:{d.get('sn') or data.sid}")
     result["send_order"] = {
-        "sid": d.get("sid"), "sn": d.get("sn"),
-        "state_label": d.get("state_label"),
-        "count_weight": d.get("count_weight"), "fees": d.get("fees"),
+        "sid": main.get("sid"), "sn": main.get("sn"),
+        "state_label": main.get("state_label"),
+        "count_weight": main.get("count_weight"), "fees": main.get("fees"),
     }
+    result["bundle"] = parts
     return result
 
 

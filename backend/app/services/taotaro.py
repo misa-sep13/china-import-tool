@@ -13,6 +13,7 @@
   ・支払いAPIは取り消せないため、ここでは実装しない（管理画面で行う）
 """
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -177,9 +178,54 @@ def _summary(x: dict) -> dict:
     return {"order_count": len(orders), "lines": lines}
 
 
+# 「723360に同梱してください」のような特殊説明。配送依頼のあとに届いた注文を、
+# 別の配送依頼にして先の便へ同梱してもらうときに書く。入荷のときに子の便を
+# 取りこぼさないよう、どの便に同梱されるかを読み取る
+_BUNDLE_RE = re.compile(r"(\d{5,7})\s*(?:番|号)?\s*(?:に|へ|と)?\s*(?:一緒に|まとめて)?\s*同梱")
+
+
+def _remark_of(x: dict) -> str:
+    for k in ("remark", "comment", "special_remark", "note"):
+        v = x.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def bundle_target(x: dict) -> Optional[int]:
+    """この配送依頼が同梱される先の配送依頼ID。無ければ None。"""
+    m = _BUNDLE_RE.search(_remark_of(x))
+    if not m:
+        return None
+    t = int(m.group(1))
+    return t if t != x.get("sid") else None
+
+
+def bundle_group(sid: int, pages: int = 3) -> dict:
+    """同梱でひとまとまりになる便。親（同梱先）と、そこへ同梱される子の一覧。
+
+    選んだのが子でも親でも、同じまとまりを返す。
+    """
+    items = []
+    for page in range(1, pages + 1):
+        d = _request("/api/v1/send-orders", {"page": page, "limit": 100})
+        items += d.get("items") or []
+        if not d.get("has_more_pages"):
+            break
+    by_sid = {x.get("sid"): x for x in items}
+    me = by_sid.get(int(sid)) or {}
+    main = bundle_target(me) or int(sid)
+    children = [x.get("sid") for x in items
+                if x.get("sid") != main and bundle_target(x) == main]
+    return {"main": main, "children": children,
+            "found": main in by_sid}
+
+
 def _send_order_brief(x: dict) -> dict:
     sm = _summary(x)
     return {
+        "remark": _remark_of(x),
+        "bundle_with": bundle_target(x),
         # どの便か見分けるための情報。番号と金額だけでは判断できない
         "latest_trace": _latest_trace(x),
         "tracking_url": x.get("shipping_website_url"),
@@ -231,6 +277,8 @@ def get_send_order(sid: int, raw: bool = False) -> dict:
         "airbills": x.get("airbills") or [],
         "have_invoice": x.get("have_invoice"),
         "comment": x.get("comment"),
+        "remark": _remark_of(x),
+        "bundle_with": bundle_target(x),
         "created_at": _ts(x.get("created_at")),
         "updated_at": _ts(x.get("updated_at")),
         "orders": [_order_brief(o) for o in orders],
