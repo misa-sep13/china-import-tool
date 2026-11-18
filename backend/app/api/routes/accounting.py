@@ -635,9 +635,11 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
             "manu_cogs": round(manu_cogs),
             "inventory_end_all": round(inv_all[ym]) if ym in inv_all else None,
             "cogs": round(cogs) if cogs is not None else None,
-            "gross_profit": round(sales - cogs) if cogs is not None else None,
+            # 楽天の売上を取り込んでいない月は、原価だけ立って赤字に見えるので出さない
+            "gross_profit": (round(sales - cogs)
+                             if cogs is not None and v["has_rakuten_sales"] else None),
             "gross_rate": (round((sales - cogs) / sales * 100, 1)
-                           if cogs is not None and sales else None),
+                           if cogs is not None and sales and v["has_rakuten_sales"] else None),
             "fixed": round(v["fixed"]),
             "import_vat": round(v["import_vat"]),
             "charge": round(v["charge"]),
