@@ -4,6 +4,7 @@ import FreightByShipmentPage from './FreightByShipmentPage'
 import ImportTaxPage from './ImportTaxPage'
 import InventoryValuePage from './InventoryValuePage'
 import MonthlySummaryPage from './MonthlySummaryPage'
+import AccountingDocsPage from './AccountingDocsPage'
 import MonthlyAccountingDesignPage from './MonthlyAccountingDesignPage'
 
 /**
@@ -12,9 +13,6 @@ import MonthlyAccountingDesignPage from './MonthlyAccountingDesignPage'
  * 試算表がタオタロウへデポジットした日で計上されていて、月ごとの利益の
  * 見え方が振れる。その月に実際に発生したぶんだけを拾う形（発生ベース）に
  * 組み替えるための画面。
- *
- * タブは作れた順に中身が入る。まだ作っていないタブは、何が要るかを
- * その場に書いておく（別の場所に散らすと、どこまで出来たか分からなくなる）。
  *
  * 設計の全体像は docs/月次管理表_発生ベース会計_設計.md にもある。
  */
@@ -28,27 +26,6 @@ const TABS = [
   { key: 'docs',     label: '📑 書類' },
   { key: 'design',   label: '📘 設計' },
 ]
-
-function Coming({ title, what, need, order }) {
-  return (
-    <div className="card" style={{ maxWidth: 720 }}>
-      <h2 style={{ margin: '0 0 4px', fontSize: 18 }}>{title}</h2>
-      <div style={{ fontSize: 12, color: '#b45309', fontWeight: 700, marginBottom: 12 }}>
-        まだ作っていません（着手順 {order}）
-      </div>
-      <div style={{ fontSize: 14, color: '#475569', lineHeight: 1.95 }}>
-        <b style={{ color: '#0f172a' }}>ここに出るもの</b>
-        <ul style={{ paddingLeft: 20, margin: '6px 0 14px' }}>
-          {what.map((t, i) => <li key={i}>{t}</li>)}
-        </ul>
-        <b style={{ color: '#0f172a' }}>そのために要るもの</b>
-        <ul style={{ paddingLeft: 20, margin: '6px 0 0' }}>
-          {need.map((t, i) => <li key={i}>{t}</li>)}
-        </ul>
-      </div>
-    </div>
-  )
-}
 
 export default function AccountingPage() {
   // タブはURLのハッシュに残す。税理士に「このタブを見てください」と
@@ -101,23 +78,7 @@ export default function AccountingPage() {
 
       {tab === 'stock' && <InventoryValuePage />}
 
-      {tab === 'docs' && (
-        <Coming
-          order="5"
-          title="書類"
-          what={[
-            '輸入許可書（41件はすでにDBに保存済み）',
-            'RMS店舗別内訳書',
-            'ヤマト運輸の送料請求書',
-            'タオタロウの請求・明細',
-            'その月の行からまとめてダウンロードできる形',
-          ]}
-          need={[
-            'RMS店舗別内訳書とヤマト請求書の取得方法を決める（手動アップロードか、APIか）',
-            '容量は問題なし（現在 245MB / 5GB。許可書は平均118KB）',
-          ]}
-        />
-      )}
+      {tab === 'docs' && <AccountingDocsPage />}
     </div>
   )
 }

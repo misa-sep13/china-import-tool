@@ -11,7 +11,7 @@ import zipfile
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, defer
@@ -21,6 +21,34 @@ from app.models.import_permit import ImportPermit
 from app.services import google_drive, permit_mail
 
 router = APIRouter(prefix="/import-permits", tags=["import_permits"])
+
+# 棚に入れる書類の種別。税理士へ月ごとにまとめて渡すので、同じ棚で種別だけ分ける。
+#   permit  … 輸入許可書（メールから自動で拾う）
+#   invoice … タオタロウの請求書（APIから拾う）
+#   rms     … 楽天RMSの店舗別内訳書（手で入れる）
+#   yamato  … ヤマト運輸の送料請求書（手で入れる）
+#   other   … その他
+DOC_KINDS = {
+    "permit": "輸入許可書",
+    "invoice": "請求書",
+    "rms": "RMS店舗別内訳書",
+    "yamato": "ヤマト請求書",
+    "other": "その他書類",
+}
+# 手で入れる種別。PDFを許可書として読まず、指定の月に置く
+MANUAL_KINDS = ("rms", "yamato", "other")
+
+_MEDIA = {
+    "pdf": "application/pdf", "csv": "text/csv; charset=utf-8",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xls": "application/vnd.ms-excel", "png": "image/png",
+    "jpg": "image/jpeg", "jpeg": "image/jpeg",
+}
+
+
+def _media_type(filename: str) -> str:
+    ext = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else "pdf"
+    return _MEDIA.get(ext, "application/octet-stream")
 
 
 def _brief(p: ImportPermit) -> dict:
@@ -98,8 +126,7 @@ def list_permits(year: Optional[int] = None, month: Optional[int] = None,
         "total_tax": sum(int(p.total_tax or 0) for p in _dedupe(rows)
                          if (p.kind or "permit") == "permit"),
         "duplicates": len(rows) - len(keep),
-        "counts": {"permit": sum(1 for p in rows if (p.kind or "permit") == "permit"),
-                   "invoice": sum(1 for p in rows if p.kind == "invoice")},
+        "counts": {k: sum(1 for p in rows if (p.kind or "permit") == k) for k in DOC_KINDS},
         "drive_ready": google_drive.is_configured(),
     }
 
@@ -267,9 +294,31 @@ def scan_candidates(days: int = 60, folder: str = ""):
 
 @router.post("/upload")
 async def upload_permit(file: UploadFile = File(...),
+                        kind: str = Form("permit"),
+                        period: str = Form(""),
                         db: Session = Depends(get_db)):
-    """手元のPDFを直接入れる。メールで届かなかったぶんの補い。"""
+    """手元の書類を直接入れる。
+
+    kind=permit（既定）は輸入許可書として読み取る（メールで届かなかったぶんの補い）。
+    rms・yamato・other は読み取らず、period（YYYY-MM）の月の書類として置く。
+    """
     content = await file.read()
+    if not content:
+        raise HTTPException(400, "ファイルが空です")
+    if kind in MANUAL_KINDS:
+        import re
+        if not re.fullmatch(r"\d{4}-\d{2}", period or ""):
+            raise HTTPException(400, "どの月の書類か（2026-10 の形）を指定してください")
+        p = ImportPermit(kind=kind, permit_date=f"{period}-01",
+                         filename=file.filename or f"{kind}.pdf",
+                         size_bytes=len(content), pdf=content, source="upload",
+                         mail_message_id=f"upload:{datetime.now().isoformat()}")
+        db.add(p)
+        db.commit()
+        db.refresh(p)
+        return {**_brief(p), "looks_like_permit": None}
+    if kind not in ("permit",):
+        raise HTTPException(400, f"種別が違います（{kind}）")
     parsed = permit_mail.parse_permit_pdf(content)
     is_permit = parsed.pop("is_permit")
     p = ImportPermit(**parsed, filename=file.filename or "permit.pdf",
@@ -289,7 +338,7 @@ def _drive_name(p: ImportPermit) -> str:
     許可書と請求書が同じ棚に入るので、種別も名前に入れる。
     """
     d = _sort_date(p) or "日付不明"
-    label = "請求書" if p.kind == "invoice" else "輸入許可書"
+    label = DOC_KINDS.get(p.kind or "permit", "書類")
     no = f"_{p.permit_no}" if p.permit_no else ""
     # 請求書はExcelで落ちてくることがある。拡張子は保管したものに合わせる
     name = (p.filename or "")
@@ -316,7 +365,7 @@ def download_pdf(permit_id: int, db: Session = Depends(get_db)):
     p = db.query(ImportPermit).filter(ImportPermit.id == permit_id).first()
     if not p or not p.pdf:
         raise HTTPException(status_code=404, detail="見つかりません")
-    return StreamingResponse(io.BytesIO(p.pdf), media_type="application/pdf")
+    return StreamingResponse(io.BytesIO(p.pdf), media_type=_media_type(p.filename))
 
 
 @router.get("/zip")
