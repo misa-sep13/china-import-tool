@@ -42,7 +42,9 @@ export default function MonthlySummaryPage() {
       <div className="card" style={{ marginBottom: 12 }}>
         <b style={{ fontSize: 16 }}>📈 月次サマリー（発生ベース）</b>
         <div style={{ fontSize: 12, color: C.sub, marginTop: 6, lineHeight: 1.9 }}>
-          <b>売上原価 ＝ 期首在庫 ＋ 当月の仕入 − 期末在庫</b>。
+          売上原価は2つに分けて出しています。
+          <b>中国輸入品 ＝ 期首在庫 ＋ 当月の仕入 − 期末在庫</b>（在庫は中国輸入品のぶんだけ）、
+          <b>日本メーカー品 ＝ 売れた数 × 原価</b>（メーカー品の仕入はツールに無いため、楽天の売上管理の原価を使用）。
           仕入はその月に実際に発生したぶん（商品代は明細の日、送料・手数料は便の出荷日、関税は輸入許可日）で、
           チャージ（前払金）は入れていません。元はその月のタオタロウ明細の実勢レートで円にしています。
           <br />
@@ -64,10 +66,9 @@ export default function MonthlySummaryPage() {
                 <th style={th}>売上（楽天）</th>
                 <th style={th}>売上（Amazon）</th>
                 <th style={th}>売上計</th>
-                <th style={th}>期首在庫</th>
-                <th style={th}>当月の仕入</th>
-                <th style={th}>期末在庫</th>
-                <th style={th}>売上原価</th>
+                <th style={th}>中国輸入の原価</th>
+                <th style={th}>メーカー品の原価</th>
+                <th style={th}>売上原価 計</th>
                 <th style={th}>粗利</th>
                 <th style={th}>粗利率</th>
                 <th style={th}>固定費</th>
@@ -84,9 +85,8 @@ export default function MonthlySummaryPage() {
                     <td style={td}>{m.has_rakuten_sales ? yen(m.sales_rakuten) : <span style={{ color: C.warn }}>未取込</span>}</td>
                     <td style={td}>{m.sales_amazon ? yen(m.sales_amazon) : <span style={{ color: C.sub }}>—</span>}</td>
                     <td style={{ ...td, fontWeight: 600 }}>{yen(m.sales)}</td>
-                    <td style={td}>{m.inventory_begin == null ? <span style={{ color: C.sub }}>未確定</span> : yen(m.inventory_begin)}</td>
-                    <td style={td}>{yen(m.purchase_total)}</td>
-                    <td style={td}>{m.inventory_end == null ? <span style={{ color: C.sub }}>未確定</span> : yen(m.inventory_end)}</td>
+                    <td style={td}>{m.china_cogs == null ? <span style={{ color: C.sub }}>在庫未確定</span> : yen(m.china_cogs)}</td>
+                    <td style={td}>{yen(m.manu_cogs)}</td>
                     <td style={{ ...td, fontWeight: 600 }}>{yen(m.cogs)}</td>
                     <td style={{ ...td, fontWeight: 700, color: m.gross_profit == null ? C.sub : m.gross_profit >= 0 ? C.good : C.bad }}>
                       {yen(m.gross_profit)}
@@ -97,9 +97,17 @@ export default function MonthlySummaryPage() {
                   </tr>
                   {open[m.ym] && (
                     <tr>
-                      <td colSpan={12} style={{ ...td, textAlign: 'left', background: '#f8fafc', padding: '8px 12px 12px 28px' }}>
+                      <td colSpan={11} style={{ ...td, textAlign: 'left', background: '#f8fafc', padding: '8px 12px 12px 28px' }}>
                         <table style={{ borderCollapse: 'collapse' }}>
                           <tbody>
+                            <tr>
+                              <td colSpan={3} style={{ ...td, textAlign: 'left', borderTop: 'none', fontWeight: 700 }}>中国輸入品の売上原価</td>
+                            </tr>
+                            <tr>
+                              <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>期首在庫（中国輸入品）</td>
+                              <td style={{ ...td, borderTop: 'none', color: C.sub, fontSize: 11 }}>前月末</td>
+                              <td style={{ ...td, borderTop: 'none' }}>{m.inventory_begin == null ? '未確定' : yen(m.inventory_begin)}</td>
+                            </tr>
                             {PURCHASE.map(([k, label, when]) => (
                               <tr key={k}>
                                 <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>{label}</td>
@@ -111,6 +119,21 @@ export default function MonthlySummaryPage() {
                               <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>当月の仕入 計</td>
                               <td style={td}></td>
                               <td style={{ ...td, fontWeight: 700 }}>{yen(m.purchase_total)}</td>
+                            </tr>
+                            <tr>
+                              <td style={{ ...td, textAlign: 'left' }}>期末在庫（中国輸入品）</td>
+                              <td style={{ ...td, color: C.sub, fontSize: 11 }}>当月末</td>
+                              <td style={td}>{m.inventory_end == null ? '未確定' : `−${yen(m.inventory_end)}`}</td>
+                            </tr>
+                            <tr>
+                              <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>中国輸入品の売上原価</td>
+                              <td style={td}></td>
+                              <td style={{ ...td, fontWeight: 700 }}>{yen(m.china_cogs)}</td>
+                            </tr>
+                            <tr>
+                              <td style={{ ...td, textAlign: 'left', fontWeight: 700, paddingTop: 14 }}>日本メーカー品の売上原価</td>
+                              <td style={{ ...td, color: C.sub, fontSize: 11, paddingTop: 14 }}>売上 {yen(m.manu_sales)} 分</td>
+                              <td style={{ ...td, fontWeight: 700, paddingTop: 14 }}>{yen(m.manu_cogs)}</td>
                             </tr>
                           </tbody>
                         </table>

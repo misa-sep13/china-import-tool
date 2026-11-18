@@ -578,14 +578,32 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
             m[ym]["duty"] += p.customs_duty or 0
             m[ym]["import_vat"] += (p.consumption_tax or 0) + (p.local_consumption_tax or 0)
 
-    # 月末在庫（楽天＋Amazon）
-    inv: dict = defaultdict(float)
+    # 月末在庫（楽天＋Amazon）。タオタロウの仕入と突き合わせるのは中国輸入品だけ。
+    # 日本メーカー品の仕入はツールに無いので、在庫の増減からは出せない
+    inv: dict = defaultdict(float)          # 中国輸入品
+    inv_all: dict = defaultdict(float)
     inv_pf: dict = defaultdict(set)
-    for period, pf, amt in (db.query(InventorySnapshot.period, InventorySnapshot.platform,
-                                     F.sum(InventorySnapshot.amount))
-                            .group_by(InventorySnapshot.period, InventorySnapshot.platform)):
-        inv[period] += amt or 0
+    for period, pf, cat, amt in (db.query(InventorySnapshot.period, InventorySnapshot.platform,
+                                          InventorySnapshot.category, F.sum(InventorySnapshot.amount))
+                                 .group_by(InventorySnapshot.period, InventorySnapshot.platform,
+                                           InventorySnapshot.category)):
+        inv_all[period] += amt or 0
+        if cat != "manufacturer":
+            inv[period] += amt or 0
         inv_pf[period].add(pf)
+
+    # 日本メーカー品の売上原価：売上管理（楽天）の「売れた数 × 原価」
+    from app.api.routes.rakuten import _is_manufacturer_product
+    from app.models.rakuten_product import RakutenProduct
+    from app.models.rakuten_sales import RakutenSalesSummary
+    manu_skus = {p.sku for p in db.query(RakutenProduct).all()
+                 if p.sku and _is_manufacturer_product(p)}
+    for r in (db.query(RakutenSalesSummary.period, RakutenSalesSummary.sku_key,
+                       RakutenSalesSummary.sales, RakutenSalesSummary.product_cost)
+              .filter(RakutenSalesSummary.level == "sku")):
+        if r.period and r.sku_key in manu_skus:
+            m[r.period]["manu_sales"] += r.sales or 0
+            m[r.period]["manu_cogs"] += r.product_cost or 0
 
     out = []
     for ym in sorted(m.keys(), reverse=True)[:max(1, min(months, 36))]:
@@ -595,7 +613,9 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
         sales = v["sales_rakuten"] + v["sales_amazon"]
         begin = inv.get(_prev_ym(ym))
         end = inv.get(ym)
-        cogs = (begin + purchase - end) if (begin is not None and end is not None) else None
+        china_cogs = (begin + purchase - end) if (begin is not None and end is not None) else None
+        manu_cogs = v["manu_cogs"]
+        cogs = (china_cogs + manu_cogs) if china_cogs is not None else None
         out.append({
             "ym": ym,
             "rate": round(rate_of(ym), 3),
@@ -610,6 +630,10 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
             "inventory_begin": round(begin) if begin is not None else None,
             "inventory_end": round(end) if end is not None else None,
             "inventory_platforms": sorted(inv_pf.get(ym, [])),
+            "china_cogs": round(china_cogs) if china_cogs is not None else None,
+            "manu_sales": round(v["manu_sales"]),
+            "manu_cogs": round(manu_cogs),
+            "inventory_end_all": round(inv_all[ym]) if ym in inv_all else None,
             "cogs": round(cogs) if cogs is not None else None,
             "gross_profit": round(sales - cogs) if cogs is not None else None,
             "gross_rate": (round((sales - cogs) / sales * 100, 1)
