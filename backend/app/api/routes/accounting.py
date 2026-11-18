@@ -481,3 +481,141 @@ def freight(ym: str, db: Session = Depends(get_db)):
                                         "shipping")},
         "ships": ships,
     }
+
+
+# ---------- 月次サマリー ----------
+#
+# 各タブで作った数字を月ごとに1行にまとめる。
+#   売上        … 楽天：売上管理で取り込んだ月の売上（RMS）／Amazon：日別実績（daily_sales）
+#   当月の仕入  … 発生ベース。商品代（＋値引・調整・削除）は明細の日、
+#                 中国国内送料・代行手数料・国際送料・通関手数料は便の出荷日、
+#                 関税は輸入許可日。元は月の実勢レートで円にする
+#   売上原価    … 期首在庫 ＋ 当月の仕入 − 期末在庫（在庫金額タブの月末確定値）
+#   固定費      … タオタロウ月会費など。原価とは別
+#   消費税      … 輸入時の消費税・地方消費税は仮払消費税なので、原価に入れず別に出す
+
+def _month_rates(db: Session) -> dict:
+    """月ごとの実勢レート（円/元）。明細の円換算額 ÷ 元 の平均。"""
+    rows = (db.query(TaotaroTransaction.ym, TaotaroTransaction.money,
+                     TaotaroTransaction.exchange_money)
+            .filter(TaotaroTransaction.ym.isnot(None)).all())
+    acc: dict = {}
+    for ym, money, jpy in rows:
+        if money and jpy:
+            r = abs(jpy) / abs(money)
+            if 10 < r < 40:          # 明らかにおかしい行は除く
+                a = acc.setdefault(ym, [0.0, 0.0])
+                a[0] += abs(jpy)
+                a[1] += abs(money)
+    return {ym: a[0] / a[1] for ym, a in acc.items() if a[1]}
+
+
+def _prev_ym(ym: str) -> str:
+    y, m = int(ym[:4]), int(ym[5:7])
+    return f"{y - 1}-12" if m == 1 else f"{y}-{m - 1:02d}"
+
+
+@router.get("/summary")
+def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
+    from collections import defaultdict
+    from sqlalchemy import func as F
+    from app.models.daily_sales import DailySales
+    from app.models.import_permit import ImportPermit
+    from app.models.inventory_snapshot import InventorySnapshot
+    from app.models.rakuten_sales import RakutenSalesImport
+    from app.models.settings import OrderSettings
+    from app.models.taotaro_send_order import TaotaroSendOrder
+
+    st = db.query(OrderSettings).first()
+    default_rate = float(getattr(st, "exchange_rate", 0) or 21.0)
+    rates = _month_rates(db)
+    rate_of = lambda ym: rates.get(ym) or default_rate
+
+    m: dict = defaultdict(lambda: defaultdict(float))
+
+    # 売上
+    for r in db.query(RakutenSalesImport).all():
+        if r.period:
+            m[r.period]["sales_rakuten"] += r.total_sales or 0
+            m[r.period]["has_rakuten_sales"] = 1
+    if db.bind.dialect.name == "postgresql":
+        q = (db.query(F.to_char(DailySales.day, "YYYY-MM"), F.sum(DailySales.revenue),
+                      F.sum(DailySales.promo_discount))
+             .group_by(F.to_char(DailySales.day, "YYYY-MM")).all())
+    else:
+        tmp: dict = defaultdict(lambda: [0.0, 0.0])
+        for d, rev, promo in db.query(DailySales.day, DailySales.revenue, DailySales.promo_discount):
+            if d:
+                tmp[d.strftime("%Y-%m")][0] += rev or 0
+                tmp[d.strftime("%Y-%m")][1] += promo or 0
+        q = [(k, v[0], v[1]) for k, v in tmp.items()]
+    for ym, rev, promo in q:
+        if ym:
+            m[ym]["sales_amazon"] += (rev or 0) - (promo or 0)
+
+    # 商品代と固定費（タオタロウ明細）。元を円に
+    for t in db.query(TaotaroTransaction).filter(TaotaroTransaction.ym.isnot(None)):
+        jpy = -(t.money or 0) * rate_of(t.ym)      # 引落はマイナス → 正の費用に
+        if t.category in ("purchase", "purchase_adjust"):
+            m[t.ym]["goods"] += jpy
+        elif t.category == "fee":
+            m[t.ym]["fixed"] += jpy
+        elif t.category == "charge":
+            m[t.ym]["charge"] += -jpy               # チャージは入金なので正で持つ
+
+    # 便ごとの費用（出荷日の月）
+    for s in db.query(TaotaroSendOrder).filter(TaotaroSendOrder.ym.isnot(None)):
+        r = rate_of(s.ym)
+        m[s.ym]["domestic"] += (s.send_price or 0) * r
+        m[s.ym]["agency"] += (s.server_fee or 0) * r
+        m[s.ym]["international"] += ((s.freight or 0) + (s.remote_fee or 0)) * r
+        m[s.ym]["customs_fee"] += (s.customs_fee or 0) * r
+
+    # 関税・消費税（輸入許可日の月）
+    for p in db.query(ImportPermit).filter(ImportPermit.kind == "permit"):
+        ym = (p.permit_date or "")[:7]
+        if ym:
+            m[ym]["duty"] += p.customs_duty or 0
+            m[ym]["import_vat"] += (p.consumption_tax or 0) + (p.local_consumption_tax or 0)
+
+    # 月末在庫（楽天＋Amazon）
+    inv: dict = defaultdict(float)
+    inv_pf: dict = defaultdict(set)
+    for period, pf, amt in (db.query(InventorySnapshot.period, InventorySnapshot.platform,
+                                     F.sum(InventorySnapshot.amount))
+                            .group_by(InventorySnapshot.period, InventorySnapshot.platform)):
+        inv[period] += amt or 0
+        inv_pf[period].add(pf)
+
+    out = []
+    for ym in sorted(m.keys(), reverse=True)[:max(1, min(months, 36))]:
+        v = m[ym]
+        purchase = sum(v[k] for k in ("goods", "domestic", "agency",
+                                      "international", "customs_fee", "duty"))
+        sales = v["sales_rakuten"] + v["sales_amazon"]
+        begin = inv.get(_prev_ym(ym))
+        end = inv.get(ym)
+        cogs = (begin + purchase - end) if (begin is not None and end is not None) else None
+        out.append({
+            "ym": ym,
+            "rate": round(rate_of(ym), 3),
+            "rate_is_default": ym not in rates,
+            "sales_rakuten": round(v["sales_rakuten"]),
+            "sales_amazon": round(v["sales_amazon"]),
+            "has_rakuten_sales": bool(v["has_rakuten_sales"]),
+            "sales": round(sales),
+            "purchase": {k: round(v[k]) for k in ("goods", "domestic", "agency",
+                                                   "international", "customs_fee", "duty")},
+            "purchase_total": round(purchase),
+            "inventory_begin": round(begin) if begin is not None else None,
+            "inventory_end": round(end) if end is not None else None,
+            "inventory_platforms": sorted(inv_pf.get(ym, [])),
+            "cogs": round(cogs) if cogs is not None else None,
+            "gross_profit": round(sales - cogs) if cogs is not None else None,
+            "gross_rate": (round((sales - cogs) / sales * 100, 1)
+                           if cogs is not None and sales else None),
+            "fixed": round(v["fixed"]),
+            "import_vat": round(v["import_vat"]),
+            "charge": round(v["charge"]),
+        })
+    return {"months": out, "default_rate": default_rate}

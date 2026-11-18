@@ -3,6 +3,7 @@ import DepositBreakdownPage from './DepositBreakdownPage'
 import FreightByShipmentPage from './FreightByShipmentPage'
 import ImportTaxPage from './ImportTaxPage'
 import InventoryValuePage from './InventoryValuePage'
+import MonthlySummaryPage from './MonthlySummaryPage'
 import MonthlyAccountingDesignPage from './MonthlyAccountingDesignPage'
 
 /**
@@ -92,22 +93,7 @@ export default function AccountingPage() {
         </div>
       )}
 
-      {tab === 'summary' && (
-        <Coming
-          order="4"
-          title="月次サマリー"
-          what={[
-            '月ごとの売上・原価・粗利（楽天／Amazon）',
-            '原価の内訳：商品代・中国国内送料・代行手数料・国際送料・通関料・関税',
-            '固定費（タオタロウ月会費など）は原価と分けて表示',
-          ]}
-          need={[
-            '便ごとの送料の按分（このタブの「🚢 便ごとの送料」）',
-            '輸入許可書の関税・消費税を輸入許可日で計上',
-            'RMS店舗別内訳書（いま売上が暫定なのはこれが無いため）',
-          ]}
-        />
-      )}
+      {tab === 'summary' && <MonthlySummaryPage />}
 
       {tab === 'freight' && <FreightByShipmentPage />}
 
