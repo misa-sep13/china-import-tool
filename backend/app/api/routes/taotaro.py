@@ -155,6 +155,20 @@ def send_check(data: SendCheckIn, db: Session = Depends(get_db)):
         raise HTTPException(502, f"確かめられませんでした（{str(e)[:200]}）")
 
 
+def _default_importer_id() -> int:
+    """住所録の輸入者（type 2）。デフォルトの印があるもの、無ければ1件だけのとき。"""
+    importers = [a for a in (_call(taotaro.addresses, 2) or [])
+                 if int(a.get("type") or 2) == 2 and a.get("address_id")]
+    pick = ([a for a in importers if a.get("is_default")] or
+            (importers if len(importers) == 1 else []))
+    if not pick:
+        raise HTTPException(
+            400, "タオタロウの住所録に輸入者のデフォルトがありません。"
+                 "輸入者情報が空の配送依頼になってしまうので作りませんでした"
+                 f"（輸入者 {len(importers)}件）")
+    return int(pick[0]["address_id"])
+
+
 @router.post("/send-orders")
 def create_send_order(data: SendOrderIn):
     """配送依頼を作る。
@@ -168,10 +182,14 @@ def create_send_order(data: SendOrderIn):
         import hashlib
         seed = ",".join(sorted(str(x) for x in data.oids)) + "|" + data.way
         key = "cit-" + hashlib.sha1(seed.encode()).hexdigest()[:24]
+    # 輸入者は画面から来ない。指定が無いとタオタロウ側で輸入者情報が空のまま
+    # 便が作られ、通関で止まる（2026-11-18 の 723353 で発生）。
+    # 住所録の輸入者（type 2）のデフォルトを入れ、無ければ作らずに止める
+    importer_id = data.importer_address_id or _default_importer_id()
     res = _call(taotaro.create_send_order,
                 oids=data.oids, way=data.way, address_id=data.address_id,
                 made_in_china_flag=data.made_in_china_flag,
-                importer_address_id=data.importer_address_id,
+                importer_address_id=importer_id,
                 extra_note=data.note, client_order_id=key)
     # 便に入った注文を、確かめるときに倉庫の在庫として数えないよう覚えを捨てる
     from app.services import restock_split as rs
