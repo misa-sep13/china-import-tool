@@ -323,53 +323,103 @@ def import_tax(ym: str, db: Session = Depends(get_db)):
 
 # ---------- 便ごとの送料 ----------
 #
+# 入出金明細には国際運賃の行がほとんど出てこない（10月1行・11月0行）。
+# そこで配送依頼（便）ごとの費用をタオタロウのAPIから取り、
+# taotaro_send_orders に保存して、出荷日の月で数える。
+#
 # 送料の「商品ごとの按分」は仕入管理（インボイスの取り込み）がすでにやっている
-# （箱の重量で按分。箱データが無い便は金額比。通関料は金額比、税は申告欄ごと）。
-# 結果は CostHistory（商品）と MaterialCost（資材）に便＝インボイス番号ごとに残る。
-# ここでは作り直さず、それを読むだけにする。
-#   ・月の運賃（実額）… タオタロウの明細の国際運賃・国内運賃（引落日の月）
-#   ・商品ごとの内訳 … 保存済みのインボイス（インボイス番号＝配送依頼の sn）
+# （箱の重量で按分。箱データが無い便は金額比）。結果は CostHistory（商品）と
+# MaterialCost（資材）にインボイス番号＝配送依頼の sn ごとに残るので、それを読む。
 # インボイスを取り込んでいない便は「未取り込み」と出して気づけるようにする。
+
+# 費用が確定している状態（出荷待ち・出荷済み・受け取り済み）。
+# お支払い待ち(7)より前は金額が動くので数えない
+_BILLED_STATES = (8, 2, 3)
+# これ以上は変わらない状態。保存済みなら詳細を取り直さない
+_FINAL_STATES = (2, 3)
+
+
+@router.post("/freight/sync")
+def freight_sync(pages: int = 10, full: bool = False, db: Session = Depends(get_db)):
+    """配送依頼ごとの費用をタオタロウから取り込む。
+
+    何度やっても同じ便は増えない（sid が主キー）。受け取り済みなど
+    もう変わらない便は、保存済みなら詳細を取り直さない（full=true で全部取り直す）。
+    """
+    from app.models.taotaro_send_order import TaotaroSendOrder
+    if not taotaro.is_configured():
+        raise HTTPException(400, "タオタロウの設定がありません")
+
+    added = updated = skipped = 0
+    errors = []
+    for page in range(1, max(1, min(pages, 50)) + 1):
+        try:
+            d = taotaro.list_send_orders(page=page, limit=100)
+        except Exception as e:
+            raise HTTPException(502, f"タオタロウから取れませんでした（{type(e).__name__}: {str(e)[:120]}）")
+        for x in d.get("items") or []:
+            sid = x.get("sid")
+            if sid is None or x.get("state") not in _BILLED_STATES:
+                continue
+            row = db.query(TaotaroSendOrder).filter(TaotaroSendOrder.sid == int(sid)).first()
+            if (row and not full and row.state in _FINAL_STATES
+                    and row.state == x.get("state") and row.shipped_date):
+                skipped += 1
+                continue
+            try:
+                det = taotaro.get_send_order(int(sid))
+            except Exception as e:
+                errors.append(f"{x.get('sn') or sid}: {type(e).__name__}")
+                continue
+            new = row is None
+            if new:
+                row = TaotaroSendOrder(sid=int(sid))
+                db.add(row)
+            shipped = taotaro._shipped_date(det)
+            row.sn = str(det.get("sn") or x.get("sn") or "").strip() or None
+            row.state = det.get("state")
+            row.state_label = det.get("state_label") or ""
+            row.delivery_name = det.get("delivery_name") or ""
+            row.count_weight = _num(det.get("count_weight"))
+            row.shipped_date = shipped or None
+            row.ym = shipped[:7] if shipped else None
+            for k in ("send_price", "server_fee", "freight", "customs_fee",
+                      "remote_fee", "total_send_fee"):
+                setattr(row, k, _num(det.get(k)))
+            if new:
+                added += 1
+            else:
+                updated += 1
+        db.commit()
+        if not d.get("has_more_pages"):
+            break
+    return {"ok": True, "added": added, "updated": updated,
+            "skipped": skipped, "errors": errors[:20]}
+
 
 @router.get("/freight/months")
 def freight_months(db: Session = Depends(get_db)):
-    """運賃の引落がある月（新しい順）。"""
-    rows = (db.query(TaotaroTransaction.ym)
-            .filter(TaotaroTransaction.category == "shipping")
-            .distinct().all())
-    return {"months": sorted({r[0] for r in rows if r[0]}, reverse=True)}
+    """便が出荷された月（新しい順）と、最後に取り込んだ日時。"""
+    from app.models.taotaro_send_order import TaotaroSendOrder
+    rows = db.query(TaotaroSendOrder.ym).distinct().all()
+    last = (db.query(TaotaroSendOrder.updated_at)
+            .order_by(TaotaroSendOrder.updated_at.desc()).first())
+    return {"months": sorted({r[0] for r in rows if r[0]}, reverse=True),
+            "synced_at": last[0].isoformat() if last and last[0] else None,
+            "count": db.query(TaotaroSendOrder).count()}
 
 
 @router.get("/freight")
 def freight(ym: str, db: Session = Depends(get_db)):
-    """その月に運賃が引き落とされた便と、保存済みインボイスの按分結果。"""
+    """その月に出荷された便の費用と、保存済みインボイスの按分結果。"""
     from app.models.cost_history import CostHistory
     from app.models.material_cost import MaterialCost
+    from app.models.taotaro_send_order import TaotaroSendOrder
 
-    txs = (db.query(TaotaroTransaction)
-           .filter(TaotaroTransaction.category == "shipping",
-                   TaotaroTransaction.ym == ym)
-           .order_by(TaotaroTransaction.occurred_at.asc()).all())
+    rows = (db.query(TaotaroSendOrder).filter(TaotaroSendOrder.ym == ym)
+            .order_by(TaotaroSendOrder.shipped_date.asc()).all())
 
-    by_ship: dict = {}
-    for t in txs:
-        key = (t.sn or "").strip() or f"sid:{t.sid or '?'}"
-        s = by_ship.setdefault(key, {
-            "sn": (t.sn or "").strip(), "sid": t.sid or "",
-            "first_at": t.occurred_at.isoformat() if t.occurred_at else None,
-            "domestic": 0.0, "international": 0.0, "other": 0.0, "lines": 0,
-        })
-        amt = -(t.money or 0)      # 引落はマイナスで入っている
-        a = t.action or ""
-        if "国内" in a:
-            s["domestic"] += amt
-        elif "国際" in a:
-            s["international"] += amt
-        else:
-            s["other"] += amt
-        s["lines"] += 1
-
-    sns = [s["sn"] for s in by_ship.values() if s["sn"]]
+    sns = [r.sn for r in rows if r.sn]
     costs = (db.query(CostHistory).filter(CostHistory.invoice_no.in_(sns)).all()
              if sns else [])
     mats = (db.query(MaterialCost).filter(MaterialCost.invoice_no.in_(sns)).all()
@@ -396,29 +446,38 @@ def freight(ym: str, db: Session = Depends(get_db)):
             "method": "",
         })
 
+    r2 = lambda v: round(v or 0, 2)
     ships = []
-    for s in by_ship.values():
-        total = round(s["domestic"] + s["international"] + s["other"], 2)
-        items = items_of.get(s["sn"], [])
-        alloc = round(sum(x["freight_cny"] for x in items), 2)
+    for r in rows:
+        items = items_of.get(r.sn or "", [])
+        # インボイスの按分は「国内運賃＋国際運賃」を配っている。比べるのも同じ範囲
+        shipping = r2((r.send_price or 0) + (r.freight or 0))
+        alloc = r2(sum(x["freight_cny"] for x in items))
         methods = {x["method"] for x in items if x["method"]}
         ships.append({
-            **{k: (round(v, 2) if isinstance(v, float) else v) for k, v in s.items()},
-            "total": total,
+            "sid": r.sid, "sn": r.sn or "", "state_label": r.state_label or "",
+            "delivery_name": r.delivery_name or "", "weight": r.count_weight,
+            "shipped_date": r.shipped_date or "",
+            "domestic": r2(r.send_price), "international": r2(r.freight),
+            "customs_fee": r2(r.customs_fee), "server_fee": r2(r.server_fee),
+            "remote_fee": r2(r.remote_fee), "total_send_fee": r2(r.total_send_fee),
+            "shipping": shipping,
             "imported": bool(items),
             "allocated_cny": alloc,
-            # 明細の運賃とインボイスで按分した送料の差（元）。大きければ見直す
-            "diff_cny": round(total - alloc, 2) if items else None,
+            # 送料（国内＋国際）とインボイスで按分した送料の差（元）。大きければ見直す
+            "diff_cny": r2(shipping - alloc) if items else None,
             "method": ("重量" if methods == {"weight"} else "金額比" if methods == {"money"}
                        else "混在" if methods else ""),
             "items": sorted(items, key=lambda x: -x["freight_cny"]),
         })
-    ships.sort(key=lambda x: x["first_at"] or "")
+    tot = lambda k: r2(sum(x[k] for x in ships))
     return {
         "ym": ym,
-        "total_cny": round(sum(x["total"] for x in ships), 2),
         "ship_count": len(ships),
         "imported_count": sum(1 for x in ships if x["imported"]),
-        "missing": [x["sn"] or x["sid"] for x in ships if not x["imported"]],
+        "missing": [x["sn"] or str(x["sid"]) for x in ships if not x["imported"]],
+        "totals": {k: tot(k) for k in ("domestic", "international", "customs_fee",
+                                        "server_fee", "remote_fee", "total_send_fee",
+                                        "shipping")},
         "ships": ships,
     }
