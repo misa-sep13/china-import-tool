@@ -26,6 +26,15 @@ const KIND_LABEL = Object.fromEntries(KINDS.map(k => [k.key, k.label]))
 // 毎月そろっているはずの種別。欠けていたら目立たせる
 const MONTHLY = ['rms', 'yamato']
 
+// 楽天の書類は2種類届く。集約版は科目ごとにまとまっていて見やすい（見る用）。
+// 店舗別内訳書は登録番号が載っている唯一の書類なので、インボイスの原本として残す
+const rakutenType = (x) => {
+  const n = String(x.filename || '')
+  if (/Billing_Summary/i.test(n)) return { order: 0, label: '集約版（見る用）', color: '#16a34a' }
+  if (/Billpay/i.test(n)) return { order: 1, label: '内訳書・詳細（インボイス原本）', color: '#64748b' }
+  return null
+}
+
 const ymOf = (x) => {
   const d = String(x.permit_date || x.mail_date || '')
   return /^\d{4}-\d{2}/.test(d) ? d.slice(0, 7) : '日付なし'
@@ -281,6 +290,7 @@ export default function AccountingDocsPage() {
             </div>
             {KINDS.map(k => {
               const list = rows.filter(x => (x.kind || 'permit') === k.key)
+                .sort((p, q) => (rakutenType(p)?.order ?? 2) - (rakutenType(q)?.order ?? 2))
               if (!list.length && k.key === 'other') return null
               const need = MONTHLY.includes(k.key)
               return (
@@ -311,7 +321,13 @@ export default function AccountingDocsPage() {
                                 : <input type="month" value={ym} title="何月分かを付け替える"
                                     onChange={e => move(x, e.target.value)} style={{ fontSize: 12, width: 'auto', padding: '2px 4px' }} />}
                             </td>
-                            <td style={{ ...td, wordBreak: 'break-all' }}>{x.filename}</td>
+                            <td style={{ ...td, wordBreak: 'break-all' }}>
+                              {rakutenType(x) && (
+                                <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 700, marginRight: 6,
+                                  color: rakutenType(x).color }}>{rakutenType(x).label}</span>
+                              )}
+                              {x.filename}
+                            </td>
                             <td style={{ ...td, fontFamily: 'monospace', fontSize: 12 }}>{x.permit_no || ''}</td>
                             <td style={{ ...td, textAlign: 'right', color: C.sub }}>{kb(x.size_bytes)}</td>
                             <td style={{ ...td, whiteSpace: 'nowrap', textAlign: 'right' }}>

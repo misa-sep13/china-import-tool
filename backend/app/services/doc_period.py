@@ -78,10 +78,37 @@ def text_of(content: bytes, filename: str) -> str:
     return ""
 
 
+def _most(months: list) -> Optional[str]:
+    from collections import Counter
+    ms = [m for m in months if m]
+    return Counter(ms).most_common(1)[0][0] if ms else None
+
+
+def _rakuten(t: str) -> Optional[dict]:
+    if "集約版帳票" in t.replace(" ", "") or "集 約 版 帳 票" in t:
+        ym = _most([_ym(y, m) for y, m in re.findall(r"(\d{4})\s*年\s*(\d{1,2})\s*月", t)])
+        if ym:
+            return {"period": ym, "how": f"楽天の集約版帳票（課金月 {ym}）", "sure": True}
+    if "店舗別内訳書No" in t or "店 舗 別 内 訳 書" in t:
+        # 入金（■支払額）の期間は除き、■請求額 の明細の開始月だけを数える
+        body = t.split("■請求額", 1)[1] if "■請求額" in t else t
+        ym = _most([_ym(y, m) for y, m in re.findall(r"(\d{4})/(\d{1,2})/\d{1,2}\s*～", body)])
+        if ym:
+            return {"period": ym, "how": f"楽天の店舗別内訳書（精算対象期間 {ym}）", "sure": True}
+    return None
+
+
 def detect(content: bytes, filename: str) -> dict:
     """{"period": "2026-10" | None, "how": 読み取った根拠, "sure": 確かか}"""
     text = text_of(content, filename)
     t = re.sub(r"[ 　]+", " ", text)
+
+    # 0. 楽天の店舗別内訳書・集約版帳票。利用した月（課金月）の約2か月後に届き、
+    #    入金（支払額）の期間や翌月分の利用料も載るので、ほかの規則では月を外す。
+    #    請求の明細でいちばん多い月＝何月分か、にする
+    r = _rakuten(t)
+    if r:
+        return r
 
     # 1. ◯月分・◯月度
     m = re.search(_YEAR + r"\s*年\s*(\d{1,2})\s*月\s*(?:分|度|ご請求|請求)", t)
