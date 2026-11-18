@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import DepositBreakdownPage from './DepositBreakdownPage'
 import FreightByShipmentPage from './FreightByShipmentPage'
 import ImportTaxPage from './ImportTaxPage'
+import InventoryValuePage from './InventoryValuePage'
 import MonthlyAccountingDesignPage from './MonthlyAccountingDesignPage'
 
 /**
@@ -112,20 +113,7 @@ export default function AccountingPage() {
 
       {tab === 'tax' && <ImportTaxPage />}
 
-      {tab === 'stock' && (
-        <Coming
-          order="4"
-          title="在庫金額"
-          what={[
-            '月末在庫の金額（楽天／Amazon／就労支援）',
-            '期首・期末の差分',
-          ]}
-          need={[
-            'inventory_snapshots の運用ルール（いつ締めるか）を決める',
-            '発生ベースの原価が先に固まっていること',
-          ]}
-        />
-      )}
+      {tab === 'stock' && <InventoryValuePage />}
 
       {tab === 'docs' && (
         <Coming
