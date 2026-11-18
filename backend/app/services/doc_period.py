@@ -129,6 +129,14 @@ def detect(content: bytes, filename: str) -> dict:
 
     # 3. ファイル名
     fn = filename or ""
+    # 締め日が8桁で入っている名前（ヤマトの webseikyu_19675_20251031.pdf など）。
+    # 中身の文字が読めないPDFでも、これで何月分か分かる。締め日の月にする
+    m = re.search(r"(?<!\d)(20\d{2})(0[1-9]|1[0-2])([0-3]\d)(?!\d)", fn)
+    if m and 1 <= int(m.group(3)) <= 31:
+        ym = _ym(m.group(1), m.group(2))
+        if ym:
+            return {"period": ym, "how": f"ファイル名の締め日 {m.group(1)}/{m.group(2)}/{m.group(3)}",
+                    "sure": True}
     m = (re.search(r"(20\d{2})\s*年\s*(\d{1,2})\s*月", fn)
          or re.search(r"(20\d{2})[-_.]?(0[1-9]|1[0-2])(?!\d)", fn))
     if m:
