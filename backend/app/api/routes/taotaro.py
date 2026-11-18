@@ -177,15 +177,23 @@ def create_send_order(data: SendOrderIn):
     ときに、同じ鍵でそのまま送り直せば二重にならない。
     画面から来ないときは、注文の並びから毎回同じ鍵を作る。
     """
-    key = (data.client_order_id or "").strip()
-    if not key:
-        import hashlib
-        seed = ",".join(sorted(str(x) for x in data.oids)) + "|" + data.way
-        key = "cit-" + hashlib.sha1(seed.encode()).hexdigest()[:24]
     # 輸入者は画面から来ない。指定が無いとタオタロウ側で輸入者情報が空のまま
     # 便が作られ、通関で止まる（2026-11-18 の 723353 で発生）。
     # 住所録の輸入者（type 2）のデフォルトを入れ、無ければ作らずに止める
     importer_id = data.importer_address_id or _default_importer_id()
+
+    # 二重に作らないための鍵。タオタロウは「同じ鍵で中身が違う」依頼を断るので、
+    # 注文と便だけでなく、送る中身（届け先・輸入者・原産地シール・一言）も材料にする。
+    # 同じ中身の送り直しは同じ鍵になり、二重には作られない
+    key = (data.client_order_id or "").strip()
+    if not key:
+        import hashlib
+        seed = "|".join([
+            ",".join(sorted(str(x) for x in data.oids)), data.way,
+            str(data.address_id), str(importer_id),
+            str(data.made_in_china_flag), (data.note or "").strip(),
+        ])
+        key = "cit2-" + hashlib.sha1(seed.encode()).hexdigest()[:24]
     res = _call(taotaro.create_send_order,
                 oids=data.oids, way=data.way, address_id=data.address_id,
                 made_in_china_flag=data.made_in_china_flag,
