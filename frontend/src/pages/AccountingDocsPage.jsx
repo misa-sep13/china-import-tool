@@ -168,16 +168,16 @@ export default function AccountingDocsPage() {
         {/* 手で入れる */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12,
           padding: '10px 12px', background: '#f8fafc', borderRadius: 8 }}>
-          <b style={{ fontSize: 13 }}>書類を入れる</b>
-          <select value={upKind} onChange={e => setUpKind(e.target.value)} style={{ fontSize: 13, padding: '4px 8px' }}>
+          <b style={{ fontSize: 13, margin: 0 }}>書類を入れる</b>
+          <select value={upKind} onChange={e => setUpKind(e.target.value)} style={{ fontSize: 13, padding: '4px 8px', width: 'auto' }}>
             {KINDS.filter(k => k.key !== 'invoice').map(k => <option key={k.key} value={k.key}>{k.label}</option>)}
           </select>
           {upKind !== 'permit'
-            ? <label style={{ fontSize: 13 }}>対象月 <input type="month" value={upYm} onChange={e => setUpYm(e.target.value)} style={{ fontSize: 13 }} /></label>
+            ? <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>対象月 <input type="month" value={upYm} onChange={e => setUpYm(e.target.value)} style={{ fontSize: 13, width: 'auto' }} /></label>
             : <span style={{ fontSize: 12, color: C.sub }}>許可日はPDFから読み取ります</span>}
           <input key={fileKey} type="file" multiple accept=".pdf,.csv,.xlsx,.xls,.png,.jpg,.jpeg"
-            onChange={e => setFiles([...e.target.files])} style={{ fontSize: 12 }} />
-          <button className="btn btn-primary" style={{ fontSize: 12 }}
+            onChange={e => setFiles([...e.target.files])} style={{ fontSize: 12, width: 'auto' }} />
+          <button className="btn btn-primary" style={{ fontSize: 12, width: 'auto' }}
             disabled={!files.length || busy === 'up'} onClick={upload}>
             {busy === 'up' ? '入れています…' : `入れる${files.length ? `（${files.length}件）` : ''}`}
           </button>
