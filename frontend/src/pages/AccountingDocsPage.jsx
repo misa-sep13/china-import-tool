@@ -72,6 +72,9 @@ export default function AccountingDocsPage() {
   const [upYm, setUpYm] = useState(thisYm())
   const [files, setFiles] = useState([])
   const [fileKey, setFileKey] = useState(0)
+  // 何月分かは中身から読み取るのが既定。読めなかったものだけ upYm に入る
+  const [auto, setAuto] = useState(true)
+  const [results, setResults] = useState([])
 
   const load = () => api.get('/import-permits/')
     .then(r => setItems((r.data.items || []).filter(x => !x.duplicate)))
@@ -121,24 +124,42 @@ export default function AccountingDocsPage() {
 
   const upload = async () => {
     if (!files.length) return
-    setBusy('up'); setErr(''); setMsg('')
+    setBusy('up'); setErr(''); setMsg(''); setResults([])
     let ok = 0
+    const out = []
     try {
       for (const f of files) {
         const fd = new FormData()
         fd.append('file', f)
         fd.append('kind', upKind)
-        if (upKind !== 'permit') fd.append('period', upYm)
-        await api.post('/import-permits/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+        if (upKind !== 'permit') {
+          fd.append('period', auto ? 'auto' : upYm)
+          fd.append('fallback', upYm)
+        }
+        const r = await api.post('/import-permits/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+        out.push({ id: r.data.id, name: f.name, period: r.data.period || ymOf(r.data), det: r.data.detected })
         ok++
       }
-      setMsg(`${KIND_LABEL[upKind]}を${ok}件入れました${upKind !== 'permit' ? `（${upYm}）` : ''}`)
+      setMsg(`${KIND_LABEL[upKind]}を${ok}件入れました`)
+      setResults(out)
       setFiles([]); setFileKey(k => k + 1)
-      if (upKind !== 'permit') setYm(upYm)
+      if (out.length) setYm(out[out.length - 1].period)
       await load()
     } catch (e) {
+      setResults(out)
       setErr(`入れられませんでした（${ok}件目まで済み）：` + (e.response?.data?.detail || e.message))
     } finally { setBusy('') }
+  }
+
+  const move = async (x, period) => {
+    if (!/^\d{4}-\d{2}$/.test(period)) return
+    try {
+      await api.patch(`/import-permits/${x.id}/period`, { period })
+      setResults(rs => rs.map(r => (r.id === x.id ? { ...r, period, moved: true } : r)))
+      await load()
+    } catch (e) {
+      setErr('月を変えられませんでした：' + (e.response?.data?.detail || e.message))
+    }
   }
 
   const remove = async (x) => {
@@ -159,7 +180,7 @@ export default function AccountingDocsPage() {
         <b style={{ fontSize: 16 }}>📑 書類（税理士へ渡すもの）</b>
         <div style={{ fontSize: 12, color: C.sub, marginTop: 6, lineHeight: 1.8 }}>
           月ごとに書類をまとめています。輸入許可書とタオタロウの請求書は自動で入ります（輸入許可書の画面から取り込み）。
-          RMS店舗別内訳書とヤマト運輸の請求書は、下から手で入れてください。
+          RMS店舗別内訳書とヤマト運輸の請求書は、下から手で入れてください。何月分かは中身（「◯月分」・請求期間・ファイル名）から読み取って振り分けます。
           「この月をZIPで書き出す」で、その月の書類を1つにまとめて渡せます。
         </div>
         {err && <div style={{ color: C.bad, fontSize: 12, marginTop: 6 }}>{err}</div>}
@@ -173,7 +194,16 @@ export default function AccountingDocsPage() {
             {KINDS.filter(k => k.key !== 'invoice').map(k => <option key={k.key} value={k.key}>{k.label}</option>)}
           </select>
           {upKind !== 'permit'
-            ? <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>対象月 <input type="month" value={upYm} onChange={e => setUpYm(e.target.value)} style={{ fontSize: 13, width: 'auto' }} /></label>
+            ? <>
+                <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>
+                  <input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} style={{ width: 'auto' }} />
+                  何月分かを中身から読み取る
+                </label>
+                <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>
+                  {auto ? '読めなければ' : '対象月'}
+                  <input type="month" value={upYm} onChange={e => setUpYm(e.target.value)} style={{ fontSize: 13, width: 'auto' }} />
+                </label>
+              </>
             : <span style={{ fontSize: 12, color: C.sub }}>許可日はPDFから読み取ります</span>}
           <input key={fileKey} type="file" multiple accept=".pdf,.csv,.xlsx,.xls,.png,.jpg,.jpeg"
             onChange={e => setFiles([...e.target.files])} style={{ fontSize: 12, width: 'auto' }} />
@@ -183,6 +213,35 @@ export default function AccountingDocsPage() {
           </button>
         </div>
       </div>
+
+      {results.length > 0 && (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <b style={{ fontSize: 14 }}>入れた書類の振り分け</b>
+          <div style={{ fontSize: 12, color: C.sub, margin: '4px 0 8px' }}>
+            違っていたら、右の月を直してください（その場で移ります）。
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <tbody>
+              {results.map(r => (
+                <tr key={r.id}>
+                  <td style={{ ...td, wordBreak: 'break-all' }}>{r.name}</td>
+                  <td style={{ ...td, fontSize: 12,
+                    color: r.moved ? C.good : !r.det ? C.sub : r.det.period ? (r.det.sure ? C.good : C.warn) : C.bad }}>
+                    {r.moved ? '手で直しました'
+                      : !r.det ? '指定した月に入れました'
+                      : r.det.period ? `${r.det.sure ? '読み取り' : '推定'}：${r.det.how}`
+                      : `${r.det.how} → 指定の月に入れました`}
+                  </td>
+                  <td style={{ ...td, whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    <input type="month" value={r.period} onChange={e => move({ id: r.id }, e.target.value)}
+                      style={{ fontSize: 13, width: 'auto' }} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {!items && !err && <div className="card" style={{ color: C.sub }}>読み込んでいます…</div>}
 
@@ -246,7 +305,12 @@ export default function AccountingDocsPage() {
                       <tbody>
                         {list.map(x => (
                           <tr key={x.id}>
-                            <td style={{ ...td, whiteSpace: 'nowrap' }}>{k.auto ? (x.permit_date || String(x.mail_date || '').slice(0, 10)) : ym}</td>
+                            <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                              {k.auto
+                                ? (x.permit_date || String(x.mail_date || '').slice(0, 10))
+                                : <input type="month" value={ym} title="何月分かを付け替える"
+                                    onChange={e => move(x, e.target.value)} style={{ fontSize: 12, width: 'auto', padding: '2px 4px' }} />}
+                            </td>
                             <td style={{ ...td, wordBreak: 'break-all' }}>{x.filename}</td>
                             <td style={{ ...td, fontFamily: 'monospace', fontSize: 12 }}>{x.permit_no || ''}</td>
                             <td style={{ ...td, textAlign: 'right', color: C.sub }}>{kb(x.size_bytes)}</td>

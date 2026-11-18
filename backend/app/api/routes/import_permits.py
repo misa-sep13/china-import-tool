@@ -296,17 +296,24 @@ def scan_candidates(days: int = 60, folder: str = ""):
 async def upload_permit(file: UploadFile = File(...),
                         kind: str = Form("permit"),
                         period: str = Form(""),
+                        fallback: str = Form(""),
                         db: Session = Depends(get_db)):
     """手元の書類を直接入れる。
 
     kind=permit（既定）は輸入許可書として読み取る（メールで届かなかったぶんの補い）。
-    rms・yamato・other は読み取らず、period（YYYY-MM）の月の書類として置く。
+    rms・yamato・other は period（YYYY-MM）の月の書類として置く。
+    period="auto" なら中身とファイル名から何月分かを読み取り、読めなければ fallback の月にする。
     """
     content = await file.read()
     if not content:
         raise HTTPException(400, "ファイルが空です")
     if kind in MANUAL_KINDS:
         import re
+        found = None
+        if period == "auto":
+            from app.services.doc_period import detect
+            found = detect(content, file.filename or "")
+            period = found["period"] or fallback
         if not re.fullmatch(r"\d{4}-\d{2}", period or ""):
             raise HTTPException(400, "どの月の書類か（2026-10 の形）を指定してください")
         p = ImportPermit(kind=kind, permit_date=f"{period}-01",
@@ -316,7 +323,8 @@ async def upload_permit(file: UploadFile = File(...),
         db.add(p)
         db.commit()
         db.refresh(p)
-        return {**_brief(p), "looks_like_permit": None}
+        return {**_brief(p), "looks_like_permit": None, "period": period,
+                "detected": found}
     if kind not in ("permit",):
         raise HTTPException(400, f"種別が違います（{kind}）")
     parsed = permit_mail.parse_permit_pdf(content)
@@ -430,6 +438,26 @@ def download_zip(year: Optional[int] = None, month: Optional[int] = None,
         buf, media_type="application/zip",
         headers={"Content-Disposition":
                  f'attachment; filename="{name}"'})
+
+
+class PeriodIn(BaseModel):
+    period: str
+
+
+@router.patch("/{permit_id}/period")
+def update_period(permit_id: int, data: PeriodIn, db: Session = Depends(get_db)):
+    """手で入れた書類の月を付け替える（読み取りが外れたとき用）。"""
+    import re
+    p = db.query(ImportPermit).filter(ImportPermit.id == permit_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="見つかりません")
+    if (p.kind or "permit") not in MANUAL_KINDS:
+        raise HTTPException(400, "月を付け替えられるのは手で入れた書類だけです")
+    if not re.fullmatch(r"\d{4}-\d{2}", data.period or ""):
+        raise HTTPException(400, "月は 2026-10 の形で指定してください")
+    p.permit_date = f"{data.period}-01"
+    db.commit()
+    return _brief(p)
 
 
 class NoteIn(BaseModel):
