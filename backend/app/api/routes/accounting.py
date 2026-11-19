@@ -1092,3 +1092,50 @@ def wholesale_reconcile(ym: str, db: Session = Depends(get_db)):
         "rows": sorted(rows, key=lambda x: -(abs(x["diff_amount"] or 0))),
         "only_receipt": only_receipt,
     }
+
+
+# ---------- 税理士に見せる公開URL ----------
+#
+# 月次管理表には実際の売上と利益が出るので、誰でも開ける形にはしない。
+# 合言葉つきのURLでだけ開く。合言葉はここで作ってDBに持ち、
+# いつでも作り直せる（作り直すと前のURLは開かなくなる）。
+
+
+def _share_url(token: str) -> str:
+    return ("https://misa-sep13.github.io/china-import-tool/"
+            f"#/accounting-public?share={token}")
+
+
+@router.get("/share")
+def get_share(db: Session = Depends(get_db)):
+    """いまの公開URL。まだ作っていなければ token は空。"""
+    from app.models.settings import OrderSettings
+    st = db.query(OrderSettings).first()
+    token = (getattr(st, "accounting_share_token", "") or "") if st else ""
+    return {"token": token, "url": _share_url(token) if token else ""}
+
+
+@router.post("/share")
+def make_share(db: Session = Depends(get_db)):
+    """公開URLを作る・作り直す。作り直すと前のURLは開かなくなる。"""
+    import secrets
+    from app.models.settings import OrderSettings
+    st = db.query(OrderSettings).first()
+    if not st:
+        st = OrderSettings(id=1)
+        db.add(st)
+    st.accounting_share_token = secrets.token_urlsafe(24)
+    db.commit()
+    return {"token": st.accounting_share_token,
+            "url": _share_url(st.accounting_share_token)}
+
+
+@router.delete("/share")
+def drop_share(db: Session = Depends(get_db)):
+    """公開をやめる。URLは開かなくなる。"""
+    from app.models.settings import OrderSettings
+    st = db.query(OrderSettings).first()
+    if st:
+        st.accounting_share_token = None
+        db.commit()
+    return {"ok": True, "token": "", "url": ""}

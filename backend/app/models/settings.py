@@ -42,6 +42,9 @@ class OrderSettings(Base):
     # 取れない。画像認証があるので自動ログインはできず、ブラウザで
     # ログインしたときの値を貼ってもらう。1か月ほどで切れる
     taotaro_web_cookie = Column(Text, nullable=True)
+    # 月次管理表を税理士に見せるための合言葉。これが入ったURLでだけ
+    # 開ける。空なら公開ページは開かない（既定で閉じておく）
+    accounting_share_token = Column(String)
     # 配送依頼ごとに前回見た状態（JSON）。支払い待ちになった瞬間を
     # 知らせるために持つ。消えても次の巡回で入り直る
     send_order_states = Column(Text, nullable=True)

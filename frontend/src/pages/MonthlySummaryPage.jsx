@@ -37,12 +37,14 @@ const PURCHASE = [
   ['duty', '関税', '輸入許可日'],
 ]
 
-export default function MonthlySummaryPage() {
+export default function MonthlySummaryPage({ share = '' }) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
   const [open, setOpen] = useState({})
 
-  const load = () => api.get('/accounting/summary', { params: { months: 18 } })
+  // share が入っているのは税理士向けの公開ページ。合言葉つきで読むだけ
+  const load = () => api.get('/accounting/summary',
+    { params: share ? { months: 18, share } : { months: 18 } })
     .then(r => setData(r.data))
     .catch(e => setErr(e.response?.data?.detail || e.message))
 
@@ -50,7 +52,7 @@ export default function MonthlySummaryPage() {
 
   return (
     <div>
-      <UndatedReceipts onChanged={load} />
+      {!share && <UndatedReceipts onChanged={load} />}
 
       <div className="card" style={{ marginBottom: 12 }}>
         <b style={{ fontSize: 16 }}>📈 月次サマリー（発生ベース）</b>

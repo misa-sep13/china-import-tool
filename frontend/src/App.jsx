@@ -37,6 +37,7 @@ import KeepClaimsPublicPage from './pages/KeepClaimsPublicPage'
 import ImageRequestsPublicPage from './pages/ImageRequestsPublicPage'
 import WorkStatusPublicPage from './pages/WorkStatusPublicPage'
 import MonthlyAccountingDesignPage from './pages/MonthlyAccountingDesignPage'
+import AccountingPublicPage from './pages/AccountingPublicPage'
 import AccountingPage from './pages/AccountingPage'
 import WorkStatusPage from './pages/WorkStatusPage'
 import FbaPlanPage from './pages/FbaPlanPage'
@@ -128,6 +129,13 @@ function App() {
         <Route path="/work-public" element={<WorkStatusPublicPage />} />
       </Routes>
     )
+  }
+
+  // 月次管理表そのもの。税理士にURLを渡して見てもらうためログイン不要。
+  // 合言葉がURLに入っていないと、サーバーが数字を返さない
+  if (location.pathname === '/accounting-public'
+      || window.location.pathname.endsWith('/accounting-public')) {
+    return <AccountingPublicPage />
   }
 
   // 月次管理表の設計。税理士にURLを渡して読んでもらうためログイン不要。

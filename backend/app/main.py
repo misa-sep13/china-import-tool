@@ -104,6 +104,7 @@ def _migrate():
         ("products",      "customer_memo",       "ALTER TABLE products ADD COLUMN customer_memo TEXT"),
         ("products",      "supplier",            "ALTER TABLE products ADD COLUMN supplier VARCHAR DEFAULT 'タオタロウ'"),
         ("order_settings","taotaro_web_cookie",  "ALTER TABLE order_settings ADD COLUMN taotaro_web_cookie TEXT"),
+        ("order_settings","accounting_share_token", "ALTER TABLE order_settings ADD COLUMN accounting_share_token VARCHAR"),
         ("order_settings","cny_closed_before",   "ALTER TABLE order_settings ADD COLUMN cny_closed_before INTEGER DEFAULT 7"),
         ("order_settings","cny_closed_after",    "ALTER TABLE order_settings ADD COLUMN cny_closed_after INTEGER DEFAULT 15"),
         ("order_settings","national_closed_days","ALTER TABLE order_settings ADD COLUMN national_closed_days INTEGER DEFAULT 7"),
@@ -1782,6 +1783,38 @@ def _share_ok(request: _StarletteRequest, header_name: str) -> bool:
     return got == want or got.replace(" ", "+") == want
 
 
+def _accounting_share_ok(request: _StarletteRequest) -> bool:
+    """月次管理表の公開URLの合言葉が合っているか。
+
+    合言葉はDBに持っている（環境変数を足さずに、画面から作り直せる
+    ようにするため）。毎回DBを引かないよう、少しの間だけ覚えておく。
+    """
+    got = (request.query_params.get("share")
+           or request.headers.get("x-accounting-share") or "")
+    if not got:
+        return False
+    import time
+    now = time.time()
+    cached = getattr(_accounting_share_ok, "_cache", None)
+    if not cached or now - cached[0] > 30:
+        want = ""
+        try:
+            from app.core.database import SessionLocal
+            from app.models.settings import OrderSettings
+            db = SessionLocal()
+            try:
+                st = db.query(OrderSettings).first()
+                want = (getattr(st, "accounting_share_token", "") or "") if st else ""
+            finally:
+                db.close()
+        except Exception:
+            want = ""
+        cached = (now, want)
+        _accounting_share_ok._cache = cached
+    want = cached[1]
+    return bool(want) and got == want
+
+
 @app.middleware("http")
 async def auth_middleware(request: _StarletteRequest, call_next):
     if request.method == "OPTIONS" or not auth_enabled():
@@ -1803,6 +1836,14 @@ async def auth_middleware(request: _StarletteRequest, call_next):
     if (request.method == "GET"
             and path.startswith("/api/repack/public/")):
         return await call_next(request)
+    # 月次管理表を税理士に見せる口。相手にログインは渡せないので、
+    # 合言葉つきのURLでだけ通す。GETだけなので、見るしかできない
+    # （取り込みや書き換えは一切できない）。合言葉はDBに持っていて、
+    # 作り直せばその時点で前のURLは開かなくなる
+    if request.method == "GET" and path.startswith("/api/accounting/"):
+        if _accounting_share_ok(request):
+            return await call_next(request)
+
     # 商品キープの共有ページ。相手（別の会社の人）がログインなしで
     # 開いて、自分のキープを登録できるようにする。合言葉つきのURLでだけ
     # 通す。読むだけでなく書き込みも通すのは、相手も登録する必要があるため。
