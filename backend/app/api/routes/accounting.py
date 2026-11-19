@@ -598,12 +598,26 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
     from app.models.rakuten_sales import RakutenSalesSummary
     manu_skus = {p.sku for p in db.query(RakutenProduct).all()
                  if p.sku and _is_manufacturer_product(p)}
+    # 同じ行から販売費も拾う。広告・ポイント・クーポンは売上に紐づくので、
+    # その売上が立った月＝発生した月でよい
     for r in (db.query(RakutenSalesSummary.period, RakutenSalesSummary.sku_key,
-                       RakutenSalesSummary.sales, RakutenSalesSummary.product_cost)
+                       RakutenSalesSummary.sales, RakutenSalesSummary.product_cost,
+                       RakutenSalesSummary.rpp_cost, RakutenSalesSummary.coupon_ad_cost,
+                       RakutenSalesSummary.affiliate_cost, RakutenSalesSummary.affiliate_fee,
+                       RakutenSalesSummary.point_cost, RakutenSalesSummary.store_coupon,
+                       RakutenSalesSummary.coupon_fee, RakutenSalesSummary.platform_fee)
               .filter(RakutenSalesSummary.level == "sku")):
-        if r.period and r.sku_key in manu_skus:
+        if not r.period:
+            continue
+        if r.sku_key in manu_skus:
             m[r.period]["manu_sales"] += r.sales or 0
             m[r.period]["manu_cogs"] += r.product_cost or 0
+        m[r.period]["ad"] += ((r.rpp_cost or 0) + (r.coupon_ad_cost or 0)
+                              + (r.affiliate_cost or 0) + (r.affiliate_fee or 0))
+        m[r.period]["promo"] += ((r.point_cost or 0) + (r.store_coupon or 0)
+                                 + (r.coupon_fee or 0))
+        # 楽天への手数料。いまは率からの見込み。店舗別内訳書を読めたら実額に差し替える
+        m[r.period]["platform_fee"] += r.platform_fee or 0
 
     out = []
     for ym in sorted(m.keys(), reverse=True)[:max(1, min(months, 36))]:
@@ -616,6 +630,11 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
         china_cogs = (begin + purchase - end) if (begin is not None and end is not None) else None
         manu_cogs = v["manu_cogs"]
         cogs = (china_cogs + manu_cogs) if china_cogs is not None else None
+        # 販売費及び一般管理費。粗利から引くと営業利益になる
+        selling = v["ad"] + v["promo"] + v["platform_fee"]
+        sga = selling + v["fixed"]
+        gross = (sales - cogs) if cogs is not None else None
+        operating = (gross - sga) if gross is not None else None
         out.append({
             "ym": ym,
             "rate": round(rate_of(ym), 3),
@@ -641,6 +660,19 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
             "gross_rate": (round((sales - cogs) / sales * 100, 1)
                            if cogs is not None and sales and v["has_rakuten_sales"] else None),
             "fixed": round(v["fixed"]),
+            "sga": {
+                "ad": round(v["ad"]),
+                "promo": round(v["promo"]),
+                "platform_fee": round(v["platform_fee"]),
+                "fixed": round(v["fixed"]),
+            },
+            "sga_total": round(sga),
+            # 楽天への手数料は率からの見込み。店舗別内訳書を読めたら実額になる
+            "platform_fee_is_estimate": True,
+            "operating_profit": (round(operating)
+                                 if operating is not None and v["has_rakuten_sales"] else None),
+            "operating_rate": (round(operating / sales * 100, 1)
+                               if operating is not None and sales and v["has_rakuten_sales"] else None),
             "import_vat": round(v["import_vat"]),
             "charge": round(v["charge"]),
         })

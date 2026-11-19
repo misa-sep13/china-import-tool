@@ -9,13 +9,22 @@ import api from '../api/client'
  *   当月の仕入 … 発生ベース（商品代・中国国内送料・代行手数料・国際送料・通関手数料・関税）
  *   売上原価   … 期首在庫 ＋ 当月の仕入 − 期末在庫
  *   粗利       … 売上 − 売上原価
- * 固定費（月会費）と輸入消費税（仮払）は原価と分けて出す。
+ *   販管費     … 広告宣伝費・販売促進費・支払手数料
+ *   営業利益   … 粗利 − 販管費
+ * 輸入消費税（仮払）は原価に入れず別に出す。
  */
 
 const C = { line: '#e5e7eb', sub: '#64748b', text: '#0f172a', good: '#16a34a', bad: '#dc2626', warn: '#b45309' }
 const th = { padding: '6px 8px', textAlign: 'right', fontSize: 12, color: C.sub, background: '#f8fafc', whiteSpace: 'nowrap' }
 const td = { padding: '6px 8px', borderTop: `1px solid ${C.line}`, fontSize: 13, textAlign: 'right', whiteSpace: 'nowrap' }
 const yen = v => (v == null ? '—' : `¥${Math.round(v).toLocaleString('ja-JP')}`)
+
+const SGA = [
+  ['ad', '広告宣伝費', 'RPP・クーポン広告・アフィリエイト'],
+  ['promo', '販売促進費', 'ポイント原資・クーポン'],
+  ['platform_fee', '支払手数料（楽天）', '見込み。内訳書を読めば実額になります'],
+  ['fixed', '支払手数料（代行）', 'タオタロウ月会費'],
+]
 
 const PURCHASE = [
   ['goods', '商品代（値引・調整・削除を含む）', '明細の日'],
@@ -48,9 +57,11 @@ export default function MonthlySummaryPage() {
           仕入はその月に実際に発生したぶん（商品代は明細の日、送料・手数料は便の出荷日、関税は輸入許可日）で、
           チャージ（前払金）は入れていません。元はその月のタオタロウ明細の実勢レートで円にしています。
           <br />
-          輸入時の消費税は仮払消費税なので原価に入れず、月会費は固定費として別に出しています。
-          広告費・手数料などの販売費はここには入っていません（売上管理の画面にあります）。
-          行を押すと仕入の内訳が出ます。
+          輸入時の消費税は仮払消費税なので原価に入れず、別に出しています。
+          <b>販管費</b>は広告宣伝費・販売促進費（ポイント・クーポン）・支払手数料で、粗利から引くと営業利益です。
+          楽天への手数料だけは率からの<b>見込み</b>で、店舗別内訳書を読めるようになれば実額に替わります。
+          人件費・地代・ヤマト送料など、ツールの外にある費用はまだ入っていません。
+          行を押すと内訳が出ます。
         </div>
         {err && <div style={{ color: C.bad, fontSize: 12, marginTop: 6 }}>{err}</div>}
       </div>
@@ -71,7 +82,9 @@ export default function MonthlySummaryPage() {
                 <th style={th}>売上原価 計</th>
                 <th style={th}>粗利</th>
                 <th style={th}>粗利率</th>
-                <th style={th}>固定費</th>
+                <th style={th}>販管費</th>
+                <th style={th}>営業利益</th>
+                <th style={th}>営業利益率</th>
                 <th style={th}>輸入消費税（仮払）</th>
               </tr>
             </thead>
@@ -92,12 +105,16 @@ export default function MonthlySummaryPage() {
                       {yen(m.gross_profit)}
                     </td>
                     <td style={td}>{m.gross_rate == null ? '—' : `${m.gross_rate}%`}</td>
-                    <td style={{ ...td, color: C.sub }}>{yen(m.fixed)}</td>
+                    <td style={td}>{yen(m.sga_total)}</td>
+                    <td style={{ ...td, fontWeight: 700, color: m.operating_profit == null ? C.sub : m.operating_profit >= 0 ? C.good : C.bad }}>
+                      {yen(m.operating_profit)}
+                    </td>
+                    <td style={td}>{m.operating_rate == null ? '—' : `${m.operating_rate}%`}</td>
                     <td style={{ ...td, color: C.sub }}>{yen(m.import_vat)}</td>
                   </tr>
                   {open[m.ym] && (
                     <tr>
-                      <td colSpan={11} style={{ ...td, textAlign: 'left', background: '#f8fafc', padding: '8px 12px 12px 28px' }}>
+                      <td colSpan={14} style={{ ...td, textAlign: 'left', background: '#f8fafc', padding: '8px 12px 12px 28px' }}>
                         <table style={{ borderCollapse: 'collapse' }}>
                           <tbody>
                             <tr>
@@ -134,6 +151,21 @@ export default function MonthlySummaryPage() {
                               <td style={{ ...td, textAlign: 'left', fontWeight: 700, paddingTop: 14 }}>日本メーカー品の売上原価</td>
                               <td style={{ ...td, color: C.sub, fontSize: 11, paddingTop: 14 }}>売上 {yen(m.manu_sales)} 分</td>
                               <td style={{ ...td, fontWeight: 700, paddingTop: 14 }}>{yen(m.manu_cogs)}</td>
+                            </tr>
+                            <tr>
+                              <td colSpan={3} style={{ ...td, textAlign: 'left', fontWeight: 700, paddingTop: 14 }}>販売費及び一般管理費</td>
+                            </tr>
+                            {SGA.map(([k, label, note]) => (
+                              <tr key={k}>
+                                <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>{label}</td>
+                                <td style={{ ...td, borderTop: 'none', color: C.sub, fontSize: 11 }}>{note}</td>
+                                <td style={{ ...td, borderTop: 'none' }}>{yen(m.sga?.[k])}</td>
+                              </tr>
+                            ))}
+                            <tr>
+                              <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>販管費 計</td>
+                              <td style={td}></td>
+                              <td style={{ ...td, fontWeight: 700 }}>{yen(m.sga_total)}</td>
                             </tr>
                           </tbody>
                         </table>
