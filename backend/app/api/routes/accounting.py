@@ -668,7 +668,11 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
                        if (manu_begin is not None and manu_end is not None) else None)
         manu_cogs = manu_by_inv if manu_by_inv is not None else manu_sold
         manu_method = "inventory" if manu_by_inv is not None else "sold"
-        manu_variance = (manu_by_inv - manu_sold) if manu_by_inv is not None else None
+        # 販売式は楽天の売上管理を取り込んだ月しか出ない。取り込んでいない月に
+        # 差を出すと、在庫式の全額がそのまま差異に見えてしまう
+        manu_variance = ((manu_by_inv - manu_sold)
+                         if (manu_by_inv is not None and v["has_rakuten_sales"])
+                         else None)
         cogs = (china_cogs + manu_cogs) if china_cogs is not None else None
         # 販売費及び一般管理費。粗利から引くと営業利益になる。
         # 楽天への費用は、請求書が読めている月は実額、無い月は見込み
