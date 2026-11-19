@@ -734,8 +734,10 @@ async def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)
         q = max(0, int(q or 0))
         arrived[x.id] = q
         x.received_qty = already + q
-        # 仕入の発生日になるので、届いたぶんを1行ずつ残す
-        _log_receipt(db, o, x, q, when=data.received_date or None)
+        # 仕入の発生日になるので、届いたぶんを1行ずつ残す。
+        # 下書きの発注は送っていない＝頼んでいないので仕入にしない
+        if (o.status or "") == "sent":
+            _log_receipt(db, o, x, q, when=data.received_date or None)
     if not any(arrived.values()):
         raise HTTPException(400, "入荷する数量が入力されていません")
 
@@ -1041,8 +1043,9 @@ async def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
         if q <= 0:
             continue
         r.received_qty = already + q
-        _log_receipt(db, orders.get(r.order_id), r, q,
-                     when=data.received_date or None)
+        _o = orders.get(r.order_id)
+        if _o is not None and (_o.status or "") == "sent":
+            _log_receipt(db, _o, r, q, when=data.received_date or None)
         p = by_item.get(r.id)
         if not p:
             unlinked.append(r.name)
@@ -1416,12 +1419,22 @@ def receipts_backfill(db: Session = Depends(get_db)):
         logs.setdefault((lg.source_id, lg.sku), []).append(
             [jst.date().isoformat(), int(lg.received_qty or 0)])
 
+    # 下書きの発注は数えない。送っていない＝頼んでいないので、仕入にならない。
+    # 入荷待ち一覧でも下書きは除いている。先に作ってしまった行も消す
+    draft_ids = [o.id for o in orders.values() if (o.status or "") != "sent"]
+    removed = 0
+    if draft_ids:
+        removed = (db.query(WholesaleReceipt)
+                   .filter(WholesaleReceipt.order_id.in_(draft_ids)).delete(
+                       synchronize_session=False))
+        done = {r.order_item_id for r in db.query(WholesaleReceipt.order_item_id).all()}
+
     added = dated = undated = 0
     for x in db.query(WholesaleOrderItem).all():
         if x.id in done or (x.received_qty or 0) <= 0:
             continue
         o = orders.get(x.order_id)
-        if not o:
+        if not o or (o.status or "") != "sent":
             continue
         name = sup.get(o.supplier_id)
         w = witems.get(x.item_id)
@@ -1449,7 +1462,9 @@ def receipts_backfill(db: Session = Depends(get_db)):
             else:
                 undated += 1
     db.commit()
-    return {"ok": True, "added": added, "dated": dated, "undated": undated}
+    return {"ok": True, "added": added, "dated": dated, "undated": undated,
+            # 下書きの発注から作ってしまっていた行（頼んでいないので仕入ではない）
+            "removed_draft": removed}
 
 
 @router.get("/receipts/monthly")
