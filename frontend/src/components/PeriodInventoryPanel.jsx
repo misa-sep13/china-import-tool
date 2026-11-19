@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
+import { isPublicView } from '../lib/publicView'
 
 const fmtYen = (v) => `¥${Math.round(Number(v) || 0).toLocaleString()}`
 const fmtNum = (v) => Number(v || 0).toLocaleString()
@@ -63,7 +64,8 @@ export default function PeriodInventoryPanel({ platform = 'rakuten', title = '�
         <span style={{ fontSize: 12, color: '#16a34a', fontWeight: 600 }}>
           毎月末 23:50 に自動で確定します
         </span>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+        {/* 税理士向けの公開ページは読むだけ。確定の操作は出さない */}
+        {!isPublicView() && <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           <input type="month" value={period} onChange={e => setPeriod(e.target.value)} style={{ width: 150 }} />
           <button
             className="btn btn-primary"
@@ -80,7 +82,7 @@ export default function PeriodInventoryPanel({ platform = 'rakuten', title = '�
           >
             {captureMut.isPending ? '確定中...' : 'この月で確定'}
           </button>
-        </div>
+        </div>}
       </div>
 
       {result && (
@@ -99,7 +101,7 @@ export default function PeriodInventoryPanel({ platform = 'rakuten', title = '�
       {rows.length === 0 ? (
         <div style={{ fontSize: 13, color: '#64748b' }}>
           まだ確定した月がありません。毎月末の23:50に自動で保存されます。
-          いますぐ残したいときは、対象月を選んで「この月で確定」を押してください。
+          {!isPublicView() && 'いますぐ残したいときは、対象月を選んで「この月で確定」を押してください。'}
         </div>
       ) : (
         <div style={{ overflowX: 'auto' }}>
