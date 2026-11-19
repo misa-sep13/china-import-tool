@@ -609,18 +609,37 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
 
     # メーカー品の仕入。届いた日で計上する（発注日でも支払日でもない）。
     # 分納があるので、入荷履歴を1行ずつ足す
+    # メーカー品の仕入は取引先ごとに決める。
+    # 請求書があればそれ（発注どおりに届くとは限らず、多く届くことも、
+    # 頼んでいないものが入ることもある。実際に請求された額が仕入）。
+    # 無ければ入荷履歴で埋める。
+    # 月まるごとで切り替えると、請求書を残していない取引先（エジソン・
+    # リビック）の仕入が、マレフィオーレの請求書がある月だけ消える
     from app.models.wholesale_invoice import WholesaleInvoiceLine
     from app.models.wholesale_receipt import WholesaleReceipt
-    for r in db.query(WholesaleReceipt.ym, F.sum(WholesaleReceipt.amount)).group_by(
-            WholesaleReceipt.ym):
+    manu_inv: dict = defaultdict(float)      # (ym, 取引先) → 請求書
+    manu_rec: dict = defaultdict(float)      # (ym, 取引先) → 入荷履歴
+    for r in db.query(WholesaleReceipt.ym, WholesaleReceipt.supplier_name,
+                      F.sum(WholesaleReceipt.amount)).group_by(
+            WholesaleReceipt.ym, WholesaleReceipt.supplier_name):
         if r[0]:
-            m[r[0]]["manu_receipt"] += r[1] or 0
-    # 請求書が読めている月は、そちらを仕入とする。発注どおりに届くとは
-    # 限らず（多く届く・頼んでいないものが入る）、実際に請求された額が仕入
-    for r in db.query(WholesaleInvoiceLine.ym, F.sum(WholesaleInvoiceLine.amount)).group_by(
-            WholesaleInvoiceLine.ym):
+            manu_rec[(r[0], r[1] or "")] += r[2] or 0
+    for r in db.query(WholesaleInvoiceLine.ym, WholesaleInvoiceLine.supplier,
+                      F.sum(WholesaleInvoiceLine.amount)).group_by(
+            WholesaleInvoiceLine.ym, WholesaleInvoiceLine.supplier):
         if r[0]:
-            m[r[0]]["manu_invoice"] += r[1] or 0
+            manu_inv[(r[0], r[1] or "")] += r[2] or 0
+    manu_by_supplier: dict = defaultdict(dict)
+    for key in set(manu_inv) | set(manu_rec):
+        ym_, sup_ = key
+        inv_amt, rec_amt = manu_inv.get(key, 0.0), manu_rec.get(key, 0.0)
+        use = inv_amt if inv_amt else rec_amt
+        manu_by_supplier[ym_][sup_] = {
+            "invoice": round(inv_amt), "receipt": round(rec_amt),
+            "used": round(use), "source": "invoice" if inv_amt else "receipt"}
+        m[ym_]["manu_purchase"] += use
+        m[ym_]["manu_invoice"] += inv_amt
+        m[ym_]["manu_receipt"] += rec_amt
 
     # 日本メーカー品の売上原価：売上管理（楽天）の「売れた数 × 原価」
     from app.api.routes.rakuten import _is_manufacturer_product
@@ -670,9 +689,12 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
         manu_sold = v["manu_cogs"]
         manu_begin = inv_manu.get(_prev_ym(ym))
         manu_end = inv_manu.get(ym)
-        # 請求書があればそれ、無ければ入荷履歴で埋める
-        manu_purchase = v["manu_invoice"] or v["manu_receipt"]
-        manu_purchase_source = "invoice" if v["manu_invoice"] else "receipt"
+        # 取引先ごとに請求書／入荷履歴を選んだ合計
+        manu_purchase = v["manu_purchase"]
+        by_sup = manu_by_supplier.get(ym, {})
+        srcs = {x["source"] for x in by_sup.values()}
+        manu_purchase_source = (srcs.pop() if len(srcs) == 1
+                                else "mixed" if srcs else "receipt")
         manu_by_inv = ((manu_begin + manu_purchase - manu_end)
                        if (manu_begin is not None and manu_end is not None) else None)
         manu_cogs = manu_by_inv if manu_by_inv is not None else manu_sold
@@ -728,6 +750,7 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
             "manu_purchase_source": manu_purchase_source,
             "manu_purchase_invoice": round(v["manu_invoice"]),
             "manu_purchase_receipt": round(v["manu_receipt"]),
+            "manu_by_supplier": by_sup,
             "manu_inventory_begin": round(manu_begin) if manu_begin is not None else None,
             "manu_inventory_end": round(manu_end) if manu_end is not None else None,
             "manu_cogs_sold": round(manu_sold),

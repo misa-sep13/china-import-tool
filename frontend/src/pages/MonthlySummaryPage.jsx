@@ -163,9 +163,25 @@ export default function MonthlySummaryPage() {
                             </tr>
                             <tr>
                               <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>当月の仕入（メーカー品）</td>
-                              <td style={{ ...td, borderTop: 'none', color: C.sub, fontSize: 11 }}>入荷した日</td>
+                              <td style={{ ...td, borderTop: 'none', color: C.sub, fontSize: 11 }}>
+                                {m.manu_purchase_source === 'invoice' ? '請求書（請求日）'
+                                  : m.manu_purchase_source === 'mixed' ? '取引先ごとに請求書／入荷日'
+                                  : '入荷した日'}
+                              </td>
                               <td style={{ ...td, borderTop: 'none' }}>{yen(m.manu_purchase)}</td>
                             </tr>
+                            {Object.entries(m.manu_by_supplier || {}).map(([sup, v]) => (
+                              <tr key={sup}>
+                                <td style={{ ...td, textAlign: 'left', borderTop: 'none', paddingLeft: 24, color: C.sub }}>
+                                  {sup || '（取引先不明）'}
+                                </td>
+                                <td style={{ ...td, borderTop: 'none', fontSize: 11,
+                                  color: v.source === 'invoice' ? C.good : C.warn }}>
+                                  {v.source === 'invoice' ? '請求書' : '入荷履歴（請求書なし）'}
+                                </td>
+                                <td style={{ ...td, borderTop: 'none', color: C.sub }}>{yen(v.used)}</td>
+                              </tr>
+                            ))}
                             <tr>
                               <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>期末在庫（メーカー品）</td>
                               <td style={{ ...td, borderTop: 'none', color: C.sub, fontSize: 11 }}>当月末</td>
