@@ -598,20 +598,25 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
     from app.models.rakuten_sales import RakutenSalesSummary
     manu_skus = {p.sku for p in db.query(RakutenProduct).all()
                  if p.sku and _is_manufacturer_product(p)}
-    # 同じ行から販売費も拾う。広告・ポイント・クーポンは売上に紐づくので、
-    # その売上が立った月＝発生した月でよい
     for r in (db.query(RakutenSalesSummary.period, RakutenSalesSummary.sku_key,
-                       RakutenSalesSummary.sales, RakutenSalesSummary.product_cost,
+                       RakutenSalesSummary.sales, RakutenSalesSummary.product_cost)
+              .filter(RakutenSalesSummary.level == "sku")):
+        if r.period and r.sku_key in manu_skus:
+            m[r.period]["manu_sales"] += r.sales or 0
+            m[r.period]["manu_cogs"] += r.product_cost or 0
+
+    # 販売費。広告・ポイント・クーポンは売上に紐づくので、その売上が立った月
+    # ＝発生した月でよい。
+    # 親商品の行から拾う。RPP・クーポン広告・アフィリエイトのレポートは
+    # 商品管理番号ごとなので、広告費はSKUの行には入っていない
+    for r in (db.query(RakutenSalesSummary.period,
                        RakutenSalesSummary.rpp_cost, RakutenSalesSummary.coupon_ad_cost,
                        RakutenSalesSummary.affiliate_cost, RakutenSalesSummary.affiliate_fee,
                        RakutenSalesSummary.point_cost, RakutenSalesSummary.store_coupon,
                        RakutenSalesSummary.coupon_fee, RakutenSalesSummary.platform_fee)
-              .filter(RakutenSalesSummary.level == "sku")):
+              .filter(RakutenSalesSummary.level == "parent")):
         if not r.period:
             continue
-        if r.sku_key in manu_skus:
-            m[r.period]["manu_sales"] += r.sales or 0
-            m[r.period]["manu_cogs"] += r.product_cost or 0
         m[r.period]["ad"] += ((r.rpp_cost or 0) + (r.coupon_ad_cost or 0)
                               + (r.affiliate_cost or 0) + (r.affiliate_fee or 0))
         m[r.period]["promo"] += ((r.point_cost or 0) + (r.store_coupon or 0)
