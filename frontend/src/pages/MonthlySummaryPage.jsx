@@ -41,6 +41,14 @@ export default function MonthlySummaryPage({ share = '' }) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
   const [open, setOpen] = useState({})
+  const [showOld, setShowOld] = useState(false)
+  // 売上も原価も出ていない古い月は、最初はたたんでおく（見たい月が埋もれるので）。
+  // 数字が出ている最初の月から後ろは、売上がまだ無い直近の月も出す
+  const allMonths = data?.months || []
+  const activeYms = allMonths.filter(m => m.has_rakuten_sales || m.cogs != null || m.sales_amazon > 0).map(m => m.ym)
+  const firstActive = activeYms.length ? activeYms[activeYms.length - 1] : ''
+  const visibleMonths = showOld || !firstActive ? allMonths : allMonths.filter(m => m.ym >= firstActive)
+  const hiddenCount = allMonths.length - allMonths.filter(m => !firstActive || m.ym >= firstActive).length
 
   // share が入っているのは税理士向けの公開ページ。合言葉つきで読むだけ
   const load = () => api.get('/accounting/summary',
@@ -105,61 +113,69 @@ export default function MonthlySummaryPage({ share = '' }) {
 
       {data && (
         <div className="card" style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
             <thead>
               <tr>
                 <th style={{ ...th, textAlign: 'left' }}>月</th>
-                <th style={th}>売上（楽天）</th>
-                <th style={th}>売上（Amazon）</th>
-                <th style={th}>売上計</th>
-                <th style={th}>中国輸入の原価（楽天）</th>
-                <th style={th}>メーカー品の原価</th>
-                <th style={th}>Amazonの原価</th>
-                <th style={th}>売上原価 計</th>
+                <th style={th}>売上</th>
+                <th style={th}>売上原価</th>
                 <th style={th}>粗利</th>
-                <th style={th}>粗利率</th>
                 <th style={th}>販管費</th>
                 <th style={th}>営業利益</th>
-                <th style={th}>営業利益率</th>
+                <th style={th} title="Amazon向けに仕入れて、まだ売れていない分。月末在庫の記録が始まるまで原価に入れません">
+                  Amazon向け在庫へ
+                </th>
                 <th style={th}>輸入消費税（仮払）</th>
               </tr>
             </thead>
             <tbody>
-              {data.months.map(m => (
+              {visibleMonths.map(m => {
+                const sub = { display: 'block', fontSize: 11, color: C.sub, fontWeight: 400 }
+                const dash = <span style={{ color: '#cbd5e1' }}>—</span>
+                return (
                 <Fragment key={m.ym}>
                   <tr style={{ cursor: 'pointer' }} onClick={() => setOpen(o => ({ ...o, [m.ym]: !o[m.ym] }))}>
                     <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>
                       <span style={{ color: C.sub, marginRight: 4 }}>{open[m.ym] ? '▾' : '▸'}</span>{m.ym}
                     </td>
-                    <td style={td}>{m.has_rakuten_sales ? yen(m.sales_rakuten) : <span style={{ color: C.warn }}>未取込</span>}</td>
-                    <td style={td}>{m.sales_amazon ? yen(m.sales_amazon) : <span style={{ color: C.sub }}>—</span>}</td>
-                    <td style={{ ...td, fontWeight: 600 }}>{yen(m.sales)}</td>
-                    <td style={td}>{m.china_cogs == null ? <span style={{ color: C.sub }}>在庫未確定</span> : yen(m.china_cogs)}</td>
-                    <td style={td}>{yen(m.manu_cogs)}</td>
+                    <td style={{ ...td, fontWeight: 600 }}>
+                      {m.has_rakuten_sales ? yen(m.sales) : <span style={{ color: C.warn, fontWeight: 400 }}>楽天 未取込</span>}
+                      {m.sales_amazon > 0 && <span style={sub}>うちAmazon {yen(m.sales_amazon)}</span>}
+                    </td>
                     <td style={td}>
-                      {m.amazon_method === 'inventory'
-                        ? yen(m.amazon_cogs)
-                        : m.purchase_amazon_total
-                          ? <span style={{ color: C.sub }} title="Amazonの月末在庫の記録が始まるまで、仕入は売れていない在庫として原価に入れません">
-                              ¥0<span style={{ fontSize: 11 }}>（在庫へ {yen(m.purchase_amazon_total)}）</span>
-                            </span>
-                          : <span style={{ color: C.sub }}>—</span>}
+                      {m.cogs == null ? <span style={{ color: C.sub }}>在庫未確定</span> : yen(m.cogs)}
                     </td>
-                    <td style={{ ...td, fontWeight: 600 }}>{yen(m.cogs)}</td>
                     <td style={{ ...td, fontWeight: 700, color: m.gross_profit == null ? C.sub : m.gross_profit >= 0 ? C.good : C.bad }}>
-                      {yen(m.gross_profit)}
+                      {m.gross_profit == null ? dash : yen(m.gross_profit)}
+                      {m.gross_rate != null && <span style={sub}>{m.gross_rate}%</span>}
                     </td>
-                    <td style={td}>{m.gross_rate == null ? '—' : `${m.gross_rate}%`}</td>
                     <td style={td}>{yen(m.sga_total)}</td>
                     <td style={{ ...td, fontWeight: 700, color: m.operating_profit == null ? C.sub : m.operating_profit >= 0 ? C.good : C.bad }}>
-                      {yen(m.operating_profit)}
+                      {m.operating_profit == null ? dash : yen(m.operating_profit)}
+                      {m.operating_rate != null && <span style={sub}>{m.operating_rate}%</span>}
                     </td>
-                    <td style={td}>{m.operating_rate == null ? '—' : `${m.operating_rate}%`}</td>
-                    <td style={{ ...td, color: C.sub }}>{yen(m.import_vat)}</td>
+                    <td style={{ ...td, color: C.sub }}>
+                      {m.amazon_method === 'inventory'
+                        ? <span title="Amazonの在庫の記録があるので、原価は在庫式で出しています">原価 {yen(m.amazon_cogs)}</span>
+                        : m.purchase_amazon_total >= 1000 ? yen(m.purchase_amazon_total) : dash}
+                    </td>
+                    <td style={{ ...td, color: C.sub }}>{m.import_vat ? yen(m.import_vat) : dash}</td>
                   </tr>
                   {open[m.ym] && (
                     <tr>
-                      <td colSpan={15}style={{ ...td, textAlign: 'left', background: '#f8fafc', padding: '8px 12px 12px 28px' }}>
+                      <td colSpan={8}style={{ ...td, textAlign: 'left', background: '#f8fafc', padding: '8px 12px 12px 28px' }}>
+                        {/* 売上原価の内訳（表では1列にまとめている） */}
+                        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 13, marginBottom: 10,
+                          padding: '8px 10px', background: '#fff', border: `1px solid ${C.line}`, borderRadius: 6 }}>
+                          <b>売上原価の内訳</b>
+                          <span>中国輸入（楽天） <b>{m.china_cogs == null ? '在庫未確定' : yen(m.china_cogs)}</b></span>
+                          <span>メーカー品 <b>{yen(m.manu_cogs)}</b></span>
+                          <span>Amazon <b>{yen(m.amazon_cogs)}</b>
+                            {m.amazon_method !== 'inventory' && m.purchase_amazon_total > 0 &&
+                              <span style={{ color: C.sub }}>（仕入 {yen(m.purchase_amazon_total)} は在庫へ）</span>}
+                          </span>
+                          {m.sales_amazon > 0 && <span>売上：楽天 {yen(m.sales_rakuten)}・Amazon {yen(m.sales_amazon)}</span>}
+                        </div>
                         <table style={{ borderCollapse: 'collapse' }}>
                           <tbody>
                             <tr>
@@ -348,9 +364,17 @@ export default function MonthlySummaryPage({ share = '' }) {
                     </tr>
                   )}
                 </Fragment>
-              ))}
+                )
+              })}
             </tbody>
           </table>
+          {hiddenCount > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={() => setShowOld(v => !v)}>
+                {showOld ? '古い月をたたむ' : `売上・原価の出ていない古い月も表示（${hiddenCount}か月）`}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
