@@ -22,7 +22,8 @@ const yen = v => (v == null ? '—' : `¥${Math.round(v).toLocaleString('ja-JP')
 const SGA = [
   ['ad', '広告宣伝費', 'RPP・クーポン広告・アフィリエイト'],
   ['promo', '販売促進費', 'ポイント原資・クーポン'],
-  ['platform_fee', '支払手数料（楽天）', '見込み。内訳書を読めば実額になります'],
+  ['platform_fee', '支払手数料（楽天）', '決済手数料・システム利用料・出店料'],
+  ['shipping', '荷造運賃', 'ヤマト運輸の請求書'],
   ['fixed', '支払手数料（代行）', 'タオタロウ月会費'],
 ]
 
@@ -59,8 +60,10 @@ export default function MonthlySummaryPage() {
           <br />
           輸入時の消費税は仮払消費税なので原価に入れず、別に出しています。
           <b>販管費</b>は広告宣伝費・販売促進費（ポイント・クーポン）・支払手数料で、粗利から引くと営業利益です。
-          楽天への手数料だけは率からの<b>見込み</b>で、店舗別内訳書を読めるようになれば実額に替わります。
-          人件費・地代・ヤマト送料など、ツールの外にある費用はまだ入っていません。
+          楽天への費用は<b>店舗別内訳書の実額</b>を使います（読めていない月だけ率からの見込み）。
+          内訳書は<b>精算対象期間の月</b>に入れています。3月分のシステム利用料が6月発行の請求書に
+          載るなど、品目ごとに遅れ方が違うためです。ヤマトの送料は請求書の締め月に入れています。
+          人件費・地代など、ツールの外にある費用はまだ入っていません。
           行を押すと内訳が出ます。
         </div>
         {err && <div style={{ color: C.bad, fontSize: 12, marginTop: 6 }}>{err}</div>}
@@ -202,7 +205,18 @@ export default function MonthlySummaryPage() {
                               </tr>
                             ))}
                             <tr>
-                              <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>販管費 計</td>
+                              <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>
+                                販管費 計
+                                <span style={{ fontWeight: 400, fontSize: 11, marginLeft: 6,
+                                  color: m.fee_source === 'invoice' ? C.good : C.warn }}>
+                                  {m.fee_source === 'invoice' ? '楽天は請求書の実額' : '楽天は見込み（内訳書が未取込）'}
+                                </span>
+                                {!m.has_shipping_invoice && (
+                                  <span style={{ fontWeight: 400, fontSize: 11, marginLeft: 6, color: C.bad }}>
+                                    ヤマト送料なし
+                                  </span>
+                                )}
+                              </td>
                               <td style={td}></td>
                               <td style={{ ...td, fontWeight: 700 }}>{yen(m.sga_total)}</td>
                             </tr>

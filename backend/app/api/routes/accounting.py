@@ -9,6 +9,7 @@
 
 設計の全体像は docs/月次管理表_発生ベース会計_設計.md にある。
 """
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -595,6 +596,17 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
             inv[period] += amt or 0
         inv_pf[period].add(pf)
 
+    # 請求書から読めた実額。読めている月は見込みより優先する
+    from app.models.billing_line import BillingLine
+    bill: dict = defaultdict(lambda: defaultdict(float))
+    has_invoice: set = set()
+    for b in db.query(BillingLine).all():
+        if not b.ym:
+            continue
+        bill[b.ym][b.bucket] += b.amount or 0
+        if b.source == "rakuten_rms":
+            has_invoice.add(b.ym)
+
     # メーカー品の仕入。届いた日で計上する（発注日でも支払日でもない）。
     # 分納があるので、入荷履歴を1行ずつ足す
     from app.models.wholesale_receipt import WholesaleReceipt
@@ -658,9 +670,20 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
         manu_method = "inventory" if manu_by_inv is not None else "sold"
         manu_variance = (manu_by_inv - manu_sold) if manu_by_inv is not None else None
         cogs = (china_cogs + manu_cogs) if china_cogs is not None else None
-        # 販売費及び一般管理費。粗利から引くと営業利益になる
-        selling = v["ad"] + v["promo"] + v["platform_fee"]
-        sga = selling + v["fixed"]
+        # 販売費及び一般管理費。粗利から引くと営業利益になる。
+        # 楽天への費用は、請求書が読めている月は実額、無い月は見込み
+        b = bill.get(ym, {})
+        if ym in has_invoice:
+            ad = b.get("ad", 0.0)
+            promo = b.get("promo", 0.0)
+            rakuten_fee = (b.get("payment_fee", 0.0) + b.get("system_fee", 0.0)
+                           + b.get("rent", 0.0) + b.get("other", 0.0))
+            fee_source = "invoice"
+        else:
+            ad, promo, rakuten_fee = v["ad"], v["promo"], v["platform_fee"]
+            fee_source = "estimate"
+        shipping_jpy = b.get("shipping", 0.0)      # ヤマトの請求書
+        sga = ad + promo + rakuten_fee + shipping_jpy + v["fixed"]
         gross = (sales - cogs) if cogs is not None else None
         operating = (gross - sga) if gross is not None else None
         out.append({
@@ -696,14 +719,16 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
                            if cogs is not None and sales and v["has_rakuten_sales"] else None),
             "fixed": round(v["fixed"]),
             "sga": {
-                "ad": round(v["ad"]),
-                "promo": round(v["promo"]),
-                "platform_fee": round(v["platform_fee"]),
+                "ad": round(ad),
+                "promo": round(promo),
+                "platform_fee": round(rakuten_fee),
+                "shipping": round(shipping_jpy),
                 "fixed": round(v["fixed"]),
             },
             "sga_total": round(sga),
-            # 楽天への手数料は率からの見込み。店舗別内訳書を読めたら実額になる
-            "platform_fee_is_estimate": True,
+            # invoice … 請求書の実額 / estimate … 率からの見込み
+            "fee_source": fee_source,
+            "has_shipping_invoice": bool(shipping_jpy),
             "operating_profit": (round(operating)
                                  if operating is not None and v["has_rakuten_sales"] else None),
             "operating_rate": (round(operating / sales * 100, 1)
@@ -712,3 +737,112 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
             "charge": round(v["charge"]),
         })
     return {"months": out, "default_rate": default_rate}
+
+
+# ---------- 請求書から実額を読む ----------
+#
+# 楽天への手数料とヤマトの送料は、率からの見込みではなく請求書が正。
+# 書類タブに入れてある原本をそのまま読む。
+#
+# 楽天は「精算対象期間」で計上する。3月分のシステム利用料が6月発行の
+# 請求書に載っていて、品目ごとに遅れ方も違う（楽天ペイ利用料は2か月、
+# 広告は3か月）。発行月で計上するとまるごとずれる。
+
+
+def _doc_key(no: str) -> str:
+    """店舗別内訳書Noの枝番を落とす。
+
+    同じ内容が翌月に「再掲」として -31 → -32 で出てくる。
+    枝番を落として同じものと見なせば、二重に数えない。
+    """
+    return (no or "").rsplit("-", 1)[0] if "-" in (no or "") else (no or "")
+
+
+@router.post("/billing/parse")
+def billing_parse(db: Session = Depends(get_db)):
+    """書類タブに入っている請求書を読んで、明細を取り込む。
+
+    何度やっても増えない（同じ請求書の行は入れ替える）。
+    """
+    from app.models.billing_line import BillingLine
+    from app.models.import_permit import ImportPermit
+    from app.services import doc_period, invoice_parse
+
+    docs = (db.query(ImportPermit)
+            .filter(ImportPermit.kind.in_(("rms", "yamato"))).all())
+    added = 0
+    failed = []
+    seen_keys = set()
+    for d in docs:
+        if not d.pdf:
+            continue
+        text = doc_period.text_of(d.pdf, d.filename or "")
+        if not text:
+            failed.append({"id": d.id, "file": d.filename, "why": "文字が取れません"})
+            continue
+        if d.kind == "rms":
+            r = invoice_parse.parse_rakuten_rms(text)
+            if not r["items"]:
+                failed.append({"id": d.id, "file": d.filename, "why": "明細が読めません"})
+                continue
+            key = (_doc_key(r["doc_no"]), r["shop_id"])
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            db.query(BillingLine).filter(
+                BillingLine.source == "rakuten_rms",
+                BillingLine.doc_no == _doc_key(r["doc_no"]),
+                BillingLine.shop_id == r["shop_id"]).delete()
+            for x in r["items"]:
+                db.add(BillingLine(
+                    source="rakuten_rms", document_id=d.id,
+                    doc_no=_doc_key(r["doc_no"]), shop_id=r["shop_id"], shop=r["shop"],
+                    bucket=x["bucket"], name=x["name"],
+                    period_start=x["period_start"], period_end=x["period_end"],
+                    ym=x["ym"], amount=x["amount"]))
+                added += 1
+        else:
+            r = invoice_parse.parse_yamato(text)
+            if not r.get("ok"):
+                failed.append({"id": d.id, "file": d.filename, "why": "合計が決まりません"})
+                continue
+            # 計上月は書類タブで決まっている月（ファイル名の締め日から
+            # 振り分けていて、画面で付け替えもできる）
+            ym = (d.permit_date or "")[:7] or None
+            if not re.fullmatch(r"\d{4}-\d{2}", ym or ""):
+                failed.append({"id": d.id, "file": d.filename, "why": "何月分か決まりません"})
+                continue
+            db.query(BillingLine).filter(
+                BillingLine.source == "yamato",
+                BillingLine.doc_no == r["doc_no"]).delete()
+            db.add(BillingLine(
+                source="yamato", document_id=d.id, doc_no=r["doc_no"],
+                bucket="shipping", name="ヤマト運輸 送料",
+                period_end=None, ym=ym, amount=r["amount"]))
+            added += 1
+    db.commit()
+    return {"ok": True, "documents": len(docs), "lines": added, "failed": failed[:20]}
+
+
+@router.get("/billing/monthly")
+def billing_monthly(db: Session = Depends(get_db)):
+    """月 × 費目。請求書から読めた実額。"""
+    from app.models.billing_line import BillingLine
+    from app.services.invoice_parse import BUCKET_LABEL
+
+    by: dict = {}
+    for r in db.query(BillingLine).all():
+        if not r.ym:
+            continue
+        m = by.setdefault(r.ym, {"ym": r.ym, "buckets": {}, "items": []})
+        m["buckets"][r.bucket] = m["buckets"].get(r.bucket, 0) + (r.amount or 0)
+        m["items"].append({
+            "source": r.source, "shop": r.shop or "", "bucket": r.bucket,
+            "name": r.name or "", "amount": r.amount or 0,
+            "period": f"{r.period_start or ''}〜{r.period_end or ''}".strip("〜"),
+        })
+    for m in by.values():
+        m["total"] = sum(m["buckets"].values())
+        m["items"].sort(key=lambda x: -x["amount"])
+    return {"months": [by[k] for k in sorted(by, reverse=True)],
+            "bucket_labels": BUCKET_LABEL}
