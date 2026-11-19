@@ -13,7 +13,7 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -629,10 +629,20 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
             WholesaleInvoiceLine.ym, WholesaleInvoiceLine.supplier):
         if r[0]:
             manu_inv[(r[0], r[1] or "")] += r[2] or 0
+    # 銀行の出金。請求書が残っていない仕入（再発行もできない）は、
+    # 実際に払った額で埋める（請求書の無い出金を税抜にして出金日の月へ）
+    try:
+        from app.services import bank_reconcile
+        bank = bank_reconcile.fill_by_month(db)
+    except Exception:
+        bank = {}
     manu_by_supplier: dict = defaultdict(dict)
-    for key in set(manu_inv) | set(manu_rec):
+    for key in set(manu_inv) | set(manu_rec) | {k for k, v in bank.items() if v["fill"]}:
         ym_, sup_ = key
-        inv_amt, rec_amt = manu_inv.get(key, 0.0), manu_rec.get(key, 0.0)
+        b = bank.get(key) or {}
+        fill = b.get("fill", 0.0)
+        # 請求書 ＋ 請求書の無い支払い ＝ 実際に請求・支払いのあった仕入
+        inv_amt, rec_amt = manu_inv.get(key, 0.0) + fill, manu_rec.get(key, 0.0)
         # 多いほうを採る。マレフィオーレは納品のたびに請求書を出していて
         # 月をまたぐズレが構造的に起きないので、差が出る＝どちらかが
         # 欠けている。少ないほうを採ると仕入を過少に計上してしまう。
@@ -647,7 +657,11 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
             "used": round(use), "source": src,
             # 片方がもう片方を大きく下回る＝資料が欠けている
             "gap": round(abs(inv_amt - rec_amt)),
-            "both": bool(inv_amt and rec_amt)}
+            "both": bool(inv_amt and rec_amt),
+            # 銀行：その月の出金（税込）と、請求書の無い出金から足した仕入（税抜）
+            "bank_paid": round(b.get("paid", 0.0)),
+            "bank_fill": round(fill),
+            "bank_no_invoice_count": b.get("no_invoice_count", 0)}
         m[ym_]["manu_purchase"] += use
         m[ym_]["manu_invoice"] += inv_amt
         m[ym_]["manu_receipt"] += rec_amt
@@ -1091,6 +1105,59 @@ def wholesale_reconcile(ym: str, db: Session = Depends(get_db)):
         "diff": inv_total - rec_total,
         "rows": sorted(rows, key=lambda x: -(abs(x["diff_amount"] or 0))),
         "only_receipt": only_receipt,
+    }
+
+
+# ---------- 銀行の出金で卸の仕入を合わせる ----------
+#
+# 請求書が残っていない仕入がある（再発行もできない）。楽天銀行の入出金明細CSVから
+# 卸への出金だけを拾い、請求書と1件ずつ突き合わせる。ほかの行は保存しない。
+
+@router.post("/bank/import")
+async def bank_import(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """楽天銀行の入出金明細CSVを入れる。何度入れても同じ出金は増えない。"""
+    from app.models.bank_payment import BankPayment
+    from app.services import bank_reconcile
+    try:
+        rows = bank_reconcile.parse_rakuten_csv(await file.read())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    added = 0
+    for r in rows:
+        if db.query(BankPayment).filter(BankPayment.key == r["key"]).first():
+            continue
+        db.add(BankPayment(**r))
+        added += 1
+    db.commit()
+    days = sorted(r["paid_on"] for r in rows)
+    by_sup: dict = defaultdict(int)
+    for r in rows:
+        by_sup[r["supplier"]] += 1
+    return {"ok": True, "found": len(rows), "added": added,
+            "from": days[0] if days else None, "to": days[-1] if days else None,
+            "suppliers": dict(by_sup)}
+
+
+@router.get("/bank/reconcile")
+def bank_reconcile_view(db: Session = Depends(get_db)):
+    """出金と請求書の突き合わせ。請求書の無い出金・出金の無い請求書を出す。"""
+    from app.models.bank_payment import BankPayment
+    from app.services import bank_reconcile as br
+    r = br.reconcile(db)
+    rng = db.query(BankPayment.paid_on).order_by(BankPayment.paid_on.asc()).all()
+    return {
+        "from": rng[0][0] if rng else None, "to": rng[-1][0] if rng else None,
+        "matched_count": len(r["matched"]),
+        "unmatched": sorted(
+            [{**p, "fill": p["supplier"] in br.FILL_SUPPLIERS,
+              "net": round(p["amount"] / br.TAX)} for p in r["unmatched"]],
+            key=lambda x: x["paid_on"]),
+        # 銀行の期間内に請求日があるのに、出金に当たらなかった請求書
+        "unpaid_docs": sorted(
+            [d for d in r["unpaid_docs"]
+             if rng and rng[0][0] <= (d.get("issued") or "") <= rng[-1][0]],
+            key=lambda d: d.get("issued") or ""),
+        "fill_suppliers": sorted(br.FILL_SUPPLIERS),
     }
 
 

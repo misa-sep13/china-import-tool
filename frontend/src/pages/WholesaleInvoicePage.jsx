@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import api from '../api/client'
 import { isPublicView } from '../lib/publicView'
+import BankReconcileCard from '../components/BankReconcileCard'
 
 /**
  * 卸の仕入（メーカー品）。請求書と入荷履歴の突合。
@@ -62,6 +63,7 @@ export default function WholesaleInvoicePage() {
 
   return (
     <div>
+      <BankReconcileCard onChanged={loadMonths} />
       <div className="card" style={{ marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <b style={{ fontSize: 16 }}>🧾 卸の仕入（メーカー品）</b>

@@ -85,6 +85,7 @@ def _migrate():
     import app.models.billing_line  # noqa: F401
     import app.models.wholesale_invoice  # noqa: F401
     import app.models.taotaro_send_order  # noqa: F401
+    import app.models.bank_payment  # noqa: F401
     Base.metadata.create_all(bind=engine)
 
     migrations = [
