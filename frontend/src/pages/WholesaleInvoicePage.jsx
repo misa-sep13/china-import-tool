@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import api from '../api/client'
+import { isPublicView } from '../lib/publicView'
 
 /**
  * 卸の仕入（メーカー品）。請求書と入荷履歴の突合。
@@ -64,9 +65,11 @@ export default function WholesaleInvoicePage() {
       <div className="card" style={{ marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <b style={{ fontSize: 16 }}>🧾 卸の仕入（メーカー品）</b>
-          <button className="btn btn-primary" disabled={busy === 'parse'} onClick={parse}>
-            {busy === 'parse' ? '読んでいます…' : '請求書を読み直す'}
-          </button>
+          {!isPublicView() && (
+            <button className="btn btn-primary" disabled={busy === 'parse'} onClick={parse}>
+              {busy === 'parse' ? '読んでいます…' : '請求書を読み直す'}
+            </button>
+          )}
         </div>
         <div style={{ fontSize: 12, color: C.sub, marginTop: 6, lineHeight: 1.9 }}>
           仕入は<b>請求書を正</b>にしています（発注どおりに届くとは限らず、多く届くことも、

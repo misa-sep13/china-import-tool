@@ -1,4 +1,10 @@
+import { useEffect, useState } from 'react'
 import MonthlySummaryPage from './MonthlySummaryPage'
+import DepositBreakdownPage from './DepositBreakdownPage'
+import FreightByShipmentPage from './FreightByShipmentPage'
+import WholesaleInvoicePage from './WholesaleInvoicePage'
+import ImportTaxPage from './ImportTaxPage'
+import InventoryValuePage from './InventoryValuePage'
 import PublicDocs from '../components/PublicDocs'
 
 /**
@@ -12,7 +18,18 @@ import PublicDocs from '../components/PublicDocs'
  * GETしか通していない）。
  */
 
+const TABS = [
+  { key: 'summary',   label: '📈 月次サマリー' },
+  { key: 'deposit',   label: '💰 デポジット内訳' },
+  { key: 'freight',   label: '🚢 便ごとの送料' },
+  { key: 'wholesale', label: '🧾 卸の仕入' },
+  { key: 'tax',       label: '📄 関税・消費税' },
+  { key: 'stock',     label: '📦 在庫金額' },
+  { key: 'docs',      label: '📑 書類' },
+]
+
 export default function AccountingPublicPage() {
+  const [tab, setTab] = useState('summary')
   const share = (window.location.hash || '').match(/[?&]share=([^&]+)/)?.[1] || ''
 
   if (!share) {
@@ -35,8 +52,24 @@ export default function AccountingPublicPage() {
         タオタロウ（代行会社）へのチャージは前払金なので原価に入れていません。
         考え方は <a href="#/accounting-design-public" style={{ color: '#1d4ed8' }}>設計のページ</a> にあります。
       </div>
-      <MonthlySummaryPage share={share} />
-      <PublicDocs share={share} />
+      <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 10,
+        marginBottom: 14, borderBottom: '1px solid #e2e8f0' }}>
+        {TABS.map(t => (
+          <button key={t.key}
+            className={`btn ${tab === t.key ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ whiteSpace: 'nowrap' }} onClick={() => setTab(t.key)}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'summary' && <MonthlySummaryPage share={share} />}
+      {tab === 'deposit' && <DepositBreakdownPage />}
+      {tab === 'freight' && <FreightByShipmentPage />}
+      {tab === 'wholesale' && <WholesaleInvoicePage />}
+      {tab === 'tax' && <ImportTaxPage />}
+      {tab === 'stock' && <InventoryValuePage />}
+      {tab === 'docs' && <PublicDocs share={share} />}
     </div>
   )
 }

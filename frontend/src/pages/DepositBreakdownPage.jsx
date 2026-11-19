@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
+import { isPublicView } from '../lib/publicView'
 
 /**
  * デポジットの内訳分解。
@@ -80,10 +81,12 @@ export default function DepositBreakdownPage() {
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0, fontSize: 18 }}>デポジットの内訳</h2>
-        <button className="btn btn-primary" disabled={syncMutation.isPending}
-          onClick={() => { setSyncMsg(''); syncMutation.mutate() }}>
-          {syncMutation.isPending ? '取り込み中...' : 'タオタロウから取り込む'}
-        </button>
+        {!isPublicView() && (
+          <button className="btn btn-primary" disabled={syncMutation.isPending}
+            onClick={() => { setSyncMsg(''); syncMutation.mutate() }}>
+            {syncMutation.isPending ? '取り込み中...' : 'タオタロウから取り込む'}
+          </button>
+        )}
         {syncMsg && <span style={{ fontSize: 12, color: '#475569' }}>{syncMsg}</span>}
       </div>
 

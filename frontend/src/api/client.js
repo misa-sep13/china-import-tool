@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { shareToken } from '../lib/publicView'
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000/api',
@@ -17,6 +18,14 @@ export const mediaUrl = (path) => (path ? apiOrigin + path : '')
 api.interceptors.request.use(config => {
   const token = localStorage.getItem('auth_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
+  // 税理士向けの公開ページ。ログインの代わりに合言葉を足す。
+  // 書き込みはサーバーが通さないので、ここでも送らない
+  const share = shareToken()
+  if (share) {
+    const m = (config.method || 'get').toLowerCase()
+    if (m !== 'get') return Promise.reject(new Error('この画面では変更できません'))
+    config.params = { ...(config.params || {}), share }
+  }
   return config
 })
 
@@ -30,7 +39,7 @@ api.interceptors.response.use(
     // ログイン画面へ飛ばすと、合言葉が違うだけなのに真っ白な404になり、
     // 何が起きたのか分からなくなる。画面に理由を出させるため素通りさせる。
     // ハッシュルーターなので、経路はパスではなくハッシュ側に入る
-    const PUBLIC = ['/welfare/work-public', '/keep-public', '/image-public']
+    const PUBLIC = ['/welfare/work-public', '/keep-public', '/image-public', '/accounting-public']
     const isPublic = PUBLIC.some(p => window.location.pathname.includes(p)
       || (window.location.hash || '').includes(p))
     if (err.response?.status === 401 && !isLoginCall && !isPublic) {

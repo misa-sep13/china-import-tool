@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import api from '../api/client'
+import { isPublicView } from '../lib/publicView'
 
 /**
  * 月次管理表の「🚢 便ごとの送料」。
@@ -71,9 +72,11 @@ export default function FreightByShipmentPage() {
           <select value={ym} onChange={e => setYm(e.target.value)} style={{ fontSize: 13, padding: '4px 8px' }}>
             {months.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
-          <button className="btn btn-secondary" style={{ fontSize: 12 }} disabled={syncing} onClick={sync}>
-            {syncing ? '取り込み中…（1〜2分）' : '🔄 タオタロウから取り込む'}
-          </button>
+          {!isPublicView() && (
+            <button className="btn btn-secondary" style={{ fontSize: 12 }} disabled={syncing} onClick={sync}>
+              {syncing ? '取り込み中…（1〜2分）' : '🔄 タオタロウから取り込む'}
+            </button>
+          )}
           {data && (
             <span style={{ fontSize: 13, color: C.text }}>
               送料（国内＋国際） <b>{yuan(data.totals?.shipping)}</b>　／　便 {data.ship_count}　／
