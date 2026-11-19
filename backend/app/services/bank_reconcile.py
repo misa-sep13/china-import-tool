@@ -172,6 +172,40 @@ def reconcile(db) -> dict:
     return match_payments(pays, invoice_docs(db))
 
 
+def covered_months(db) -> set:
+    """銀行の明細が月の初めから終わりまでそろっている月。
+
+    この月は銀行が正。マレフィオーレは「請求の翌日着」なので、月末の請求分は
+    翌月の入荷履歴に入る。入荷履歴との多いほうを採ると、同じ商品を
+    請求書の月と入荷の月で二重に数えてしまう。
+    """
+    import calendar
+    from app.models.bank_payment import BankStatement
+    out = set()
+    for st in db.query(BankStatement).all():
+        first, last = st.from_day or "", st.to_day or ""
+        if not first or not last:
+            continue
+        y, m = int(first[:4]), int(first[5:7])
+        while f"{y}-{m:02d}" <= last[:7]:
+            ym = f"{y}-{m:02d}"
+            end = f"{ym}-{calendar.monthrange(y, m)[1]:02d}"
+            if first <= f"{ym}-01" and last >= end:
+                out.add(ym)
+            y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
+
+
+def statement_range(content: bytes) -> tuple:
+    """CSVの最初と最後の取引日。"""
+    days = []
+    for r in csv.reader(io.StringIO(_decode(content))):
+        if r and r[0].strip().isdigit() and len(r[0].strip()) == 8:
+            d = r[0].strip()
+            days.append(f"{d[:4]}-{d[4:6]}-{d[6:8]}")
+    return (min(days), max(days)) if days else ("", "")
+
+
 def fill_by_month(db) -> Dict[tuple, dict]:
     """(仕入の月, 取引先) → 銀行の情報。
 

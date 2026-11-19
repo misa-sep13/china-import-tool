@@ -23,3 +23,18 @@ class BankPayment(Base):
     bank = Column(String, default="rakuten")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class BankStatement(Base):
+    """取り込んだ明細の期間。その月の出金が全部そろっているかの判定に使う。
+
+    卸への出金だけを持つと、出金の無い日が明細の外なのか、ただ払って
+    いないだけなのか区別がつかないので、CSVの最初と最後の日付を残す。
+    """
+    __tablename__ = "bank_statements"
+
+    key = Column(String, primary_key=True)      # "rakuten|2026-06-01|2026-11-19"
+    bank = Column(String, default="rakuten")
+    from_day = Column(String)
+    to_day = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

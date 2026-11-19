@@ -634,8 +634,10 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
     try:
         from app.services import bank_reconcile
         bank = bank_reconcile.fill_by_month(db)
+        bank_months = bank_reconcile.covered_months(db)
+        bank_terms = bank_reconcile.PAY_TERMS
     except Exception:
-        bank = {}
+        bank, bank_months, bank_terms = {}, set(), {}
     manu_by_supplier: dict = defaultdict(dict)
     for key in (set(manu_inv) | set(manu_rec)
                 | {k for k, v in bank.items() if v["fill"] or v["bank_purchase"]}):
@@ -668,6 +670,12 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
         use = max(inv_amt, rec_amt)
         src = ("invoice" if inv_amt >= rec_amt and inv_amt else
                "receipt" if rec_amt else "none")
+        if bank_terms.get(sup_) == "per_invoice" and ym_ in bank_months:
+            # 銀行の明細がそろっている月は、請求書＋請求書の無い出金（＝実際に
+            # 払った額）を正にする。マレフィオーレは請求の翌日着なので、月末の
+            # 請求分が翌月の入荷履歴に入り、多いほうを採ると二重に数えてしまう
+            use = inv_amt
+            src = "bank_invoice"
         manu_by_supplier[ym_][sup_] = {
             "invoice": round(inv_amt), "receipt": round(rec_amt),
             "used": round(use), "source": src,
@@ -1132,12 +1140,19 @@ def wholesale_reconcile(ym: str, db: Session = Depends(get_db)):
 @router.post("/bank/import")
 async def bank_import(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """楽天銀行の入出金明細CSVを入れる。何度入れても同じ出金は増えない。"""
-    from app.models.bank_payment import BankPayment
+    from app.models.bank_payment import BankPayment, BankStatement
     from app.services import bank_reconcile
+    content = await file.read()
     try:
-        rows = bank_reconcile.parse_rakuten_csv(await file.read())
+        rows = bank_reconcile.parse_rakuten_csv(content)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    # 明細の期間を残す（その月の出金が全部そろっているかの判定に使う）
+    f_day, t_day = bank_reconcile.statement_range(content)
+    if f_day:
+        skey = f"rakuten|{f_day}|{t_day}"
+        if not db.query(BankStatement).filter(BankStatement.key == skey).first():
+            db.add(BankStatement(key=skey, from_day=f_day, to_day=t_day))
     added = 0
     for r in rows:
         if db.query(BankPayment).filter(BankPayment.key == r["key"]).first():

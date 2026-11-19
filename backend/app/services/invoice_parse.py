@@ -167,7 +167,59 @@ def _int(s: str) -> int:
     return int(str(s).replace(",", ""))
 
 
+# エジソン販売の請求書。月末締めで、その月の納品（掛売上）が1枚にまとまる。
+#   2026/10/01 67691 掛売上 エジソンのお箸Ⅰぱんだ KJ1030204 12個 576.00 6,912
+#   掛売上 お箸KID'S KJ103210 12個 576.00 6,912
+#   ［御買上額］ 312,768  ／ 締め日は「2026/10/31 末」
+_EDISON_ITEM = re.compile(
+    r"掛売上\s+(?P<name>.+?)\s+(?P<code>[A-Za-z0-9\-]+)\s+(?P<qty>[\d,]+)\s*個\s+"
+    r"(?P<price>[\d,]+(?:\.\d+)?)\s+(?P<amount>[\d,]+)\s*$")
+
+
+def is_edison_invoice(text: str) -> bool:
+    return "エジソン販売" in (text or "") and "掛売上" in (text or "")
+
+
+def parse_edison_invoice(text: str) -> dict:
+    """エジソン販売の月まとめの請求書。計上日は締め日（その月の納品分）。"""
+    issued = ""
+    m = re.search(r"(\d{4})/(\d{1,2})/(\d{1,2})\s*末", text)
+    if m:
+        issued = f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    cust = re.search(r"\b(\d{10})\b", text)
+    no = f"{cust.group(1) if cust else 'edison'}-{issued or 'unknown'}"
+
+    items = []
+    for raw in text.splitlines():
+        m2 = _EDISON_ITEM.search(raw.strip())
+        if not m2:
+            continue
+        price = float(m2.group("price").replace(",", ""))
+        items.append({
+            "name": m2.group("name").strip(),
+            "qty": _int(m2.group("qty")),
+            "unit_price": round(price),
+            "amount": _int(m2.group("amount")),
+            "note": m2.group("code"),
+        })
+    m = re.search(r"御買上額[］\]]?\s*([\d,]+)", text)
+    subtotal = _int(m.group(1)) if m else None
+    m = re.search(r"消費税等[］\]]?\s*([\d,]+)", text)
+    tax = _int(m.group(1)) if m else None
+    calc = sum(x["amount"] for x in items)
+    rows_ok = all(abs(x["qty"] * x["unit_price"] - x["amount"]) <= x["qty"] for x in items)
+    ok = bool(items) and rows_ok and (subtotal is None or calc == subtotal)
+    return {
+        "kind": "wholesale_invoice", "doc_no": no, "issued": issued,
+        "items": items, "subtotal": subtotal, "tax": tax,
+        "total": (subtotal + tax) if (subtotal is not None and tax is not None) else None,
+        "calc": calc, "ok": ok, "revised": False,
+    }
+
+
 def parse_wholesale_invoice(text: str) -> dict:
+    if is_edison_invoice(text):
+        return parse_edison_invoice(text)
     """卸の請求書。品名・数量・単価・金額を1行ずつ返す。
 
     明細の合計と小計が一致するかを見て、読めたかどうかを自分で確かめる。
