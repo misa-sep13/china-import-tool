@@ -633,10 +633,21 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
     for key in set(manu_inv) | set(manu_rec):
         ym_, sup_ = key
         inv_amt, rec_amt = manu_inv.get(key, 0.0), manu_rec.get(key, 0.0)
-        use = inv_amt if inv_amt else rec_amt
+        # 多いほうを採る。マレフィオーレは納品のたびに請求書を出していて
+        # 月をまたぐズレが構造的に起きないので、差が出る＝どちらかが
+        # 欠けている。少ないほうを採ると仕入を過少に計上してしまう。
+        #   7月・8月 … 発注ツールを使う前なので入荷履歴がほぼ無い → 請求書
+        #   10月    … 請求書が2枚しか残っていない → 入荷履歴
+        # 差は「🧾 卸の仕入」で1行ずつ追える
+        use = max(inv_amt, rec_amt)
+        src = ("invoice" if inv_amt >= rec_amt and inv_amt else
+               "receipt" if rec_amt else "none")
         manu_by_supplier[ym_][sup_] = {
             "invoice": round(inv_amt), "receipt": round(rec_amt),
-            "used": round(use), "source": "invoice" if inv_amt else "receipt"}
+            "used": round(use), "source": src,
+            # 片方がもう片方を大きく下回る＝資料が欠けている
+            "gap": round(abs(inv_amt - rec_amt)),
+            "both": bool(inv_amt and rec_amt)}
         m[ym_]["manu_purchase"] += use
         m[ym_]["manu_invoice"] += inv_amt
         m[ym_]["manu_receipt"] += rec_amt

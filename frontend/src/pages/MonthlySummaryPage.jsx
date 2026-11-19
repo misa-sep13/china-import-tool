@@ -177,7 +177,12 @@ export default function MonthlySummaryPage() {
                                 </td>
                                 <td style={{ ...td, borderTop: 'none', fontSize: 11,
                                   color: v.source === 'invoice' ? C.good : C.warn }}>
-                                  {v.source === 'invoice' ? '請求書' : '入荷履歴（請求書なし）'}
+                                  {v.source === 'invoice' ? '請求書' : '入荷履歴'}
+                                  {v.both && v.gap > 0 && (
+                                    <span style={{ color: C.bad, marginLeft: 6 }}>
+                                      もう片方と {yen(v.gap)} 違います
+                                    </span>
+                                  )}
                                 </td>
                                 <td style={{ ...td, borderTop: 'none', color: C.sub }}>{yen(v.used)}</td>
                               </tr>
