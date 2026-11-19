@@ -178,19 +178,6 @@ export default function AccountingDocsPage() {
     } finally { setBusy('') }
   }
 
-  const dedupe = async () => {
-    setBusy('dedupe'); setErr(''); setMsg('')
-    try {
-      const r = await api.post('/import-permits/dedupe')
-      setMsg(r.data.removed
-        ? `同じ中身の書類を ${r.data.removed}件まとめました`
-        : '同じ中身の書類はありませんでした')
-      await load()
-    } catch (e) {
-      setErr(e.response?.data?.detail || e.message)
-    } finally { setBusy('') }
-  }
-
   const move = async (x, period) => {
     if (!/^\d{4}-\d{2}$/.test(period)) return
     try {
@@ -318,10 +305,6 @@ export default function AccountingDocsPage() {
                   {busy === 'zip' ? 'まとめています…' : '⬇ この月をZIPで書き出す'}
                 </button>
               )}
-              <button className="btn btn-secondary" style={{ fontSize: 12 }}
-                disabled={busy === 'dedupe'} onClick={dedupe}>
-                {busy === 'dedupe' ? '調べています…' : '重複を片付ける'}
-              </button>
             </div>
             {KINDS.map(k => {
               const list = rows.filter(x => (x.kind || 'permit') === k.key)
