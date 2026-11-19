@@ -962,6 +962,7 @@ def wholesale_invoices_parse(db: Session = Depends(get_db)):
             .order_by(ImportPermit.id.asc()).all())
     added, read, moved = 0, 0, 0
     failed = []
+    revised_keys = set()
     for d in docs:
         if not d.pdf:
             continue
@@ -984,6 +985,11 @@ def wholesale_invoices_parse(db: Session = Depends(get_db)):
             continue
         supplier = _supplier_of(text, d.filename or "")
         no = r["doc_no"] or f"file-{d.id}"
+        key = (supplier, no)
+        # 同じ請求Noで「修正版」が来ることがある。修正版があればそちらを採り、
+        # あとから元の版を読んでも上書きしない
+        if key in revised_keys and not r["revised"]:
+            continue
         # 書類タブの月も請求日に合わせる。卸の請求書は納品のたびに出ていて
         # 請求日＝到着日なので、ほかの請求書のように前月へ寄せてはいけない。
         # 先に入れたぶんは前月に振り分けられているので、ここで直す
@@ -1002,6 +1008,8 @@ def wholesale_invoices_parse(db: Session = Depends(get_db)):
                 name=x["name"], qty=x["qty"], unit_price=x["unit_price"],
                 amount=x["amount"], note=x.get("note") or None))
             added += 1
+        if r["revised"]:
+            revised_keys.add(key)
         read += 1
     db.commit()
     return {"ok": True, "documents": len(docs), "read": read,

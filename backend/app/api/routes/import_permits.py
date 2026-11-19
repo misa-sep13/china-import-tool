@@ -317,6 +317,17 @@ async def upload_permit(file: UploadFile = File(...),
             period = found["period"] or fallback
         if not re.fullmatch(r"\d{4}-\d{2}", period or ""):
             raise HTTPException(400, "どの月の書類か（2026-10 の形）を指定してください")
+        # 同じ中身の書類がもう入っていれば、入れ直さない。
+        # 「請求書 (1).pdf」「請求書 - コピー.pdf」のように名前だけ違う
+        # 同じファイルを一緒に選んでしまうことがある
+        same = (db.query(ImportPermit)
+                .filter(ImportPermit.kind == kind,
+                        ImportPermit.size_bytes == len(content)).all())
+        for q in same:
+            if q.pdf == content:
+                return {**_brief(q), "looks_like_permit": None,
+                        "period": (q.permit_date or "")[:7],
+                        "detected": found, "duplicate": True}
         p = ImportPermit(kind=kind, permit_date=f"{period}-01",
                          filename=file.filename or f"{kind}.pdf",
                          size_bytes=len(content), pdf=content, source="upload",
@@ -483,3 +494,31 @@ def delete_permit(permit_id: int, db: Session = Depends(get_db)):
     db.delete(p)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/dedupe")
+def dedupe_documents(db: Session = Depends(get_db)):
+    """同じ中身の書類が二重に入っていたら、古いほうを残して消す。
+
+    「請求書 (1).pdf」「請求書 - コピー.pdf」のように名前だけ違う同じ
+    ファイルを、一緒に選んでしまうことがある。金額は請求Noで重ねないので
+    二重計上にはならないが、書類の一覧とZIPに同じものが並ぶ。
+    """
+    rows = (db.query(ImportPermit)
+            .order_by(ImportPermit.id.asc()).all())
+    seen = {}
+    removed = []
+    for p in rows:
+        if not p.pdf:
+            continue
+        key = ((p.kind or "permit"), p.size_bytes or 0)
+        for q in seen.get(key, []):
+            if q.pdf == p.pdf:
+                removed.append({"id": p.id, "file": p.filename,
+                                "kept": q.id, "kept_file": q.filename})
+                db.delete(p)
+                break
+        else:
+            seen.setdefault(key, []).append(p)
+    db.commit()
+    return {"ok": True, "removed": len(removed), "items": removed[:50]}
