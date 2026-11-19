@@ -4,7 +4,7 @@
 送信は取り消せないので、作る（draft）と送る（send）を必ず分けている。
 """
 import base64
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -68,7 +68,18 @@ def _log_receipt(db, order, item, qty, when=None, supplier_name=None,
     qty = int(qty or 0)
     if qty <= 0:
         return None
-    d = (when or date.today()).isoformat() if not isinstance(when, str) else when
+    if isinstance(when, str):
+        d = when[:10] or None
+    elif when is not None:
+        d = when.isoformat()
+    elif source == "backfill":
+        # さかのぼって作る行は、分からない日付を今日で埋めない。
+        # 空にしておけば画面に出るので、後から入れてもらえる
+        d = None
+    else:
+        # サーバはUTCで動いているので、日本時間の今日にする。
+        # 夜に入荷すると前日になり、月末だと先月の仕入になってしまう
+        d = (datetime.now(timezone.utc) + timedelta(hours=9)).date().isoformat()
     price = float(item.unit_price or 0)
     row = WholesaleReceipt(
         order_id=order.id if order else None,
@@ -1377,16 +1388,34 @@ def reconcile(data: ReconcileIn, db: Session = Depends(get_db)):
 
 @router.post("/receipts/backfill")
 def receipts_backfill(db: Session = Depends(get_db)):
-    """すでにある発注から入荷履歴を作る。
+    """すでにある発注から入荷履歴を作る。何度やっても増えない。
 
-    何度やっても増えない（履歴のある明細は飛ばす）。
-    全部届いている発注はその入荷日を使う。分納の途中のものは
-    届いた日が残っていないので、日付を空のまま作る。
-    空のままだと月に入れられないので、あとから画面で入れてもらう。
+    分納の各回の日付は、在庫を動かしたときの記録（在庫反映履歴）に
+    残っている。発注ID・SKU・数量・日時が揃っているので、そこから
+    1回ぶんずつ復元する。
+    履歴に残っていない分（在庫と結び付いていない商品など）は、
+    全部届いていればその入荷日、途中なら空で作る。
     """
-    sup = {s.id: s.name for s in db.query(WholesaleSupplier).all()}
+    sup = {s_.id: s_.name for s_ in db.query(WholesaleSupplier).all()}
     done = {r.order_item_id for r in db.query(WholesaleReceipt.order_item_id).all()}
     orders = {o.id: o for o in db.query(WholesaleOrder).all()}
+    witems = {w.id: w for w in db.query(WholesaleItem).all()}
+    skus = {p_.id: p_.sku for p_ in db.query(RakutenProduct).all()}
+
+    # (発注ID, SKU) → [[日付, 残り数], ...] 古い順。
+    # 記録はUTCなので、日本時間に直してから日付にする。夜の入荷が
+    # 前日に寄って、月をまたぐとずれるため
+    logs: dict = {}
+    for lg in (db.query(InventoryReflectionLog)
+               .filter(InventoryReflectionLog.source == "wholesale_receive",
+                       InventoryReflectionLog.source_id.isnot(None))
+               .order_by(InventoryReflectionLog.created_at.asc()).all()):
+        if (lg.received_qty or 0) <= 0 or not lg.created_at:
+            continue
+        jst = lg.created_at + timedelta(hours=9)
+        logs.setdefault((lg.source_id, lg.sku), []).append(
+            [jst.date().isoformat(), int(lg.received_qty or 0)])
+
     added = dated = undated = 0
     for x in db.query(WholesaleOrderItem).all():
         if x.id in done or (x.received_qty or 0) <= 0:
@@ -1394,14 +1423,31 @@ def receipts_backfill(db: Session = Depends(get_db)):
         o = orders.get(x.order_id)
         if not o:
             continue
-        when = o.received_at.date().isoformat() if o.received_at else None
-        _log_receipt(db, o, x, x.received_qty, when=when,
-                     supplier_name=sup.get(o.supplier_id), source="backfill")
-        added += 1
-        if when:
+        name = sup.get(o.supplier_id)
+        w = witems.get(x.item_id)
+        sku = skus.get(w.rakuten_product_id) if w else None
+        left = int(x.received_qty or 0)
+        for ent in logs.get((o.id, sku), []):
+            if left <= 0:
+                break
+            q = min(left, ent[1])
+            if q <= 0:
+                continue
+            _log_receipt(db, o, x, q, when=ent[0], supplier_name=name,
+                         source="backfill")
+            ent[1] -= q
+            left -= q
+            added += 1
             dated += 1
-        else:
-            undated += 1
+        if left > 0:
+            when = o.received_at.date().isoformat() if o.received_at else None
+            _log_receipt(db, o, x, left, when=when, supplier_name=name,
+                         source="backfill")
+            added += 1
+            if when:
+                dated += 1
+            else:
+                undated += 1
     db.commit()
     return {"ok": True, "added": added, "dated": dated, "undated": undated}
 
