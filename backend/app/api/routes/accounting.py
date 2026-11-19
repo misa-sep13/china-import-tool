@@ -672,16 +672,23 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
         cogs = (china_cogs + manu_cogs) if china_cogs is not None else None
         # 販売費及び一般管理費。粗利から引くと営業利益になる。
         # 楽天への費用は、請求書が読めている月は実額、無い月は見込み
+        # 費目ごとに見る。楽天は品目で遅れ方が違い（決済は2か月、広告は3か月）、
+        # 直近の月は決済だけ届いて広告はまだ、ということが普通に起きる。
+        # 月まるごと切り替えると、届いていない費目が0になって利益が多く出る
         b = bill.get(ym, {})
-        if ym in has_invoice:
-            ad = b.get("ad", 0.0)
-            promo = b.get("promo", 0.0)
-            rakuten_fee = (b.get("payment_fee", 0.0) + b.get("system_fee", 0.0)
-                           + b.get("rent", 0.0) + b.get("other", 0.0))
-            fee_source = "invoice"
-        else:
-            ad, promo, rakuten_fee = v["ad"], v["promo"], v["platform_fee"]
-            fee_source = "estimate"
+        rakuten_fee_bill = (b.get("payment_fee", 0.0) + b.get("system_fee", 0.0)
+                            + b.get("rent", 0.0) + b.get("other", 0.0))
+        ad = b.get("ad") or v["ad"]
+        promo = b.get("promo") or v["promo"]
+        rakuten_fee = rakuten_fee_bill or v["platform_fee"]
+        sga_source = {
+            "ad": "invoice" if b.get("ad") else "estimate",
+            "promo": "invoice" if b.get("promo") else "estimate",
+            "platform_fee": "invoice" if rakuten_fee_bill else "estimate",
+        }
+        fee_source = ("invoice" if all(x == "invoice" for x in sga_source.values())
+                      else "estimate" if all(x == "estimate" for x in sga_source.values())
+                      else "mixed")
         shipping_jpy = b.get("shipping", 0.0)      # ヤマトの請求書
         sga = ad + promo + rakuten_fee + shipping_jpy + v["fixed"]
         gross = (sales - cogs) if cogs is not None else None
@@ -726,8 +733,9 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
                 "fixed": round(v["fixed"]),
             },
             "sga_total": round(sga),
-            # invoice … 請求書の実額 / estimate … 率からの見込み
+            # invoice … 請求書の実額 / estimate … 率からの見込み / mixed … 混在
             "fee_source": fee_source,
+            "sga_source": sga_source,
             "has_shipping_invoice": bool(shipping_jpy),
             "operating_profit": (round(operating)
                                  if operating is not None and v["has_rakuten_sales"] else None),
@@ -783,7 +791,10 @@ def billing_parse(db: Session = Depends(get_db)):
         if d.kind == "rms":
             r = invoice_parse.parse_rakuten_rms(text)
             if not r["items"]:
-                failed.append({"id": d.id, "file": d.filename, "why": "明細が読めません"})
+                # 集約版帳票（Billing_Summary）は品目の明細を持たない。
+                # 同じ内容は店舗別内訳書にあるので、読めなくてよい
+                if "Billing_Summary" not in (d.filename or ""):
+                    failed.append({"id": d.id, "file": d.filename, "why": "明細が読めません"})
                 continue
             key = (_doc_key(r["doc_no"]), r["shop_id"])
             if key in seen_keys:

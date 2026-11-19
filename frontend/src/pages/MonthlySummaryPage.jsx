@@ -197,19 +197,32 @@ export default function MonthlySummaryPage() {
                             <tr>
                               <td colSpan={3} style={{ ...td, textAlign: 'left', fontWeight: 700, paddingTop: 14 }}>販売費及び一般管理費</td>
                             </tr>
-                            {SGA.map(([k, label, note]) => (
-                              <tr key={k}>
-                                <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>{label}</td>
-                                <td style={{ ...td, borderTop: 'none', color: C.sub, fontSize: 11 }}>{note}</td>
-                                <td style={{ ...td, borderTop: 'none' }}>{yen(m.sga?.[k])}</td>
-                              </tr>
-                            ))}
+                            {SGA.map(([k, label, note]) => {
+                              const src = m.sga_source?.[k]
+                              return (
+                                <tr key={k}>
+                                  <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>
+                                    {label}
+                                    {src === 'estimate' && (
+                                      <span style={{ fontSize: 11, color: C.warn, marginLeft: 6 }}>見込み</span>
+                                    )}
+                                    {src === 'invoice' && (
+                                      <span style={{ fontSize: 11, color: C.good, marginLeft: 6 }}>請求書</span>
+                                    )}
+                                  </td>
+                                  <td style={{ ...td, borderTop: 'none', color: C.sub, fontSize: 11 }}>{note}</td>
+                                  <td style={{ ...td, borderTop: 'none' }}>{yen(m.sga?.[k])}</td>
+                                </tr>
+                              )
+                            })}
                             <tr>
                               <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>
                                 販管費 計
                                 <span style={{ fontWeight: 400, fontSize: 11, marginLeft: 6,
                                   color: m.fee_source === 'invoice' ? C.good : C.warn }}>
-                                  {m.fee_source === 'invoice' ? '楽天は請求書の実額' : '楽天は見込み（内訳書が未取込）'}
+                                  {m.fee_source === 'invoice' ? '楽天は請求書の実額'
+                                    : m.fee_source === 'mixed' ? '楽天は一部まだ請求書が届いていません'
+                                    : '楽天は見込み（内訳書が未取込）'}
                                 </span>
                                 {!m.has_shipping_invoice && (
                                   <span style={{ fontWeight: 400, fontSize: 11, marginLeft: 6, color: C.bad }}>
