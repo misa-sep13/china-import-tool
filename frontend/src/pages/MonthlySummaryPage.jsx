@@ -148,10 +148,49 @@ export default function MonthlySummaryPage() {
                               <td style={{ ...td, fontWeight: 700 }}>{yen(m.china_cogs)}</td>
                             </tr>
                             <tr>
-                              <td style={{ ...td, textAlign: 'left', fontWeight: 700, paddingTop: 14 }}>日本メーカー品の売上原価</td>
-                              <td style={{ ...td, color: C.sub, fontSize: 11, paddingTop: 14 }}>売上 {yen(m.manu_sales)} 分</td>
-                              <td style={{ ...td, fontWeight: 700, paddingTop: 14 }}>{yen(m.manu_cogs)}</td>
+                              <td colSpan={3} style={{ ...td, textAlign: 'left', fontWeight: 700, paddingTop: 14 }}>日本メーカー品の売上原価</td>
                             </tr>
+                            <tr>
+                              <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>期首在庫（メーカー品）</td>
+                              <td style={{ ...td, borderTop: 'none', color: C.sub, fontSize: 11 }}>前月末</td>
+                              <td style={{ ...td, borderTop: 'none' }}>{m.manu_inventory_begin == null ? '未確定' : yen(m.manu_inventory_begin)}</td>
+                            </tr>
+                            <tr>
+                              <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>当月の仕入（メーカー品）</td>
+                              <td style={{ ...td, borderTop: 'none', color: C.sub, fontSize: 11 }}>入荷した日</td>
+                              <td style={{ ...td, borderTop: 'none' }}>{yen(m.manu_purchase)}</td>
+                            </tr>
+                            <tr>
+                              <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>期末在庫（メーカー品）</td>
+                              <td style={{ ...td, borderTop: 'none', color: C.sub, fontSize: 11 }}>当月末</td>
+                              <td style={{ ...td, borderTop: 'none' }}>{m.manu_inventory_end == null ? '未確定' : `−${yen(m.manu_inventory_end)}`}</td>
+                            </tr>
+                            <tr>
+                              <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>
+                                メーカー品の売上原価
+                                <span style={{ fontWeight: 400, color: C.sub, fontSize: 11, marginLeft: 6 }}>
+                                  {m.manu_method === 'inventory' ? '在庫式' : '販売式（在庫が未確定のため）'}
+                                </span>
+                              </td>
+                              <td style={td}></td>
+                              <td style={{ ...td, fontWeight: 700 }}>{yen(m.manu_cogs)}</td>
+                            </tr>
+                            {m.manu_variance != null && (
+                              <>
+                                <tr>
+                                  <td style={{ ...td, textAlign: 'left', borderTop: 'none', color: C.sub }}>参考：売れた数 × 原価</td>
+                                  <td style={{ ...td, borderTop: 'none', color: C.sub, fontSize: 11 }}>売上 {yen(m.manu_sales)} 分</td>
+                                  <td style={{ ...td, borderTop: 'none', color: C.sub }}>{yen(m.manu_cogs_sold)}</td>
+                                </tr>
+                                <tr>
+                                  <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>棚卸差異</td>
+                                  <td style={{ ...td, borderTop: 'none', color: C.sub, fontSize: 11 }}>破損・紛失・原価ズレ・記録漏れ</td>
+                                  <td style={{ ...td, borderTop: 'none', fontWeight: 700, color: Math.abs(m.manu_variance) > 100000 ? C.bad : C.sub }}>
+                                    {yen(m.manu_variance)}
+                                  </td>
+                                </tr>
+                              </>
+                            )}
                             <tr>
                               <td colSpan={3} style={{ ...td, textAlign: 'left', fontWeight: 700, paddingTop: 14 }}>販売費及び一般管理費</td>
                             </tr>

@@ -81,6 +81,7 @@ def _migrate():
     import app.models.inventory_event  # noqa: F401
     import app.models.material_order   # noqa: F401
     import app.models.taotaro_transaction  # noqa: F401
+    import app.models.wholesale_receipt  # noqa: F401
     import app.models.taotaro_send_order  # noqa: F401
     Base.metadata.create_all(bind=engine)
 

@@ -15,6 +15,7 @@ from app.core.database import get_db
 from app.models.wholesale import (
     WholesaleSupplier, WholesaleItem, WholesaleOrder, WholesaleOrderItem,
 )
+from app.models.wholesale_receipt import WholesaleReceipt
 from app.models.rakuten_product import RakutenProduct
 from app.models.inventory_reflection_log import InventoryReflectionLog
 from app.services import wholesale_excel as wx
@@ -54,6 +55,34 @@ def _supplier_dict(s):
         "payment_note": getattr(s, "payment_note", None),
         "is_active": s.is_active,
     }
+
+
+
+def _log_receipt(db, order, item, qty, when=None, supplier_name=None,
+                 source="receive"):
+    """入荷を1行残す。メーカー品の仕入はここが発生日になる。
+
+    発注1件に日付を1つしか持たないと、分納のときどの月の仕入か
+    決められないため、届いたたびに日付と数を残す。
+    """
+    qty = int(qty or 0)
+    if qty <= 0:
+        return None
+    d = (when or date.today()).isoformat() if not isinstance(when, str) else when
+    price = float(item.unit_price or 0)
+    row = WholesaleReceipt(
+        order_id=order.id if order else None,
+        order_item_id=item.id,
+        supplier_id=order.supplier_id if order else None,
+        supplier_name=supplier_name,
+        received_date=d or None,
+        ym=(d[:7] if d else None),
+        item_code=item.item_code, name=item.name,
+        qty=qty, unit_price=price, amount=round(price * qty, 2),
+        source=source,
+    )
+    db.add(row)
+    return row
 
 
 @router.get("/suppliers")
@@ -660,6 +689,8 @@ class ReceiveIn(BaseModel):
     mode: str = "add_stock"
     items: List[ReceiveItemIn] = []
     note: Optional[str] = None
+    # 届いた日。指定が無ければ今日。仕入をどの月に入れるかがこれで決まる
+    received_date: Optional[str] = None
 
 
 @router.post("/orders/{oid:int}/receive")
@@ -692,6 +723,8 @@ async def receive_order(oid: int, data: ReceiveIn, db: Session = Depends(get_db)
         q = max(0, int(q or 0))
         arrived[x.id] = q
         x.received_qty = already + q
+        # 仕入の発生日になるので、届いたぶんを1行ずつ残す
+        _log_receipt(db, o, x, q, when=data.received_date or None)
     if not any(arrived.values()):
         raise HTTPException(400, "入荷する数量が入力されていません")
 
@@ -947,6 +980,8 @@ class ReceiveItemsIn(BaseModel):
     mode: str = "add_stock"
     items: List[ReceiveRowIn] = []
     note: Optional[str] = None
+    # 届いた日。指定が無ければ今日。仕入をどの月に入れるかがこれで決まる
+    received_date: Optional[str] = None
 
 
 @router.post("/receive-items")
@@ -995,6 +1030,8 @@ async def receive_items(data: ReceiveItemsIn, db: Session = Depends(get_db)):
         if q <= 0:
             continue
         r.received_qty = already + q
+        _log_receipt(db, orders.get(r.order_id), r, q,
+                     when=data.received_date or None)
         p = by_item.get(r.id)
         if not p:
             unlinked.append(r.name)
@@ -1330,3 +1367,112 @@ def reconcile(data: ReconcileIn, db: Session = Depends(get_db)):
 
     return {"dry_run": data.dry_run, "items": plan,
             "total_fixed": sum(p_["fixed"] for p_ in plan)}
+
+
+# ---------- 入荷履歴（メーカー品の仕入） ----------
+#
+# 月次管理表はここを仕入として読む。発注日でも支払日でもなく、
+# 届いた日で計上するため。
+
+
+@router.post("/receipts/backfill")
+def receipts_backfill(db: Session = Depends(get_db)):
+    """すでにある発注から入荷履歴を作る。
+
+    何度やっても増えない（履歴のある明細は飛ばす）。
+    全部届いている発注はその入荷日を使う。分納の途中のものは
+    届いた日が残っていないので、日付を空のまま作る。
+    空のままだと月に入れられないので、あとから画面で入れてもらう。
+    """
+    sup = {s.id: s.name for s in db.query(WholesaleSupplier).all()}
+    done = {r.order_item_id for r in db.query(WholesaleReceipt.order_item_id).all()}
+    orders = {o.id: o for o in db.query(WholesaleOrder).all()}
+    added = dated = undated = 0
+    for x in db.query(WholesaleOrderItem).all():
+        if x.id in done or (x.received_qty or 0) <= 0:
+            continue
+        o = orders.get(x.order_id)
+        if not o:
+            continue
+        when = o.received_at.date().isoformat() if o.received_at else None
+        _log_receipt(db, o, x, x.received_qty, when=when,
+                     supplier_name=sup.get(o.supplier_id), source="backfill")
+        added += 1
+        if when:
+            dated += 1
+        else:
+            undated += 1
+    db.commit()
+    return {"ok": True, "added": added, "dated": dated, "undated": undated}
+
+
+@router.get("/receipts/monthly")
+def receipts_monthly(db: Session = Depends(get_db)):
+    """月ごとのメーカー品の仕入（税抜）。日付の無い行は別に数える。"""
+    by: dict = {}
+    undated = {"count": 0, "amount": 0.0}
+    for r in db.query(WholesaleReceipt).all():
+        if not r.ym:
+            undated["count"] += 1
+            undated["amount"] += r.amount or 0
+            continue
+        m = by.setdefault(r.ym, {"ym": r.ym, "amount": 0.0, "qty": 0,
+                                 "count": 0, "suppliers": {}})
+        m["amount"] += r.amount or 0
+        m["qty"] += r.qty or 0
+        m["count"] += 1
+        name = r.supplier_name or "（取引先不明）"
+        m["suppliers"][name] = round(m["suppliers"].get(name, 0) + (r.amount or 0), 2)
+    for m in by.values():
+        m["amount"] = round(m["amount"], 2)
+    return {
+        "months": [by[k] for k in sorted(by, reverse=True)],
+        # ここが0でないと、その分だけ月次の仕入が足りていない
+        "undated": {"count": undated["count"], "amount": round(undated["amount"], 2)},
+    }
+
+
+@router.get("/receipts")
+def list_receipts(ym: Optional[str] = None, undated: bool = False,
+                  limit: int = 500, db: Session = Depends(get_db)):
+    """入荷履歴。undated=true で、届いた日が入っていない行だけ。"""
+    q = db.query(WholesaleReceipt)
+    if undated:
+        q = q.filter(WholesaleReceipt.received_date.is_(None))
+    elif ym:
+        q = q.filter(WholesaleReceipt.ym == ym)
+    rows = (q.order_by(WholesaleReceipt.received_date.desc(),
+                       WholesaleReceipt.id.desc())
+            .limit(max(1, min(limit, 2000))).all())
+    orders = {o.id: o for o in db.query(WholesaleOrder)
+              .filter(WholesaleOrder.id.in_({r.order_id for r in rows if r.order_id})).all()}
+    return {"items": [{
+        "id": r.id, "order_id": r.order_id,
+        "order_date": (orders.get(r.order_id).order_date if orders.get(r.order_id) else ""),
+        "supplier_name": r.supplier_name or "",
+        "received_date": r.received_date or "",
+        "item_code": r.item_code or "", "name": r.name or "",
+        "qty": r.qty or 0, "unit_price": r.unit_price or 0,
+        "amount": round(r.amount or 0, 2), "source": r.source or "",
+    } for r in rows]}
+
+
+class ReceiptDateIn(BaseModel):
+    received_date: str
+
+
+@router.put("/receipts/{rid:int}")
+def set_receipt_date(rid: int, data: ReceiptDateIn, db: Session = Depends(get_db)):
+    """届いた日を入れる・直す。仕入の計上月が変わる。"""
+    r = db.query(WholesaleReceipt).filter(WholesaleReceipt.id == rid).first()
+    if not r:
+        raise HTTPException(404, "入荷の行が見つかりません")
+    d = (data.received_date or "").strip()[:10]
+    try:
+        date.fromisoformat(d)
+    except ValueError:
+        raise HTTPException(400, "日付は YYYY-MM-DD で入れてください")
+    r.received_date = d
+    r.ym = d[:7]
+    db.commit()
+    return {"ok": True, "id": r.id, "received_date": r.received_date, "ym": r.ym}

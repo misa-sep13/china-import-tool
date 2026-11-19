@@ -581,6 +581,7 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
     # 月末在庫（楽天＋Amazon）。タオタロウの仕入と突き合わせるのは中国輸入品だけ。
     # 日本メーカー品の仕入はツールに無いので、在庫の増減からは出せない
     inv: dict = defaultdict(float)          # 中国輸入品
+    inv_manu: dict = defaultdict(float)     # 日本メーカー品
     inv_all: dict = defaultdict(float)
     inv_pf: dict = defaultdict(set)
     for period, pf, cat, amt in (db.query(InventorySnapshot.period, InventorySnapshot.platform,
@@ -588,9 +589,19 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
                                  .group_by(InventorySnapshot.period, InventorySnapshot.platform,
                                            InventorySnapshot.category)):
         inv_all[period] += amt or 0
-        if cat != "manufacturer":
+        if cat == "manufacturer":
+            inv_manu[period] += amt or 0
+        else:
             inv[period] += amt or 0
         inv_pf[period].add(pf)
+
+    # メーカー品の仕入。届いた日で計上する（発注日でも支払日でもない）。
+    # 分納があるので、入荷履歴を1行ずつ足す
+    from app.models.wholesale_receipt import WholesaleReceipt
+    for r in db.query(WholesaleReceipt.ym, F.sum(WholesaleReceipt.amount)).group_by(
+            WholesaleReceipt.ym):
+        if r[0]:
+            m[r[0]]["manu_purchase"] += r[1] or 0
 
     # 日本メーカー品の売上原価：売上管理（楽天）の「売れた数 × 原価」
     from app.api.routes.rakuten import _is_manufacturer_product
@@ -633,7 +644,19 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
         begin = inv.get(_prev_ym(ym))
         end = inv.get(ym)
         china_cogs = (begin + purchase - end) if (begin is not None and end is not None) else None
-        manu_cogs = v["manu_cogs"]
+        # メーカー品の売上原価は2通りで出す。
+        #   在庫式 … 期首 ＋ 仕入 − 期末。実地棚卸が正なので決算はこちら
+        #   販売式 … 売れた数 × 原価。売れたぶんだけで、減耗は入らない
+        # 差は棚卸差異（破損・紛失・原価ズレ・記録漏れ）。毎月見れば異常に気づける
+        manu_sold = v["manu_cogs"]
+        manu_begin = inv_manu.get(_prev_ym(ym))
+        manu_end = inv_manu.get(ym)
+        manu_purchase = v["manu_purchase"]
+        manu_by_inv = ((manu_begin + manu_purchase - manu_end)
+                       if (manu_begin is not None and manu_end is not None) else None)
+        manu_cogs = manu_by_inv if manu_by_inv is not None else manu_sold
+        manu_method = "inventory" if manu_by_inv is not None else "sold"
+        manu_variance = (manu_by_inv - manu_sold) if manu_by_inv is not None else None
         cogs = (china_cogs + manu_cogs) if china_cogs is not None else None
         # 販売費及び一般管理費。粗利から引くと営業利益になる
         selling = v["ad"] + v["promo"] + v["platform_fee"]
@@ -657,6 +680,13 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
             "china_cogs": round(china_cogs) if china_cogs is not None else None,
             "manu_sales": round(v["manu_sales"]),
             "manu_cogs": round(manu_cogs),
+            "manu_method": manu_method,
+            "manu_purchase": round(manu_purchase),
+            "manu_inventory_begin": round(manu_begin) if manu_begin is not None else None,
+            "manu_inventory_end": round(manu_end) if manu_end is not None else None,
+            "manu_cogs_sold": round(manu_sold),
+            # 棚卸差異。在庫式 − 販売式
+            "manu_variance": round(manu_variance) if manu_variance is not None else None,
             "inventory_end_all": round(inv_all[ym]) if ym in inv_all else None,
             "cogs": round(cogs) if cogs is not None else None,
             # 楽天の売上を取り込んでいない月は、原価だけ立って赤字に見えるので出さない
