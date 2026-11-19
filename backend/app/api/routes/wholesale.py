@@ -1507,6 +1507,24 @@ def list_receipts(ym: Optional[str] = None, undated: bool = False,
             .limit(max(1, min(limit, 2000))).all())
     orders = {o.id: o for o in db.query(WholesaleOrder)
               .filter(WholesaleOrder.id.in_({r.order_id for r in rows if r.order_id})).all()}
+    hidden = 0
+    if undated:
+        # 銀行の出金で仕入を合わせ済みの取引先・月は、入荷日が無くても
+        # 月次の仕入は足りている（支払った額で計上している）。直す必要が
+        # 無いものを出し続けると、本当に直すべき行が埋もれるので外す
+        from app.services import bank_reconcile as br
+        try:
+            months = br.covered_months(db)
+        except Exception:
+            months = set()
+        keep = []
+        for r in rows:
+            o = orders.get(r.order_id)
+            if _bank_settled(months, r.supplier_name or "", (o.order_date if o else "") or ""):
+                hidden += 1
+                continue
+            keep.append(r)
+        rows = keep
     return {"items": [{
         "id": r.id, "order_id": r.order_id,
         "order_date": (orders.get(r.order_id).order_date if orders.get(r.order_id) else ""),
@@ -1515,7 +1533,19 @@ def list_receipts(ym: Optional[str] = None, undated: bool = False,
         "item_code": r.item_code or "", "name": r.name or "",
         "qty": r.qty or 0, "unit_price": r.unit_price or 0,
         "amount": round(r.amount or 0, 2), "source": r.source or "",
-    } for r in rows]}
+    } for r in rows], "hidden_bank_settled": hidden}
+
+
+def _bank_settled(months: set, supplier: str, order_date: str) -> bool:
+    """その取引先のその月の仕入が、銀行の出金で確定しているか。"""
+    from app.services import bank_reconcile as br
+    if supplier not in br.PAY_TERMS or len(order_date) < 7:
+        return False
+    ym = order_date[:7]
+    # 発注した月か、その翌月（月末の発注は翌月に届く）が明細でそろっていれば確定
+    y, m = int(ym[:4]), int(ym[5:7])
+    nxt = f"{y + 1}-01" if m == 12 else f"{y}-{m + 1:02d}"
+    return ym in months and nxt in months
 
 
 class ReceiptDateIn(BaseModel):
