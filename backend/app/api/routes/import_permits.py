@@ -313,7 +313,7 @@ async def upload_permit(file: UploadFile = File(...),
         found = None
         if period == "auto":
             from app.services.doc_period import detect
-            found = detect(content, file.filename or "")
+            found = detect(content, file.filename or "", kind=kind)
             period = found["period"] or fallback
         if not re.fullmatch(r"\d{4}-\d{2}", period or ""):
             raise HTTPException(400, "どの月の書類か（2026-10 の形）を指定してください")

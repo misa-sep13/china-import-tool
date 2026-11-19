@@ -926,7 +926,7 @@ def wholesale_invoices_parse(db: Session = Depends(get_db)):
     docs = (db.query(ImportPermit)
             .filter(ImportPermit.kind == "wholesale")
             .order_by(ImportPermit.id.asc()).all())
-    added, read = 0, 0
+    added, read, moved = 0, 0, 0
     failed = []
     for d in docs:
         if not d.pdf:
@@ -942,8 +942,22 @@ def wholesale_invoices_parse(db: Session = Depends(get_db)):
                    else "明細の合計と小計が合いません")
             failed.append({"id": d.id, "file": d.filename, "why": why})
             continue
+        if not r["issued"]:
+            # 請求日が無いと月に入れられない（返金の控えなど、請求書でない
+            # 書類が混ざっていることがある）
+            failed.append({"id": d.id, "file": d.filename,
+                           "why": "請求日が読めません"})
+            continue
         supplier = _supplier_of(text, d.filename or "")
         no = r["doc_no"] or f"file-{d.id}"
+        # 書類タブの月も請求日に合わせる。卸の請求書は納品のたびに出ていて
+        # 請求日＝到着日なので、ほかの請求書のように前月へ寄せてはいけない。
+        # 先に入れたぶんは前月に振り分けられているので、ここで直す
+        if r["issued"]:
+            want = r["issued"][:7] + "-01"
+            if (d.permit_date or "") != want:
+                d.permit_date = want
+                moved += 1
         db.query(WholesaleInvoiceLine).filter(
             WholesaleInvoiceLine.doc_no == no,
             WholesaleInvoiceLine.supplier == supplier).delete()
@@ -957,7 +971,7 @@ def wholesale_invoices_parse(db: Session = Depends(get_db)):
         read += 1
     db.commit()
     return {"ok": True, "documents": len(docs), "read": read,
-            "lines": added, "failed": failed[:30]}
+            "lines": added, "moved": moved, "failed": failed[:30]}
 
 
 @router.get("/wholesale-invoices/monthly")

@@ -47,6 +47,7 @@ export default function WholesaleInvoicePage() {
       const r = await api.post('/accounting/wholesale-invoices/parse')
       const f = r.data.failed || []
       setMsg(`請求書 ${r.data.read}枚から ${r.data.lines}行を読みました`
+        + (r.data.moved ? `／書類タブの月を ${r.data.moved}枚ぶん請求日に直しました` : '')
         + (f.length ? `（読めなかったもの ${f.length}枚：${f.map(x => x.file).slice(0, 3).join(' / ')}）` : ''))
       await loadMonths()
       if (ym) {

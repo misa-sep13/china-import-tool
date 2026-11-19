@@ -98,10 +98,22 @@ def _rakuten(t: str) -> Optional[dict]:
     return None
 
 
-def detect(content: bytes, filename: str) -> dict:
-    """{"period": "2026-10" | None, "how": 読み取った根拠, "sure": 確かか}"""
+def detect(content: bytes, filename: str, kind: str = "") -> dict:
+    """{"period": "2026-10" | None, "how": 読み取った根拠, "sure": 確かか}
+
+    kind="wholesale"（卸請求書）のときは、請求日をそのまま計上月にする。
+    マレフィオーレは納品のたびに請求書を出していて、請求日＝到着日。
+    ほかの請求書のように「前月分」と推定すると、まるごと1か月ずれる。
+    """
     text = text_of(content, filename)
     t = re.sub(r"[ 　]+", " ", text)
+
+    if kind == "wholesale":
+        m = re.search(r"(?:請求日|発行日|作成日)\s*[:：]?\s*" + _YEAR + _SEP + r"(\d{1,2})", t)
+        if m:
+            ym = _ym(m.group(1), m.group(2))
+            if ym:
+                return {"period": ym, "how": f"{m.group(0).strip()}（納品日）", "sure": True}
 
     # 0. 楽天の店舗別内訳書・集約版帳票。利用した月（課金月）の約2か月後に届き、
     #    入金（支払額）の期間や翌月分の利用料も載るので、ほかの規則では月を外す。
