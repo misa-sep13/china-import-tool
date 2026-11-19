@@ -641,6 +641,7 @@ def _migrate():
 from contextlib import asynccontextmanager
 import asyncio
 import logging
+import re
 from datetime import datetime as dt, timezone, timedelta
 
 JST = timezone(timedelta(hours=9))
@@ -1841,6 +1842,16 @@ async def auth_middleware(request: _StarletteRequest, call_next):
     # （取り込みや書き換えは一切できない）。合言葉はDBに持っていて、
     # 作り直せばその時点で前のURLは開かなくなる
     if request.method == "GET" and path.startswith("/api/accounting/"):
+        if _accounting_share_ok(request):
+            return await call_next(request)
+    # 同じURLから、その月の書類（輸入許可書・内訳書・請求書）も渡す。
+    # 数字だけ見せても裏づけが無いと確かめようがないため。
+    # 一覧・原本・月ごとのZIPだけ。メールを読む口（scan-candidates・folders）は
+    # 通さない
+    if request.method == "GET" and (
+            path == "/api/import-permits/"
+            or path == "/api/import-permits/zip"
+            or re.fullmatch(r"/api/import-permits/\d+/pdf", path)):
         if _accounting_share_ok(request):
             return await call_next(request)
 

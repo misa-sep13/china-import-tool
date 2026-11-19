@@ -1,4 +1,5 @@
 import MonthlySummaryPage from './MonthlySummaryPage'
+import PublicDocs from '../components/PublicDocs'
 
 /**
  * 月次管理表の公開ページ。税理士にURLを渡して見てもらうためログイン不要。
@@ -35,6 +36,7 @@ export default function AccountingPublicPage() {
         考え方は <a href="#/accounting-design-public" style={{ color: '#1d4ed8' }}>設計のページ</a> にあります。
       </div>
       <MonthlySummaryPage share={share} />
+      <PublicDocs share={share} />
     </div>
   )
 }
