@@ -145,3 +145,78 @@ def parse_yamato(text: str) -> dict:
     return {"kind": "yamato", "doc_no": no, "ok": True,
             "total": total, "amount": net, "tax": tax,
             "bucket": "shipping"}
+
+
+# ---------- 卸の請求書（マレフィオーレなど） ----------
+#
+# 発注どおりに届くとは限らない。多く届くこともあれば、頼んでいないものが
+# 入っていることもある。実際、9/4の請求書はバナナ480本なのに発注は360本で、
+# ピーチ60本は発注自体が無かった。
+# 仕入の金額は請求書を正にして、発注・入荷と突き合わせる。
+
+_UNITS = "本|個|枚|袋|箱|ｹｰｽ|ケース|ｾｯﾄ|セット|組|缶|本入|ｺ"
+# 金額のうしろに摘要が入ることがある（「追加分」など）。
+# 数字で始まらない語だけを摘要として許す
+_ITEM = re.compile(
+    r"^(?P<name>\S.*?)\s+(?P<qty>-?[\d,]+)\s+(?:" + _UNITS + r")\s+"
+    r"(?P<price>-?[\d,]+)\s+(?P<amount>-?[\d,]+)"
+    r"(?:\s+(?P<note>[^\d\s].*?))?\s*$")
+
+
+def _int(s: str) -> int:
+    return int(str(s).replace(",", ""))
+
+
+def parse_wholesale_invoice(text: str) -> dict:
+    """卸の請求書。品名・数量・単価・金額を1行ずつ返す。
+
+    明細の合計と小計が一致するかを見て、読めたかどうかを自分で確かめる。
+    合わなければ ok=False にして、画面で原本を見てもらう。
+    """
+    no = issued = ""
+    m = re.search(r"請求No[.．:：]?\s*([0-9A-Za-z-]+)", text)
+    if m:
+        no = m.group(1)
+    m = re.search(r"請求日\s*[:：]?\s*(\d{4})[/年](\d{1,2})[/月](\d{1,2})", text)
+    if m:
+        issued = f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+
+    def _find(*words):
+        for w in words:
+            m2 = re.search(w + r"[^\d\-]{0,12}(-?[\d,]+)", text)
+            if m2:
+                return _int(m2.group(1))
+        return None
+
+    subtotal = _find(r"小\s*計")
+    tax = _find(r"消費税")
+    total = _find(r"合計\s*\(税込\)", r"合計金額")
+
+    items = []
+    for raw in text.splitlines():
+        m3 = _ITEM.match(raw.strip())
+        if not m3:
+            continue
+        name = m3.group("name").strip()
+        # 見出し行（品 名 数量 単位 単価 金 額）を拾わないように
+        if "品" in name and "名" in name and len(name) <= 6:
+            continue
+        items.append({
+            "name": name,
+            "qty": _int(m3.group("qty")),
+            "unit_price": _int(m3.group("price")),
+            "amount": _int(m3.group("amount")),
+            "note": (m3.group("note") or "").strip(),
+        })
+
+    calc = sum(x["amount"] for x in items)
+    # 行ごとの数量×単価が金額と合うかも見る。1行でも崩れていれば読み違い
+    rows_ok = all(x["qty"] * x["unit_price"] == x["amount"] for x in items)
+    ok = bool(items) and rows_ok and (subtotal is None or calc == subtotal)
+    return {
+        "kind": "wholesale_invoice", "doc_no": no, "issued": issued,
+        "items": items, "subtotal": subtotal, "tax": tax, "total": total,
+        "calc": calc, "ok": ok,
+        # 修正版が後から来ることがある。同じ請求Noなら新しいほうを採る
+        "revised": "修正" in text,
+    }
