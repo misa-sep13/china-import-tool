@@ -554,11 +554,21 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
         if ym:
             m[ym]["sales_amazon"] += (rev or 0) - (promo or 0)
 
+    # タオタロウの仕入を楽天とAmazonに分ける。注文ごとの販路と、便ごとのAmazonの割合
+    try:
+        from app.services import channel_split
+        oid_channel, sid_amz_share = channel_split.maps(db)
+    except Exception:
+        oid_channel, sid_amz_share = {}, {}
+
     # 商品代と固定費（タオタロウ明細）。元を円に
     for t in db.query(TaotaroTransaction).filter(TaotaroTransaction.ym.isnot(None)):
         jpy = -(t.money or 0) * rate_of(t.ym)      # 引落はマイナス → 正の費用に
         if t.category in ("purchase", "purchase_adjust"):
             m[t.ym]["goods"] += jpy
+            # Amazon向けの注文。見分けがつかないものは楽天のまま
+            if oid_channel.get(str(t.oid or "")) == "amazon":
+                m[t.ym]["amz_goods"] += jpy
         elif t.category == "fee":
             m[t.ym]["fixed"] += jpy
         elif t.category == "charge":
@@ -571,6 +581,13 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
         m[s.ym]["agency"] += (s.server_fee or 0) * r
         m[s.ym]["international"] += ((s.freight or 0) + (s.remote_fee or 0)) * r
         m[s.ym]["customs_fee"] += (s.customs_fee or 0) * r
+        # 便の費用は、その便に入った注文の金額の割合でAmazonに配る
+        sh = sid_amz_share.get(str(s.sid), 0.0)
+        if sh:
+            m[s.ym]["amz_domestic"] += (s.send_price or 0) * r * sh
+            m[s.ym]["amz_agency"] += (s.server_fee or 0) * r * sh
+            m[s.ym]["amz_international"] += ((s.freight or 0) + (s.remote_fee or 0)) * r * sh
+            m[s.ym]["amz_customs_fee"] += (s.customs_fee or 0) * r * sh
 
     # 関税・消費税（輸入許可日の月）
     for p in db.query(ImportPermit).filter(ImportPermit.kind == "permit"):
@@ -581,7 +598,8 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
 
     # 月末在庫（楽天＋Amazon）。タオタロウの仕入と突き合わせるのは中国輸入品だけ。
     # 日本メーカー品の仕入はツールに無いので、在庫の増減からは出せない
-    inv: dict = defaultdict(float)          # 中国輸入品
+    inv: dict = defaultdict(float)          # 中国輸入品（楽天）
+    inv_amz: dict = defaultdict(float)      # Amazon（FBA）の在庫
     inv_manu: dict = defaultdict(float)     # 日本メーカー品
     inv_all: dict = defaultdict(float)
     inv_pf: dict = defaultdict(set)
@@ -592,6 +610,9 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
         inv_all[period] += amt or 0
         if cat == "manufacturer":
             inv_manu[period] += amt or 0
+        elif pf == "amazon":
+            # Amazonの在庫はAmazon向けの仕入と突き合わせる（楽天とは別に数える）
+            inv_amz[period] += amt or 0
         else:
             inv[period] += amt or 0
         inv_pf[period].add(pf)
@@ -725,12 +746,32 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
     out = []
     for ym in sorted(m.keys(), reverse=True)[:max(1, min(months, 36))]:
         v = m[ym]
-        purchase = sum(v[k] for k in ("goods", "domestic", "agency",
-                                      "international", "customs_fee", "duty"))
+        # 関税はその月のタオタロウ商品代の割合でAmazonに配る
+        amz_ratio = (v["amz_goods"] / v["goods"]) if v["goods"] > 0 else 0.0
+        amz_ratio = min(max(amz_ratio, 0.0), 1.0)
+        amz = {
+            "goods": v["amz_goods"], "domestic": v["amz_domestic"], "agency": v["amz_agency"],
+            "international": v["amz_international"], "customs_fee": v["amz_customs_fee"],
+            "duty": v["duty"] * amz_ratio,
+        }
+        PKEYS = ("goods", "domestic", "agency", "international", "customs_fee", "duty")
+        # 楽天向け ＝ 全体 − Amazon向け
+        rk_p = {k: v[k] - amz[k] for k in PKEYS}
+        purchase = sum(rk_p.values())
+        purchase_amz = sum(amz.values())
         sales = v["sales_rakuten"] + v["sales_amazon"]
         begin = inv.get(_prev_ym(ym))
         end = inv.get(ym)
         china_cogs = (begin + purchase - end) if (begin is not None and end is not None) else None
+        # Amazon：月末の在庫が前月・当月ともあれば在庫式。まだ無い月は、
+        # Amazon向けの仕入は全部「売れていない在庫」として原価に入れない
+        # （FBAに入ってまだ売れていない。第一弾が入った翌月末から記録が始まる）
+        amz_begin = inv_amz.get(_prev_ym(ym))
+        amz_end = inv_amz.get(ym)
+        if amz_begin is not None and amz_end is not None:
+            amz_cogs, amz_method = amz_begin + purchase_amz - amz_end, "inventory"
+        else:
+            amz_cogs, amz_method = 0.0, "unsold"
         # メーカー品の売上原価は2通りで出す。
         #   在庫式 … 期首 ＋ 仕入 − 期末。実地棚卸が正なので決算はこちら
         #   販売式 … 売れた数 × 原価。売れたぶんだけで、減耗は入らない
@@ -753,7 +794,7 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
         manu_variance = ((manu_by_inv - manu_sold)
                          if (manu_by_inv is not None and v["has_rakuten_sales"])
                          else None)
-        cogs = (china_cogs + manu_cogs) if china_cogs is not None else None
+        cogs = (china_cogs + manu_cogs + amz_cogs) if china_cogs is not None else None
         # 販売費及び一般管理費。粗利から引くと営業利益になる。
         # 楽天への費用は、請求書が読めている月は実額、無い月は見込み
         # 費目ごとに見る。楽天は品目で遅れ方が違い（決済は2か月、広告は3か月）、
@@ -785,9 +826,16 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
             "sales_amazon": round(v["sales_amazon"]),
             "has_rakuten_sales": bool(v["has_rakuten_sales"]),
             "sales": round(sales),
-            "purchase": {k: round(v[k]) for k in ("goods", "domestic", "agency",
-                                                   "international", "customs_fee", "duty")},
+            # 楽天向けの仕入（中国輸入）。Amazon向けは purchase_amazon に分けた
+            "purchase": {k: round(rk_p[k]) for k in PKEYS},
             "purchase_total": round(purchase),
+            "purchase_amazon": {k: round(amz[k]) for k in PKEYS},
+            "purchase_amazon_total": round(purchase_amz),
+            "amazon_inventory_begin": round(amz_begin) if amz_begin is not None else None,
+            "amazon_inventory_end": round(amz_end) if amz_end is not None else None,
+            "amazon_cogs": round(amz_cogs),
+            # inventory … 在庫式で原価を出した / unsold … 在庫の記録がまだ無く、仕入は全部在庫に積んだ
+            "amazon_method": amz_method,
             "inventory_begin": round(begin) if begin is not None else None,
             "inventory_end": round(end) if end is not None else None,
             "inventory_platforms": sorted(inv_pf.get(ym, [])),
@@ -1190,6 +1238,37 @@ def bank_reconcile_view(db: Session = Depends(get_db)):
             key=lambda d: d.get("issued") or ""),
         "fill_suppliers": sorted(br.FILL_SUPPLIERS),
     }
+
+
+# ---------- 楽天とAmazonに分ける ----------
+
+@router.post("/channel/sync")
+def channel_sync(db: Session = Depends(get_db)):
+    """タオタロウの注文を読み、注文ごとにAmazon向けか楽天向けかを決めて保存する。
+
+    月次サマリーで、タオタロウの仕入を楽天とAmazonに分けるのに使う。
+    何度やっても増えない。見分けがつかない注文は楽天にする。
+    """
+    if not taotaro.is_configured():
+        raise HTTPException(400, "タオタロウの設定がありません")
+    from app.services import channel_split
+    try:
+        return channel_split.sync(db)
+    except taotaro.TaotaroError as e:
+        raise HTTPException(502, f"タオタロウから取れませんでした（{e.message}）")
+
+
+@router.get("/channel/status")
+def channel_status(db: Session = Depends(get_db)):
+    """振り分け済みの注文の数と、最後に振り分けた日時。"""
+    from sqlalchemy import func as F
+    from app.models.taotaro_order_channel import TaotaroOrderChannel
+    rows = (db.query(TaotaroOrderChannel.channel, F.count())
+            .group_by(TaotaroOrderChannel.channel).all())
+    last = (db.query(TaotaroOrderChannel.updated_at)
+            .order_by(TaotaroOrderChannel.updated_at.desc()).first())
+    return {"by_channel": {c or "": n for c, n in rows},
+            "updated_at": last[0].isoformat() if last and last[0] else None}
 
 
 # ---------- 税理士に見せる公開URL ----------

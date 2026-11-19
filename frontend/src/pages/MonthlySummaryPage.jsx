@@ -50,6 +50,21 @@ export default function MonthlySummaryPage({ share = '' }) {
 
   useEffect(() => { load() }, [])
 
+  // タオタロウの注文ごとに、Amazon向けか楽天向けかを決め直す（仕入を販路で分けるため）
+  const [chBusy, setChBusy] = useState(false)
+  const [chMsg, setChMsg] = useState('')
+  const syncChannel = async () => {
+    setChBusy(true); setChMsg('')
+    try {
+      const r = await api.post('/accounting/channel/sync', null, { timeout: 300000 })
+      const b = r.data.by_channel || {}
+      setChMsg(`タオタロウの注文 ${r.data.seen}件を振り分けました（Amazon ${b.amazon || 0}件・楽天 ${b.rakuten || 0}件）`)
+      await load()
+    } catch (e) {
+      setChMsg('振り分けできませんでした：' + (e.response?.data?.detail || e.message))
+    } finally { setChBusy(false) }
+  }
+
   return (
     <div>
       {!share && <UndatedReceipts onChanged={load} />}
@@ -70,7 +85,19 @@ export default function MonthlySummaryPage({ share = '' }) {
           載るなど、品目ごとに遅れ方が違うためです。ヤマトの送料は請求書の締め月に入れています。
           人件費・地代など、ツールの外にある費用はまだ入っていません。
           行を押すと内訳が出ます。
+          <br />
+          <b>楽天とAmazonは分けて計算しています。</b>タオタロウの仕入は注文ごとに（FBAの印・ASIN・マスタで）Amazon向けか楽天向けかを見分け、
+          便の送料・手数料は便の中身の金額の割合、関税はその月の商品代の割合で配ります。見分けがつかない注文は楽天に入れます。
+          Amazonは月末在庫の記録が始まるまで、仕入を「売れていない在庫」として原価に入れません。
         </div>
+        {!share && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+            <button className="btn btn-secondary" style={{ fontSize: 12 }} disabled={chBusy} onClick={syncChannel}>
+              {chBusy ? '振り分けています…（1〜2分）' : '🔀 楽天／Amazonの振り分けを更新'}
+            </button>
+            {chMsg && <span style={{ fontSize: 12, color: chMsg.startsWith('振り分けでき') ? C.bad : C.good }}>{chMsg}</span>}
+          </div>
+        )}
         {err && <div style={{ color: C.bad, fontSize: 12, marginTop: 6 }}>{err}</div>}
       </div>
 
@@ -85,8 +112,9 @@ export default function MonthlySummaryPage({ share = '' }) {
                 <th style={th}>売上（楽天）</th>
                 <th style={th}>売上（Amazon）</th>
                 <th style={th}>売上計</th>
-                <th style={th}>中国輸入の原価</th>
+                <th style={th}>中国輸入の原価（楽天）</th>
                 <th style={th}>メーカー品の原価</th>
+                <th style={th}>Amazonの原価</th>
                 <th style={th}>売上原価 計</th>
                 <th style={th}>粗利</th>
                 <th style={th}>粗利率</th>
@@ -108,6 +136,15 @@ export default function MonthlySummaryPage({ share = '' }) {
                     <td style={{ ...td, fontWeight: 600 }}>{yen(m.sales)}</td>
                     <td style={td}>{m.china_cogs == null ? <span style={{ color: C.sub }}>在庫未確定</span> : yen(m.china_cogs)}</td>
                     <td style={td}>{yen(m.manu_cogs)}</td>
+                    <td style={td}>
+                      {m.amazon_method === 'inventory'
+                        ? yen(m.amazon_cogs)
+                        : m.purchase_amazon_total
+                          ? <span style={{ color: C.sub }} title="Amazonの月末在庫の記録が始まるまで、仕入は売れていない在庫として原価に入れません">
+                              ¥0<span style={{ fontSize: 11 }}>（在庫へ {yen(m.purchase_amazon_total)}）</span>
+                            </span>
+                          : <span style={{ color: C.sub }}>—</span>}
+                    </td>
                     <td style={{ ...td, fontWeight: 600 }}>{yen(m.cogs)}</td>
                     <td style={{ ...td, fontWeight: 700, color: m.gross_profit == null ? C.sub : m.gross_profit >= 0 ? C.good : C.bad }}>
                       {yen(m.gross_profit)}
@@ -122,11 +159,11 @@ export default function MonthlySummaryPage({ share = '' }) {
                   </tr>
                   {open[m.ym] && (
                     <tr>
-                      <td colSpan={14} style={{ ...td, textAlign: 'left', background: '#f8fafc', padding: '8px 12px 12px 28px' }}>
+                      <td colSpan={15}style={{ ...td, textAlign: 'left', background: '#f8fafc', padding: '8px 12px 12px 28px' }}>
                         <table style={{ borderCollapse: 'collapse' }}>
                           <tbody>
                             <tr>
-                              <td colSpan={3} style={{ ...td, textAlign: 'left', borderTop: 'none', fontWeight: 700 }}>中国輸入品の売上原価</td>
+                              <td colSpan={3} style={{ ...td, textAlign: 'left', borderTop: 'none', fontWeight: 700 }}>中国輸入品の売上原価（楽天）</td>
                             </tr>
                             <tr>
                               <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>期首在庫（中国輸入品）</td>
@@ -141,7 +178,7 @@ export default function MonthlySummaryPage({ share = '' }) {
                               </tr>
                             ))}
                             <tr>
-                              <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>当月の仕入 計</td>
+                              <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>当月の仕入 計（楽天向け）</td>
                               <td style={td}></td>
                               <td style={{ ...td, fontWeight: 700 }}>{yen(m.purchase_total)}</td>
                             </tr>
@@ -151,9 +188,44 @@ export default function MonthlySummaryPage({ share = '' }) {
                               <td style={td}>{m.inventory_end == null ? '未確定' : `−${yen(m.inventory_end)}`}</td>
                             </tr>
                             <tr>
-                              <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>中国輸入品の売上原価</td>
+                              <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>中国輸入品の売上原価（楽天）</td>
                               <td style={td}></td>
                               <td style={{ ...td, fontWeight: 700 }}>{yen(m.china_cogs)}</td>
+                            </tr>
+                            <tr>
+                              <td colSpan={3} style={{ ...td, textAlign: 'left', fontWeight: 700, paddingTop: 14 }}>Amazon（FBA）</td>
+                            </tr>
+                            <tr>
+                              <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>期首在庫（Amazon）</td>
+                              <td style={{ ...td, borderTop: 'none', color: C.sub, fontSize: 11 }}>前月末</td>
+                              <td style={{ ...td, borderTop: 'none' }}>{m.amazon_inventory_begin == null ? '未記録' : yen(m.amazon_inventory_begin)}</td>
+                            </tr>
+                            {PURCHASE.map(([k, label]) => (
+                              <tr key={'amz-' + k}>
+                                <td style={{ ...td, textAlign: 'left', borderTop: 'none', paddingLeft: 24, color: C.sub }}>{label}</td>
+                                <td style={{ ...td, borderTop: 'none' }}></td>
+                                <td style={{ ...td, borderTop: 'none', color: C.sub }}>{yen(m.purchase_amazon?.[k])}</td>
+                              </tr>
+                            ))}
+                            <tr>
+                              <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>当月の仕入（Amazon向け）</td>
+                              <td style={{ ...td, borderTop: 'none' }}></td>
+                              <td style={{ ...td, borderTop: 'none' }}>{yen(m.purchase_amazon_total)}</td>
+                            </tr>
+                            <tr>
+                              <td style={{ ...td, textAlign: 'left', borderTop: 'none' }}>期末在庫（Amazon）</td>
+                              <td style={{ ...td, borderTop: 'none', color: C.sub, fontSize: 11 }}>当月末</td>
+                              <td style={{ ...td, borderTop: 'none' }}>{m.amazon_inventory_end == null ? '未記録' : `−${yen(m.amazon_inventory_end)}`}</td>
+                            </tr>
+                            <tr>
+                              <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>
+                                Amazonの売上原価
+                                <span style={{ fontWeight: 400, color: C.sub, fontSize: 11, marginLeft: 6 }}>
+                                  {m.amazon_method === 'inventory' ? '在庫式' : '在庫の記録がまだ無いので、仕入は全部「売れていない在庫」に積んでいます'}
+                                </span>
+                              </td>
+                              <td style={td}></td>
+                              <td style={{ ...td, fontWeight: 700 }}>{yen(m.amazon_cogs)}</td>
                             </tr>
                             <tr>
                               <td colSpan={3} style={{ ...td, textAlign: 'left', fontWeight: 700, paddingTop: 14 }}>日本メーカー品の売上原価</td>
@@ -178,9 +250,9 @@ export default function MonthlySummaryPage({ share = '' }) {
                                   {sup || '（取引先不明）'}
                                 </td>
                                 <td style={{ ...td, borderTop: 'none', fontSize: 11,
-                                  color: v.source === 'invoice' ? C.good : C.warn }}>
-                                  {v.source === 'invoice' ? '請求書' : '入荷履歴'}
-                                  {v.gap > 0 && (
+                                  color: v.source === 'receipt' ? C.warn : C.good }}>
+                                  {{ invoice: '請求書', bank: '銀行の出金', bank_invoice: '請求書＋銀行の出金' }[v.source] || '入荷履歴'}
+                                  {v.gap > 0 && (v.source === 'invoice' || v.source === 'receipt') && (
                                     <span style={{ color: C.bad, marginLeft: 6 }}>
                                       {v.source === 'receipt' ? '請求書が不足しています'
                                         : '入荷の記録が不足しています'}
