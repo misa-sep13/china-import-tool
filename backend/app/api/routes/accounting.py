@@ -609,11 +609,18 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
 
     # メーカー品の仕入。届いた日で計上する（発注日でも支払日でもない）。
     # 分納があるので、入荷履歴を1行ずつ足す
+    from app.models.wholesale_invoice import WholesaleInvoiceLine
     from app.models.wholesale_receipt import WholesaleReceipt
     for r in db.query(WholesaleReceipt.ym, F.sum(WholesaleReceipt.amount)).group_by(
             WholesaleReceipt.ym):
         if r[0]:
-            m[r[0]]["manu_purchase"] += r[1] or 0
+            m[r[0]]["manu_receipt"] += r[1] or 0
+    # 請求書が読めている月は、そちらを仕入とする。発注どおりに届くとは
+    # 限らず（多く届く・頼んでいないものが入る）、実際に請求された額が仕入
+    for r in db.query(WholesaleInvoiceLine.ym, F.sum(WholesaleInvoiceLine.amount)).group_by(
+            WholesaleInvoiceLine.ym):
+        if r[0]:
+            m[r[0]]["manu_invoice"] += r[1] or 0
 
     # 日本メーカー品の売上原価：売上管理（楽天）の「売れた数 × 原価」
     from app.api.routes.rakuten import _is_manufacturer_product
@@ -663,7 +670,9 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
         manu_sold = v["manu_cogs"]
         manu_begin = inv_manu.get(_prev_ym(ym))
         manu_end = inv_manu.get(ym)
-        manu_purchase = v["manu_purchase"]
+        # 請求書があればそれ、無ければ入荷履歴で埋める
+        manu_purchase = v["manu_invoice"] or v["manu_receipt"]
+        manu_purchase_source = "invoice" if v["manu_invoice"] else "receipt"
         manu_by_inv = ((manu_begin + manu_purchase - manu_end)
                        if (manu_begin is not None and manu_end is not None) else None)
         manu_cogs = manu_by_inv if manu_by_inv is not None else manu_sold
@@ -716,6 +725,9 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
             "manu_cogs": round(manu_cogs),
             "manu_method": manu_method,
             "manu_purchase": round(manu_purchase),
+            "manu_purchase_source": manu_purchase_source,
+            "manu_purchase_invoice": round(v["manu_invoice"]),
+            "manu_purchase_receipt": round(v["manu_receipt"]),
             "manu_inventory_begin": round(manu_begin) if manu_begin is not None else None,
             "manu_inventory_end": round(manu_end) if manu_end is not None else None,
             "manu_cogs_sold": round(manu_sold),
@@ -861,3 +873,166 @@ def billing_monthly(db: Session = Depends(get_db)):
         m["items"].sort(key=lambda x: -x["amount"])
     return {"months": [by[k] for k in sorted(by, reverse=True)],
             "bucket_labels": BUCKET_LABEL}
+
+
+# ---------- 卸の請求書（メーカー品の仕入） ----------
+#
+# 発注どおりに届くとは限らないので、仕入の金額は請求書を正にする。
+# 請求書は納品のたびに出ているので、請求日をそのまま発生日に使える。
+# ただし請求書のDL漏れもあるため、請求書が無い月は入荷履歴で埋める。
+
+# 請求書の差出人から取引先を決める。発注の取引先名と字面が違う
+SUPPLIER_WORDS = [
+    ("Mare Fiore", "マレフィオーレ"),
+    ("マレフィオーレ", "マレフィオーレ"),
+    ("エジソン", "株式会社エジソン販売"),
+    ("リビック", "株式会社リビック"),
+]
+
+
+def _supplier_of(text: str, filename: str) -> str:
+    hay = (text or "") + " " + (filename or "")
+    for word, name in SUPPLIER_WORDS:
+        if word in hay:
+            return name
+    return "（取引先不明）"
+
+
+def _norm(s: str) -> str:
+    """品名を突き合わせるための形にそろえる。
+
+    請求書は「DENT. チェックアップ ジェル バナナ 60g」、発注は
+    「チェックアップジェルバナナ」のように書き方が違う。
+    空白と記号を落とせば、片方がもう片方を含む形になる。
+    """
+    out = []
+    for ch in (s or ""):
+        if ch.isalnum() or ord(ch) > 0x2000:
+            out.append(ch)
+    return "".join(out).replace("DENT", "").upper()
+
+
+@router.post("/wholesale-invoices/parse")
+def wholesale_invoices_parse(db: Session = Depends(get_db)):
+    """書類タブの「卸請求書」を読んで、明細を取り込む。
+
+    何度やっても増えない（同じ請求Noの行は入れ替える）。
+    修正版が後から来たときも、入れ直せば新しいほうになる。
+    """
+    from app.models.import_permit import ImportPermit
+    from app.models.wholesale_invoice import WholesaleInvoiceLine
+    from app.services import doc_period, invoice_parse
+
+    docs = (db.query(ImportPermit)
+            .filter(ImportPermit.kind == "wholesale")
+            .order_by(ImportPermit.id.asc()).all())
+    added, read = 0, 0
+    failed = []
+    for d in docs:
+        if not d.pdf:
+            continue
+        text = doc_period.text_of(d.pdf, d.filename or "")
+        if not text:
+            failed.append({"id": d.id, "file": d.filename,
+                           "why": "文字が取れません（画像のPDFです）"})
+            continue
+        r = invoice_parse.parse_wholesale_invoice(text)
+        if not r["ok"]:
+            why = ("明細が見つかりません" if not r["items"]
+                   else "明細の合計と小計が合いません")
+            failed.append({"id": d.id, "file": d.filename, "why": why})
+            continue
+        supplier = _supplier_of(text, d.filename or "")
+        no = r["doc_no"] or f"file-{d.id}"
+        db.query(WholesaleInvoiceLine).filter(
+            WholesaleInvoiceLine.doc_no == no,
+            WholesaleInvoiceLine.supplier == supplier).delete()
+        for x in r["items"]:
+            db.add(WholesaleInvoiceLine(
+                document_id=d.id, supplier=supplier, doc_no=no,
+                issued=r["issued"] or None, ym=(r["issued"] or "")[:7] or None,
+                name=x["name"], qty=x["qty"], unit_price=x["unit_price"],
+                amount=x["amount"], note=x.get("note") or None))
+            added += 1
+        read += 1
+    db.commit()
+    return {"ok": True, "documents": len(docs), "read": read,
+            "lines": added, "failed": failed[:30]}
+
+
+@router.get("/wholesale-invoices/monthly")
+def wholesale_invoices_monthly(db: Session = Depends(get_db)):
+    """月 × 取引先。請求書から読めたメーカー品の仕入（税抜）。"""
+    from app.models.wholesale_invoice import WholesaleInvoiceLine
+    by: dict = {}
+    for r in db.query(WholesaleInvoiceLine).all():
+        if not r.ym:
+            continue
+        m = by.setdefault(r.ym, {"ym": r.ym, "amount": 0.0, "count": 0,
+                                 "suppliers": {}, "docs": set()})
+        m["amount"] += r.amount or 0
+        m["count"] += 1
+        m["suppliers"][r.supplier] = round(
+            m["suppliers"].get(r.supplier, 0) + (r.amount or 0), 2)
+        m["docs"].add(r.doc_no)
+    out = []
+    for ym in sorted(by, reverse=True):
+        m = by[ym]
+        m["amount"] = round(m["amount"], 2)
+        m["invoices"] = len(m.pop("docs"))
+        out.append(m)
+    return {"months": out}
+
+
+@router.get("/wholesale-invoices/reconcile")
+def wholesale_reconcile(ym: str, db: Session = Depends(get_db)):
+    """その月の 請求書 と 入荷履歴 を突き合わせる。
+
+    品名の書き方が違うので、空白と記号を落として片方がもう片方を
+    含むかで見る。付かなかったものは、それぞれ片側だけとして出す。
+    """
+    from app.models.wholesale_invoice import WholesaleInvoiceLine
+    from app.models.wholesale_receipt import WholesaleReceipt
+
+    inv = db.query(WholesaleInvoiceLine).filter(WholesaleInvoiceLine.ym == ym).all()
+    rec = db.query(WholesaleReceipt).filter(WholesaleReceipt.ym == ym).all()
+
+    recs = [{"name": r.name or "", "qty": r.qty or 0,
+             "amount": round(r.amount or 0), "key": _norm(r.name or ""),
+             "used": False, "supplier": r.supplier_name or ""} for r in rec]
+
+    rows = []
+    for i in inv:
+        key = _norm(i.name or "")
+        hit = None
+        for r in recs:
+            if r["used"] or not r["key"]:
+                continue
+            if key and (key in r["key"] or r["key"] in key):
+                hit = r
+                r["used"] = True
+                break
+        rows.append({
+            "name": i.name, "supplier": i.supplier, "doc_no": i.doc_no,
+            "issued": i.issued,
+            "inv_qty": i.qty, "inv_amount": round(i.amount or 0),
+            "rec_name": hit["name"] if hit else "",
+            "rec_qty": hit["qty"] if hit else None,
+            "rec_amount": hit["amount"] if hit else None,
+            "diff_qty": (i.qty - hit["qty"]) if hit else None,
+            "diff_amount": (round(i.amount or 0) - hit["amount"]) if hit else None,
+        })
+    only_receipt = [{"name": r["name"], "supplier": r["supplier"],
+                     "qty": r["qty"], "amount": r["amount"]}
+                    for r in recs if not r["used"]]
+
+    inv_total = round(sum(x["inv_amount"] for x in rows))
+    rec_total = round(sum(r["amount"] for r in recs))
+    return {
+        "ym": ym,
+        "invoice_total": inv_total,
+        "receipt_total": rec_total,
+        "diff": inv_total - rec_total,
+        "rows": sorted(rows, key=lambda x: -(abs(x["diff_amount"] or 0))),
+        "only_receipt": only_receipt,
+    }

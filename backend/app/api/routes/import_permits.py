@@ -33,10 +33,11 @@ DOC_KINDS = {
     "invoice": "請求書",
     "rms": "RMS店舗別内訳書",
     "yamato": "ヤマト請求書",
+    "wholesale": "卸請求書",
     "other": "その他書類",
 }
 # 手で入れる種別。PDFを許可書として読まず、指定の月に置く
-MANUAL_KINDS = ("rms", "yamato", "other")
+MANUAL_KINDS = ("rms", "yamato", "wholesale", "other")
 
 _MEDIA = {
     "pdf": "application/pdf", "csv": "text/csv; charset=utf-8",

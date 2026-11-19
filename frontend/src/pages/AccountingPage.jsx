@@ -6,6 +6,7 @@ import InventoryValuePage from './InventoryValuePage'
 import MonthlySummaryPage from './MonthlySummaryPage'
 import AccountingDocsPage from './AccountingDocsPage'
 import MonthlyAccountingDesignPage from './MonthlyAccountingDesignPage'
+import WholesaleInvoicePage from './WholesaleInvoicePage'
 
 /**
  * 月次管理表。会計まわりを1枚にまとめた画面。
@@ -21,6 +22,7 @@ const TABS = [
   { key: 'summary',  label: '📈 月次サマリー' },
   { key: 'deposit',  label: '💰 デポジット内訳' },
   { key: 'freight',  label: '🚢 便ごとの送料' },
+  { key: 'wholesale', label: '🧾 卸の仕入' },
   { key: 'tax',      label: '🧾 関税・消費税' },
   { key: 'stock',    label: '📦 在庫金額' },
   { key: 'docs',     label: '📑 書類' },
@@ -63,6 +65,8 @@ export default function AccountingPage() {
       </div>
 
       {tab === 'deposit' && <DepositBreakdownPage />}
+
+      {tab === 'wholesale' && <WholesaleInvoicePage />}
 
       {tab === 'design' && (
         <div style={{ margin: '-14px -14px 0' }}>

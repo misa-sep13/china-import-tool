@@ -20,6 +20,7 @@ const KINDS = [
   { key: 'invoice', label: 'タオタロウの請求書', auto: true, hint: 'タオタロウから自動で取り込み' },
   { key: 'rms', label: 'RMS店舗別内訳書', hint: 'RMSからダウンロードしてここに入れる' },
   { key: 'yamato', label: 'ヤマト運輸の送料請求書', hint: 'ヤマトの請求書をここに入れる' },
+  { key: 'wholesale', label: '卸請求書', hint: 'マレフィオーレ・エジソン・リビック。まとめて選べます' },
   { key: 'other', label: 'その他', hint: '' },
 ]
 const KIND_LABEL = Object.fromEntries(KINDS.map(k => [k.key, k.label]))
