@@ -157,6 +157,14 @@ def capture_snapshot(data: CaptureIn, db: Session = Depends(get_db)):
         raise HTTPException(400, f"platformは {' / '.join(PLATFORMS)} のいずれかです")
     rows = _collect_rakuten(db) if platform == "rakuten" else _collect_amazon(db)
     if not rows:
+        # AmazonはFBAに在庫が無いことがふつうにある（初回の納品がまだ、
+        # 売り切り後など）。失敗にすると月末バッチごと落ちて楽天まで
+        # 記録されないので、0件として返す。在庫が入れば次の月末から
+        # ひとりでに記録が始まる
+        if platform == "amazon":
+            return {"period": period, "platform": platform, "items": 0,
+                    "total_amount": 0, "by_category": {}, "no_cost_skus": [],
+                    "note": "FBAに在庫がありません（0件として記録しました）"}
         raise HTTPException(400, "在庫のある商品がありません")
     return _save(db, period, platform, rows)
 
