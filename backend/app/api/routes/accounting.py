@@ -878,6 +878,8 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
             "operating_rate": (round(operating / sales * 100, 1)
                                if operating is not None and sales and v["has_rakuten_sales"] else None),
             "import_vat": round(v["import_vat"]),
+            # 輸入消費税のうちAmazon向け（その月の商品代の割合）
+            "import_vat_amazon": round(v["import_vat"] * amz_ratio),
             "charge": round(v["charge"]),
         })
     return {"months": out, "default_rate": default_rate}

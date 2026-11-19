@@ -113,57 +113,92 @@ export default function MonthlySummaryPage({ share = '' }) {
 
       {data && (
         <div className="card" style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
             <thead>
               <tr>
                 <th style={{ ...th, textAlign: 'left' }}>月</th>
+                <th style={{ ...th, textAlign: 'left' }}>販路</th>
                 <th style={th}>売上</th>
-                <th style={th}>売上原価</th>
+                <th style={th}>中国輸入の原価</th>
+                <th style={th}>メーカー品の原価</th>
+                <th style={th}>売上原価 計</th>
                 <th style={th}>粗利</th>
+                <th style={th}>粗利率</th>
                 <th style={th}>販管費</th>
                 <th style={th}>営業利益</th>
-                <th style={th} title="Amazon向けに仕入れて、まだ売れていない分。月末在庫の記録が始まるまで原価に入れません">
-                  Amazon向け在庫へ
+                <th style={th}>営業利益率</th>
+                <th style={th} title="仕入れて、まだ売れていない分。Amazonは月末在庫の記録が始まるまで原価に入れず、ここに積みます">
+                  在庫へ積んだ仕入
                 </th>
                 <th style={th}>輸入消費税（仮払）</th>
               </tr>
             </thead>
             <tbody>
               {visibleMonths.map(m => {
-                const sub = { display: 'block', fontSize: 11, color: C.sub, fontWeight: 400 }
                 const dash = <span style={{ color: '#cbd5e1' }}>—</span>
+                const pct = (a, b) => (a != null && b ? `${Math.round(a / b * 1000) / 10}%` : null)
+                const money = (v, color) => (v == null ? dash
+                  : <span style={color ? { color: v >= 0 ? C.good : C.bad, fontWeight: 700 } : undefined}>{yen(v)}</span>)
+                // 楽天：中国輸入（楽天向け）＋メーカー品。販管費は今のところ全部楽天の費用
+                const rkSales = m.has_rakuten_sales ? m.sales_rakuten : null
+                const rkCogs = m.china_cogs != null ? m.china_cogs + (m.manu_cogs || 0) : null
+                const rkGross = rkSales != null && rkCogs != null ? rkSales - rkCogs : null
+                const rkOp = rkGross != null ? rkGross - (m.sga_total || 0) : null
+                // Amazon：在庫の記録が始まるまでは原価0、仕入は在庫へ積む。販管費（Amazonの手数料など）はまだ取り込んでいない
+                const amzSales = m.sales_amazon || 0
+                const amzCogs = m.amazon_cogs || 0
+                const amzGross = amzSales || amzCogs ? amzSales - amzCogs : null
+                const amzStock = m.amazon_method === 'inventory' ? null : (m.purchase_amazon_total || 0)
+                const rows = [
+                  { key: 'rk', label: '楽天', sales: rkSales, salesNote: m.has_rakuten_sales ? null : '未取込',
+                    china: m.china_cogs, manu: m.manu_cogs, cogs: rkCogs, gross: rkGross,
+                    sga: m.sga_total, op: rkOp, stock: null, vat: (m.import_vat || 0) - (m.import_vat_amazon || 0) },
+                  { key: 'amz', label: 'Amazon', sales: amzSales || null, salesNote: amzSales ? null : '—',
+                    china: m.amazon_method === 'inventory' ? amzCogs : (amzSales ? 0 : null), manu: null,
+                    cogs: amzGross != null ? amzCogs : null, gross: amzGross,
+                    sga: null, sgaNote: amzSales ? '未取込' : null, op: null,
+                    stock: amzStock >= 1000 ? amzStock : null, vat: m.import_vat_amazon || 0 },
+                  { key: 'all', label: '合計', sales: m.has_rakuten_sales ? m.sales : null, salesNote: m.has_rakuten_sales ? null : '—',
+                    china: m.china_cogs != null ? m.china_cogs + amzCogs : null, manu: m.manu_cogs, cogs: m.cogs,
+                    gross: m.gross_profit, sga: m.sga_total, op: m.operating_profit,
+                    stock: amzStock >= 1000 ? amzStock : null, vat: m.import_vat || 0 },
+                ]
                 return (
                 <Fragment key={m.ym}>
-                  <tr style={{ cursor: 'pointer' }} onClick={() => setOpen(o => ({ ...o, [m.ym]: !o[m.ym] }))}>
-                    <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>
-                      <span style={{ color: C.sub, marginRight: 4 }}>{open[m.ym] ? '▾' : '▸'}</span>{m.ym}
-                    </td>
-                    <td style={{ ...td, fontWeight: 600 }}>
-                      {m.has_rakuten_sales ? yen(m.sales) : <span style={{ color: C.warn, fontWeight: 400 }}>楽天 未取込</span>}
-                      {m.sales_amazon > 0 && <span style={sub}>うちAmazon {yen(m.sales_amazon)}</span>}
-                    </td>
-                    <td style={td}>
-                      {m.cogs == null ? <span style={{ color: C.sub }}>在庫未確定</span> : yen(m.cogs)}
-                    </td>
-                    <td style={{ ...td, fontWeight: 700, color: m.gross_profit == null ? C.sub : m.gross_profit >= 0 ? C.good : C.bad }}>
-                      {m.gross_profit == null ? dash : yen(m.gross_profit)}
-                      {m.gross_rate != null && <span style={sub}>{m.gross_rate}%</span>}
-                    </td>
-                    <td style={td}>{yen(m.sga_total)}</td>
-                    <td style={{ ...td, fontWeight: 700, color: m.operating_profit == null ? C.sub : m.operating_profit >= 0 ? C.good : C.bad }}>
-                      {m.operating_profit == null ? dash : yen(m.operating_profit)}
-                      {m.operating_rate != null && <span style={sub}>{m.operating_rate}%</span>}
-                    </td>
-                    <td style={{ ...td, color: C.sub }}>
-                      {m.amazon_method === 'inventory'
-                        ? <span title="Amazonの在庫の記録があるので、原価は在庫式で出しています">原価 {yen(m.amazon_cogs)}</span>
-                        : m.purchase_amazon_total >= 1000 ? yen(m.purchase_amazon_total) : dash}
-                    </td>
-                    <td style={{ ...td, color: C.sub }}>{m.import_vat ? yen(m.import_vat) : dash}</td>
-                  </tr>
+                  {rows.map((r, i) => {
+                    const isAll = r.key === 'all'
+                    const rowTd = { ...td, ...(isAll ? { fontWeight: 700, background: '#f8fafc' } : {}),
+                      ...(i === 0 ? { borderTop: '2px solid #cbd5e1' } : { borderTop: `1px dashed ${C.line}` }) }
+                    return (
+                      <tr key={r.key} style={{ cursor: 'pointer' }} onClick={() => setOpen(o => ({ ...o, [m.ym]: !o[m.ym] }))}>
+                        {i === 0 && (
+                          <td rowSpan={3} style={{ ...td, textAlign: 'left', fontWeight: 700, verticalAlign: 'top',
+                            borderTop: '2px solid #cbd5e1' }}>
+                            <span style={{ color: C.sub, marginRight: 4 }}>{open[m.ym] ? '▾' : '▸'}</span>{m.ym}
+                          </td>
+                        )}
+                        <td style={{ ...rowTd, textAlign: 'left',
+                          color: r.key === 'rk' ? '#bf0000' : r.key === 'amz' ? '#c45500' : C.text }}>{r.label}</td>
+                        <td style={rowTd}>
+                          {r.sales != null ? yen(r.sales)
+                            : <span style={{ color: r.salesNote === '未取込' ? C.warn : '#cbd5e1', fontWeight: 400 }}>{r.salesNote || '—'}</span>}
+                        </td>
+                        <td style={rowTd}>{r.key === 'rk' && r.china == null ? <span style={{ color: C.sub, fontWeight: 400 }}>在庫未確定</span> : money(r.china)}</td>
+                        <td style={rowTd}>{money(r.manu)}</td>
+                        <td style={rowTd}>{money(r.cogs)}</td>
+                        <td style={rowTd}>{money(r.gross, true)}</td>
+                        <td style={{ ...rowTd, color: C.sub }}>{pct(r.gross, r.sales) || dash}</td>
+                        <td style={rowTd}>{r.sga != null ? yen(r.sga) : (r.sgaNote ? <span style={{ color: C.warn, fontWeight: 400 }}>{r.sgaNote}</span> : dash)}</td>
+                        <td style={rowTd}>{money(r.op, true)}</td>
+                        <td style={{ ...rowTd, color: C.sub }}>{pct(r.op, r.sales) || dash}</td>
+                        <td style={{ ...rowTd, color: C.sub }}>{r.stock ? yen(r.stock) : dash}</td>
+                        <td style={{ ...rowTd, color: C.sub }}>{r.vat ? yen(r.vat) : dash}</td>
+                      </tr>
+                    )
+                  })}
                   {open[m.ym] && (
                     <tr>
-                      <td colSpan={8}style={{ ...td, textAlign: 'left', background: '#f8fafc', padding: '8px 12px 12px 28px' }}>
+                      <td colSpan={13}style={{ ...td, textAlign: 'left', background: '#f8fafc', padding: '8px 12px 12px 28px' }}>
                         {/* 売上原価の内訳（表では1列にまとめている） */}
                         <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 13, marginBottom: 10,
                           padding: '8px 10px', background: '#fff', border: `1px solid ${C.line}`, borderRadius: 6 }}>
