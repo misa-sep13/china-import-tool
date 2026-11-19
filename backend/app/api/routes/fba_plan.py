@@ -461,6 +461,61 @@ def confirm_placement(req: ConfirmPlacementIn):
     return {"ok": True, "shipments": shipments}
 
 
+@router.get("/shipment-status/{confirmation_id}")
+def shipment_status(confirmation_id: str, sid: Optional[int] = None):
+    """FBA番号から、納品の今の状態を読むだけで返す（受領が遅いときの調べ用）。
+
+    ・Amazon側：ステータス、追跡番号が箱に入っているか、SKUごとの出荷数／受領数
+    ・タオタロウ側（sid を渡したとき）：配送依頼の状態、追跡番号、最新の追跡
+    """
+    import urllib.parse
+    from app.services import amazon_api as amz
+    out: dict = {"confirmation_id": confirmation_id}
+    mp = "A1VC38T7YXB528"
+    try:
+        d = amz._call_sp_api("/fba/inbound/v0/shipments?" + urllib.parse.urlencode({
+            "MarketplaceId": mp, "QueryType": "SHIPMENT", "ShipmentIdList": confirmation_id}))
+        rows = (d.get("payload") or {}).get("ShipmentData") or []
+        out["v0"] = rows[0] if rows else None
+    except Exception as e:
+        out["v0_error"] = str(e)[:300]
+    try:
+        d = amz._call_sp_api(f"/fba/inbound/v0/shipments/{confirmation_id}/items?"
+                             + urllib.parse.urlencode({"MarketplaceId": mp}))
+        items = (d.get("payload") or {}).get("ItemData") or []
+        out["items"] = [{"sku": i.get("SellerSKU"), "shipped": i.get("QuantityShipped"),
+                         "received": i.get("QuantityReceived")} for i in items]
+    except Exception as e:
+        out["items_error"] = str(e)[:300]
+    try:
+        found = amz.find_shipment(confirmation_id)
+        out["plan"] = found
+        if found:
+            sh = amz.get_plan_shipment(found["inbound_plan_id"], found["shipment_id"])
+            out["shipment"] = {k: sh.get(k) for k in (
+                "status", "trackingDetails", "selectedDeliveryWindow", "shipmentConfirmationId",
+                "selectedTransportationOptionId", "source", "freightInformation")}
+            boxes = amz.list_shipment_boxes(found["inbound_plan_id"], found["shipment_id"])
+            out["boxes"] = [{"box_id": b.get("boxId"), "tracking": (b.get("trackingId") or
+                             (b.get("trackingDetails") or {}).get("trackingId") or ""),
+                             "weight": b.get("weight")} for b in boxes]
+    except Exception as e:
+        out["plan_error"] = str(e)[:300]
+    if sid:
+        try:
+            t = taotaro.get_send_order(sid)
+            out["taotaro"] = {"sid": sid, "sn": t.get("sn"), "state_label": t.get("state_label"),
+                              "delivery_name": t.get("delivery_name"),
+                              "latest_trace": t.get("latest_trace"),
+                              "tracking_url": t.get("tracking_url"),
+                              "airbills": [{"no": a.get("express_no"),
+                                            "trace": (a.get("trace_info") or a.get("trace_info_array") or [])[-3:]}
+                                           for a in (t.get("airbills") or [])]}
+        except Exception as e:
+            out["taotaro_error"] = str(e)[:300]
+    return out
+
+
 @router.get("/debug/plan/{plan_id}")
 def debug_plan(plan_id: str):
     """納品プランの今の状態をそのまま返す。読むだけで何も作らない。"""
