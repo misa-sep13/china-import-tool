@@ -637,12 +637,28 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
     except Exception:
         bank = {}
     manu_by_supplier: dict = defaultdict(dict)
-    for key in set(manu_inv) | set(manu_rec) | {k for k, v in bank.items() if v["fill"]}:
+    for key in (set(manu_inv) | set(manu_rec)
+                | {k for k, v in bank.items() if v["fill"] or v["bank_purchase"]}):
         ym_, sup_ = key
         b = bank.get(key) or {}
         fill = b.get("fill", 0.0)
+        bank_purchase = b.get("bank_purchase", 0.0)
         # 請求書 ＋ 請求書の無い支払い ＝ 実際に請求・支払いのあった仕入
         inv_amt, rec_amt = manu_inv.get(key, 0.0) + fill, manu_rec.get(key, 0.0)
+        if bank_purchase:
+            # 月末締め翌月払い・前入金の取引先は、出金がその月の仕入の確定額。
+            # 最終的に銀行で合わせる（入荷履歴は参考として残す）
+            use = bank_purchase
+            manu_by_supplier[ym_][sup_] = {
+                "invoice": round(manu_inv.get(key, 0.0)), "receipt": round(rec_amt),
+                "used": round(use), "source": "bank",
+                "gap": round(abs(use - rec_amt)), "both": bool(rec_amt),
+                "bank_paid": round(b.get("paid", 0.0)), "bank_fill": 0,
+                "bank_no_invoice_count": 0, "bank_paid_on": b.get("paid_on", [])}
+            m[ym_]["manu_purchase"] += use
+            m[ym_]["manu_invoice"] += manu_inv.get(key, 0.0)
+            m[ym_]["manu_receipt"] += rec_amt
+            continue
         # 多いほうを採る。マレフィオーレは納品のたびに請求書を出していて
         # 月をまたぐズレが構造的に起きないので、差が出る＝どちらかが
         # 欠けている。少ないほうを採ると仕入を過少に計上してしまう。

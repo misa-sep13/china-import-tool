@@ -472,6 +472,30 @@ def update_period(permit_id: int, data: PeriodIn, db: Session = Depends(get_db))
     return _brief(p)
 
 
+class PermitFieldsIn(BaseModel):
+    """読み取れなかった許可書（画像だけのPDF。EMSの国際郵便物課税通知書など）に、
+    人が読んだ値を入れる。送った項目だけ書き換える。"""
+    permit_no: Optional[str] = None
+    permit_date: Optional[str] = None
+    customs_duty: Optional[int] = None
+    consumption_tax: Optional[int] = None
+    local_consumption_tax: Optional[int] = None
+    total_tax: Optional[int] = None
+    transport: Optional[str] = None
+    note: Optional[str] = None
+
+
+@router.patch("/{permit_id}/fields")
+def update_fields(permit_id: int, data: PermitFieldsIn, db: Session = Depends(get_db)):
+    p = db.query(ImportPermit).filter(ImportPermit.id == permit_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="見つかりません")
+    for k, v in data.model_dump(exclude_unset=True).items():
+        setattr(p, k, v)
+    db.commit()
+    return _brief(p)
+
+
 class NoteIn(BaseModel):
     note: str = ""
 

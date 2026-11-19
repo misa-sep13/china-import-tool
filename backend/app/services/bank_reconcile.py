@@ -31,6 +31,26 @@ SUPPLIER_PATTERNS = [
 # 請求書が無い支払いを仕入に足す取引先（納品ごとに請求・即日払い）
 FILL_SUPPLIERS = {"マレフィオーレ"}
 
+# 支払い条件。出金をどの月の仕入にするか（2026-11-20 ユーザーから）
+#   per_invoice … 請求日に即日払い。出金を請求書に当て、当たらない分を出金月に足す
+#   next_month  … 月末締め・翌月払い。出金月の前月の仕入（出金額が前月分の確定額）
+#   prepay      … 前入金・数日で着。出金月の仕入
+PAY_TERMS = {
+    "マレフィオーレ": "per_invoice",
+    "株式会社エジソン販売": "next_month",
+    "イノベンテック": "next_month",
+    "株式会社リビック": "prepay",
+}
+
+
+def _prev_ym(ym: str) -> str:
+    y, m = int(ym[:4]), int(ym[5:7])
+    return f"{y - 1}-12" if m == 1 else f"{y}-{m - 1:02d}"
+
+
+def purchase_ym(supplier: str, paid_ym: str) -> str:
+    return _prev_ym(paid_ym) if PAY_TERMS.get(supplier) == "next_month" else paid_ym
+
 TAX = 1.1
 TOL = 3   # 円。端数の丸め違い
 
@@ -153,13 +173,25 @@ def reconcile(db) -> dict:
 
 
 def fill_by_month(db) -> Dict[tuple, dict]:
-    """(ym, 取引先) → 銀行の情報。仕入に足すのは FILL_SUPPLIERS の、請求書の無い出金だけ。"""
+    """(仕入の月, 取引先) → 銀行の情報。
+
+    per_invoice（マレフィオーレ）… 請求書の無い出金を税抜で fill に入れる（請求書に足す）
+    next_month / prepay      … 出金そのものが仕入の確定額。税抜で bank_purchase に入れ、
+                               月次サマリーではこれを正にする（無い月は入荷履歴のまま）
+    """
     r = reconcile(db)
     out: Dict[tuple, dict] = defaultdict(lambda: {"paid": 0.0, "no_invoice": 0.0,
-                                                  "no_invoice_count": 0, "fill": 0.0})
+                                                  "no_invoice_count": 0, "fill": 0.0,
+                                                  "bank_purchase": 0.0, "paid_on": []})
     for p in r["matched"] + r["unmatched"]:
-        out[(p["ym"], p["supplier"])]["paid"] += p["amount"]
+        k = (purchase_ym(p["supplier"], p["ym"]), p["supplier"])
+        out[k]["paid"] += p["amount"]
+        out[k]["paid_on"].append(p["paid_on"])
+        if PAY_TERMS.get(p["supplier"]) in ("next_month", "prepay"):
+            out[k]["bank_purchase"] += p["amount"] / TAX
     for p in r["unmatched"]:
+        if PAY_TERMS.get(p["supplier"]) in ("next_month", "prepay"):
+            continue
         o = out[(p["ym"], p["supplier"])]
         o["no_invoice"] += p["amount"]
         o["no_invoice_count"] += 1
