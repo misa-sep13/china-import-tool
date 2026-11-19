@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import api from '../api/client'
+import UndatedReceipts from '../components/UndatedReceipts'
 
 /**
  * 月次管理表の「📈 月次サマリー」。
@@ -41,14 +42,16 @@ export default function MonthlySummaryPage() {
   const [err, setErr] = useState('')
   const [open, setOpen] = useState({})
 
-  useEffect(() => {
-    api.get('/accounting/summary', { params: { months: 18 } })
-      .then(r => setData(r.data))
-      .catch(e => setErr(e.response?.data?.detail || e.message))
-  }, [])
+  const load = () => api.get('/accounting/summary', { params: { months: 18 } })
+    .then(r => setData(r.data))
+    .catch(e => setErr(e.response?.data?.detail || e.message))
+
+  useEffect(() => { load() }, [])
 
   return (
     <div>
+      <UndatedReceipts onChanged={load} />
+
       <div className="card" style={{ marginBottom: 12 }}>
         <b style={{ fontSize: 16 }}>📈 月次サマリー（発生ベース）</b>
         <div style={{ fontSize: 12, color: C.sub, marginTop: 6, lineHeight: 1.9 }}>
