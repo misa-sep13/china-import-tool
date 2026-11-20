@@ -8,7 +8,7 @@
 6月発行の請求書に載り、品目によって遅れ方も違う。
 発行月で計上すると、まるごとずれる。
 """
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Boolean, Column, Integer, String, DateTime
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -33,4 +33,8 @@ class BillingLine(Base):
     ym = Column(String, index=True)            # 計上月＝精算対象期間の月
 
     amount = Column(Integer, default=0)        # 税抜
+    # 消費税がかかる行か。楽天の内訳書は「税率10％」と「非/不課税・免税」の
+    # 2節に分かれていて、ポイント付与料は非課税。ひとまとめに10%を掛けると
+    # 税込がずれる
+    taxable = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

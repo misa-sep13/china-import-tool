@@ -90,11 +90,15 @@ def parse_rakuten_rms(text: str) -> dict:
     # 二重に数えないよう印を付けて返す（入れるかどうかは呼ぶ側が決める）
     restated = "再掲" in text
 
-    items, in_bill = [], False
+    items, in_bill, taxable = [], False, True
     for raw in text.splitlines():
         line = raw.strip()
         if line.startswith("■"):
             in_bill = "請求額" in line
+            # 請求額は「税率10％」と「非/不課税・免税」の2節に分かれている。
+            # ポイント付与料は非課税なので、ひとまとめに10%を掛けると
+            # 税込がずれる。どちらの節の行かを覚えておく
+            taxable = "非" not in line and "不課税" not in line
             continue
         if not in_bill:
             continue
@@ -116,6 +120,7 @@ def parse_rakuten_rms(text: str) -> dict:
             "ym": (end_d or start_d or "")[:7] or None,
             "amount": yen,
             "bucket": _bucket(agg, name),
+            "taxable": taxable,
         })
     return {
         "kind": "rakuten_rms", "shop_id": shop_id, "shop": shop,

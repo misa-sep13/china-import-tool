@@ -620,11 +620,16 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
     # 請求書から読めた実額。読めている月は見込みより優先する
     from app.models.billing_line import BillingLine
     bill: dict = defaultdict(lambda: defaultdict(float))
+    # 消費税がかかるぶんだけ別に持つ。ポイント付与料は非課税なので、
+    # ひとまとめに10%を掛けると税込がずれる
+    bill_tx: dict = defaultdict(lambda: defaultdict(float))
     has_invoice: set = set()
     for b in db.query(BillingLine).all():
         if not b.ym:
             continue
         bill[b.ym][b.bucket] += b.amount or 0
+        if b.taxable is not False:
+            bill_tx[b.ym][b.bucket] += b.amount or 0
         if b.source == "rakuten_rms":
             has_invoice.add(b.ym)
 
@@ -815,6 +820,31 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
                       else "estimate" if all(x == "estimate" for x in sga_source.values())
                       else "mixed")
         shipping_jpy = b.get("shipping", 0.0)      # ヤマトの請求書
+
+        # ---- 消費税 ----
+        # 取り込んだ値の基準が項目で違うので、ここで揃える。
+        #   売上           … 税込（楽天・Amazonとも総額表示のまま取り込む）
+        #   中国輸入の原価 … 不課税（元建ての支払。日本の消費税は付かない）
+        #   関税           … 不課税
+        #   メーカー品     … 税抜（請求書の税抜額／銀行の出金は÷1.1 済み）
+        #   楽天への費用   … 税抜（内訳書の「金額(税抜)」列。ポイント付与料は非課税）
+        #   ヤマト送料     … 税抜
+        #   代行の月会費   … 不課税（国外）
+        RATE = 0.1
+        bt = bill_tx.get(ym, {})
+        sales_ex = round(sales / (1 + RATE))          # 売上の税抜
+        sales_tax = round(sales) - sales_ex
+        # 課税仕入（税抜）。中国輸入ぶんは不課税なので入れない
+        manu_tx = manu_purchase
+        sga_tx = (bt.get("ad", 0.0) + bt.get("promo", 0.0)
+                  + bt.get("payment_fee", 0.0) + bt.get("system_fee", 0.0)
+                  + bt.get("rent", 0.0) + bt.get("other", 0.0)
+                  + bt.get("shipping", 0.0))
+        if fee_source == "estimate":
+            # 請求書が無い月は見込みを使う。ポイント原資は非課税なので
+            # 課税ぶんからは外す（promo の中身が分けられないため広告と手数料だけ）
+            sga_tx = ad + rakuten_fee + shipping_jpy
+        purchase_tax = round((manu_tx + sga_tx) * RATE)
         sga = ad + promo + rakuten_fee + shipping_jpy + v["fixed"]
         gross = (sales - cogs) if cogs is not None else None
         operating = (gross - sga) if gross is not None else None
@@ -881,6 +911,19 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
             # 輸入消費税のうちAmazon向け（その月の商品代の割合）
             "import_vat_amazon": round(v["import_vat"] * amz_ratio),
             "charge": round(v["charge"]),
+            # 税抜に揃えた数字。売上だけ税込で取り込んでいるので、
+            # そのまま引き算すると粗利が消費税のぶん多く出る
+            "tax": {
+                "rate": RATE,
+                "sales_ex": sales_ex,
+                "sales_tax": sales_tax,
+                # 課税仕入の消費税（中国輸入は不課税なので入っていない）
+                "purchase_tax": purchase_tax,
+                "gross_ex": ((sales_ex - round(cogs))
+                             if (cogs is not None and v["has_rakuten_sales"]) else None),
+                "operating_ex": ((sales_ex - round(cogs) - round(sga))
+                                 if (cogs is not None and v["has_rakuten_sales"]) else None),
+            },
         })
     return {"months": out, "default_rate": default_rate}
 
@@ -948,7 +991,8 @@ def billing_parse(db: Session = Depends(get_db)):
                     doc_no=_doc_key(r["doc_no"]), shop_id=r["shop_id"], shop=r["shop"],
                     bucket=x["bucket"], name=x["name"],
                     period_start=x["period_start"], period_end=x["period_end"],
-                    ym=x["ym"], amount=x["amount"]))
+                    ym=x["ym"], amount=x["amount"],
+                    taxable=bool(x.get("taxable", True))))
                 added += 1
         else:
             r = invoice_parse.parse_yamato(text)

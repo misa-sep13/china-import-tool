@@ -109,6 +109,7 @@ def _migrate():
         ("products",      "supplier",            "ALTER TABLE products ADD COLUMN supplier VARCHAR DEFAULT 'タオタロウ'"),
         ("order_settings","taotaro_web_cookie",  "ALTER TABLE order_settings ADD COLUMN taotaro_web_cookie TEXT"),
         ("order_settings","accounting_share_token", "ALTER TABLE order_settings ADD COLUMN accounting_share_token VARCHAR"),
+        ("billing_lines","taxable", "ALTER TABLE billing_lines ADD COLUMN taxable BOOLEAN DEFAULT TRUE"),
         ("order_settings","cny_closed_before",   "ALTER TABLE order_settings ADD COLUMN cny_closed_before INTEGER DEFAULT 7"),
         ("order_settings","cny_closed_after",    "ALTER TABLE order_settings ADD COLUMN cny_closed_after INTEGER DEFAULT 15"),
         ("order_settings","national_closed_days","ALTER TABLE order_settings ADD COLUMN national_closed_days INTEGER DEFAULT 7"),

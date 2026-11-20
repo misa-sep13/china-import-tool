@@ -41,6 +41,9 @@ export default function MonthlySummaryPage({ share = '' }) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
   const [open, setOpen] = useState({})
+  // 税込／税抜の切り替え。売上だけ税込で取り込んでいるので、
+  // そのまま引き算すると粗利が消費税のぶん多く出る。決算は税抜
+  const [taxMode, setTaxMode] = useState('in')
   const [showOld, setShowOld] = useState(false)
   // 売上も原価も出ていない古い月は、最初はたたんでおく（見たい月が埋もれるので）。
   // 数字が出ている最初の月から後ろは、売上がまだ無い直近の月も出す
@@ -78,7 +81,20 @@ export default function MonthlySummaryPage({ share = '' }) {
       {!share && <UndatedReceipts onChanged={load} />}
 
       <div className="card" style={{ marginBottom: 12 }}>
-        <b style={{ fontSize: 16 }}>📈 月次サマリー（発生ベース）</b>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 16 }}>📈 月次サマリー（発生ベース）</b>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {[['in', '税込'], ['ex', '税抜']].map(([k, label]) => (
+              <button key={k} className={`btn btn-sm ${taxMode === k ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setTaxMode(k)}>{label}</button>
+            ))}
+          </div>
+          <span style={{ fontSize: 11, color: C.sub }}>
+            {taxMode === 'ex'
+              ? '売上から消費税を抜いています（決算はこちら）'
+              : '売上は税込のまま。原価と販管費は税抜なので、粗利は消費税のぶん多く出ます'}
+          </span>
+        </div>
         <div style={{ fontSize: 12, color: C.sub, marginTop: 6, lineHeight: 1.9 }}>
           売上原価は2つに分けて出しています。
           <b>中国輸入品 ＝ 期首在庫 ＋ 当月の仕入 − 期末在庫</b>（在庫は中国輸入品のぶんだけ）、
@@ -86,6 +102,9 @@ export default function MonthlySummaryPage({ share = '' }) {
           仕入はその月に実際に発生したぶん（商品代は明細の日、送料・手数料は便の出荷日、関税は輸入許可日）で、
           チャージ（前払金）は入れていません。元はその月のタオタロウ明細の実勢レートで円にしています。
           <br />
+          <b>消費税</b>：売上は<b>税込</b>のまま取り込んでいます（楽天・Amazonとも総額表示）。
+          原価と販管費は<b>税抜</b>です（中国輸入の商品代・送料・関税と代行の月会費は<b>不課税</b>、
+          楽天のポイント付与料は<b>非課税</b>）。上の「税抜」を押すと売上から消費税を抜いて揃えます。
           輸入時の消費税は仮払消費税なので原価に入れず、別に出しています。
           <b>販管費</b>は広告宣伝費・販売促進費（ポイント・クーポン）・支払手数料で、粗利から引くと営業利益です。
           楽天への費用は<b>店舗別内訳書の実額</b>を使います（読めていない月だけ率からの見込み）。
@@ -140,12 +159,16 @@ export default function MonthlySummaryPage({ share = '' }) {
                 const money = (v, color) => (v == null ? dash
                   : <span style={color ? { color: v >= 0 ? C.good : C.bad, fontWeight: 700 } : undefined}>{yen(v)}</span>)
                 // 楽天：中国輸入（楽天向け）＋メーカー品。販管費は今のところ全部楽天の費用
-                const rkSales = m.has_rakuten_sales ? m.sales_rakuten : null
+                // 税抜表示のときは売上だけ割る。原価と販管費はもともと税抜
+                // （中国輸入と代行の月会費は不課税なので、どちらの表示でも同じ）
+                const ex = v => (v == null ? null : Math.round(v / (1 + (m.tax?.rate || 0.1))))
+                const sv = v => (taxMode === 'ex' ? ex(v) : v)
+                const rkSales = m.has_rakuten_sales ? sv(m.sales_rakuten) : null
                 const rkCogs = m.china_cogs != null ? m.china_cogs + (m.manu_cogs || 0) : null
                 const rkGross = rkSales != null && rkCogs != null ? rkSales - rkCogs : null
                 const rkOp = rkGross != null ? rkGross - (m.sga_total || 0) : null
                 // Amazon：在庫の記録が始まるまでは原価0、仕入は在庫へ積む。販管費（Amazonの手数料など）はまだ取り込んでいない
-                const amzSales = m.sales_amazon || 0
+                const amzSales = sv(m.sales_amazon || 0) || 0
                 const amzCogs = m.amazon_cogs || 0
                 const amzGross = amzSales || amzCogs ? amzSales - amzCogs : null
                 const amzStock = m.amazon_method === 'inventory' ? null : (m.purchase_amazon_total || 0)
@@ -158,9 +181,11 @@ export default function MonthlySummaryPage({ share = '' }) {
                     cogs: amzGross != null ? amzCogs : null, gross: amzGross,
                     sga: null, sgaNote: amzSales ? '未取込' : null, op: null,
                     stock: amzStock >= 1000 ? amzStock : null, vat: m.import_vat_amazon || 0 },
-                  { key: 'all', label: '合計', sales: m.has_rakuten_sales ? m.sales : null, salesNote: m.has_rakuten_sales ? null : '—',
+                  { key: 'all', label: '合計', sales: m.has_rakuten_sales ? sv(m.sales) : null, salesNote: m.has_rakuten_sales ? null : '—',
                     china: m.china_cogs != null ? m.china_cogs + amzCogs : null, manu: m.manu_cogs, cogs: m.cogs,
-                    gross: m.gross_profit, sga: m.sga_total, op: m.operating_profit,
+                    gross: m.has_rakuten_sales && m.cogs != null ? sv(m.sales) - m.cogs : null,
+                    sga: m.sga_total,
+                    op: m.has_rakuten_sales && m.cogs != null ? sv(m.sales) - m.cogs - (m.sga_total || 0) : null,
                     stock: amzStock >= 1000 ? amzStock : null, vat: m.import_vat || 0 },
                 ]
                 return (
