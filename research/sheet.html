@@ -9727,9 +9727,15 @@ if(FIREBASE_CONFIG.databaseURL){
     const note0 = (((research.rows || [])[0] || {}).note || '').trim();
     const regKids = (research.regChildren || []).filter(x => x.sku || x.color);
     const extra = ['■この商品について', ''];
-    if((research.parentSku || '').trim()){
-      extra.push('SKU（親）：' + research.parentSku.trim());
-    }
+    // SKUと商品名は必ず出す。空のときに行ごと消していたので、
+    // 親SKUをまだ採番していないと指示書のどこにもSKUが無く、
+    // デザイナーがどの商品の話か分からなくなっていた。
+    // 親が空なら、カラー別SKUの頭（a029_12 → a029）で代わりにする
+    const skuFromKids = (regKids.map(x => (x.sku || '').trim())
+      .filter(Boolean)[0] || '').split('_')[0];
+    const skuHead = (research.parentSku || '').trim() || skuFromKids;
+    extra.push('SKU（親）：' + (skuHead || '(未採番)'));
+    extra.push('商品名：' + (parent || '(未入力)'));
     if((research.cnName || '').trim()){
       extra.push('中国語名：' + research.cnName.trim());
     }
