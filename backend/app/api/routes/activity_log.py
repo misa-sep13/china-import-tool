@@ -67,3 +67,27 @@ def recent_activity(limit: int = Query(60, le=300), db: Session = Depends(get_db
     feed = [f for f in feed if f["created_at"]]
     feed.sort(key=lambda f: f["created_at"], reverse=True)
     return {"items": feed[:limit]}
+
+
+@router.get("/by-sku")
+def by_sku(sku: str = Query(...), limit: int = Query(200, le=1000),
+           db: Session = Depends(get_db)):
+    """SKUを決めて在庫の動きを古いほうまで追う。
+
+    /recent は新しい順に300件までなので、数か月前は届かない。
+    「あのときの入荷で在庫が二重に増えていないか」を確かめるには
+    品物を決めて遡れる必要がある。
+    """
+    rows = (db.query(InventoryReflectionLog)
+            .filter(InventoryReflectionLog.sku == sku)
+            .order_by(InventoryReflectionLog.created_at.desc())
+            .limit(max(1, min(limit, 1000))).all())
+    return {"sku": sku, "count": len(rows), "items": [{
+        "at": r.created_at.isoformat() if r.created_at else None,
+        "source": r.source, "label": r.source_label,
+        "source_id": r.source_id, "ref": r.source_ref,
+        "qty": r.received_qty,
+        "stock_before": r.stock_before, "stock_after": r.stock_after,
+        "inbound_before": r.inbound_before, "inbound_after": r.inbound_after,
+        "note": r.note,
+    } for r in rows]}
