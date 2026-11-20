@@ -7802,6 +7802,57 @@ if(FIREBASE_CONFIG.databaseURL){
       dnRow.appendChild(dnote);
       panel.appendChild(dnRow);
 
+      // よく使う指示。チェックすると上の①②に文章で入り、
+      // ❷「商品マスタに登録」でそのまま持っていける。
+      //
+      // 指示が無いとタオタロウは厚みに関係なく再梱包してしまい、
+      // 3.3cmに収まる商品まで厚くなって送料が上がる。
+      // 書き忘れると気づけないので、登録のときに選べるようにする。
+      // 文章を書かせないのは、言い回しがぶれると現場が迷うため。
+      {
+        // [見出し, 入れ先, 実際に入る文章]
+        const PRESETS = [
+          ['薄く梱包', 'master_note', '薄く梱包してください（3.3cm以下に収まるように）'],
+          ['圧縮する', 'master_note', '一番大きい圧縮をかけてください'],
+          ['再梱包しない', 'master_note', '再梱包しないでください（元の袋のまま送ってください）'],
+          ['OPP袋', 'master_note', '1つずつOPP袋に入れてください'],
+          ['袋を折らない', 'delivery_note', '袋を折らないでください'],
+        ];
+        const fields = { master_note: note, delivery_note: dnote };
+        // ／で区切って足し引きする。手で書いた分は触らない
+        const toggle = (key, text, on) => {
+          const ta = fields[key];
+          const parts = (ta.value || '').split('／').map(s => s.trim()).filter(Boolean);
+          const rest = parts.filter(s => s !== text);
+          const next = (on ? rest.concat([text]) : rest).join('／');
+          ta.value = next;
+          put(key, next);
+        };
+        const pRow = el('div', 'an-row reg-line');
+        pRow.appendChild(el('span', 'reg-lead', 'よく使う指示'));
+        const pBox = el('div', '');
+        pBox.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;font-size:12px;';
+        PRESETS.forEach(([label, key, text]) => {
+          const lb = document.createElement('label');
+          lb.style.cssText = 'display:inline-flex;align-items:center;gap:4px;cursor:pointer;';
+          lb.title = text;
+          const cb = document.createElement('input');
+          cb.type = 'checkbox'; cb.dataset.writes = '1';
+          cb.checked = (fields[key].value || '').includes(text);
+          cb.addEventListener('change', () => toggle(key, text, cb.checked));
+          lb.appendChild(cb);
+          lb.appendChild(document.createTextNode(label));
+          pBox.appendChild(lb);
+        });
+        pRow.appendChild(pBox);
+        // 置き場所は②の上。チェックしてから書く流れにしたいので、
+        // 入れ先の文章欄（dnote）より先に見える位置へ差し込む
+        panel.insertBefore(pRow, dnRow);
+        panel.insertBefore(el('div', 'an-note',
+          '厚みが3.3cmに収まりそうなもの・圧縮すれば薄くなりそうなものは「薄く梱包」を入れてください。'
+          + '指示が無いとタオタロウは厚みに関係なく再梱包し、送料が上がります。'), dnRow);
+      }
+
       // タオタロウの検品オプション。発注の備考に「全量開封検品」と
       // 書いていたのを、チェックで選べるようにする。❷で全SKUのマスタに入り、
       // 発注画面では最初からチェックが入った状態になる
