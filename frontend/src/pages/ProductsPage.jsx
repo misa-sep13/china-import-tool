@@ -207,25 +207,6 @@ export default function ProductsPage() {
     }
   }
 
-  // ASINから商品画像を入れる。名前が似た商品を一覧や発注で
-  // 取り違えないようにするためのもの（画像の無いものだけを埋める）
-  const [fetchingImg, setFetchingImg] = useState(false)
-  const fetchImages = async () => {
-    setFetchingImg(true)
-    try {
-      const r = await api.post('/products/fetch-images')
-      const d = r.data
-      alert(d.targets
-        ? `${d.targets}件のうち ${d.filled}件に画像が入りました`
-          + (d.missing && d.missing.length ? `
-取れなかったSKU: ${d.missing.join(', ')}` : '')
-        : '画像の無い商品はありませんでした')
-      await qc.invalidateQueries({ queryKey: ['products'] })
-    } catch (e) {
-      alert(e.response?.data?.detail || e.message)
-    } finally { setFetchingImg(false) }
-  }
-
   const handleRefreshFees = async () => {
     if (!confirm('SP-APIから全商品の販売価格・FBA手数料を取得します。\n商品数によっては数分かかります。よろしいですか？')) return
     setRefreshing(true)
@@ -362,9 +343,6 @@ export default function ProductsPage() {
         </button>
         <button className="btn btn-secondary" onClick={handleRefreshFees} disabled={refreshing}>
           {refreshing ? '取得中...' : '💰 価格・手数料を更新'}
-        </button>
-        <button className="btn btn-secondary" onClick={fetchImages} disabled={fetchingImg}>
-          {fetchingImg ? '取り込み中...' : '🖼 商品画像を取り込む'}
         </button>
         <a
           href={`${api.defaults.baseURL}/products/export/t4s-cost`}

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -129,9 +129,55 @@ class ProductOut(ProductCreate):
     class Config:
         from_attributes = True
 
+# 画像を取りに行って空だったASIN。毎回取りに行かないよう覚えておく
+# （処理が止まるまで。入れ直せばまた取りに行く）
+_IMAGE_TRIED: set = set()
+
+
+def _fill_missing_images(ids: list) -> None:
+    """ASINから商品画像を埋める。画面の裏で動く。
+
+    名前がほとんど同じ商品があり（介護シューズのグレーM/Sなど）、
+    文字だけだと一覧でも発注でも取り違える。
+    ボタンを押させると押し忘れるので、一覧を開いたときに裏で入れる。
+    """
+    from app.core.database import SessionLocal
+    from app.services.amazon_api import fetch_catalog_info
+
+    db = SessionLocal()
+    try:
+        rows = db.query(Product).filter(Product.id.in_(ids)).all()
+        asins = sorted({(p.asin or "").strip() for p in rows if (p.asin or "").strip()})
+        if not asins:
+            return
+        info = fetch_catalog_info(asins)
+        for p in rows:
+            a = (p.asin or "").strip()
+            url = ((info.get(a) or {}).get("image_url") or "").strip()
+            if url:
+                p.photo_url = url
+            else:
+                _IMAGE_TRIED.add(a)
+        db.commit()
+    except Exception:
+        # 画像が入らなくても一覧は出したい。失敗しても黙って終わる
+        pass
+    finally:
+        db.close()
+
+
 @router.get("/", response_model=List[ProductOut])
-def list_products(db: Session = Depends(get_db)):
-    return db.query(Product).filter(Product.is_active == True).order_by(Product.no).all()
+def list_products(background: BackgroundTasks, db: Session = Depends(get_db)):
+    rows = (db.query(Product).filter(Product.is_active == True)
+            .order_by(Product.no).all())
+    # 画像の無いものを裏で埋める。一覧はすぐ返す（次に開いたときに出る）。
+    # 一度取りに行って空だったASINは、もう取りに行かない
+    need = [p.id for p in rows
+            if (p.asin or "").strip() and not (p.photo_url or "").strip()
+            and (p.asin or "").strip() not in _IMAGE_TRIED]
+    if need:
+        background.add_task(_fill_missing_images, need[:60])
+    return rows
 
 @router.get("/lookup")
 def lookup_product(sku: str, db: Session = Depends(get_db)):

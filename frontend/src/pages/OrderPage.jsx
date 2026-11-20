@@ -545,8 +545,21 @@ export default function OrderPage() {
                       return (
                       <tr key={item.product_id} style={{ background: rowBg }}>
                         <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{item.sku}</td>
-                        <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {item.name}
+                        <td style={{ maxWidth: 220 }}>
+                          {/* 商品画像。名前が似た商品を取り違えないよう出す
+                              （読めなければ枠ごと消す） */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                            {item.photo_url ? (
+                              <img src={item.photo_url} alt="" loading="lazy"
+                                referrerPolicy="no-referrer"
+                                onError={e => { e.currentTarget.style.display = 'none' }}
+                                style={{ width: 28, height: 28, objectFit: 'contain', flexShrink: 0,
+                                  border: '1px solid #e5e7eb', borderRadius: 3 }} />
+                            ) : null}
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {item.name}
+                            </span>
+                          </div>
                         </td>
                         <td style={{ fontSize: 12, color: '#666' }}>{[item.color, item.size].filter(Boolean).join(' / ')}</td>
                         <td>{daysBadge(item.days_left)}</td>
