@@ -1858,6 +1858,14 @@ async def auth_middleware(request: _StarletteRequest, call_next):
             or re.fullmatch(r"/api/import-permits/\d+/pdf", path)):
         if _accounting_share_ok(request):
             return await call_next(request)
+    # 在庫金額のタブが読む口。月次管理表の一部なのに別の道にあったので
+    # 401になり、税理士の画面では在庫だけ出ていなかった。
+    # 読むだけ（確定＝POSTは通さない）
+    if request.method == "GET" and path in (
+            "/api/inventory-snapshots/summary",
+            "/api/inventory-snapshots/detail"):
+        if _accounting_share_ok(request):
+            return await call_next(request)
 
     # 商品キープの共有ページ。相手（別の会社の人）がログインなしで
     # 開いて、自分のキープを登録できるようにする。合言葉つきのURLでだけ
