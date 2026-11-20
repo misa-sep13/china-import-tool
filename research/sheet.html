@@ -7812,7 +7812,7 @@ if(FIREBASE_CONFIG.databaseURL){
       {
         // [見出し, 入れ先, 実際に入る文章]
         const PRESETS = [
-          ['薄く梱包', 'master_note', '薄く梱包してください（3.3cm以下に収まるように）'],
+          ['薄く梱包', 'delivery_note', '薄く梱包してください（3.3or2センチ以下に収まるように）'],
           ['圧縮する', 'master_note', '一番大きい圧縮をかけてください'],
           ['再梱包しない', 'master_note', '再梱包しないでください（元の袋のまま送ってください）'],
           ['OPP袋', 'master_note', '1つずつOPP袋に入れてください'],
@@ -7849,7 +7849,7 @@ if(FIREBASE_CONFIG.databaseURL){
         // 入れ先の文章欄（dnote）より先に見える位置へ差し込む
         panel.insertBefore(pRow, dnRow);
         panel.insertBefore(el('div', 'an-note',
-          '厚みが3.3cmに収まりそうなもの・圧縮すれば薄くなりそうなものは「薄く梱包」を入れてください。'
+          '厚みが3.3cm・2cmに収まりそうなもの、圧縮すれば薄くなりそうなものは「薄く梱包」を入れてください。'
           + '指示が無いとタオタロウは厚みに関係なく再梱包し、送料が上がります。'), dnRow);
       }
 
