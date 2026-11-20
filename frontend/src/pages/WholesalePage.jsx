@@ -737,7 +737,7 @@ function PendingReceive({ supplierId, onDone }) {
       let g = map.get(key)
       if (!g) {
         g = { key, name: r.name, rows: [], qty: 0, received: 0, remaining: 0,
-              orders: new Set(), first: '', manual: 0, caseQty: null }
+              orders: new Set(), dates: new Set(), first: '', manual: 0, caseQty: null }
         map.set(key, g)
       }
       g.rows.push(r)
@@ -747,7 +747,13 @@ function PendingReceive({ supplierId, onDone }) {
         g.qty += r.qty || 0
         g.received += r.received_qty || 0
         g.orders.add(r.order_id)
-        if (r.order_date && (!g.first || r.order_date < g.first)) g.first = r.order_date
+        if (r.order_date) {
+          if (!g.first || r.order_date < g.first) g.first = r.order_date
+          // 日付の違う発注がまとまることがある。古い日付だけを出すと、
+          // 発注数に別の日のぶんが入っているのが読めない（残が減って
+          // いないように見える）ので、全部の日付を出す
+          g.dates.add(r.order_date)
+        }
       } else {
         g.manual += r.remaining_qty || 0
       }
@@ -851,11 +857,11 @@ function PendingReceive({ supplierId, onDone }) {
               {groups.map(g => (
                 <tr key={g.key} style={{ borderTop: '1px solid #f1f5f9' }}>
                   <td style={{ padding: 8, whiteSpace: 'nowrap', color: '#64748b', fontSize: 12 }}>
-                    {g.first || (
+                    {/* 日付は全部出す。1行に複数の発注がまとまるので、
+                        どの日のぶんが入っているかが見えないと数が合わなく見える */}
+                    {[...g.dates].sort().join('・') || (
                       <span style={{ padding: '1px 6px', borderRadius: 3, background: '#f1f5f9', color: '#475569' }}>手動発注</span>
                     )}
-                    {/* 何件の発注をまとめているかが分かるようにしておく。
-                        「発注数が思ったより多い」と感じたときの手がかりになる */}
                     {g.orders.size > 1 && (
                       <span style={{ marginLeft: 6, color: '#94a3b8' }}>発注{g.orders.size}件</span>
                     )}
