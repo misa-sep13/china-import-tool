@@ -246,3 +246,72 @@ def delete_snapshot(period: str, platform: str = Query("rakuten"), db: Session =
     ).delete(synchronize_session=False)
     db.commit()
     return {"deleted": n}
+
+
+class LineIn(BaseModel):
+    period: str
+    sku: str
+    stock: int
+    platform: str = "rakuten"
+    note: str | None = None
+
+
+@router.patch("/line")
+def edit_line(data: LineIn, db: Session = Depends(get_db)):
+    """確定済みのスナップショットを、1行だけ直す。
+
+    スナップショットは「その時点の在庫数」を撮って保存したものなので、
+    あとから入荷漏れが見つかっても遡って入らない。撮り直すと他の商品まで
+    今の値になってしまうため、直したい1行だけを入れ替えられるようにする。
+
+    その月に無かったSKU（在庫0で記録されなかったもの）は新しく作る。
+    金額は 在庫数 × 原価 で入れ直す。
+    """
+    from app.api.routes.rakuten import _is_manufacturer_product
+
+    period = _validate_period(data.period)
+    platform = (data.platform or "rakuten").strip()
+    if platform not in PLATFORMS:
+        raise HTTPException(400, f"platformは {' / '.join(PLATFORMS)} のいずれかです")
+    if data.stock < 0:
+        raise HTTPException(400, "在庫数は0以上で入れてください")
+    # その月のスナップショットそのものが無いなら、1行だけ作っても意味がない
+    # （月全体が未確定なのに、その月の在庫があるように見えてしまう）
+    if not (db.query(InventorySnapshot)
+            .filter(InventorySnapshot.period == period,
+                    InventorySnapshot.platform == platform).first()):
+        raise HTTPException(400, f"{period} の{platform}の在庫はまだ確定していません")
+
+    row = (db.query(InventorySnapshot)
+           .filter(InventorySnapshot.period == period,
+                   InventorySnapshot.platform == platform,
+                   InventorySnapshot.sku == data.sku).first())
+    before = row.stock if row else None
+    if not row:
+        if platform == "rakuten":
+            p = (db.query(RakutenProduct)
+                 .filter(RakutenProduct.sku == data.sku).first())
+            if not p:
+                raise HTTPException(404, f"楽天の商品マスタに {data.sku} がありません")
+            cat = "manufacturer" if _is_manufacturer_product(p) else "china"
+            cost, name, sup = (p.cost_jpy or 0), (p.name or ""), (p.supplier or "")
+        else:
+            p = db.query(Product).filter(Product.sku == data.sku).first()
+            if not p:
+                raise HTTPException(404, f"商品マスタに {data.sku} がありません")
+            sup = p.supplier or ""
+            cat = "manufacturer" if (sup and "タオタロウ" not in sup) else "china"
+            cost, name = (p.price or 0), (p.name or "")
+        row = InventorySnapshot(period=period, platform=platform, sku=data.sku,
+                                name=name, supplier=sup, category=cat, cost_jpy=cost)
+        db.add(row)
+
+    row.stock = int(data.stock)
+    row.amount = round((row.stock or 0) * (row.cost_jpy or 0))
+    # あとから直したことが分かるように残す。棚卸差異を追うときの手がかりになる
+    row.note = (data.note or "あとから直した").strip()[:200]
+    db.commit()
+    return {"ok": True, "period": period, "platform": platform, "sku": row.sku,
+            "name": row.name, "category": row.category,
+            "stock_before": before, "stock": row.stock,
+            "cost_jpy": row.cost_jpy, "amount": row.amount, "note": row.note}
