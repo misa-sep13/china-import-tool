@@ -404,6 +404,11 @@ def order_preview(req: PreviewRequest, db: Session = Depends(get_db)):
             # どの発注から展開された行か。発注履歴を販売単位で残すのに使う
             "origin_sku": it.origin_sku, "origin_qty": it.origin_qty,
             "is_accessory": it.is_accessory,
+            # ASIN・FNSKU。発注のときタオタロウへ一緒に送るためにここで返す。
+            # 返していなかったので画面に無く、商品マスタに入れてあっても
+            # 発注には乗らず、タオタロウ側で空のままだった
+            "asin": (getattr(product, "asin", "") or "").strip(),
+            "fnsku": (getattr(product, "fnsku", "") or "").strip(),
             "ok": False, "error": "", "skus": [], "chosen": None,
             "product_id": None, "platform": "", "title": "",
             "min_order_quantity": 1, "remembered": False,
