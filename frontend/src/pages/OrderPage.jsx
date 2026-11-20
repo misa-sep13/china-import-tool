@@ -508,8 +508,10 @@ export default function OrderPage() {
                   <thead>
                     <tr>
                       <th>SKU</th>
-                      <th>商品名</th>
-                      <th>色/サイズ</th>
+                      {/* 商品名は広く、色/サイズは狭く。どれを発注するかは
+                          商品名で見分けるので、そちらに幅を回す */}
+                      <th style={{ minWidth: 320 }}>商品名</th>
+                      <th style={{ width: 110 }}>色/サイズ</th>
                       <th>残日数</th>
                       <th>販売可能</th>
                       <th>納品中</th>
@@ -545,7 +547,7 @@ export default function OrderPage() {
                       return (
                       <tr key={item.product_id} style={{ background: rowBg }}>
                         <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{item.sku}</td>
-                        <td style={{ maxWidth: 220 }}>
+                        <td style={{ minWidth: 320 }}>
                           {/* 商品画像。名前が似た商品を取り違えないよう出す
                               （読めなければ枠ごと消す） */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
@@ -561,7 +563,11 @@ export default function OrderPage() {
                             </span>
                           </div>
                         </td>
-                        <td style={{ fontSize: 12, color: '#666' }}>{[item.color, item.size].filter(Boolean).join(' / ')}</td>
+                        <td style={{ fontSize: 12, color: '#666', width: 110, maxWidth: 110,
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          title={[item.color, item.size].filter(Boolean).join(' / ')}>
+                          {[item.color, item.size].filter(Boolean).join(' / ')}
+                        </td>
                         <td>{daysBadge(item.days_left)}</td>
                         <td style={{ textAlign: 'right', fontWeight: 600 }}>{item.available}</td>
                         <td style={{ textAlign: 'right', color: item.inbound > 0 ? '#2563eb' : '#bbb' }}>{item.inbound || '-'}</td>
