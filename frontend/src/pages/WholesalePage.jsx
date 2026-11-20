@@ -720,6 +720,7 @@ function WholesaleMaster({ suppliers, supplierId, items, onChanged }) {
  */
 function PendingReceive({ supplierId, onDone }) {
   const [rows, setRows] = useState([])
+  const [today, setToday] = useState({})   // 今日入れた数（商品名ごと）
   const [qty, setQty] = useState({})
   const [mode, setMode] = useState('add_stock')
   const [busy, setBusy] = useState(false)
@@ -733,6 +734,21 @@ function PendingReceive({ supplierId, onDone }) {
       const r = await api.get(`/wholesale/pending-items${q}`)
       setRows(r.data || [])
       setQty({})
+      // 今日どれだけ入れたか。一覧は「まだ届いていない発注」だけを出すので、
+      // 全部届いた発注は行ごと消える。入れた数がどこにも出ず、
+      // 「300入れたのに入荷60のまま」に見えていた
+      try {
+        const now = new Date()
+        const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+        const d = `${ym}-${String(now.getDate()).padStart(2, '0')}`
+        const rc = await api.get('/wholesale/receipts', { params: { ym, limit: 1000 } })
+        const sum = {}
+        ;(rc.data.items || []).forEach(x => {
+          if ((x.received_date || '') !== d) return
+          sum[x.name || ''] = (sum[x.name || ''] || 0) + (x.qty || 0)
+        })
+        setToday(sum)
+      } catch { setToday({}) }
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
     } finally { setBusy(false) }
@@ -868,8 +884,8 @@ function PendingReceive({ supplierId, onDone }) {
               <tr style={{ background: '#f8fafc' }}>
                 <th style={{ textAlign: 'left', padding: 8 }}>発注日</th>
                 <th style={{ textAlign: 'left', padding: 8 }}>商品名</th>
-                <th style={{ textAlign: 'right', padding: 8 }}>発注数</th>
-                <th style={{ textAlign: 'right', padding: 8 }}>入荷済</th>
+                <th style={{ textAlign: 'right', padding: 8 }} title="まだ届いていない発注のぶんだけです。全部届いた発注は行ごと消えます">発注数（未完了分）</th>
+                <th style={{ textAlign: 'right', padding: 8 }} title="この行に残っている発注に対して入れたぶんです">入荷済</th>
                 <th style={{ textAlign: 'right', padding: 8 }}>残り</th>
                 <th style={{ textAlign: 'right', padding: 8, width: 170 }}>今回届いた数</th>
               </tr>
@@ -900,6 +916,13 @@ function PendingReceive({ supplierId, onDone }) {
                     {g.received}
                     {box(g.received, g.caseQty) &&
                       <span style={{ fontSize: 11, marginLeft: 4 }}>（{box(g.received, g.caseQty)}）</span>}
+                    {/* 今日入れた数。完了した発注は行ごと消えるので、
+                        この行の入荷済には出てこない。入れた実感と合わせる */}
+                    {today[g.name] > 0 && (
+                      <div style={{ fontSize: 11, color: '#16a34a', fontWeight: 700 }}>
+                        今日 {today[g.name]} 入荷
+                      </div>
+                    )}
                   </td>
                   <td style={{ padding: 8, textAlign: 'right', fontWeight: 700, color: '#b45309' }}>
                     {g.remaining}
