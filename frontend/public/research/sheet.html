@@ -7810,13 +7810,16 @@ if(FIREBASE_CONFIG.databaseURL){
       // 書き忘れると気づけないので、登録のときに選べるようにする。
       // 文章を書かせないのは、言い回しがぶれると現場が迷うため。
       {
-        // [見出し, 入れ先, 実際に入る文章]
+        // [見出し, 入れ先, 実際に入る文章, 見出しの中でリンクにする語, 行き先]
         const PRESETS = [
           ['薄く梱包', 'delivery_note', '薄く梱包してください（3.3or2センチ以下に収まるように）'],
           ['圧縮する', 'master_note', '一番大きい圧縮をかけてください'],
           ['再梱包しない', 'master_note', '再梱包しないでください（元の袋のまま送ってください）'],
           ['OPP袋', 'master_note', '1つずつOPP袋に入れてください'],
           ['袋を折らない', 'delivery_note', '袋を折らないでください'],
+          // どの箱かを毎回探さずに済むよう、「箱」の字から仕入先ページへ飛ばす
+          ['箱に入れる', 'delivery_note', '箱に入れてください', '箱',
+           'https://shop403y73228ry02.1688.com/?spm=a261y.7663282.shopNavigation.2.9c972975HcBnY7&offerId=728485723929&td_page_id=PC-GYP-2026'],
         ];
         const fields = { master_note: note, delivery_note: dnote };
         // ／で区切って足し引きする。手で書いた分は触らない
@@ -7832,7 +7835,7 @@ if(FIREBASE_CONFIG.databaseURL){
         pRow.appendChild(el('span', 'reg-lead', 'よく使う指示'));
         const pBox = el('div', '');
         pBox.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;font-size:12px;';
-        PRESETS.forEach(([label, key, text]) => {
+        PRESETS.forEach(([label, key, text, linkWord, url]) => {
           const lb = document.createElement('label');
           lb.style.cssText = 'display:inline-flex;align-items:center;gap:4px;cursor:pointer;';
           lb.title = text;
@@ -7841,7 +7844,22 @@ if(FIREBASE_CONFIG.databaseURL){
           cb.checked = (fields[key].value || '').includes(text);
           cb.addEventListener('change', () => toggle(key, text, cb.checked));
           lb.appendChild(cb);
-          lb.appendChild(document.createTextNode(label));
+          const at = linkWord ? label.indexOf(linkWord) : -1;
+          if (at < 0) {
+            lb.appendChild(document.createTextNode(label));
+          } else {
+            // 見出しの一部だけをリンクにする。ラベルの中のリンクは、
+            // 押すとチェックまで動いてしまうので、そこで止める
+            if (at > 0) lb.appendChild(document.createTextNode(label.slice(0, at)));
+            const a = document.createElement('a');
+            a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+            a.textContent = linkWord;
+            a.title = '仕入先のページを開きます';
+            a.style.cssText = 'color:var(--key,#2563eb);text-decoration:underline;';
+            a.addEventListener('click', ev => ev.stopPropagation());
+            lb.appendChild(a);
+            lb.appendChild(document.createTextNode(label.slice(at + linkWord.length)));
+          }
           pBox.appendChild(lb);
         });
         pRow.appendChild(pBox);
