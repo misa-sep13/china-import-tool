@@ -451,10 +451,17 @@ def delete_order(oid: int, db: Session = Depends(get_db)):
     o, _, _ = _load(db, oid)
     if o.status == "sent":
         raise HTTPException(400, "送信済みの発注は消せません")
+    # 入荷履歴を先に消す。明細を参照しているので、残したまま明細を
+    # 消すとデータベースに止められる（入荷履歴の表を足したときに
+    # ここを直し忘れていて、下書きが消せなくなっていた）。
+    # 消すのは下書きだけなので、仕入に数えていない行しか消えない
+    gone = (db.query(WholesaleReceipt)
+            .filter(WholesaleReceipt.order_id == oid)
+            .delete(synchronize_session=False))
     db.query(WholesaleOrderItem).filter(WholesaleOrderItem.order_id == oid).delete()
     db.delete(o)
     db.commit()
-    return {"deleted": oid}
+    return {"deleted": oid, "receipts_removed": gone}
 
 
 def _build_excel(o, items, s):

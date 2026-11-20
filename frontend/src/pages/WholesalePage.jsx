@@ -119,6 +119,27 @@ export default function WholesalePage() {
     } finally { setBusy(false) }
   }
 
+  // 文面を閉じるとき。まだ送信済にしていない下書きは、そのままだと
+  // 残り続け、作り直したときに同じ中身の発注が2件になる。
+  // 消すか残すかをその場で決めてもらう
+  const closeMessage = async () => {
+    const o = message?.order
+    if (!o || o.status === 'sent') { setMessage(null); return }
+    const keep = window.confirm(
+`まだ「送信済にする」を押していません。
+
+［OK］　　　　　この下書きを残す（あとで送る）
+［キャンセル］　この下書きを消す
+
+※残したまま同じ発注をもう一度作ると、同じ内容が2件になります`)
+    if (!keep) {
+      try { await api.delete(`/wholesale/orders/${o.id}`) }
+      catch (e) { setErr(e.response?.data?.detail || e.message) }
+      await load()
+    }
+    setMessage(null)
+  }
+
   const openPreview = async (id) => {
     setBusy(true); setErr('')
     try {
@@ -464,7 +485,7 @@ export default function WholesalePage() {
       {message && (
         <MessageDialog m={message} busy={busy}
           onChange={t => setMessage({ ...message, text: t })}
-          onConfirm={confirmSent} onClose={() => setMessage(null)} />
+          onConfirm={confirmSent} onClose={closeMessage} />
       )}
 
       {receiving && (
@@ -1056,8 +1077,11 @@ function MessageDialog({ m, busy, onChange, onConfirm, onClose }) {
   }
 
   return (
+    /* 外側を押しても閉じない。ここで閉じると、作った下書きが
+       「送信済にする」を押さないまま残り、作り直したときに同じ中身の
+       発注が2件できる（9/5・11/9に実際に起きた） */
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 1000,
-      display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 10,
         width: 'min(620px, 94vw)', maxHeight: '92vh', overflow: 'auto', padding: 24 }}>
         <h3 style={{ marginTop: 0 }}>
