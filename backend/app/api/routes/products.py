@@ -620,3 +620,41 @@ def list_inspect_options():
         "texts": [{"key": k, "label": v}
                   for k, v in taotaro.INSPECT_TEXT.items()],
     }
+
+
+@router.post("/fetch-images")
+def fetch_images(force: bool = False, db: Session = Depends(get_db)):
+    """ASINから商品画像を取り込む。
+
+    発注の画面でもマスタでも、文字だけだと似た商品を取り違える
+    （介護シューズのグレーM/Sのように、名前がほとんど同じものがある）。
+    画像があれば一目で分かる。
+
+    既定では画像の無いものだけを埋める。force=true で全部取り直す。
+    """
+    from app.services.amazon_api import fetch_catalog_info
+
+    rows = [p for p in db.query(Product).filter(Product.is_active == True).all()
+            if (p.asin or "").strip()
+            and (force or not (p.photo_url or "").strip())]
+    if not rows:
+        return {"ok": True, "targets": 0, "filled": 0,
+                "message": "取り込む対象がありません"}
+
+    asins = sorted({(p.asin or "").strip() for p in rows})
+    try:
+        info = fetch_catalog_info(asins)
+    except Exception as e:
+        raise HTTPException(502, f"Amazonから取れませんでした（{type(e).__name__}: {str(e)[:120]}）")
+
+    filled, missing = 0, []
+    for p in rows:
+        url = ((info.get((p.asin or "").strip()) or {}).get("image_url") or "").strip()
+        if url:
+            p.photo_url = url
+            filled += 1
+        else:
+            missing.append(p.sku)
+    db.commit()
+    return {"ok": True, "targets": len(rows), "filled": filled,
+            "missing": missing[:30]}

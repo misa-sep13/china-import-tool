@@ -293,6 +293,19 @@ function Row({ r, i, patch, pickSku, changeQty }) {
         <input type="checkbox" checked={!!r.send} disabled={ng}
           onChange={e => patch(i, { send: e.target.checked })}
           style={{ ...check, marginTop: 3 }} />
+        {/* Amazonの商品画像。名前がほとんど同じ商品があるので
+            （介護シューズのグレーM/Sなど）、どれを頼んでいるかを
+            自社側の絵でも確かめられるようにする。
+            仕入先の絵と並べて、左が自社・右が仕入先 */}
+        {r.photo_url
+          ? <img src={r.photo_url} alt="" loading="lazy"
+              referrerPolicy="no-referrer"
+              title="Amazonの商品画像（自社の出品）"
+              onError={e => { e.currentTarget.style.display = 'none' }}
+              style={{
+                width: 44, height: 44, objectFit: 'contain', flexShrink: 0,
+                border: `1px solid ${C.line}`, borderRadius: 4 }} />
+          : null}
         {/* 仕入先の画像は読めないことがある（URLが無い・画像だけ弾かれる）。
             壊れた絵が出ると誤解を招くので、読めなければ枠ごと消す */}
         {r.chosen && r.chosen.image

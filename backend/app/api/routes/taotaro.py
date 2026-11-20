@@ -409,6 +409,9 @@ def order_preview(req: PreviewRequest, db: Session = Depends(get_db)):
             # 発注には乗らず、タオタロウ側で空のままだった
             "asin": (getattr(product, "asin", "") or "").strip(),
             "fnsku": (getattr(product, "fnsku", "") or "").strip(),
+            # 商品画像。名前がほとんど同じ商品があるので、文字だけだと
+            # 取り違える（介護シューズのグレーM/Sなど）
+            "photo_url": (getattr(product, "photo_url", "") or "").strip(),
             "ok": False, "error": "", "skus": [], "chosen": None,
             "product_id": None, "platform": "", "title": "",
             "min_order_quantity": 1, "remembered": False,
