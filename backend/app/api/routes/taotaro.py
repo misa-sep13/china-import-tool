@@ -1234,3 +1234,57 @@ def ids_apply(body: IdsApplyIn = IdsApplyIn(), db: Session = Depends(get_db)):
         rs._orders_cache.clear()
     return {"done": done, "failed": failed, "stopped": stopped,
             "done_count": len(done), "failed_count": len(failed)}
+
+
+# ---------- 配送依頼の急ぎ判定 ----------
+#
+# 配送依頼の画面は倉庫に何があるかしか見ていなかったので、
+# 楽天の在庫が切れていても何も言わなかった。
+# 船便で間に合うかを売れ行きから見て、間に合わないものに印を付ける。
+
+
+class StockHintIn(BaseModel):
+    skus: List[str] = []
+
+
+@router.post("/stock-hints")
+def stock_hints(data: StockHintIn, db: Session = Depends(get_db)):
+    """SKUごとに、船便で間に合うかを返す。
+
+    残日数 ＝ 楽天の実在庫 ÷ 1日に売れる数。
+    これが船便の所要日数を下回るなら、着く前に切れる。
+    入荷予定（発注済）は、まだ日本に無いので足さない。
+    """
+    from app.models.rakuten_product import RakutenProduct
+    from app.models.settings import OrderSettings
+
+    want = [s for s in {(x or "").strip() for x in data.skus} if s]
+    if not want:
+        return {"items": {}, "sea_days": 0, "air_days": 0}
+
+    st = db.query(OrderSettings).first()
+    sea = int(getattr(st, "lt_sea_to_fba", 18) or 18)
+    air = int(getattr(st, "lt_air_to_fba", 10) or 10)
+    # 配送依頼を出してから船に載るまでの待ちも入れる。
+    # 出した翌日に出航するわけではないので、これを足さないと甘く出る
+    wait = int(getattr(st, "lt_shipping_request", 7) or 7)
+
+    rows = (db.query(RakutenProduct)
+            .filter(RakutenProduct.sku.in_(want)).all())
+    out = {}
+    for p in rows:
+        stock = int(p.stock or 0)
+        daily = round((p.sales_30_recent or 0) / 30.0, 2)
+        days = None if daily <= 0 else round(stock / daily, 1)
+        if stock <= 0:
+            level = "out"            # もう切れている
+        elif days is not None and days < sea + wait:
+            level = "short"          # 船便では間に合わない
+        else:
+            level = "ok"
+        out[p.sku] = {
+            "name": p.name or "", "stock": stock,
+            "inbound": int(p.inbound or 0), "daily": daily,
+            "days_left": days, "level": level,
+        }
+    return {"items": out, "sea_days": sea + wait, "air_days": air + wait}

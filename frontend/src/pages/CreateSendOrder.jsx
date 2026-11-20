@@ -378,6 +378,9 @@ export default function CreateSendOrder({ onCreated, channel = 'amazon' } = {}) 
   const [opts, setOpts] = useState(null)
   const [rows, setRows] = useState([])
   const [picked, setPicked] = useState(() => new Set())
+  // 楽天の在庫の状況（SKUごと）と、船便の所要日数
+  const [hints, setHints] = useState({})
+  const [seaDays, setSeaDays] = useState(0)
   const [way, setWay] = useState('')
   const [addrId, setAddrId] = useState('')
   const [flag, setFlag] = useState(3)
@@ -411,6 +414,17 @@ export default function CreateSendOrder({ onCreated, channel = 'amazon' } = {}) 
             fba: x.fba, asin: x.asin, fnsku: x.fnsku })),
         })
         setCheck(prev => ({ ...prev, kinds: c.data.kinds || {} }))
+        // 楽天の在庫から、船便で間に合うかを見る。
+        // 振り分けで決まったSKUで引く（管理番号と違うことがある）
+        const kinds = c.data.kinds || {}
+        const skus = [...new Set(arrived
+          .map(x => (kinds[x.oid] || {}).sku || x.out_id)
+          .filter(Boolean))]
+        try {
+          const h = await api.post('/taotaro/stock-hints', { skus })
+          setHints(h.data.items || {})
+          setSeaDays(h.data.sea_days || 0)
+        } catch { /* 在庫が見られなくても配送依頼は出せる */ }
       } catch { /* 取れなければ send-check の結果を待つ */ }
       setRows(arrived)
     } catch (e) {
@@ -649,6 +663,33 @@ export default function CreateSendOrder({ onCreated, channel = 'amazon' } = {}) 
       </div>
 
       <div style={{ fontSize: 14, fontWeight: 700, margin: '14px 0 2px' }}>② 送る注文を選ぶ</div>
+      {/* 便は1つしか選べない。1行でも切れていれば、ここでまとめて知らせる。
+          全部を航空便にすると送料が跳ねるので、切れているものだけ
+          別の便に分ける案内も出す */}
+      {(() => {
+        const urgent = rows.filter(r => {
+          const k = kindOf(r)
+          const h = hints[k.sku || r.out_id]
+          return h && h.level !== 'ok'
+        })
+        if (!urgent.length) return null
+        const outs = urgent.filter(r => {
+          const k = kindOf(r)
+          return (hints[k.sku || r.out_id] || {}).level === 'out'
+        })
+        return (
+          <div style={{ margin: '6px 0 8px', padding: '8px 10px', borderRadius: 6,
+            background: '#fef2f2', border: '1px solid #fecaca', fontSize: 12, color: '#b91c1c' }}>
+            <b>船便では間に合わない商品が {urgent.length}件あります</b>
+            {outs.length > 0 && <span>（うち在庫0が {outs.length}件）</span>}
+            <div style={{ color: '#7f1d1d', marginTop: 3, fontWeight: 400 }}>
+              {urgent.map(r => (kindOf(r).sku || r.out_id)).join('、')}
+              　… この便を<b>航空便</b>にするか、急ぎのものだけ別の便に分けてください。
+              全部を航空便にすると送料が大きく変わります。
+            </div>
+          </div>
+        )
+      })()}
       {chan === 'amazon' ? (
         <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>
           右の「おすすめ」は、いまの売れ行きとFBA在庫から計算した数です（航空便＝欠品しそうな分だけ、船便＝目標日数までの残り）。
@@ -751,6 +792,24 @@ export default function CreateSendOrder({ onCreated, channel = 'amazon' } = {}) 
                         {spec && <span>　{spec}</span>}
                         <span>　注文{r.oid}</span>
                       </div>
+                      {/* 楽天の在庫から、船便で間に合うかを出す。
+                          便は1つしか選べないので、1行でも赤ければ
+                          上にまとめて出している */}
+                      {(() => {
+                        const h = hints[k.sku || r.out_id]
+                        if (!h || h.level === 'ok') return null
+                        const out = h.level === 'out'
+                        return (
+                          <div style={{ fontSize: 11, marginTop: 3, fontWeight: 700,
+                            color: out ? C.bad : C.warn }}>
+                            {out ? '🔴 楽天在庫 0' : `🟠 楽天在庫 ${h.stock}（あと${h.days_left}日）`}
+                            {h.daily > 0 && <span style={{ fontWeight: 400 }}>　1日 {h.daily}個</span>}
+                            <span style={{ fontWeight: 400 }}>
+                              　船便（約{seaDays}日）では間に合いません
+                            </span>
+                          </div>
+                        )
+                      })()}
                     </div>
                   </div>
                 </td>
