@@ -33,6 +33,7 @@ from app.api.routes import research as research_routes
 from app.api.routes import product_drafts as product_draft_routes
 from app.api.routes import import_permits as import_permit_routes
 from app.api.routes import chatwork as chatwork_routes
+from app.api.routes import secretary as secretary_routes
 from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
 from app.models import daily_sales as daily_sales_models
@@ -72,6 +73,7 @@ from app.models import work_status as work_status_models
 from app.models import rakuten_shipping_daily as rakuten_shipping_daily_models
 from app.models import rakuten_ad as rakuten_ad_models
 from app.models import page_snapshot as page_snapshot_models
+from app.models import secretary as secretary_models
 
 def _migrate():
     from sqlalchemy import text, inspect
@@ -1953,6 +1955,7 @@ app.include_router(season_routes.router, prefix="/api")
 app.include_router(rakuten_ads.router, prefix="/api")
 app.include_router(import_permit_routes.router, prefix="/api")
 app.include_router(chatwork_routes.router, prefix="/api")
+app.include_router(secretary_routes.router, prefix="/api")
 app.include_router(research_routes.router, prefix="/api")
 app.include_router(wholesale.router, prefix="/api")
 app.include_router(product_draft_routes.router, prefix="/api")

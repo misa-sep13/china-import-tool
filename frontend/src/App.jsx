@@ -34,6 +34,7 @@ import InventoryReflectionLogsPage from './pages/InventoryReflectionLogsPage'
 import WelfareInventoryPage from './pages/WelfareInventoryPage'
 import WelfareWorkPublicPage from './pages/WelfareWorkPublicPage'
 import KeepClaimsPublicPage from './pages/KeepClaimsPublicPage'
+import SecretaryPage from './pages/SecretaryPage'
 import ImageRequestsPublicPage from './pages/ImageRequestsPublicPage'
 import WorkStatusPublicPage from './pages/WorkStatusPublicPage'
 import MonthlyAccountingDesignPage from './pages/MonthlyAccountingDesignPage'
@@ -48,7 +49,8 @@ import './App.css'
 // 外注さんには見せない（APIキー等が見える設定画面）。
 // バックエンド側でもAPI自体を403で弾いているので、ここはUI上の導線を隠す・
 // URL直打ちでの表示だけを防ぐための二重の壁。
-const OWNER_ONLY_PATHS = ['/settings', '/rakuten/settings']
+// 秘書は自分の仕事の段取りなので、外注さんには出さない
+const OWNER_ONLY_PATHS = ['/settings', '/rakuten/settings', '/secretary']
 
 function App() {
   const location = useLocation()
@@ -176,6 +178,15 @@ function App() {
         >
           🇨🇳 中国輸入管理
         </div>
+        {/* 毎日ここから始める。建設も物販も混ざるので一番上に置く */}
+        {!isContractor && (
+          <>
+            <NavLink to="/secretary" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+              🗒️ 秘書
+            </NavLink>
+            <div style={{ borderTop: '1px solid #2d3748', margin: '8px 0 0' }} />
+          </>
+        )}
         {/* 楽天の見出しと同じ形。上が何の並びか分かるように */}
         <div style={{ margin: '8px 0 8px', fontSize: 11, color: '#475569',
           fontWeight: 700, letterSpacing: 1, paddingLeft: 16 }}>
@@ -310,6 +321,7 @@ function App() {
       <main className="main-content">
         <Routes>
           <Route path="/" element={<OrderPage />} />
+          <Route path="/secretary" element={<SecretaryPage />} />
           <Route path="/stock" element={<StockPage />} />
           <Route path="/amazon-sales" element={<AmazonSalesPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />

@@ -373,7 +373,17 @@ function InquiriesTab({ days, setDays, reviewOnly, setReviewOnly, inquiriesMut, 
                           <span style={{ fontSize: 11, color: '#94a3b8' }}>—</span>
                         )}
                       </td>
-                      <td style={{ fontFamily: 'monospace', fontSize: 10 }}>{inq.order_number || '—'}</td>
+                      <td style={{ fontFamily: 'monospace', fontSize: 10 }}>
+                        {inq.order_number || '—'}
+                        {/* R-Messeで完了にしたあと登録を忘れていたもの。
+                            出しておかないと応募が消えるので、印を付けて出す */}
+                        {inq.is_completed && !inq.already_registered && (
+                          <div style={{ fontFamily: 'sans-serif', fontSize: 10, fontWeight: 700,
+                            color: '#b45309' }}>
+                            完了済みだが未登録
+                          </div>
+                        )}
+                      </td>
                       <td>
                         {inq.already_registered ? (
                           <span style={{ color: '#16a34a', fontWeight: 600, fontSize: 11 }}>登録済み</span>
