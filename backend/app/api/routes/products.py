@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from datetime import datetime, timezone
 from app.core.database import get_db
 from app.models.product import Product
@@ -42,6 +42,16 @@ class ProductCreate(BaseModel):
     taotaro_inspect: Optional[str] = None
     # 納品時の備考。買付の備考（note）とは別で、FBA指示書に出す
     delivery_note: Optional[str] = ""
+
+    # 画面の数字の欄を空にすると "" で届く。空欄は「未設定」として受け取る
+    @field_validator("price", "cost_jpy", "amazon_fee_rate",
+                     "set_size", "extra_stock", mode="before")
+    @classmethod
+    def _blank_to_none(cls, v):
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
 
 def _restore_deleted_product(existing: Product, data: ProductCreate, db: Session) -> Product:
     for k, v in data.model_dump().items():
@@ -88,6 +98,20 @@ class ProductUpdate(BaseModel):
     order_lot: Optional[int] = None
     # 非表示にした商品を戻す（作り直さずに戻せるように。作り直すと全項目が入れ替わる）
     is_active: Optional[bool] = None
+
+    # 画面の数字の欄は、空にすると "" で届く。そのままだと
+    # 「数字として読めません」で保存ごと弾かれ、どの欄が原因かも
+    # 分からない（売価を空にしただけで商品が保存できなくなっていた）。
+    # 空欄は「未設定」として受け取る
+    @field_validator("price", "cost_jpy", "amazon_fee_rate", "selling_price",
+                     "fba_fee", "set_size", "extra_stock", "order_lot",
+                     mode="before")
+    @classmethod
+    def _blank_to_none(cls, v):
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
 
 class ProductOut(ProductCreate):
     id: int
