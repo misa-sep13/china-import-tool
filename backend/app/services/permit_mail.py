@@ -372,6 +372,35 @@ def _fetch_message(im, num, prefilter=True):
         return None
 
 
+def debug_folder(folder: str, last: int = 15) -> dict:
+    """フォルダの中身を件名と日付だけで返す（本文・添付は読まない）。調べ用。"""
+    im = _connect()
+    try:
+        _open(im, folder)
+        typ, all_ = im.search(None, "ALL")
+        nums = (all_[0] or b"").split()
+        since = (datetime.now() - timedelta(days=45)).strftime("%d-%b-%Y")
+        typ2, s = im.search(None, "SINCE", since)
+        out = []
+        for num in nums[-last:]:
+            typ3, d = im.fetch(num, "(INTERNALDATE BODY.PEEK[HEADER.FIELDS (SUBJECT DATE FROM)])")
+            head = b""
+            meta = b""
+            for x in d or []:
+                if isinstance(x, tuple):
+                    meta, head = x[0], x[1]
+            msg = email.message_from_bytes(head or b"")
+            out.append({"num": num.decode(), "internaldate": re.search(rb'INTERNALDATE "([^"]+)"', meta or b"").group(1).decode()
+                        if re.search(rb'INTERNALDATE "([^"]+)"', meta or b"") else "",
+                        "date": _decode(msg.get("Date")), "subject": _decode(msg.get("Subject"))[:60]})
+        return {"all": len(nums), "since45": len((s[0] or b"").split()), "since_arg": since, "last": out}
+    finally:
+        try:
+            im.logout()
+        except Exception:
+            pass
+
+
 def _walk(im, folder, days, cap, handle):
     """1フォルダぶんを見る。開けないフォルダは飛ばす。
 
