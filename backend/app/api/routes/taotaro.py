@@ -107,6 +107,12 @@ def send_order_contents(sid: int, db: Session = Depends(get_db)):
             "name_cn": (o.get("goods_name_trans") or o.get("goods_name") or "").strip(),
         }
         product, _ = _match_product(line, by_url_spec, unique_url, by_url_all, by_sku)
+        if not product and line["customer_memo"]:
+            # Amazon向けの便は楽天のマスタに無い。管理番号でAmazonのマスタから名前を引く
+            from app.models.product import Product
+            ap = db.query(Product).filter(Product.sku == line["customer_memo"]).first()
+            if ap:
+                product = ap
         key = (product.sku if product else "") or line["customer_memo"] or line["name_cn"][:30]
         r = rows.setdefault(key, {
             "sku": product.sku if product else line["customer_memo"],
