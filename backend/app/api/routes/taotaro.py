@@ -61,6 +61,83 @@ def _to_our_names(items: list, db: Session) -> None:
         x["titles"] = names
 
 
+def _arrived_on(db: Session, sid: int, sn: str) -> tuple:
+    """便が手元に届いた日（日本時間）。見つかった順に使う。
+
+      1. 楽天の入荷処理（配送依頼の入荷）をした日時
+      2. 就労支援の荷受けに取り込んだ日時（作業所に届いた便）
+    どちらも無ければ空。画面で輸入許可日などに替える。
+    """
+    from datetime import timedelta
+    from app.models.shipment_order import ShipmentOrder
+    from app.models.welfare import WelfareWorkInstruction
+    jst = lambda d: (d + timedelta(hours=9)).strftime("%Y-%m-%d") if d else ""
+    if sn:
+        so = (db.query(ShipmentOrder)
+              .filter(ShipmentOrder.tracking_no == sn, ShipmentOrder.received_at.isnot(None))
+              .order_by(ShipmentOrder.received_at.asc()).first())
+        if so:
+            return jst(so.received_at), "楽天の入荷処理をした日"
+    keys = [f"taotaro:{sn}"] if sn else []
+    keys.append(f"taotaro:{sid}")
+    w = (db.query(WelfareWorkInstruction)
+         .filter(WelfareWorkInstruction.source_file.in_(keys))
+         .order_by(WelfareWorkInstruction.created_at.asc()).first())
+    if w and w.created_at:
+        return jst(w.created_at), "就労支援の荷受けに取り込んだ日"
+    return "", ""
+
+
+@router.get("/send-orders/{sid:int}/contents")
+def send_order_contents(sid: int, db: Session = Depends(get_db)):
+    """便の中身を自社の商品名で返す（仕入管理で、どの便に何が入っているかを見るため）。"""
+    from app.api.routes.welfare import _match_product, _product_indexes
+    from app.models.cost_history import CostHistory
+    x = _call(taotaro.get_send_order, sid, raw=True)
+    by_url_spec, unique_url, by_url_all, by_sku = _product_indexes(db)
+    rows: dict = {}
+    for o in x.get("orders") or []:
+        props = o.get("good_skus") or []
+        line = {
+            "buy_url": (o.get("goods_url") or o.get("url") or "").strip(),
+            "supplier_spec": taotaro._prop(props, taotaro._COLOR_KEYS),
+            "size": taotaro._prop(props, taotaro._SIZE_KEYS),
+            "customer_memo": str(o.get("out_id") or "").strip(),
+            "asin": o.get("asin") or "", "fnsku": o.get("fnsku") or "",
+            "name_cn": (o.get("goods_name_trans") or o.get("goods_name") or "").strip(),
+        }
+        product, _ = _match_product(line, by_url_spec, unique_url, by_url_all, by_sku)
+        key = (product.sku if product else "") or line["customer_memo"] or line["name_cn"][:30]
+        r = rows.setdefault(key, {
+            "sku": product.sku if product else line["customer_memo"],
+            "name": (product.name if product else "") or line["name_cn"][:40],
+            "spec": " ".join(x for x in (line["supplier_spec"], line["size"]) if x),
+            "image": o.get("goods_img") or "",
+            "qty": 0, "matched": bool(product),
+        })
+        try:
+            r["qty"] += int(o.get("goods_num") or 0)
+        except (TypeError, ValueError):
+            pass
+    sn = x.get("sn") or ""
+    imported = bool(sn) and db.query(CostHistory).filter(CostHistory.invoice_no == sn).first() is not None
+    arrived_on, arrived_how = _arrived_on(db, sid, sn)
+    return {"sid": sid, "sn": sn, "state_label": taotaro.SEND_ORDER_STATES.get(x.get("state"), ""),
+            "delivery_name": x.get("delivery_name"), "count_weight": x.get("count_weight"),
+            "imported": imported,
+            # 入荷した日。仕入日に入れる（後日まとめて処理すると分からなくなるため）
+            "arrived_on": arrived_on, "arrived_how": arrived_how,
+            "items": sorted(rows.values(), key=lambda r: (-r["qty"], r["name"]))}
+
+
+@router.get("/imported-sns")
+def imported_sns(db: Session = Depends(get_db)):
+    """仕入管理（インボイス）で取り込み済みの便の番号。"""
+    from app.models.cost_history import CostHistory
+    rows = db.query(CostHistory.invoice_no).distinct().all()
+    return {"sns": sorted({r[0] for r in rows if r[0]})}
+
+
 @router.get("/send-orders")
 def list_send_orders(
     page: int = 1,

@@ -62,6 +62,19 @@ export default function RakutenInvoicePage() {
   const [matchResult, setMatchResult] = useState(null)
   const [sendOrders, setSendOrders] = useState([])
   const [storedPermits, setStoredPermits] = useState([])
+  const [importedSns, setImportedSns] = useState(new Set())
+  const [dateSource, setDateSource] = useState('')
+  // 選んだ便の中身（自社の商品名・数）。どれが入ってきたかを読み込む前に見るため
+  const [contents, setContents] = useState(null)
+  useEffect(() => {
+    setContents(null)
+    if (!apiSid) return
+    let alive = true
+    api.get(`/taotaro/send-orders/${apiSid}/contents`)
+      .then(r => { if (alive) setContents(r.data) })
+      .catch(e => { if (alive) setContents({ error: e.response?.data?.detail || e.message }) })
+    return () => { alive = false }
+  }, [apiSid])
 
   useEffect(() => {
     // どちらも無ければカードは出るが選べないだけ。エラーにはしない
@@ -69,6 +82,9 @@ export default function RakutenInvoicePage() {
       .then(r => setSendOrders(r.data.items || [])).catch(() => {})
     api.get('/import-permits/', { params: { kind: 'permit' } })
       .then(r => setStoredPermits(r.data.items || [])).catch(() => {})
+    // 取り込み済みの便（インボイス番号＝便の番号）。選ぶときに印を付ける
+    api.get('/taotaro/imported-sns')
+      .then(r => setImportedSns(new Set(r.data.sns || []))).catch(() => {})
   }, [])
 
   // 許可書がどの便のものかを探す。
@@ -108,9 +124,16 @@ export default function RakutenInvoicePage() {
       const pdfRes = await api.get(`/rakuten/invoices/stored-permit/${apiPermitId}`)
       setPdfResult(pdfRes.data)
       setUseTariff((pdfRes.data.permit_columns || []).length > 0)
+      // 仕入日は入荷した日。後日まとめて処理すると分からなくなるので自動で入れる。
+      // 入荷の記録が無い便は輸入許可日（届く数日前）で代える
+      const permit = storedPermits.find(p => String(p.id) === String(apiPermitId))
+      const arrived = contents?.arrived_on || ''
+      const fallback = String(permit?.permit_date || '').slice(0, 10)
+      setDateSource(arrived ? contents.arrived_how : fallback ? '輸入許可日（入荷の記録が無いため）' : '')
       setForm(f => ({
         ...f,
         invoice_no: invRes.data.invoice_no || '',
+        invoice_date: f.invoice_date || arrived || fallback,
         domestic_freight: invRes.data.domestic_freight || 0,
         international_freight: invRes.data.international_freight || 0,
         import_tax_jpy: pdfRes.data.import_tax_jpy || 0,
@@ -279,12 +302,18 @@ export default function RakutenInvoicePage() {
             <select value={apiPermitId} onChange={e => { setApiPermitId(e.target.value); reset() }}
               style={{ width: '100%', padding: '6px 8px' }}>
               <option value="">選んでください</option>
-              {storedPermits.map(p => (
-                <option key={p.id} value={p.id}>
-                  {p.permit_date || p.mail_date || '日付なし'}
-                  {p.permit_no || '(番号なし)'}　¥{(p.total_tax || 0).toLocaleString()}
-                </option>
-              ))}
+              {storedPermits.map(p => {
+                const d = String(p.permit_date || p.mail_date || '').slice(0, 10)
+                const md = d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : '日付なし'
+                const way = { sea: '船便', air: '航空便', ems: 'EMS（郵便）' }[p.transport] || ''
+                const cargo = [p.cargo_weight ? `${p.cargo_weight}kg` : '', p.package_count ? `${p.package_count}箱` : '']
+                  .filter(Boolean).join('・')
+                return (
+                  <option key={p.id} value={p.id}>
+                    {md} 許可　{way}{cargo ? ` ${cargo}` : ''}　税 ¥{(p.total_tax || 0).toLocaleString()}　（No.{p.permit_no || 'なし'}）
+                  </option>
+                )
+              })}
             </select>
           </div>
           <div className="form-group">
@@ -292,15 +321,65 @@ export default function RakutenInvoicePage() {
             <select value={apiSid} onChange={e => { setApiSid(e.target.value); reset() }}
               style={{ width: '100%', padding: '6px 8px' }}>
               <option value="">選んでください</option>
-              {sendOrders.map(x => (
-                <option key={x.sid} value={x.sid}>
-                  {x.sn || x.sid}　{x.state_label}　{x.total_send_fee}元
-                  {x.count_weight ? `　${x.count_weight}kg` : ''}
-                </option>
-              ))}
+              {sendOrders.map(x => {
+                const t = String(x.latest_trace?.time || x.updated_at || '').slice(0, 10).replace(/\//g, '-')
+                const md = t ? `${Number(t.slice(5, 7))}/${Number(t.slice(8, 10))}` : ''
+                const way = /船/.test(x.delivery_name || '') ? '船便' : /空|航空|EMS/i.test(x.delivery_name || '') ? '航空便' : ''
+                const what = (x.titles || []).slice(0, 2).join('・')
+                const more = x.order_count > 2 ? ` 他${x.order_count - 2}品` : ''
+                return (
+                  <option key={x.sid} value={x.sid}>
+                    {importedSns.has(x.sn) ? '✓取込済 ' : ''}{md}　{way} {x.count_weight ? `${x.count_weight}kg` : ''}　{what}{more}　（{x.sn || x.sid}・{x.state_label}）
+                  </option>
+                )
+              })}
             </select>
           </div>
         </div>
+
+        {/* 選んだ便に何が入っているか。読み込む前に、入ってきた物を確かめられるように */}
+        {apiSid && (
+          <div style={{ marginTop: 12, border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 12px', background: '#fafafa' }}>
+            {!contents && <div style={{ fontSize: 12, color: '#64748b' }}>便の中身を読んでいます…</div>}
+            {contents?.error && <div style={{ fontSize: 12, color: '#dc2626' }}>中身を読めませんでした：{contents.error}</div>}
+            {contents && !contents.error && (
+              <>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 8 }}>
+                  <b style={{ fontSize: 14 }}>この便の中身　{contents.items.length}品・{contents.items.reduce((a, r) => a + (r.qty || 0), 0)}個</b>
+                  <span style={{ fontSize: 12, color: '#64748b' }}>
+                    {contents.sn}・{contents.state_label}・{contents.delivery_name}{contents.count_weight ? `・${contents.count_weight}kg` : ''}
+                  </span>
+                  {contents.imported && (
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#b45309' }}>
+                      ⚠ この便はもう取り込み済みです（読み込むと上書きになります）
+                    </span>
+                  )}
+                </div>
+                <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <tbody>
+                      {contents.items.map((r, i) => (
+                        <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
+                          <td style={{ width: 44, padding: '4px 6px' }}>
+                            {r.image ? <img src={r.image} alt="" style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 4 }} /> : null}
+                          </td>
+                          <td style={{ padding: '4px 6px' }}>
+                            <div style={{ fontWeight: 600 }}>{r.name}</div>
+                            <div style={{ fontSize: 11, color: '#64748b' }}>
+                              {r.sku}{r.spec ? `・${r.spec}` : ''}
+                              {!r.matched && <span style={{ color: '#b45309', marginLeft: 6 }}>商品マスタに無い</span>}
+                            </div>
+                          </td>
+                          <td style={{ padding: '4px 6px', textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 700 }}>{r.qty}個</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        )}
         <div style={{ marginTop: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
           <button className="btn btn-primary" onClick={handleApiLoad}
             disabled={apiLoading || !apiSid || !apiPermitId}>
@@ -457,9 +536,18 @@ export default function RakutenInvoicePage() {
               ['国際運費（元）', 'international_freight', 'number'],
             ].map(([label, key, type]) => (
               <div key={key} className="form-group">
-                <label>{label}</label>
+                <label>
+                  {key === 'invoice_date' ? '仕入日（入荷した日）' : label}
+                  {key === 'invoice_date' && dateSource && (
+                    <span style={{ fontSize: 11, color: '#16a34a', marginLeft: 6 }}>{dateSource}から自動で入れました</span>
+                  )}
+                  {key === 'invoice_date' && !form.invoice_date && (
+                    <span style={{ fontSize: 11, color: '#b45309', marginLeft: 6 }}>入荷した日を入れてください</span>
+                  )}
+                </label>
                 <input value={form[key] ?? ''} type={type} step="0.01"
-                  onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} />
+                  style={key === 'invoice_date' && !form.invoice_date ? { borderColor: '#f59e0b' } : undefined}
+                  onChange={e => { if (key === 'invoice_date') setDateSource(''); setForm(f => ({ ...f, [key]: e.target.value })) }} />
               </div>
             ))}
             <div className="form-group">

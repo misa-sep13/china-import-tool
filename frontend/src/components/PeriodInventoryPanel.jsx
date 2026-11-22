@@ -18,7 +18,10 @@ function prevMonth() {
  * 在庫数はマスタに現在値しか無いため、月末に「確定」して保存した値を月別に表示する。
  * platform: 'rakuten' | 'amazon'
  */
-export default function PeriodInventoryPanel({ platform = 'rakuten', title = '📦 期末在庫金額' }) {
+// taxMode: 'in'＝税込（原価マスタのまま）/ 'ex'＝税抜（日本メーカー品だけ÷1.1）
+export default function PeriodInventoryPanel({ platform = 'rakuten', title = '📦 期末在庫金額', taxMode = 'in' }) {
+  const manuK = taxMode === 'ex' ? 1 / 1.1 : 1
+  const kOf = cat => (cat === 'manufacturer' ? manuK : 1)
   const qc = useQueryClient()
   const [period, setPeriod] = useState(prevMonth())
   const [openPeriod, setOpenPeriod] = useState(null)
@@ -125,8 +128,10 @@ export default function PeriodInventoryPanel({ platform = 'rakuten', title = '�
                   <tr key={r.period} style={{ borderTop: '1px solid #e2e8f0' }}>
                     <td style={{ fontWeight: 700 }}>{r.period}</td>
                     <td style={{ textAlign: 'right' }}>{china ? fmtYen(china.amount) : '—'}</td>
-                    <td style={{ textAlign: 'right' }}>{manu ? fmtYen(manu.amount) : '—'}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtYen(r.total_amount)}</td>
+                    <td style={{ textAlign: 'right' }}>{manu ? fmtYen(manu.amount * manuK) : '—'}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>
+                      {fmtYen((r.total_amount || 0) - (manu?.amount || 0) * (1 - manuK))}
+                    </td>
                     <td style={{ textAlign: 'right', color: '#64748b' }}>{fmtNum(stock)}</td>
                     <td style={{ textAlign: 'right' }}>
                       <button
@@ -168,8 +173,8 @@ export default function PeriodInventoryPanel({ platform = 'rakuten', title = '�
                       <td>{it.name}</td>
                       <td>{it.category_label}</td>
                       <td style={{ textAlign: 'right' }}>{fmtNum(it.stock)}</td>
-                      <td style={{ textAlign: 'right' }}>{it.cost_jpy ? fmtYen(it.cost_jpy) : <span style={{ color: '#d97706' }}>未設定</span>}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtYen(it.amount)}</td>
+                      <td style={{ textAlign: 'right' }}>{it.cost_jpy ? fmtYen(it.cost_jpy * kOf(it.category)) : <span style={{ color: '#d97706' }}>未設定</span>}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtYen(it.amount * kOf(it.category))}</td>
                     </tr>
                   ))}
                 </tbody>

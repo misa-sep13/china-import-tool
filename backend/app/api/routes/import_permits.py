@@ -72,6 +72,11 @@ def _brief(p: ImportPermit) -> dict:
         "mail_date": p.mail_date,
         "drive_url": p.drive_url,
         "note": p.note,
+        # 便を見分けるための値（仕入管理で、どの許可書がどの便かを選ぶときに出す）
+        "cargo_weight": p.cargo_weight,
+        "package_count": p.package_count,
+        "transport": p.transport,
+        "arrival_date": p.arrival_date,
         "created_at": p.created_at,
     }
 
