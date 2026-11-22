@@ -51,6 +51,74 @@ def _prev_ym(ym: str) -> str:
 def purchase_ym(supplier: str, paid_ym: str) -> str:
     return _prev_ym(paid_ym) if PAY_TERMS.get(supplier) == "next_month" else paid_ym
 
+
+# 取引先名の揺れ（商品マスタは「エジソン販売」、銀行は「株式会社エジソン販売」など）
+_SUPPLIER_KEY = {
+    "株式会社エジソン販売": "エジソン",
+    "イノベンテック": "INNOVENTECH",
+    "株式会社リビック": "リビック",
+    "マレフィオーレ": "マレフィオーレ",
+}
+
+
+def arrivals_by_month(db, supplier: str) -> Dict[str, float]:
+    """在庫に入った記録（メーカー入荷・卸入荷）から、月ごとの入荷金額（税抜）を出す。
+
+    発注ツールを使う前（〜8月）の入荷も、在庫の操作ログには残っている。
+    原価マスタは税込なので÷1.1。日時はUTCなので日本時間に直して月を決める。
+    """
+    from datetime import timedelta
+    from app.models.inventory_reflection_log import InventoryReflectionLog
+    from app.models.rakuten_product import RakutenProduct
+    key = _SUPPLIER_KEY.get(supplier, supplier)
+    prods = {p.sku: p for p in db.query(RakutenProduct).all()
+             if p.sku and key.lower() in (p.supplier or "").lower()}
+    if not prods:
+        return {}
+    out: Dict[str, float] = defaultdict(float)
+    rows = (db.query(InventoryReflectionLog)
+            .filter(InventoryReflectionLog.sku.in_(list(prods)),
+                    InventoryReflectionLog.received_qty > 0).all())
+    for r in rows:
+        if "receive" not in (r.source or "") or not r.created_at:
+            continue
+        ym = (r.created_at + timedelta(hours=9)).strftime("%Y-%m")
+        out[ym] += (r.received_qty or 0) * float(prods[r.sku].cost_jpy or 0) / TAX
+    return dict(out)
+
+
+def _split_next_month(payments: List[dict], arrivals: Dict[str, float]) -> List[tuple]:
+    """月末締め翌月払いの出金を、仕入の月に割り当てる。
+
+    ふつうは出金月の前月。ただし払っていない月があると、次の出金に
+    何か月分かがまとまる（エジソン：7月・8月分を9/03にまとめて払った）。
+    前の出金の対象月より後で、前月までの入荷のある月（最大3か月）に、
+    入荷金額の割合で分ける。入荷の記録が無ければ前月にまとめる。
+    戻り値: [(仕入の月, 金額, 出金), ...]
+    """
+    out = []
+    last = None
+    for p in sorted(payments, key=lambda x: x["paid_on"]):
+        target = _prev_ym(p["ym"])
+        months = [target]
+        if last:
+            m = target
+            for _ in range(2):
+                m = _prev_ym(m)
+                if m <= last:
+                    break
+                months.insert(0, m)
+        weights = {m: arrivals.get(m, 0.0) for m in months}
+        total = sum(weights.values())
+        if len(months) > 1 and total > 0:
+            for m in months:
+                if weights[m] > 0:
+                    out.append((m, p["amount"] * weights[m] / total, p))
+        else:
+            out.append((target, p["amount"], p))
+        last = max(target, last) if last else target
+    return out
+
 TAX = 1.1
 TOL = 3   # 円。端数の丸め違い
 
@@ -217,11 +285,29 @@ def fill_by_month(db) -> Dict[tuple, dict]:
     out: Dict[tuple, dict] = defaultdict(lambda: {"paid": 0.0, "no_invoice": 0.0,
                                                   "no_invoice_count": 0, "fill": 0.0,
                                                   "bank_purchase": 0.0, "paid_on": []})
-    for p in r["matched"] + r["unmatched"]:
+    allp = r["matched"] + r["unmatched"]
+    # 月末締め翌月払いの取引先は、まとめ払いを入荷の割合で月に分ける
+    by_sup: Dict[str, list] = defaultdict(list)
+    for p in allp:
+        if PAY_TERMS.get(p["supplier"]) == "next_month":
+            by_sup[p["supplier"]].append(p)
+    for sup, ps in by_sup.items():
+        try:
+            arr = arrivals_by_month(db, sup)
+        except Exception:
+            arr = {}
+        for ym, amt, p in _split_next_month(ps, arr):
+            k = (ym, sup)
+            out[k]["paid"] += amt
+            out[k]["paid_on"].append(p["paid_on"])
+            out[k]["bank_purchase"] += amt / TAX
+    for p in allp:
+        if PAY_TERMS.get(p["supplier"]) == "next_month":
+            continue
         k = (purchase_ym(p["supplier"], p["ym"]), p["supplier"])
         out[k]["paid"] += p["amount"]
         out[k]["paid_on"].append(p["paid_on"])
-        if PAY_TERMS.get(p["supplier"]) in ("next_month", "prepay"):
+        if PAY_TERMS.get(p["supplier"]) == "prepay":
             out[k]["bank_purchase"] += p["amount"] / TAX
     for p in r["unmatched"]:
         if PAY_TERMS.get(p["supplier"]) in ("next_month", "prepay"):
