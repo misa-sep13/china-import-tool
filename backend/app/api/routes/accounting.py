@@ -516,6 +516,9 @@ def _prev_ym(ym: str) -> str:
     return f"{y - 1}-12" if m == 1 else f"{y}-{m - 1:02d}"
 
 
+MANU_TAX = 1.1   # メーカー品の原価マスタ（税込）を税抜に戻す率
+
+
 @router.get("/summary")
 def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
     from collections import defaultdict
@@ -609,7 +612,10 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
                                            InventorySnapshot.category)):
         inv_all[period] += amt or 0
         if cat == "manufacturer":
-            inv_manu[period] += amt or 0
+            # メーカー品の原価マスタは税込（請求書の単価×1.1）。仕入（請求書・銀行）は
+            # 税抜なので、そのまま足し引きすると仕入の多い月ほど差異がマイナスに出る
+            # （2026-07 の −65.8万円の主因）。在庫金額も税抜にそろえる
+            inv_manu[period] += (amt or 0) / MANU_TAX
         elif pf == "amazon":
             # Amazonの在庫はAmazon向けの仕入と突き合わせる（楽天とは別に数える）
             inv_amz[period] += amt or 0
@@ -727,7 +733,8 @@ def monthly_summary(months: int = 12, db: Session = Depends(get_db)):
               .filter(RakutenSalesSummary.level == "sku")):
         if r.period and r.sku_key in manu_skus:
             m[r.period]["manu_sales"] += r.sales or 0
-            m[r.period]["manu_cogs"] += r.product_cost or 0
+            # 売上管理の原価も原価マスタ（税込）から出ている。税抜にそろえる
+            m[r.period]["manu_cogs"] += (r.product_cost or 0) / MANU_TAX
 
     # 販売費。広告・ポイント・クーポンは売上に紐づくので、その売上が立った月
     # ＝発生した月でよい。
