@@ -477,6 +477,13 @@ def scan(days: int = 60, folder: str = None, stats: dict = None):
                 parsed = parse_permit_text(text)
                 if not parsed.pop("is_permit"):
                     continue
+                # TWの預り金残高明細書は、関税・消費税の行があるので許可書と見分けが
+                # つかない（2026-11-23 に5件入った）。申告番号が読めないものは、
+                # 名前に「許可」が無ければ許可書ではないとみなす。請求書・明細書は除く
+                if any(w in name for w in ("残高明細", "請求書", "明細書")) and "許可" not in name:
+                    continue
+                if not parsed.get("permit_no") and "許可" not in name:
+                    continue
                 found.append({
                     **parsed,
                     "filename": name,
