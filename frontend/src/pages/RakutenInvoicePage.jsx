@@ -329,7 +329,7 @@ export default function RakutenInvoicePage() {
                 const more = x.order_count > 2 ? ` 他${x.order_count - 2}品` : ''
                 return (
                   <option key={x.sid} value={x.sid}>
-                    {importedSns.has(x.sn) ? '✓取込済 ' : ''}{md}　{way} {x.count_weight ? `${x.count_weight}kg` : ''}　{what}{more}　（{x.sn || x.sid}・{x.state_label}）
+                    {importedSns.has(x.sn) ? '✓取込済 ' : ''}{md}　{way} {x.count_weight ? `${x.count_weight}kg` : ''}　{what}{more}　（No.{x.sid}{/^[A-Z]{2,}\d/.test(x.sn || '') ? `・${x.sn}` : ''}・{x.state_label}）
                   </option>
                 )
               })}
