@@ -356,11 +356,18 @@ def _fetch_message(im, num, prefilter=True):
             typ, st = im.fetch(num, "(BODYSTRUCTURE)")
             if typ != "OK":
                 return None
-            blob = b" ".join(x for x in st if isinstance(x, bytes)).lower()
-            # 「pdf」の文字だけで見ると落とす。TWのメール（2026-10-28〜）は添付名が
-            # 日本語でエンコードされ、種類も application/pdf と書かれていないため、
-            # 許可書が付いているのに「添付なし」として飛ばしていた。
-            # 何かしら添付らしいもの（application/・attachment・ファイル名）があれば読む
+            # 添付名に日本語があると、サーバーは BODYSTRUCTURE を何個かの塊
+            # （文字列と、literal を含むタプル）に分けて返す。バイト列だけを
+            # つなぐとタプル側の "application" "pdf" を見落とし、TWのメール
+            # （2026-10-28〜）の許可書を「添付なし」として飛ばしていた。全部つなぐ
+            parts = []
+            for x in st or []:
+                if isinstance(x, bytes):
+                    parts.append(x)
+                elif isinstance(x, tuple):
+                    parts.extend(y for y in x if isinstance(y, bytes))
+            blob = b" ".join(parts).lower()
+            # 何かしら添付らしいもの（pdf・application/・attachment・ファイル名）があれば読む
             if not any(k in blob for k in (b"pdf", b"octet-stream", b'"application"',
                                             b'"attachment"', b'"filename"', b'"name"')):
                 return None
