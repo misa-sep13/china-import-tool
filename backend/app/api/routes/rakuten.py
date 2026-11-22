@@ -901,6 +901,29 @@ async def update_product(product_id: int, data: RakutenProductIn, request: Reque
                 from app.services.rakuten_rms import push_inventory_and_record
                 rms_items = []
 
+                # セット商品の在庫は中身の単品から決まる。画面や一括更新が古い値（作った
+                # ばかりのセットは0）をそのまま送ってくると、楽天の在庫が0に上書きされる
+                # （2026-11-22 Ci歯ブラシで発生）。送られた値は使わず、単品から計算し直す
+                try:
+                    own = json.loads(p.set_components or "[]") or []
+                except Exception:
+                    own = []
+                if own:
+                    _all = db.query(RakutenProduct).filter(RakutenProduct.is_active == True).all()
+                    _stock = {cp.sku: (cp.stock or 0) for cp in _all}
+                    _share = build_component_share_counts(
+                        [cp for cp in _all if cp.set_components])
+                    _q = None
+                    for c in own:
+                        c_sku, c_qty = c.get("sku"), (c.get("qty") or 1)
+                        if not c_sku:
+                            continue
+                        a = calc_set_avail(_stock.get(c_sku, 0), c_qty, _share.get(c_sku, 0))
+                        _q = a if _q is None else min(_q, a)
+                    if _q is not None:
+                        p.stock = _q
+                        db.commit()
+
                 # 自分自身をRMSに反映（発送資材・販促品は楽天に出品していないので対象外）
                 if not p.is_material and not p.is_promo:
                     manage_number = p.rakuten_item_url or p.sku.split("_")[0]
