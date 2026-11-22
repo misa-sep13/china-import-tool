@@ -290,10 +290,10 @@ def fetch_taotaro_invoices(data: TaotaroInvoiceIn, db: Session = Depends(get_db)
 
 
 @router.get("/debug-folder")
-def debug_folder(folder: str = "INBOX", last: int = 15):
+def debug_folder(folder: str = "INBOX", last: int = 15, try_num: str = ""):
     """フォルダの件数と、最後の数通の件名・日付（取り込めないときの調べ用）。"""
     try:
-        return permit_mail.debug_folder(folder, last)
+        return permit_mail.debug_folder(folder, last, try_num)
     except permit_mail.PermitMailError as e:
         raise HTTPException(status_code=502, detail=str(e))
 

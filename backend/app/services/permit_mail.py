@@ -372,7 +372,7 @@ def _fetch_message(im, num, prefilter=True):
         return None
 
 
-def debug_folder(folder: str, last: int = 15) -> dict:
+def debug_folder(folder: str, last: int = 15, try_num: str = "") -> dict:
     """フォルダの中身を件名と日付だけで返す（本文・添付は読まない）。調べ用。"""
     im = _connect()
     try:
@@ -393,7 +393,26 @@ def debug_folder(folder: str, last: int = 15) -> dict:
             out.append({"num": num.decode(), "internaldate": re.search(rb'INTERNALDATE "([^"]+)"', meta or b"").group(1).decode()
                         if re.search(rb'INTERNALDATE "([^"]+)"', meta or b"") else "",
                         "date": _decode(msg.get("Date")), "subject": _decode(msg.get("Subject"))[:60]})
-        return {"all": len(nums), "since45": len((s[0] or b"").split()), "since_arg": since, "last": out}
+        res = {"all": len(nums), "since45": len((s[0] or b"").split()), "since_arg": since, "last": out}
+        if try_num:
+            # 1通を取り込みと同じ手順で読んでみる。どこで止まるかを返す
+            t = {"num": try_num}
+            try:
+                typ, st = im.fetch(try_num, "(BODYSTRUCTURE)")
+                t["bodystructure"] = (b" ".join(x for x in st if isinstance(x, bytes))[:600]).decode("utf-8", "replace")
+                typ, raw = im.fetch(try_num, "(RFC822)")
+                t["rfc822_typ"] = typ
+                t["raw_shapes"] = [type(x).__name__ + (f"[{len(x)}]" if isinstance(x, tuple) else "") for x in (raw or [])]
+                body = next((x[1] for x in raw or [] if isinstance(x, tuple)), b"")
+                t["raw_len"] = len(body)
+                msg = email.message_from_bytes(body)
+                t["pdfs"] = [(n, len(d)) for n, d in _pdf_attachments(msg)]
+                t["parts"] = [(p.get_content_type(), _decode(p.get_filename())) for p in msg.walk()
+                              if p.get_content_maintype() != "multipart"][:8]
+            except Exception as e:
+                t["error"] = f"{type(e).__name__}: {e}"[:300]
+            res["try"] = t
+        return res
     finally:
         try:
             im.logout()
