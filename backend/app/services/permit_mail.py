@@ -357,7 +357,12 @@ def _fetch_message(im, num, prefilter=True):
             if typ != "OK":
                 return None
             blob = b" ".join(x for x in st if isinstance(x, bytes)).lower()
-            if b"pdf" not in blob and b"octet-stream" not in blob:
+            # 「pdf」の文字だけで見ると落とす。TWのメール（2026-10-28〜）は添付名が
+            # 日本語でエンコードされ、種類も application/pdf と書かれていないため、
+            # 許可書が付いているのに「添付なし」として飛ばしていた。
+            # 何かしら添付らしいもの（application/・attachment・ファイル名）があれば読む
+            if not any(k in blob for k in (b"pdf", b"octet-stream", b'"application"',
+                                            b'"attachment"', b'"filename"', b'"name"')):
                 return None
         typ, raw = im.fetch(num, "(RFC822)")
         if typ != "OK" or not raw or not isinstance(raw[0], tuple):
