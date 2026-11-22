@@ -6,7 +6,7 @@
 （同じ添付・同じ申告番号は入らないので、何度動いても増えない）。
 
 見るフォルダは画面と同じ選び方：名前に「許可書」「許可通知」「permit」を含む
-フォルダ。無ければ全フォルダ（ごみ箱などを除く）。
+フォルダ。無ければ受信トレイ（全フォルダはメモリ超過で落ちるので見ない）。
 """
 import os
 import re
@@ -47,8 +47,11 @@ with httpx.Client(timeout=180, headers=AUTH_HEADERS) as c:
         print(f"フォルダ一覧を取れませんでした（全フォルダを見ます）: {e}")
 
     results = []
-    # 許可書のフォルダに加えて、念のため全フォルダも見る（振り分けに漏れた許可書を拾う）
-    for fd in ([folder, "*"] if folder != "*" else ["*"]):
+    # 全フォルダは見ない。35万通あるフォルダまで読みに行き、Renderのメモリ上限を
+    # 超えて落ちた（2026-11-22）。許可書のフォルダが無いときだけ受信トレイを見る
+    if folder == "*":
+        folder = ""
+    for fd in [folder]:
         r = c.post(f"{BACKEND_URL}/api/import-permits/fetch-mail",
                    json={"days": DAYS, "folder": fd})
         if r.status_code >= 400:
