@@ -1,0 +1,30 @@
+name: Fetch Import Permits
+
+on:
+  schedule:
+    # 毎日 00:30 UTC（= JST 9:30）。通関業者のメールは夕方〜夜に届くことが多いので翌朝に拾う
+    - cron: '30 0 * * *'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: '何日前までのメールを見るか'
+        required: false
+        default: '14'
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install deps
+        run: pip install httpx
+      - name: 輸入許可書をメールから取り込む
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          AUTH_SERVICE_TOKEN: ${{ secrets.AUTH_SERVICE_TOKEN }}
+          DAYS: ${{ github.event.inputs.days || '14' }}
+        run: python scripts/fetch_import_permits.py
