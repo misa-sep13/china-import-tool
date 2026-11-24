@@ -473,6 +473,17 @@ def forward_videos(payload: ForwardIn, db: Session = Depends(get_db)):
             db, days=max(1, min(payload.days, 180)))
     except permit_mail_error() as e:
         raise HTTPException(502, str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        # 思わぬところで落ちると、ブラウザには「繋がりません」としか出ず、
+        # 何が起きたのか分からない。理由をそのまま返す
+        import logging
+        import traceback
+        logging.getLogger("secretary").exception("動画の転送で失敗")
+        db.rollback()
+        raise HTTPException(500, f"{type(e).__name__}: {e}"[:400]
+                            + "／" + traceback.format_exc()[-400:])
 
 
 # ----------------------------------------------------------------- 毎朝の知らせ
