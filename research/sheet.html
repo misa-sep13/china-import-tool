@@ -7971,6 +7971,15 @@ if(FIREBASE_CONFIG.databaseURL){
               lastNeed = lastNeed.map(f => f.name === name ? Object.assign({}, f, {kind: kind}) : f);
               showNeed();
             }catch(e){ opStatus.textContent = String(e.message || e); }
+          },
+          // 子ごとに決めた値を保存する
+          () => {
+            put('children', (data.children || []).map(c => ({
+              id: c.id, sku: c.sku, jan: c.jan, title: c.title,
+              axis1: c.axis1, axis2: c.axis2, price: c.price,
+              set_size: c.set_size, attrs: c.attrs || {},
+            })));
+            showNeed();
           });
       }
 
@@ -8556,7 +8565,7 @@ if(FIREBASE_CONFIG.databaseURL){
   //   自動で入る／共通の設定から  … 入力は要らない。値だけ出す
   //   このカテゴリで覚える        … 1度入れれば次から自動
   //   商品ごとに入れる            … 毎回入れる
-  function drawNeed(box, data, need, onChange, onRemember, onFlip){
+  function drawNeed(box, data, need, onChange, onRemember, onFlip, onKids){
     box.innerHTML = '';
     if(!need || !need.length) return;
     const attrs = Object.assign({}, data.attrs || {});
@@ -8627,6 +8636,46 @@ if(FIREBASE_CONFIG.databaseURL){
         });
         cell.appendChild(input);
 
+        // 子ごとに変える。入数や付属コンポーネントは、バリエーションで
+        // 中身が違うことがある（a030：本体+替えロール2個付き と
+        // 替えロール10個のみ）。親の値を全部の子に入れていたので、
+        // 片方が必ず間違った値でAmazonへ出ていた。空なら上の値を使う
+        const kids2 = (data.children || []);
+        if(kind === 'item' && kids2.length > 1 && typeof onKids === 'function'){
+          const det = document.createElement('details');
+          const sum = document.createElement('summary');
+          sum.className = 'reg-hint';
+          sum.style.cursor = 'pointer';
+          const anySet = kids2.some(c => ((c.attrs || {})[f.name] || '') !== '');
+          sum.textContent = '子ごとに変える' + (anySet ? '（設定あり）' : '');
+          if(anySet) sum.style.color = '#16a34a';
+          det.appendChild(sum);
+          const wrap2 = el('div', 'reg-kidattr');
+          wrap2.style.cssText = 'display:grid;gap:4px;margin-top:4px;';
+          kids2.forEach(c => {
+            const ln = el('div', '');
+            ln.style.cssText = 'display:flex;gap:6px;align-items:center;';
+            const nm = el('span', '', c.axis1 || c.sku || '子');
+            nm.style.cssText = 'font-size:11px;color:#64748b;min-width:140px;'
+              + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+            ln.appendChild(nm);
+            const ki = document.createElement('input');
+            ki.type = 'text'; ki.dataset.writes = '1';
+            ki.style.cssText = 'flex:1;';
+            ki.placeholder = (attrs[f.name] || '') || '（上の値を使う）';
+            ki.value = (c.attrs || {})[f.name] || '';
+            ki.addEventListener('change', () => {
+              if(!c.attrs || typeof c.attrs !== 'object') c.attrs = {};
+              const v = ki.value.trim();
+              if(v) c.attrs[f.name] = v; else delete c.attrs[f.name];
+              onKids();
+            });
+            ln.appendChild(ki);
+            wrap2.appendChild(ln);
+          });
+          det.appendChild(wrap2);
+          cell.appendChild(det);
+        }
         if(f.suggest){
           const b = el('button', 'mini', f.suggest + ' を入れる');
           b.dataset.writes = '1';
