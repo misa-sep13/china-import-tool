@@ -3449,6 +3449,8 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
                 "分かりやすい名前にしたいときは、シートの付属品欄に入れてください（例: a021_squeezer）")
         components.append({
             "sku": (a.get("sku") or "").strip(), "qty": a.get("qty") or 1,
+            # 入数（仕入先の1つに何個入っているか）。発注数をこれで割る
+            "pack_size": a.get("pack_size") or 1,
             "buy_url": (a.get("url") or "").strip() or buy_url,
             # 仕入先の言い方は中国語名。人が読む名前は日本語のほうを使う
             "supplier_spec": a.get("name") or "",

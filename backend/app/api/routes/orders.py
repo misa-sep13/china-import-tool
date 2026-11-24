@@ -15,6 +15,7 @@ from app.models.settings import OrderSettings
 from app.models.order_history import OrderHistory
 from app.services.calc import CalcSettings, calc_order_qty, growth_rate_pct
 from app.services.excel_export import build_taotaro_excel
+from app.services import accessories
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -608,7 +609,6 @@ def _expand_purchase_components(item: "OrderItem", db: Session) -> list:
     rows = []
     for comp in pcomps:
         comp_sku = comp.get("sku")
-        comp_qty = comp.get("qty", 1)
         comp_url = comp.get("buy_url", "")
         comp_spec = comp.get("supplier_spec", "") or comp.get("spec", "")
         comp_price = comp.get("price", None)
@@ -632,7 +632,8 @@ def _expand_purchase_components(item: "OrderItem", db: Session) -> list:
             "size": "",
             "spec": comp_spec,
             "customer_memo": comp.get("customer_memo", ""),
-            "qty": item.qty * comp_qty,
+            # 必要数（本体1つに付ける数）を入数で割って切り上げる
+            "qty": accessories.order_qty(item.qty, comp),
             "price": comp_price or 0,
             "repack": "",
             # 画面は楽天と同じ notes で持つ。古いデータの note も拾う

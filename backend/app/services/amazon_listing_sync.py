@@ -245,7 +245,11 @@ def extract(research: dict, settings: dict) -> dict:
              "jp_name": (a.get("jp_name") or "").strip(),
              "name": (a.get("name") or "").strip(),
              "url": (a.get("url") or "").strip(),
+             # 本体1つに付ける数
              "qty": int(a.get("qty") or 1) or 1,
+             # 仕入先の1つに何個入っているか。空なら1（＝これまでと同じ）。
+             # 10巻で1つのページから2巻だけ要るときに使う
+             "pack_size": int(a.get("pack_size") or 1) or 1,
              # 単価が無いと原価に乗らず、そのぶん利益を多く見積もる
              "price": _f(a.get("price")) or None,
              # 付け先の色。空ならどの色にも共通。

@@ -87,3 +87,47 @@ def ensure_skus(db: Session, comps: list, base_sku: str) -> tuple:
         c["sku"] = hit.sku
         out.append(c)
     return out, made
+
+
+# ---------- 入数（pack_size）----------
+#
+# 付属品の「数量」は本体1つに付ける数（必要数）。仕入先の1つに何個
+# 入っているか（入数）は別の話で、これまで持っていなかった。
+# a030 の替えロールは10巻で1つのページなのに、必要数2をそのまま
+# 送っていたので、10巻パックを2つ＝20巻、本体100個なら2,000巻の
+# 発注になっていた。欲しいのは200巻。
+# 入数が空（または1）なら、これまでと同じ計算になる。
+
+
+def need_qty(comp: dict) -> int:
+    """本体1つに付ける数（必要数）。"""
+    try:
+        n = int(float((comp or {}).get("qty") or 1))
+    except (TypeError, ValueError):
+        return 1
+    return n if n > 0 else 1
+
+
+def pack_size(comp: dict) -> int:
+    """仕入先の1つに何個入っているか（入数）。空・不正は1。"""
+    try:
+        n = int(float((comp or {}).get("pack_size") or 1))
+    except (TypeError, ValueError):
+        return 1
+    return n if n > 0 else 1
+
+
+def order_qty(units, comp: dict) -> int:
+    """本体 units 個ぶんの、この付属品の発注数（仕入先の単位）。
+
+    必要数を入数で割り、切り上げる。端数は捨てられない（半分の
+    パックは買えない）ので、多いほうへ寄せる。
+    """
+    try:
+        u = int(float(units or 0))
+    except (TypeError, ValueError):
+        u = 0
+    total = max(0, u) * need_qty(comp)
+    if total <= 0:
+        return 0
+    return -(-total // pack_size(comp))

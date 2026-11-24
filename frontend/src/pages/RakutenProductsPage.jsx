@@ -740,6 +740,7 @@ export default function RakutenProductsPage() {
                 value={form.purchase_components || ''}
                 onChange={v => setForm(p => ({ ...p, purchase_components: v }))}
                 allProducts={products}
+                withPack
               />
             </div>
 
@@ -865,7 +866,9 @@ function ProductRow({ p, commissionRate = 0.09, expanded, childCount, onToggle, 
 }
 
 // セット構成エディタコンポーネント
-function SetComponentsEditor({ value, onChange, allProducts }) {
+// withPack: 発注用付属品だけ「入数」を出す。構成品（set_components）は
+// 販売セットの中身なので、仕入先の入数という考えが無い
+function SetComponentsEditor({ value, onChange, allProducts, withPack = false }) {
   const parse = (v) => { try { return JSON.parse(v || '[]') } catch { return [] } }
   const items = parse(value)
 
@@ -942,14 +945,32 @@ function SetComponentsEditor({ value, onChange, allProducts }) {
                 />
               </div>
               <div style={{ width: 70 }}>
-                <div style={labelStyle}>数量</div>
+                <div style={labelStyle}>{withPack ? '必要数' : '数量'}</div>
                 <input
                   type="number" min={1}
                   value={item.qty || 1}
+                  title={withPack ? '本体1つに付ける数（例: 替えロールを2本付けるなら 2）' : ''}
                   onChange={e => updateRow(i, 'qty', Number(e.target.value))}
                   style={{ ...inputStyle, textAlign: 'center' }}
                 />
               </div>
+              {/* 仕入先の1つに何個入っているか。10巻で1つのページから2巻だけ
+                  要るとき、必要数2をそのまま送ると10巻パックを2つ頼むことに
+                  なる。発注数はこれで割って切り上げる */}
+              {withPack && (
+                <div style={{ width: 70 }}>
+                  <div style={labelStyle}>入数</div>
+                  <input
+                    type="number" min={1}
+                    value={item.pack_size ?? ''}
+                    placeholder="1"
+                    title="仕入先の1つに何個入っているか（例: 替えロール10巻で1つなら 10）。空なら1。発注数は「必要数 ÷ 入数」を切り上げた数になります"
+                    onChange={e => updateRow(i, 'pack_size',
+                      e.target.value === '' ? '' : Number(e.target.value))}
+                    style={{ ...inputStyle, textAlign: 'center' }}
+                  />
+                </div>
+              )}
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
               <div style={labelStyle}>お客様専用メモ（タオタロウG列）</div>

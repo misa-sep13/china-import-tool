@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.order_history import OrderHistory
 from app.models.product import Product
-from app.services import taotaro
+from app.services import accessories, taotaro
 
 router = APIRouter(prefix="/taotaro", tags=["taotaro"])
 
@@ -456,7 +456,10 @@ def _expand_for_order(items, db: Session) -> list:
             rows.append({
                 "sku": label,
                 "name": comp.get("name") or comp_spec or comp_sku or "付属品",
-                "qty": int(it.qty) * int(comp.get("qty") or 1),
+                # 必要数（本体1つに付ける数）を入数で割って切り上げる。
+                # 10巻で1つのページから2巻だけ要るとき、2を送ると
+                # 10巻パックを2つ頼むことになる
+                "qty": accessories.order_qty(it.qty, comp),
                 "buy_url": comp_url, "color": "", "size": "",
                 "spec": comp_spec, "product": c,
                 "origin_sku": it.sku, "origin_qty": it.qty,

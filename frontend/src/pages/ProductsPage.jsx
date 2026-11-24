@@ -711,7 +711,7 @@ function AccessoryEditor({ value, onChange, allProducts = [] }) {
   // 全部消したら空文字で保存する。null だと API 側で「変更なし」になる
   const update = (next) => onChange(next.length > 0 ? JSON.stringify(next) : '')
   const addRow = () => update([...items, {
-    sku: '', qty: 1, buy_url: '', supplier_spec: '', price: '',
+    sku: '', qty: 1, pack_size: '', buy_url: '', supplier_spec: '', price: '',
     customer_memo: '', notes: '',
   }])
   const removeRow = (i) => update(items.filter((_, n) => n !== i))
@@ -761,11 +761,23 @@ function AccessoryEditor({ value, onChange, allProducts = [] }) {
                   onChange={e => setField(i, 'price', e.target.value === '' ? '' : Number(e.target.value))} />
               </div>
               <div style={{ width: 80 }}>
-                {/* 本体1つにつき何個いるか。発注数はこれを掛けた数になる */}
-                <div style={lab}>数量</div>
+                {/* 本体1つに付ける数。現場のセット組み指示もこの数で出る */}
+                <div style={lab}>必要数</div>
                 <input type="number" min={1} value={it.qty || 1}
                   style={{ textAlign: 'center' }}
+                  title="本体1つに付ける数（例: 替えロールを2本付けるなら 2）"
                   onChange={e => setField(i, 'qty', Number(e.target.value))} />
+              </div>
+              <div style={{ width: 80 }}>
+                {/* 仕入先の1つに何個入っているか。10巻で1つのページから
+                    2巻だけ要るとき、必要数2をそのまま送ると10巻パックを
+                    2つ＝20巻頼むことになる。発注数はこれで割って切り上げる */}
+                <div style={lab}>入数</div>
+                <input type="number" min={1} value={it.pack_size ?? ''}
+                  placeholder="1" style={{ textAlign: 'center' }}
+                  title="仕入先の1つに何個入っているか（例: 替えロール10巻で1つなら 10）。空なら1。発注数は「必要数 ÷ 入数」を切り上げた数になります"
+                  onChange={e => setField(i, 'pack_size',
+                    e.target.value === '' ? '' : Number(e.target.value))} />
               </div>
             </div>
             {/* 付属品ごとのメモは、今の発注（API）では使われない。

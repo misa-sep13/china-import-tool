@@ -24,7 +24,7 @@ from app.models.rakuten_order import RakutenOrderHistory
 from app.models.rakuten_settings import RakutenSettings
 from app.models.inventory_reflection_log import InventoryReflectionLog
 from app.models.rakuten_sales import RakutenSalesImport, RakutenSalesSummary
-from app.services import invoice_calc
+from app.services import accessories, invoice_calc
 from app.services.rakuten_calc import calc_rakuten_order, RakutenCalcSettings
 from app.services.rakuten_sales_import import (
     build_sales_summary,
@@ -2535,7 +2535,6 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
 
         for comp in _merge_purchase_components(comps, pcomps, _resolve_x):
             comp_sku = comp.get("sku")
-            comp_qty = comp.get("qty", 1)
             # set_components内に直接情報がある場合はそちらを使う
             comp_url  = comp.get("buy_url", "")
             comp_spec = comp.get("supplier_spec", "")
@@ -2553,7 +2552,8 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
                 "buy_url":       comp_url,
                 "supplier_spec": comp_spec,
                 "spec":          "",
-                "qty":           qty * comp_qty,
+                # 必要数を入数で割って切り上げる（10巻で1つのページから2巻だけ要るとき）
+                "qty":           accessories.order_qty(qty, comp),
                 "price":         comp_price or 0,
                 "customer_memo": comp.get("customer_memo", ""),
                 "notes":         with_shipping_note(comp.get("notes", ""), item_shipping),
@@ -2561,7 +2561,8 @@ def download_order_excel(body: dict, db: Session = Depends(get_db)):
             if comp_sku:
                 # その構成品のSKUでそのまま入荷する
                 cp = db.query(RakutenProduct).filter(RakutenProduct.sku == comp_sku).first()
-                _hist(comp_sku, (cp.name if cp else comp_sku), qty * comp_qty)
+                _hist(comp_sku, (cp.name if cp else comp_sku),
+                      accessories.order_qty(qty, comp))
             elif not recorded_parent:
                 # 自分のSKUを持たない部材は親のSKUで入る。発注1件につき1行
                 _hist(sku, p.name, qty)
@@ -5537,7 +5538,6 @@ def _taotaro_rows(order_items: list, db: Session) -> list:
 
         for comp in _merge_purchase_components(comps, pcomps, _resolve_t):
             comp_sku = comp.get("sku")
-            comp_qty = comp.get("qty", 1)
             comp_url = comp.get("buy_url", "")
             comp_spec = comp.get("supplier_spec", "")
             if not comp_url or not comp_spec:
@@ -5552,7 +5552,8 @@ def _taotaro_rows(order_items: list, db: Session) -> list:
                 "sku": comp_sku or sku,
                 "name": comp.get("name", "") or comp_sku or "",
                 "buy_url": comp_url, "spec": comp_spec,
-                "qty": qty * comp_qty,
+                # 必要数を入数で割って切り上げる
+                "qty": accessories.order_qty(qty, comp),
                 "origin_sku": sku, "origin_qty": qty, "shipping": shipping,
                 # 自分のSKUを持たない部材は、親のSKUで並ぶ。
                 # 覚えた組み合わせを共有すると、4色セットの4行すべてに
