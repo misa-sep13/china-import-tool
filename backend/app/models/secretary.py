@@ -105,8 +105,57 @@ class SecretaryRun(Base):
     ref_url = Column(String)
     checklist = Column(Text)
 
+    # メールから拾ったものを二度立てないための鍵（Message-IDと添付名の組）
+    source_key = Column(String, index=True)
+    # 書類棚（import_permits）に入れた原本。画面からそのまま開ける
+    permit_id = Column(Integer, index=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class SecretarySender(Base):
+    """請求が届くメールの差出人。ここに登録した相手だけを見に行く。
+
+    件名では絞らない。相手が件名を変えた時点で拾えなくなるため、
+    差出人のアドレスで見る（permit_mail が差出人を見ないのと逆向きだが、
+    請求書は「誰から来たか」が種別そのものなので、こちらが確実）。
+    """
+
+    __tablename__ = "secretary_senders"
+
+    id = Column(Integer, primary_key=True)
+
+    name = Column(String, nullable=False)          # あざみ就労支援
+    # 差出人に含まれていれば一致とみなす。小文字で持つ
+    match_from = Column(String, nullable=False)
+    area = Column(String, nullable=False, default="money")
+
+    # 書類棚（import_permits）に入れるときの種別
+    doc_kind = Column(String, nullable=False, default="wholesale")
+
+    # 支払期限の決め方
+    #   eom      … 届いた月の月末（月末締め翌月末払いはこれ）
+    #   eom_next … 翌月末
+    #   day      … 届いた月の due_day 日（過ぎていれば翌月）
+    #   days     … 届いた日から due_day 日後
+    due_rule = Column(String, nullable=False, default="eom")
+    due_day = Column(Integer, nullable=False, default=10)
+    lead_days = Column(Integer, nullable=False, default=7)
+
+    # 対応するくり返しの決まり。あれば、その月の実体に金額と原本を入れる
+    # （同じ仕事が二重に並ばないようにするため）
+    task_id = Column(Integer, nullable=True, index=True)
+
+    note = Column(Text)
+    active = Column(Boolean, nullable=False, default=True)
+    last_found_at = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+DUE_RULES = ("eom", "eom_next", "day", "days")
 
 
 def month_last_day(year: int, month: int) -> int:

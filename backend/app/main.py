@@ -110,6 +110,7 @@ def _migrate():
         ("order_settings","taotaro_web_cookie",  "ALTER TABLE order_settings ADD COLUMN taotaro_web_cookie TEXT"),
         ("order_settings","accounting_share_token", "ALTER TABLE order_settings ADD COLUMN accounting_share_token VARCHAR"),
         ("billing_lines","taxable", "ALTER TABLE billing_lines ADD COLUMN taxable BOOLEAN DEFAULT TRUE"),
+        ("amazon_listing_children","attrs", "ALTER TABLE amazon_listing_children ADD COLUMN attrs TEXT"),
         ("order_settings","cny_closed_before",   "ALTER TABLE order_settings ADD COLUMN cny_closed_before INTEGER DEFAULT 7"),
         ("order_settings","cny_closed_after",    "ALTER TABLE order_settings ADD COLUMN cny_closed_after INTEGER DEFAULT 15"),
         ("order_settings","national_closed_days","ALTER TABLE order_settings ADD COLUMN national_closed_days INTEGER DEFAULT 7"),
@@ -457,6 +458,12 @@ def _migrate():
          "ALTER TABLE rakuten_products ADD COLUMN order_lot_group VARCHAR"),
         ("rakuten_products","discontinued",
          "ALTER TABLE rakuten_products ADD COLUMN discontinued BOOLEAN DEFAULT FALSE"),
+
+        # 秘書。メールから拾った請求を二度立てないための鍵と、原本への紐付け
+        ("secretary_runs","source_key",
+         "ALTER TABLE secretary_runs ADD COLUMN source_key VARCHAR"),
+        ("secretary_runs","permit_id",
+         "ALTER TABLE secretary_runs ADD COLUMN permit_id INTEGER"),
     ]
 
     inspector = inspect(engine)

@@ -29,6 +29,16 @@ const td = { padding: '8px 10px', borderTop: `1px solid ${C.line}`, fontSize: 13
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
 
+const yen = (n) => (n == null ? '' : `¥${Math.round(n).toLocaleString('ja-JP')}`)
+
+// 原本のPDF。ログインの合言葉が要るので、リンクで開かずに取ってから開く
+async function openPermit(permitId) {
+  const r = await api.get(`/import-permits/${permitId}/pdf`, { responseType: 'blob' })
+  const href = URL.createObjectURL(r.data)
+  window.open(href, '_blank', 'noopener')
+  setTimeout(() => URL.revokeObjectURL(href), 60000)
+}
+
 const thisPeriod = () => {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
@@ -92,6 +102,17 @@ function RunRow({ run, onDone, onSkip, onReopen, busy }) {
               </span>
             )}
           </div>
+          {run.amount != null && (
+            <span style={{ marginRight: 10, fontSize: 13, fontWeight: 700, color: C.text }}>
+              {yen(run.amount)}
+            </span>
+          )}
+          {run.permit_id && (
+            <button onClick={() => openPermit(run.permit_id)} style={{
+              marginRight: 10, fontSize: 12, color: C.blue, background: 'none',
+              border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline',
+            }}>請求書を見る</button>
+          )}
           {run.ref_url && (
             <a href={run.ref_url} target={run.ref_url.startsWith('#') ? undefined : '_blank'}
               rel="noreferrer"
@@ -151,12 +172,16 @@ export default function SecretaryPage() {
   const [tab, setTab] = useState('today')
   const [runs, setRuns] = useState([])
   const [tasks, setTasks] = useState([])
+  const [senders, setSenders] = useState([])
+  const [rules, setRules] = useState([])
   const [period, setPeriod] = useState(thisPeriod())
   const [ahead, setAhead] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState({ title: '', area: 'construction', due_date: todayStr() })
+  const [fetching, setFetching] = useState(false)
+  const [fetchResult, setFetchResult] = useState(null)
 
   const loadToday = async () => {
     const r = await api.get('/secretary/today', { params: { days: ahead } })
@@ -170,12 +195,18 @@ export default function SecretaryPage() {
     const r = await api.get('/secretary/tasks')
     setTasks(r.data.tasks || [])
   }
+  const loadSenders = async () => {
+    const r = await api.get('/secretary/senders')
+    setSenders(r.data.senders || [])
+    setRules(r.data.due_rules || [])
+  }
 
   const reload = async () => {
     setError('')
     try {
       if (tab === 'today') await loadToday()
       else if (tab === 'month') await loadMonth(period)
+      else if (tab === 'senders') await loadSenders()
       else await loadTasks()
     } catch (e) {
       setError(e.response?.data?.detail || e.message)
@@ -216,6 +247,23 @@ export default function SecretaryPage() {
     }
   }
 
+  // メールを見に行って、届いている請求を振込待ちにする。
+  // 同じ添付は二度入らないので、何度押しても増えない
+  const fetchMail = async () => {
+    setFetching(true)
+    setError('')
+    setFetchResult(null)
+    try {
+      const r = await api.post('/secretary/fetch-mail', { days: 45 })
+      setFetchResult(r.data)
+      await reload()
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message)
+    } finally {
+      setFetching(false)
+    }
+  }
+
   const overdue = useMemo(() => runs.filter(r => r.overdue), [runs])
   const rest = useMemo(() => runs.filter(r => !r.overdue), [runs])
 
@@ -239,6 +287,7 @@ export default function SecretaryPage() {
         <Tab id="today" label="やること" />
         <Tab id="month" label="今月の一覧" />
         <Tab id="tasks" label="くり返しの決まり" />
+        <Tab id="senders" label="請求元のメール" />
       </div>
 
       {error && (
@@ -259,8 +308,31 @@ export default function SecretaryPage() {
               </select>
             </label>
             <div style={{ flex: 1 }} />
+            <button onClick={fetchMail} disabled={fetching} style={btnGhost}>
+              {fetching ? 'メールを見ています…' : '📥 請求メールを取り込む'}
+            </button>
             <button onClick={() => setAdding(v => !v)} style={btnGhost}>＋ 都度の仕事を足す</button>
           </div>
+
+          {fetchResult && (
+            <div style={{
+              border: `1px solid ${fetchResult.added ? C.good : C.line}33`,
+              background: fetchResult.added ? '#f0fdf4' : '#f8fafc',
+              borderRadius: 8, padding: '10px 12px', fontSize: 13, marginBottom: 12,
+            }}>
+              {fetchResult.added
+                ? `${fetchResult.added}件の請求書を取り込みました。`
+                : '新しい請求書はありませんでした。'}
+              {fetchResult.skipped ? `（取り込み済み ${fetchResult.skipped}件）` : ''}
+              {fetchResult.message && <span style={{ color: C.warn }}> {fetchResult.message}</span>}
+              {(fetchResult.items || []).map((x, i) => (
+                <div key={i} style={{ marginTop: 4, color: C.sub }}>
+                  {x.sender}：{x.amount != null ? yen(x.amount) : '金額は読めませんでした'}
+                  ／{x.due_date} まで
+                </div>
+              ))}
+            </div>
+          )}
 
           {adding && (
             <div style={{ border: `1px solid ${C.line}`, borderRadius: 8, padding: 12, marginBottom: 12,
@@ -333,6 +405,7 @@ export default function SecretaryPage() {
       )}
 
       {tab === 'tasks' && <TaskList tasks={tasks} onChanged={reload} />}
+      {tab === 'senders' && <SenderList senders={senders} rules={rules} onChanged={reload} />}
     </div>
   )
 }
@@ -355,6 +428,137 @@ function RunTable({ runs, onDone, onSkip, onReopen, busy }) {
         ))}
       </tbody>
     </table>
+  )
+}
+
+/** 請求元のメール。ここに登録した差出人だけを見に行く */
+function SenderList({ senders, rules, onChanged }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [draft, setDraft] = useState({ name: '', match_from: '', due_rule: 'eom', due_day: 10 })
+
+  const patch = async (s, changes) => {
+    setBusy(true)
+    setError('')
+    try {
+      // 変える項目だけを送る
+      await api.patch(`/secretary/senders/${s.id}`, changes)
+      await onChanged()
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const add = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      await api.post('/secretary/senders', draft)
+      setDraft({ name: '', match_from: '', due_rule: 'eom', due_day: 10 })
+      setAdding(false)
+      await onChanged()
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <div style={{ fontSize: 13, color: C.sub, marginBottom: 10 }}>
+        ここに登録した差出人からメールが届くと、添付の請求書を月次管理表の「書類」に入れて、
+        支払期限つきの振込待ちにします。件名では絞らないので、相手が件名を変えても拾えます。
+      </div>
+      {error && (
+        <div style={{ background: '#fef2f2', color: C.bad, borderRadius: 6,
+          padding: '8px 12px', fontSize: 13, marginBottom: 10 }}>{error}</div>
+      )}
+      <table style={{ width: '100%', borderCollapse: 'collapse', border: `1px solid ${C.line}` }}>
+        <thead>
+          <tr>
+            <th style={th}>請求元</th>
+            <th style={th}>差出人のメールアドレス</th>
+            <th style={{ ...th, width: 200 }}>支払期限</th>
+            <th style={{ ...th, width: 130 }}>何日前から出す</th>
+            <th style={{ ...th, width: 80 }} />
+          </tr>
+        </thead>
+        <tbody>
+          {senders.map(s => (
+            <tr key={s.id} style={{ opacity: s.active ? 1 : 0.45 }}>
+              <td style={td}>
+                <div style={{ fontWeight: 600 }}>{s.name}</div>
+                {s.note && <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{s.note}</div>}
+                {s.last_found_at && (
+                  <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>
+                    最後に届いたのは {s.last_found_at.slice(0, 10)}
+                  </div>
+                )}
+              </td>
+              <td style={{ ...td, fontSize: 12, wordBreak: 'break-all' }}>{s.match_from}</td>
+              <td style={td}>
+                <select value={s.due_rule} disabled={busy}
+                  onChange={e => patch(s, { due_rule: e.target.value })}
+                  style={{ fontSize: 13, padding: '3px 4px', maxWidth: 180 }}>
+                  {rules.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+                </select>
+                {(s.due_rule === 'day' || s.due_rule === 'days') && (
+                  <select value={s.due_day} disabled={busy}
+                    onChange={e => patch(s, { due_day: Number(e.target.value) })}
+                    style={{ fontSize: 13, padding: '3px 4px', marginTop: 4 }}>
+                    {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                      <option key={d} value={d}>{s.due_rule === 'day' ? `${d}日` : `${d}日後`}</option>
+                    ))}
+                  </select>
+                )}
+              </td>
+              <td style={td}>
+                <select value={s.lead_days} disabled={busy}
+                  onChange={e => patch(s, { lead_days: Number(e.target.value) })}
+                  style={{ fontSize: 13, padding: '3px 4px' }}>
+                  {[0, 3, 5, 7, 10, 14].map(d => (
+                    <option key={d} value={d}>{d === 0 ? '当日' : `${d}日前`}</option>
+                  ))}
+                </select>
+              </td>
+              <td style={{ ...td, textAlign: 'right' }}>
+                <button disabled={busy} onClick={() => patch(s, { active: !s.active })} style={btnGhost}>
+                  {s.active ? '止める' : '戻す'}
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div style={{ marginTop: 10 }}>
+        {adding ? (
+          <div style={{ border: `1px solid ${C.line}`, borderRadius: 8, padding: 12,
+            display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input autoFocus placeholder="請求元の名前" value={draft.name}
+              onChange={e => setDraft({ ...draft, name: e.target.value })}
+              style={{ fontSize: 13, padding: '6px 8px', border: `1px solid ${C.line}`, borderRadius: 6 }} />
+            <input placeholder="差出人のメールアドレス" value={draft.match_from}
+              onChange={e => setDraft({ ...draft, match_from: e.target.value })}
+              style={{ flex: '1 1 240px', fontSize: 13, padding: '6px 8px',
+                border: `1px solid ${C.line}`, borderRadius: 6 }} />
+            <select value={draft.due_rule}
+              onChange={e => setDraft({ ...draft, due_rule: e.target.value })}
+              style={{ fontSize: 13, padding: '6px' }}>
+              {rules.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+            </select>
+            <button onClick={add} disabled={busy} style={btnMain}>足す</button>
+            <button onClick={() => setAdding(false)} style={btnGhost}>やめる</button>
+          </div>
+        ) : (
+          <button onClick={() => setAdding(true)} style={btnGhost}>＋ 請求元を足す</button>
+        )}
+      </div>
+    </>
   )
 }
 

@@ -99,6 +99,10 @@ class AmazonListingChild(Base):
     axis2 = Column(String)
     price = Column(Integer)                # 子ごとに変える場合。空なら親の値
     set_size = Column(Integer, nullable=True)  # 子ごとの入数。空ならシートの入数
+    # 子ごとに変える項目（ユニット数・付属コンポーネントなど）。JSON。
+    # 入数や付属品が子で違うのに、親の値を全部の子に入れていた
+    # （a030：本体+替えロール2個付き と 替えロール10個のみ）
+    attrs = Column(Text)
 
     status       = Column(String, default="draft")   # draft/submitted/live/failed
     asin         = Column(String)

@@ -545,3 +545,58 @@ def scan_candidates(days: int = 60, folder: str = None):
         except Exception:
             pass
     return out
+
+
+def scan_by_sender(addresses, days: int = 45, folder: str = None,
+                   stats: dict = None):
+    """差出人で絞って、添付PDFを集める。中身では判定しない。
+
+    許可書の取り込み（scan）は「誰から来ても拾う」ために中身で見分けるが、
+    請求書は相手ごとに様式も支払条件も違うので、差出人で分けるほうが確実。
+    addresses は小文字のメールアドレス（部分一致）のリスト。
+    """
+    wanted = [str(a).strip().lower() for a in (addresses or []) if str(a).strip()]
+    if not wanted:
+        return []
+
+    im = _connect()
+    found = []
+    stats = stats if stats is not None else {}
+    stats.update({"folders": [], "messages": 0, "matched": 0, "pdfs": 0})
+    try:
+        targets = _targets(im, folder)
+        cap = MAX_MESSAGES_ALL if len(targets) > 1 else MAX_MESSAGES
+        stats["folders"] = [_utf7_decode(t) for t in targets]
+
+        def handle(msg, box):
+            h = _headers(msg)
+            sender = (h["from"] or "").lower()
+            hit = next((a for a in wanted if a in sender), None)
+            if not hit:
+                return
+            stats["matched"] += 1
+            for name, data_bytes in _pdf_attachments(msg):
+                stats["pdfs"] += 1
+                found.append({
+                    "matched": hit,
+                    "filename": name,
+                    "size_bytes": len(data_bytes),
+                    "pdf": data_bytes,
+                    "text": _pdf_text(data_bytes),
+                    # Message-IDを出さないサーバーがあるので、無ければ
+                    # 差出人と件名と日付で代える（同じ組は同じメール）
+                    "mail_message_id": (h["message_id"]
+                                        or f"{h['from']}|{h['subject']}|{h['date']}"),
+                    "mail_subject": h["subject"],
+                    "mail_from": h["from"],
+                    "mail_date": h["date"],
+                })
+
+        for box in targets:
+            stats["messages"] += _walk(im, box, days, cap, handle)
+    finally:
+        try:
+            im.logout()
+        except Exception:
+            pass
+    return found

@@ -687,6 +687,37 @@ export default function ListingEditor({ listingId, onBack }) {
                           onChange={e => set('attrs',
                             { ...(d.attrs || {}), [f.name]: e.target.value })} />
                       )}
+                      {/* 子ごとに変える。入数や付属コンポーネントは、
+                          バリエーションで中身が違うことがある
+                          （a030：本体+替えロール2個付き と 替えロール10個のみ）。
+                          親の値を全部の子に入れていたので片方が必ず間違っていた。
+                          空のままなら上の値が使われる */}
+                      {kind === 'item' && (d.children || []).length > 1 && (
+                        <details style={{ marginTop: 4 }}>
+                          <summary style={{ fontSize: 11, color: C.key, cursor: 'pointer' }}>
+                            子ごとに変える
+                            {(d.children || []).some(c => ((c.attrs || {})[f.name] || '') !== '')
+                              && <span style={{ color: C.good, marginLeft: 4 }}>（設定あり）</span>}
+                          </summary>
+                          <div style={{ marginTop: 4, display: 'grid', gap: 4 }}>
+                            {(d.children || []).map((c, ci) => (
+                              <div key={c.id ?? ci} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                <span style={{ fontSize: 11, color: C.sub, minWidth: 120,
+                                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {c.axis1 || c.sku || `子${ci + 1}`}
+                                </span>
+                                <input style={{ ...input, flex: 1 }}
+                                  placeholder={(d.attrs || {})[f.name] || '（上の値を使う）'}
+                                  value={(c.attrs || {})[f.name] || ''}
+                                  onChange={e => set('children', (d.children || []).map((x, j) =>
+                                    j === ci
+                                      ? { ...x, attrs: { ...(x.attrs || {}), [f.name]: e.target.value } }
+                                      : x))} />
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
                       {f.suggest && (
                         <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>
                           商品説明から読み取り:{' '}

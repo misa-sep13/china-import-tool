@@ -11,9 +11,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.secretary import (AREA_LABELS, CADENCES, STATUSES,
-                                  SecretaryRun, SecretaryTask)
+from app.models.secretary import (AREA_LABELS, CADENCES, DUE_RULES, STATUSES,
+                                  SecretaryRun, SecretarySender, SecretaryTask)
 from app.services import secretary as svc
+from app.services import secretary_mail
 
 router = APIRouter(prefix="/secretary", tags=["secretary"])
 
@@ -96,7 +97,18 @@ def _run_out(r: SecretaryRun, today: date) -> dict:
         "done_at": r.done_at.isoformat() if r.done_at else None,
         "done_note": r.done_note,
         "amount": r.amount, "source": r.source, "ref_url": r.ref_url,
-        "checklist": r.checklist,
+        "checklist": r.checklist, "permit_id": r.permit_id,
+    }
+
+
+def _sender_out(s) -> dict:
+    return {
+        "id": s.id, "name": s.name, "match_from": s.match_from,
+        "area": s.area, "area_label": AREA_LABELS.get(s.area, s.area),
+        "doc_kind": s.doc_kind, "due_rule": s.due_rule, "due_day": s.due_day,
+        "lead_days": s.lead_days, "task_id": s.task_id, "note": s.note,
+        "active": bool(s.active),
+        "last_found_at": s.last_found_at.isoformat() if s.last_found_at else None,
     }
 
 
@@ -264,6 +276,117 @@ def update_task(task_id: int, payload: TaskPatch, db: Session = Depends(get_db))
         r.target_period = svc.period_str(ty, tm) if row.target_month_offset else None
     db.commit()
     return _task_out(row)
+
+
+# ----------------------------------------------------------------- 請求元
+class SenderIn(BaseModel):
+    name: str
+    match_from: str
+    area: str = "money"
+    doc_kind: str = "wholesale"
+    due_rule: str = "eom"
+    due_day: int = 10
+    lead_days: int = 7
+    task_id: Optional[int] = None
+    note: Optional[str] = None
+    active: bool = True
+
+
+class SenderPatch(BaseModel):
+    name: Optional[str] = None
+    match_from: Optional[str] = None
+    area: Optional[str] = None
+    doc_kind: Optional[str] = None
+    due_rule: Optional[str] = None
+    due_day: Optional[int] = None
+    lead_days: Optional[int] = None
+    task_id: Optional[int] = None
+    note: Optional[str] = None
+    active: Optional[bool] = None
+
+
+def _check_sender(data: dict):
+    if "area" in data and data["area"] not in AREA_LABELS:
+        raise HTTPException(400, "区分が違います: " + str(data["area"]))
+    if "due_rule" in data and data["due_rule"] not in DUE_RULES:
+        raise HTTPException(400, "期限の決め方が違います: " + str(data["due_rule"]))
+    if "match_from" in data and "@" not in str(data["match_from"] or ""):
+        raise HTTPException(400, "メールアドレスを入れてください")
+
+
+@router.get("/senders")
+def list_senders(db: Session = Depends(get_db)):
+    svc.seed_if_empty(db)
+    secretary_mail.seed_senders_if_empty(db)
+    rows = db.query(SecretarySender).order_by(SecretarySender.id.asc()).all()
+    return {"senders": [_sender_out(s) for s in rows],
+            "due_rules": [
+                {"key": "eom", "label": "届いた月の月末まで"},
+                {"key": "eom_next", "label": "翌月末まで"},
+                {"key": "day", "label": "毎月の決まった日まで"},
+                {"key": "days", "label": "届いてから何日後か"},
+            ]}
+
+
+@router.post("/senders")
+def add_sender(payload: SenderIn, db: Session = Depends(get_db)):
+    data = payload.model_dump()
+    _check_sender(data)
+    if not (payload.name or "").strip():
+        raise HTTPException(400, "名前が空です")
+    row = SecretarySender(**data)
+    row.name = row.name.strip()
+    row.match_from = row.match_from.strip().lower()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _sender_out(row)
+
+
+@router.patch("/senders/{sender_id}")
+def update_sender(sender_id: int, payload: SenderPatch,
+                  db: Session = Depends(get_db)):
+    """送られてきた項目だけを書き換える。"""
+    row = db.query(SecretarySender).filter(SecretarySender.id == sender_id).first()
+    if not row:
+        raise HTTPException(404, "見つかりません")
+    data = payload.model_dump(exclude_unset=True)
+    _check_sender(data)
+    if "match_from" in data and data["match_from"]:
+        data["match_from"] = str(data["match_from"]).strip().lower()
+    for key, value in data.items():
+        setattr(row, key, value)
+    db.commit()
+    db.refresh(row)
+    return _sender_out(row)
+
+
+class FetchMailIn(BaseModel):
+    # 何日ぶん遡って見るか。ふだんは45日で足りる
+    days: int = 45
+    # 見に行くフォルダ。省くと受信トレイ。"*" で全フォルダ
+    folder: Optional[str] = None
+
+
+@router.post("/fetch-mail")
+def fetch_mail(payload: FetchMailIn, db: Session = Depends(get_db)):
+    """登録した請求元のメールを見て、振込待ちを立てる。
+
+    同じ添付は二度入らないので、何度押しても増えない。
+    """
+    svc.seed_if_empty(db)
+    secretary_mail.seed_senders_if_empty(db)
+    svc.ensure_runs(db)
+    try:
+        return secretary_mail.fetch(db, days=max(1, min(payload.days, 365)),
+                                    folder=payload.folder)
+    except permit_mail_error() as e:
+        raise HTTPException(502, str(e))
+
+
+def permit_mail_error():
+    from app.services.permit_mail import PermitMailError
+    return PermitMailError
 
 
 @router.delete("/tasks/{task_id}")

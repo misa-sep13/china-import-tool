@@ -106,6 +106,8 @@ def _child_out(c: AmazonListingChild) -> dict:
     return {"id": c.id, "sort_order": c.sort_order, "sku": c.sku, "jan": c.jan,
             "title": c.title, "axis1": c.axis1, "axis2": c.axis2,
             "price": c.price, "set_size": c.set_size,
+            # 子ごとに決めた項目（ユニット数・付属コンポーネントなど）
+            "attrs": _loads(c.attrs, {}) or {},
             "status": c.status, "asin": c.asin, "error": c.error}
 
 
@@ -479,6 +481,12 @@ def update_listing(listing_id: int, body: ListingIn,
                 c.set_size = int(ss) if ss not in (None, "") and int(ss) > 0 else None
             except (TypeError, ValueError):
                 c.set_size = None
+            # 子ごとに決めた項目。空の値は持たない（親の値が使われる）
+            if "attrs" in ch:
+                av = ch.get("attrs") or {}
+                av = {k: v for k, v in av.items()
+                      if isinstance(k, str) and v not in (None, "")} if isinstance(av, dict) else {}
+                c.attrs = json.dumps(av, ensure_ascii=False) if av else None
             db.flush()
             keep.add(c.id)
         for c in (db.query(AmazonListingChild)
@@ -1860,6 +1868,12 @@ def _attributes(row: AmazonListing, child: AmazonListingChild,
     extra.update(memo_values(db, row.product_type))
     extra.update({k: _typed(k, v)
                   for k, v in (_loads(row.attrs, {}) or {}).items()
+                  if v not in (None, "")})
+    # 子ごとに決めた値がいちばん強い。入数や付属コンポーネントは子で
+    # 違うことがある（a030：本体+替えロール2個付き と 替えロール10個のみ）。
+    # 親の値を全部の子に入れていたので、片方が必ず間違っていた
+    extra.update({k: _typed(k, v)
+                  for k, v in (_loads(getattr(child, "attrs", None), {}) or {}).items()
                   if v not in (None, "")})
 
     def one(v, **kw):
