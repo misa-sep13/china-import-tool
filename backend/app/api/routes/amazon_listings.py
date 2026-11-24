@@ -3462,7 +3462,14 @@ def _master_rows(db: Session, row: AmazonListing, src: dict) -> dict:
             # いると、どちらのSKUを買うか決められないため
             "spec": ((src.get("cn_names") or {}).get(c.axis1 or "")
                      or (src.get("cn_name") or "").strip() or spec),
-            "buy_url": buy_url,
+            # 色ごとのURL。基本は同じページだが、「本体+替えロール2個付き」と
+            # 「替えロール10個のみ」のように別ページになることがある
+            "buy_url": ((src.get("cn_urls") or {}).get(c.axis1 or "") or "").strip()
+                       or buy_url,
+            # 色ごとにURLを決めてある行。候補から1本選んだときも、
+            # この行だけは上書きしない
+            "buy_url_fixed": bool(((src.get("cn_urls") or {})
+                                   .get(c.axis1 or "") or "").strip()),
             "price": (main or {}).get("price"),
             # 子ごとの入数があればそれ。シートは商品ごとに1つしか持てず、
             # 1冊と2冊セットが同じ商品にあると全部に同じ入数が入っていた

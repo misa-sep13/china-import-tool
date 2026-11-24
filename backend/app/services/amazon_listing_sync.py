@@ -232,6 +232,11 @@ def extract(research: dict, settings: dict) -> dict:
                      for k, v in (research.get("cnNames") or {}).items()
                      if str(v or "").strip()},
         "main_url": (research.get("mainUrl") or "").strip(),
+        # 色ごとの仕入URL。基本は本体URLと同じだが、色（バリエーション）に
+        # よって別ページになることがある。入っていればそちらを使う
+        "cn_urls": {str(k).strip(): str(v).strip()
+                    for k, v in (research.get("cnUrls") or {}).items()
+                    if str(v or "").strip()},
         # 一緒に発注するもの（収納袋など）。在庫には連動しない。
         # URLが空なら本体と同じページから買う
         "accessories": [

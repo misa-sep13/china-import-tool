@@ -9126,7 +9126,9 @@ if(FIREBASE_CONFIG.databaseURL){
           rows: (p.rows || []).map(r => ({
             sku: r.sku, name: r.name || '', color: r.color || '',
             size: r.size || '', spec: r.spec || '',
-            buy_url: buyUrl || r.buy_url || '',
+            // 色ごとにURLを決めてある行はそれを使う。選んだURLは、
+            // 指定が無い行にだけ効かせる（選択機能はそのまま残す）
+            buy_url: r.buy_url_fixed ? r.buy_url : (buyUrl || r.buy_url || ''),
             price: r.price, set_size: r.set_size == null ? 1 : r.set_size,
             selling_price: r.selling_price, cost_jpy: r.cost_jpy,
             fba_fee: r.fba_fee, asin: r.asin || '',
@@ -10337,7 +10339,8 @@ if(FIREBASE_CONFIG.databaseURL){
       // ③で色名を変える前に入れた値が、古い色名のまま残っていることがある。
       // 今ある色だけにして、消えた色のぶんは落とす（別の色の欄に
       // 古い中国語名が出ていると、違う色を発注してしまう）
-      [research.cnNames, research.firstQty, research.vine].forEach(m => {
+      if(!research.cnUrls || typeof research.cnUrls !== 'object') research.cnUrls = {};
+      [research.cnNames, research.firstQty, research.vine, research.cnUrls].forEach(m => {
         Object.keys(m).forEach(k => {
           if(kidNames.indexOf(k) < 0) delete m[k];
         });
@@ -10366,6 +10369,19 @@ if(FIREBASE_CONFIG.databaseURL){
           research.cnNames[k] = inp.value; scheduleSave();
         });
         line.appendChild(inp);
+        // 色ごとの仕入URL。基本は上の本体URLと同じだが、
+        // 「本体+替えロール2個付き」と「替えロール10個のみ」のように
+        // 色によって別ページになることがある
+        if(!research.cnUrls || typeof research.cnUrls !== 'object') research.cnUrls = {};
+        const uu = document.createElement('input');
+        uu.type = 'text';
+        uu.placeholder = 'この色のURL（空なら上の本体URL）';
+        uu.title = '色によって仕入先のページが違うときだけ入れてください';
+        uu.value = research.cnUrls[k] || '';
+        uu.addEventListener('input', () => {
+          research.cnUrls[k] = uu.value.trim(); scheduleSave();
+        });
+        line.appendChild(uu);
         const q = document.createElement('input');
         q.type = 'number'; q.min = '0'; q.className = 'acc-qty';
         q.placeholder = '初回';
