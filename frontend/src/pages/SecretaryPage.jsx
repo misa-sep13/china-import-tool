@@ -175,6 +175,7 @@ export default function SecretaryPage() {
   const [senders, setSenders] = useState([])
   const [rules, setRules] = useState([])
   const [notify, setNotify] = useState(null)
+  const [forwards, setForwards] = useState(null)
   const [period, setPeriod] = useState(thisPeriod())
   const [ahead, setAhead] = useState(0)
   const [busy, setBusy] = useState(false)
@@ -196,6 +197,10 @@ export default function SecretaryPage() {
     const r = await api.get('/secretary/tasks')
     setTasks(r.data.tasks || [])
   }
+  const loadForwards = async () => {
+    const r = await api.get('/secretary/forwards')
+    setForwards(r.data)
+  }
   const loadNotify = async () => {
     const r = await api.get('/secretary/notify')
     setNotify(r.data)
@@ -213,6 +218,7 @@ export default function SecretaryPage() {
       else if (tab === 'month') await loadMonth(period)
       else if (tab === 'senders') await loadSenders()
       else if (tab === 'notify') await loadNotify()
+      else if (tab === 'videos') await loadForwards()
       else await loadTasks()
     } catch (e) {
       setError(e.response?.data?.detail || e.message)
@@ -295,6 +301,7 @@ export default function SecretaryPage() {
         <Tab id="tasks" label="くり返しの決まり" />
         <Tab id="senders" label="請求元のメール" />
         <Tab id="notify" label="毎朝のLINE" />
+        <Tab id="videos" label="タオタロウの動画" />
       </div>
 
       {error && (
@@ -414,6 +421,7 @@ export default function SecretaryPage() {
       {tab === 'tasks' && <TaskList tasks={tasks} onChanged={reload} />}
       {tab === 'senders' && <SenderList senders={senders} rules={rules} onChanged={reload} />}
       {tab === 'notify' && <NotifyPanel notify={notify} onChanged={reload} />}
+      {tab === 'videos' && <VideoPanel data={forwards} onChanged={reload} />}
     </div>
   )
 }
@@ -436,6 +444,103 @@ function RunTable({ runs, onDone, onSkip, onReopen, busy }) {
         ))}
       </tbody>
     </table>
+  )
+}
+
+/** タオタロウの動画。届いたらチャットワークへ自動で流れる。その記録 */
+function VideoPanel({ data, onChanged }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [result, setResult] = useState('')
+
+  if (!data) return <div style={{ color: C.sub, fontSize: 13 }}>読み込み中...</div>
+
+  const run = async () => {
+    setBusy(true)
+    setError('')
+    setResult('')
+    try {
+      const r = await api.post('/secretary/forward-videos', { days: 30 })
+      setResult(r.data.message
+        || (r.data.sent ? `${r.data.sent}件 送りました。`
+          : '新しい動画はありませんでした。')
+          + (r.data.failed ? `送れなかったもの ${r.data.failed}件。` : ''))
+      await onChanged()
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const mb = (n) => (n ? `${(n / 1024 / 1024).toFixed(1)}MB` : '')
+  const label = { sent: '送信済み', too_large: '大きすぎて送れず', error: '失敗' }
+  const color = { sent: C.good, too_large: C.warn, error: C.bad }
+
+  return (
+    <div style={{ maxWidth: 820 }}>
+      <div style={{ fontSize: 13, color: C.sub, marginBottom: 12 }}>
+        <b style={{ color: C.text }}>{data.sender}</b> から動画が添付で届くと、
+        チャットワークの北田しずくさんの部屋へ自動で流します（20分おきに見に行きます）。
+        同じ動画は二度送りません。チャットワークの上限は1ファイル5MBで、
+        超えるものは「送れませんでした」とだけ知らせます。
+      </div>
+
+      {error && (
+        <div style={{ background: '#fef2f2', color: C.bad, borderRadius: 6,
+          padding: '8px 12px', fontSize: 13, marginBottom: 10 }}>{error}</div>
+      )}
+      {result && (
+        <div style={{ background: '#f0fdf4', color: C.good, borderRadius: 6,
+          padding: '8px 12px', fontSize: 13, marginBottom: 10 }}>{result}</div>
+      )}
+
+      <button onClick={run} disabled={busy} style={{ ...btnGhost, marginBottom: 12 }}>
+        {busy ? 'メールを見ています…' : '📥 いま届いている分を送る'}
+      </button>
+
+      {(data.forwards || []).length === 0 ? (
+        <div style={{ padding: 30, textAlign: 'center', color: C.sub, fontSize: 14 }}>
+          まだ送った動画はありません。
+        </div>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse', border: `1px solid ${C.line}` }}>
+          <thead>
+            <tr>
+              <th style={{ ...th, width: 100 }}>状態</th>
+              <th style={th}>動画</th>
+              <th style={{ ...th, width: 80 }}>大きさ</th>
+              <th style={{ ...th, width: 130 }}>送った日時</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.forwards.map(f => (
+              <tr key={f.id}>
+                <td style={td}>
+                  <span style={{ fontSize: 12, fontWeight: 700,
+                    color: color[f.status] || C.sub }}>
+                    {label[f.status] || f.status}
+                  </span>
+                </td>
+                <td style={td}>
+                  <div style={{ fontWeight: 600 }}>{f.filename}</div>
+                  {f.mail_subject && (
+                    <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{f.mail_subject}</div>
+                  )}
+                  {f.error && (
+                    <div style={{ fontSize: 12, color: C.bad, marginTop: 2 }}>{f.error}</div>
+                  )}
+                </td>
+                <td style={{ ...td, whiteSpace: 'nowrap' }}>{mb(f.size_bytes)}</td>
+                <td style={{ ...td, whiteSpace: 'nowrap', fontSize: 12, color: C.sub }}>
+                  {f.sent_at ? f.sent_at.slice(0, 16).replace('T', ' ') : (f.mail_date || '')}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   )
 }
 

@@ -185,6 +185,36 @@ class SecretaryNotify(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
+class SecretaryForward(Base):
+    """メールで届いたものを、そのまま別の場所へ流した記録。
+
+    いまのところタオタロウの動画をチャットワークへ送るのに使う。
+    同じメールを二度送らないための控えでもあるので、添付が無かった
+    メールも「見た」として残す（次から中身を落とさずに済む）。
+    """
+
+    __tablename__ = "secretary_forwards"
+
+    id = Column(Integer, primary_key=True)
+
+    kind = Column(String, nullable=False, default="taotaro_video", index=True)
+    mail_message_id = Column(String, index=True)
+    mail_subject = Column(String)
+    mail_from = Column(String)
+    mail_date = Column(String)
+
+    filename = Column(String)
+    size_bytes = Column(Integer, default=0)
+
+    # sent=送った / too_large=大きすぎて送れない / none=添付なし / error=失敗
+    status = Column(String, nullable=False, default="sent", index=True)
+    room_id = Column(String)
+    error = Column(Text)
+
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 DUE_RULES = ("eom", "eom_next", "day", "days")
 
 

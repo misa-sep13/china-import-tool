@@ -1676,6 +1676,30 @@ async def _sync_amazon_daily_sales():
         logger.warning(f"[scheduler] Amazonの日別実績でエラー: {e}")
 
 
+async def _taotaro_videos():
+    """タオタロウから届いた動画を、チャットワークの北田しずくさんへ流す。
+
+    同じ動画は二度送らない。見たメールのMessage-IDを控えてあるので、
+    何分おきに呼んでも増えない。
+    """
+    def _run():
+        from app.core.database import SessionLocal
+        from app.services.taotaro_video import tick
+        db = SessionLocal()
+        try:
+            return tick(db)
+        finally:
+            db.close()
+    try:
+        out = await asyncio.to_thread(_run)
+        if out and out.get("sent"):
+            logger.info(f"[scheduler] タオタロウの動画を転送: {out.get('sent')}件")
+        if out and out.get("failed"):
+            logger.warning(f"[scheduler] 動画の転送に失敗: {out.get('errors')}")
+    except Exception as e:
+        logger.warning(f"[scheduler] 動画の転送でエラー: {e}")
+
+
 async def _secretary_notify():
     """秘書の毎朝の知らせ。送る時刻になっていれば1通だけ送る。
 
@@ -1736,6 +1760,10 @@ async def _scheduler_loop():
         # 5分ごと: 秘書の毎朝の知らせ。送る時刻かどうかは中で見る
         if tick % 5 == 0:
             await _secretary_notify()
+        # 20分ごと: タオタロウの動画をチャットワークへ。
+        # 動画は1通数MBあるので、見出しだけ見て新しいものだけ落とす
+        if tick % 20 == 0:
+            await _taotaro_videos()
 
 
 @asynccontextmanager

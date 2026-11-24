@@ -600,3 +600,103 @@ def scan_by_sender(addresses, days: int = 45, folder: str = None,
         except Exception:
             pass
     return found
+
+
+# 動画の添付。タオタロウから届く動作確認の動画を拾うのに使う
+VIDEO_EXTS = ("mp4", "mov", "m4v", "avi", "wmv", "mkv", "webm")
+
+
+def _attachments(msg, exts):
+    """指定した拡張子の添付を取り出す。exts が空なら添付を全部。"""
+    want = tuple(e.lower().lstrip(".") for e in (exts or ()))
+    for part in msg.walk():
+        if part.get_content_maintype() == "multipart":
+            continue
+        name = _decode(part.get_filename())
+        if not name:
+            continue
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if want and ext not in want:
+            continue
+        try:
+            data = part.get_payload(decode=True) or b""
+        except Exception:
+            continue
+        if data:
+            yield name, data
+
+
+def scan_new_from(addresses, known_ids, exts, days: int = 14,
+                  folder: str = None, cap: int = 60, stats: dict = None):
+    """差出人で絞り、まだ見ていないメールだけ中身を落として添付を返す。
+
+    動画は1通で数MBある。取り込み済みかどうかを落としてから調べると、
+    同じ動画を何度も落とすことになる。先に見出し（Message-ID）だけを見て、
+    知らないメールの本文だけを取りに行く。
+
+    戻り値は1通につき1件。添付が無くても返すので、呼び出し側が
+    「見た」と記録しておけば次から落とさずに済む。
+    """
+    wanted = [str(a).strip().lower() for a in (addresses or []) if str(a).strip()]
+    if not wanted:
+        return []
+    known = set(known_ids or ())
+
+    im = _connect()
+    out = []
+    stats = stats if stats is not None else {}
+    stats.update({"folders": [], "messages": 0, "matched": 0,
+                  "already": 0, "fetched": 0})
+    try:
+        targets = _targets(im, folder)
+        stats["folders"] = [_utf7_decode(t) for t in targets]
+        for box in targets:
+            try:
+                _open(im, box)
+            except PermitMailError:
+                continue
+            for num in _recent_nums(im, days, cap):
+                stats["messages"] += 1
+                # まず見出しだけ。ここで落とすのは数百バイト
+                try:
+                    typ, d = im.fetch(
+                        num, "(BODY.PEEK[HEADER.FIELDS "
+                             "(FROM SUBJECT DATE MESSAGE-ID)])")
+                except Exception:
+                    continue
+                head = next((x[1] for x in (d or []) if isinstance(x, tuple)), b"")
+                if not head:
+                    continue
+                h = _headers(email.message_from_bytes(head))
+                sender = (h["from"] or "").lower()
+                hit = next((a for a in wanted if a in sender), None)
+                if not hit:
+                    continue
+                stats["matched"] += 1
+                key = (h["message_id"]
+                       or f"{h['from']}|{h['subject']}|{h['date']}")
+                if key in known:
+                    stats["already"] += 1
+                    continue
+                known.add(key)
+
+                msg = _fetch_message(im, num, prefilter=False)
+                if msg is None:
+                    continue
+                stats["fetched"] += 1
+                files = [{"filename": n, "size_bytes": len(b), "content": b}
+                         for n, b in _attachments(msg, exts)]
+                out.append({
+                    "matched": hit,
+                    "mail_message_id": key,
+                    "mail_subject": h["subject"],
+                    "mail_from": h["from"],
+                    "mail_date": h["date"],
+                    "files": files,
+                })
+    finally:
+        try:
+            im.logout()
+        except Exception:
+            pass
+    return out

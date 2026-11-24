@@ -127,6 +127,27 @@ def list_rooms(all_rooms: bool = False) -> list:
     return picked or out
 
 
+# 送るときに付ける種類。決め打ちにすると、動画を送ったときに
+# Wordファイル扱いになって相手の画面で開けない
+_TYPES = {
+    "docx": ("application/vnd.openxmlformats-officedocument"
+             ".wordprocessingml.document"),
+    "pdf": "application/pdf",
+    "mp4": "video/mp4", "mov": "video/quicktime", "m4v": "video/x-m4v",
+    "avi": "video/x-msvideo", "wmv": "video/x-ms-wmv",
+    "mkv": "video/x-matroska", "webm": "video/webm",
+    "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+    "xlsx": ("application/vnd.openxmlformats-officedocument"
+             ".spreadsheetml.sheet"),
+    "zip": "application/zip", "csv": "text/csv",
+}
+
+
+def content_type_of(filename: str) -> str:
+    ext = str(filename or "").rsplit(".", 1)[-1].lower()
+    return _TYPES.get(ext, "application/octet-stream")
+
+
 def send_file(room_id: str, filename: str, content: bytes,
               message: str = "") -> dict:
     """ファイルを1つ送る。メッセージを付けると本文になる。"""
@@ -138,9 +159,7 @@ def send_file(room_id: str, filename: str, content: bytes,
         raise ChatworkError(
             f"ファイルが大きすぎます（{len(content) // 1024}KB／上限5MB）")
 
-    files = {"file": (filename, content,
-                      "application/vnd.openxmlformats-officedocument"
-                      ".wordprocessingml.document")}
+    files = {"file": (filename, content, content_type_of(filename))}
     data = {"message": message} if message else None
     try:
         r = httpx.post(f"{settings.CHATWORK_API_BASE}/rooms/{room_id}/files",

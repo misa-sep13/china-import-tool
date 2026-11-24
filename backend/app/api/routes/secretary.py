@@ -12,10 +12,12 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.secretary import (AREA_LABELS, CADENCES, DUE_RULES, STATUSES,
-                                  SecretaryRun, SecretarySender, SecretaryTask)
+                                  SecretaryForward, SecretaryRun,
+                                  SecretarySender, SecretaryTask)
 from app.services import secretary as svc
 from app.services import secretary_mail
 from app.services import secretary_line
+from app.services import taotaro_video
 
 router = APIRouter(prefix="/secretary", tags=["secretary"])
 
@@ -388,6 +390,44 @@ def fetch_mail(payload: FetchMailIn, db: Session = Depends(get_db)):
 def permit_mail_error():
     from app.services.permit_mail import PermitMailError
     return PermitMailError
+
+
+# ----------------------------------------------------------------- 動画の転送
+@router.get("/forwards")
+def list_forwards(limit: int = Query(30, ge=1, le=200),
+                  db: Session = Depends(get_db)):
+    """タオタロウの動画をチャットワークへ流した記録。
+
+    添付の無かったメール（status=none）は数が多いだけで見ても仕方がないので
+    出さない。送れなかったものは出す。
+    """
+    rows = (db.query(SecretaryForward)
+            .filter(SecretaryForward.status != "none")
+            .order_by(SecretaryForward.id.desc())
+            .limit(limit).all())
+    return {
+        "forwards": [{
+            "id": r.id, "filename": r.filename, "size_bytes": r.size_bytes,
+            "status": r.status, "error": r.error,
+            "mail_subject": r.mail_subject, "mail_date": r.mail_date,
+            "sent_at": r.sent_at.isoformat() if r.sent_at else None,
+        } for r in rows],
+        "sender": taotaro_video.sender_address(),
+    }
+
+
+class ForwardIn(BaseModel):
+    days: int = 14
+
+
+@router.post("/forward-videos")
+def forward_videos(payload: ForwardIn, db: Session = Depends(get_db)):
+    """いま届いている動画を送る。ふだんは20分おきに自動で走る。"""
+    try:
+        return taotaro_video.fetch_and_forward(
+            db, days=max(1, min(payload.days, 180)))
+    except permit_mail_error() as e:
+        raise HTTPException(502, str(e))
 
 
 # ----------------------------------------------------------------- 毎朝の知らせ
