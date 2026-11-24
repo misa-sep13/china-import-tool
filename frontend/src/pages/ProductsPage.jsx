@@ -749,12 +749,13 @@ function AccessoryEditor({ value, onChange, allProducts = [] }) {
               <input value={it.buy_url || ''} placeholder="https://detail.1688.com/..."
                 onChange={e => setField(i, 'buy_url', e.target.value)} />
             </div>
-            <div>
+            <div style={{ gridColumn: '1 / -1' }}>
               <div style={lab}>仕様（中国語）</div>
               <input value={it.supplier_spec || ''} placeholder="例: 收纳袋 灰色"
                 onChange={e => setField(i, 'supplier_spec', e.target.value)} />
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            {/* 欄が3つ並ぶので、半分の幅に押し込むと単価が読めなくなる */}
+            <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
               <div style={{ flex: 1 }}>
                 <div style={lab}>単価（元）</div>
                 <input type="number" step="0.01" value={it.price ?? ''} placeholder="0.19"

@@ -917,7 +917,7 @@ function SetComponentsEditor({ value, onChange, allProducts, withPack = false })
                 placeholder="https://detail.1688.com/..."
               />
             </div>
-            <div>
+            <div style={{ gridColumn: '1 / -1' }}>
               <div style={labelStyle}>仕様（中国語）</div>
               <input
                 value={item.supplier_spec || ''}
@@ -926,7 +926,8 @@ function SetComponentsEditor({ value, onChange, allProducts, withPack = false })
                 placeholder="例: 水色"
               />
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            {/* 欄が3つ並ぶので、半分の幅に押し込むと単価が読めなくなる */}
+            <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
               <div style={{ flex: 1 }}>
                 <div style={labelStyle}>単価（元）</div>
                 <input
