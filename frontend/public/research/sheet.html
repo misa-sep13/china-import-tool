@@ -7542,6 +7542,11 @@ if(FIREBASE_CONFIG.databaseURL){
       panel.innerHTML = '';
       if(!data) return;
 
+      // 見出しは 1〜6 の算用数字にしてある。
+      // ①② は「発注時／納品時の指示」、❶〜❹ は「押すボタン」なので、
+      // 同じ番号を使うとどれを指しているのか分からなくなる
+      panel.appendChild(el('div', 'reg-sec', '1. Amazonに出す形（サイズ・価格・SKU）'));
+
       // --- 梱包サイズ。表から自動で入るが、自社実測があれば上書きできる ---
       const dRow = el('div', 'an-row reg-line');
       dRow.appendChild(el('span', 'reg-lead', '梱包サイズ'));
@@ -7781,7 +7786,7 @@ if(FIREBASE_CONFIG.databaseURL){
       // しかなかった。移ってから書こうとすると忘れるので、ここで書いて
       // 「商品マスタに登録」で一緒に持っていく
       const nRow = el('div', 'an-row reg-line');
-      nRow.appendChild(el('span', 'reg-lead', '① 発注時の指示（仕入先へ）'));
+      nRow.appendChild(el('span', 'reg-lead', '① 発注時の指示（タオタロウの発注書へ）'));
       const note = document.createElement('textarea');
       note.className = 'reg-note';
       note.placeholder = '発注するときに仕入先へ伝えること（例: グレーでお願いします／ロゴなし発注OKもらってます）。検品は下のチェックで選びます';
@@ -7793,7 +7798,7 @@ if(FIREBASE_CONFIG.databaseURL){
       // 買付の指示は納品の段階では終わっている。FBA指示書に残ると
       // 現場が迷うので、納品のときの指示は別に持つ
       const dnRow = el('div', 'an-row reg-line');
-      dnRow.appendChild(el('span', 'reg-lead', '② 納品時の指示（FBA納品へ）'));
+      dnRow.appendChild(el('span', 'reg-lead', '② 納品時の指示（FBA指示書へ）'));
       const dnote = document.createElement('textarea');
       dnote.className = 'reg-note';
       dnote.placeholder = 'FBAへ送るときの作業（例: a021_squeezer とセット組み／2個1セットにまとめる／袋を折らない）';
@@ -7922,7 +7927,7 @@ if(FIREBASE_CONFIG.databaseURL){
         + 'タオタロウの「FBA」オプションはツールからは送れないので、配送依頼のときに付けてください'));
 
       // --- 商品画像 ---
-      panel.appendChild(el('div', 'reg-sec', '商品画像'));
+      panel.appendChild(el('div', 'reg-sec', '3. 商品画像'));
       const imgBox = el('div', 'reg-part');
       panel.appendChild(imgBox);
       // 結果の表示は imgBox の外に置く。drawImages は box を作り直すので、
@@ -7937,13 +7942,13 @@ if(FIREBASE_CONFIG.databaseURL){
       drawImages(imgBox, data, reloadImages, imgStatus);
 
       // --- よく聞かれる項目（全商品に共通）---
-      panel.appendChild(el('div', 'reg-sec', 'よく聞かれる項目（全商品に共通）'));
+      panel.appendChild(el('div', 'reg-sec', '4. よく聞かれる項目（全商品に共通）'));
       const comBox = el('div', 'reg-part');
       panel.appendChild(comBox);
       loadCommon().then(c => drawCommon(comBox, c)).catch(() => {});
 
       // --- 商品タイプごとの必要な項目。検証を押すと並ぶ ---
-      panel.appendChild(el('div', 'reg-sec', 'この商品タイプで必要な項目'));
+      panel.appendChild(el('div', 'reg-sec', '5. この商品タイプで必要な項目'));
       const needBox = el('div', 'reg-part');
       needBox.appendChild(el('span', 'an-note',
         '❸「🔎 Amazonで検証する」を押すと、足りない項目がここに出ます'));
@@ -7986,23 +7991,34 @@ if(FIREBASE_CONFIG.databaseURL){
       // --- 進めるボタン ---
       // 押す順に番号を振る。どれから押すのか見て分からないと、
       // 検証から先に押して「SKUが無い」で止まる
-      // --- 仕入先の言い方（発注・商品マスタ用）---
-      // ❶でSKUを決めたあと、❷で商品マスタに登録する前に入れるものなので、
-      // 進めるボタンのすぐ上に置く。色ごとの欄は③商品タイトルの子から作る
-      panel.appendChild(el('div', 'reg-sec',
-        '仕入先の言い方（1688の選択肢の文字をそのまま。❷を押す前に）'));
+      // --- 2. 仕入先・タオタロウに頼むこと ---
+      //
+      // 中国語名・付属品・①②の指示・検品オプションは、行き先がどれも
+      // タオタロウ（発注書とFBA指示書）。前は中国語名と付属品だけが
+      // 一番下の「仕入先の言い方」にあり、①②と画像・属性を挟んで
+      // 離れていたので、どこに何を書くのか見当が付かなかった。
+      // ①の直前へ移して、仕入先へ渡すものを1か所にまとめる（2026-11-24）。
+      //
+      // 入れ先は nRow（① 発注時の指示）の手前。先に作った順に
+      // insertBefore で差し込むので、呼ぶ順がそのまま画面の順になる
+      panel.insertBefore(el('div', 'reg-sec',
+        '2. 仕入先・タオタロウに頼むこと'), nRow);
       const supNote = el('div', 'reg-hint');
-      supNote.innerHTML = '1688の色の選択肢に<b>書いてあるとおりの文字</b>を入れてください'
-        + '（例：<code>晨雾粉-站立小号20*9*5cm</code>）。'
-        + '発注のとき、この文字でどの色を買うかを見分けます。'
-        + '<b>日本語の色名や商品ページのタイトルでは当たりません。</b>'
-        + '当たらないと発注の画面で止まります（近い色を勝手に買うことはしません）。'
-        + '<br>③商品タイトルで色（子）を作ると、色ごとの欄になります。'
-        + '入れた文字は❷「📦 商品マスタに登録」で商品マスタの仕様になります'
-        + '（❷のあとに書いても入らないので、先に入れてください）。';
-      panel.appendChild(supNote);
+      supNote.innerHTML =
+        '<b>入れるもの</b>：1688の選択肢に<b>書いてあるとおりの文字</b>と、'
+        + '本体と一緒に頼む付属品。'
+        + '<br><b>例</b>：<code>晨雾粉-站立小号20*9*5cm</code>'
+        + '／付属品 <code>替换卷纸-10卷</code>（必要数2・入数10 → 10巻パックで頼みます）'
+        + '<br><b>やりがちな間違い</b>：'
+        + '<br>・日本語の色名や商品ページのタイトルを入れる'
+        + '（当たらないと発注の画面で止まります。近い色を勝手に買うことはしません）'
+        + '<br>・❷「📦 商品マスタに登録」を押したあとに書く'
+        + '（あとから書いても入りません。<b>❷より先に</b>入れてください）'
+        + '<br>・色が複数あるのに1つの欄に2色まとめて書く'
+        + '（③商品タイトルで色を作ると、色ごとの欄になります）';
+      panel.insertBefore(supNote, nRow);
       const supGrid = el('div', 'brief-grid');
-      panel.appendChild(supGrid);
+      panel.insertBefore(supGrid, nRow);
       // buildSupplierWords が使う入力欄の作り方。リサーチ枠側と同じ形にする
       const supField = (grid, label, value, onInput, cls) => {
         const cell = el('div', 'brief-cell' + (cls ? ' ' + cls : ''));
@@ -8030,7 +8046,9 @@ if(FIREBASE_CONFIG.databaseURL){
       const qtyStatus = el('span', 'an-status');
       qtyRow.appendChild(qtyBtn); qtyRow.appendChild(qtySel);
       qtyRow.appendChild(qtyStatus);
-      panel.appendChild(qtyRow);
+      // 初回発注数は上の「色ごと」の欄のこと。離すと何を聞くボタンか
+      // 分からなくなるので、仕入先の欄と同じまとまりに置く
+      panel.insertBefore(qtyRow, nRow);
 
       const QTY_ROOM_KEY = 'ars_chatwork_room';
       if(API_BASE){
@@ -8119,7 +8137,7 @@ if(FIREBASE_CONFIG.databaseURL){
           .finally(() => { qtyBtn.disabled = false; });
       });
 
-      panel.appendChild(el('div', 'reg-sec', '進める（❶→❹の順に押します）'));
+      panel.appendChild(el('div', 'reg-sec', '6. 進める（❶→❹の順に押します）'));
       let ptSuggest = null;
       let ptSugBox = null;
       // 商品タイプが実態と違うと、そのタイプの必須項目が埋まらず
@@ -10515,13 +10533,21 @@ if(FIREBASE_CONFIG.databaseURL){
       kidNames.length
         ? '付属品（一緒に発注するもの。付ける色を選べます）'
         : '付属品（一緒に発注するもの）'));
-    accWrap.appendChild(el('div', 'acc-note',
-      '本体のSKUに含まれているもの（「套装（収納袋＋眼罩耳塞）」など、'
-      + '本体を選べば一緒に届くもの）は入れません。'
-      + '別に頼むものだけ、URLと中国語名を入れてください'
+    const accNote = el('div', 'acc-note');
+    accNote.innerHTML =
+      '<b>入れるもの</b>：本体とは<b>別に頼む</b>ものだけ（替えロール・収納袋など）。'
+      + '本体を選べば一緒に届くもの（<code>套装（収納袋＋眼罩耳塞）</code>のような'
+      + '1つの選択肢に入っているもの）は入れません。'
+      + '<br><b>必要数</b>＝本体1つに付ける数。<b>入数</b>＝仕入先の1つに入っている数。'
+      + '発注数は「必要数 ÷ 入数」を切り上げた数になります。'
+      + '<br>　例：替えロールを本体1つに2本、仕入先は10巻で1つ'
+      + ' → <b>必要数2・入数10</b>。本体100個なら10巻パックを10個頼みます。'
+      + '<br>　1つのページで1個ずつ買えるもの（収納袋など）は<b>入数は空</b>でかまいません。'
       + (kidNames.length > 1
-         ? '。既定はどの色にも付きます。片方にしか付かないものは「付ける色」のチェックを外してください'
-         : '')));
+         ? '<br><b>付ける色</b>：既定はどの色にも付きます。'
+           + '片方にしか付かないものはチェックを外してください。'
+         : '');
+    accWrap.appendChild(accNote);
     const accList = el('div', 'acc-list');
     accWrap.appendChild(accList);
     const drawAcc = () => {
