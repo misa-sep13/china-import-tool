@@ -463,14 +463,18 @@ def retry_forward(forward_id: int, db: Session = Depends(get_db)):
 
 class ForwardIn(BaseModel):
     days: int = 14
+    # 送らずに、何が見つかるかだけ返す（うまくいかないときの切り分け用）
+    peek: bool = False
 
 
 @router.post("/forward-videos")
 def forward_videos(payload: ForwardIn, db: Session = Depends(get_db)):
     """いま届いている動画を送る。ふだんは20分おきに自動で走る。"""
     try:
-        return taotaro_video.fetch_and_forward(
-            db, days=max(1, min(payload.days, 180)))
+        days = max(1, min(payload.days, 180))
+        if payload.peek:
+            return taotaro_video.peek(db, days=days)
+        return taotaro_video.fetch_and_forward(db, days=days)
     except permit_mail_error() as e:
         raise HTTPException(502, str(e))
     except HTTPException:

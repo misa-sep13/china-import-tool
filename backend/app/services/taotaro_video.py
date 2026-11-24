@@ -133,6 +133,25 @@ def _too_large(row, item: dict, f: dict, room, failed: list, why: str):
     failed.append({"filename": f["filename"], "reason": row.error})
 
 
+def peek(db: Session, days: int = 14, in_folder: str = None) -> dict:
+    """見るだけ。送らないし、何も残さない。
+
+    うまくいかないときに、メールを落とすところで困っているのか、
+    送るところで困っているのかを切り分けるため。
+    """
+    stats = {}
+    found = []
+    for item in permit_mail.scan_new_from(
+            [sender_address()], _known_ids(db), permit_mail.VIDEO_EXTS,
+            days=days, folder=in_folder or folder(), stats=stats):
+        for f in (item.get("files") or []):
+            found.append({"filename": f["filename"],
+                          "size_bytes": f["size_bytes"],
+                          "mail_date": item["mail_date"]})
+            f["content"] = None
+    return {"found": found, "scanned": stats}
+
+
 def fetch_and_forward(db: Session, days: int = 14, in_folder: str = None,
                       room_id: str = None) -> dict:
     """届いた動画をチャットワークへ送る。何度呼んでも同じものは送らない。"""
@@ -171,9 +190,13 @@ def fetch_and_forward(db: Session, days: int = 14, in_folder: str = None,
 
         for f in videos:
             row = SecretaryForward(**base, filename=f["filename"],
-                                   size_bytes=f["size_bytes"])
+                                   size_bytes=f["size_bytes"],
+                                   status="error",
+                                   error="処理の途中です")
             db.add(row)
-            db.flush()
+            # ここでいったん確定させる。この先で落ちても、どこまで進んだかが残る。
+            # Message-ID はまだ入っているが、status=error なので画面から送り直せる
+            db.commit()
             if f["size_bytes"] > chatwork.MAX_FILE_BYTES:
                 # チャットワークに載らない大きさ。預かってリンクを送る。
                 # タオタロウの動画は5MB超のほうが多いので、ここが通らないと
@@ -185,6 +208,7 @@ def fetch_and_forward(db: Session, days: int = 14, in_folder: str = None,
                     _via_link(db, row, item, f, room, sent, failed)
             else:
                 try:
+                    row.error = None
                     chatwork.send_file(str(room), f["filename"], f["content"],
                                        message=_body(item, f["filename"]))
                     row.status = "sent"
