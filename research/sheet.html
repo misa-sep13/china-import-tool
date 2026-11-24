@@ -10447,14 +10447,15 @@ if(FIREBASE_CONFIG.databaseURL){
     const accWrap = el('div', 'brief-cell w-acc w-break');
     accWrap.appendChild(el('div', 'brief-cap',
       kidNames.length
-        ? '付属品（どの色にも共通。一緒に発注するもの）'
+        ? '付属品（一緒に発注するもの。付ける色を選べます）'
         : '付属品（一緒に発注するもの）'));
     accWrap.appendChild(el('div', 'acc-note',
       '本体のSKUに含まれているもの（「套装（収納袋＋眼罩耳塞）」など、'
       + '本体を選べば一緒に届くもの）は入れません。'
       + '別に頼むものだけ、URLと中国語名を入れてください'
-      + (kidNames.length
-         ? '。色ごとに分けて入れないでください（どの色にも共通です）' : '')));
+      + (kidNames.length > 1
+         ? '。既定はどの色にも付きます。片方にしか付かないものは「付ける色」のチェックを外してください'
+         : '')));
     const accList = el('div', 'acc-list');
     accWrap.appendChild(accList);
     const drawAcc = () => {
@@ -10496,6 +10497,44 @@ if(FIREBASE_CONFIG.databaseURL){
           research.accessories[i].qty = Number(q.value) || 1; scheduleSave();
         });
         line.appendChild(q);
+        // どの色に付けるか。空＝どの色にも共通。
+        // 「本体+替えロール2個付き」と「替えロール10個のみ」のように、
+        // 片方にしか付かない付属品があるため（10個セットに2個セットが
+        // 付いてしまっていた）
+        if(kidNames.length > 1){
+          if(!Array.isArray(a.only)) research.accessories[i].only = [];
+          const ow = el('span', 'acc-only');
+          ow.style.cssText = 'display:inline-flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:11px;';
+          ow.appendChild(el('span', '', '付ける色：'));
+          kidNames.forEach(k => {
+            const lb = document.createElement('label');
+            lb.style.cssText = 'display:inline-flex;align-items:center;gap:3px;cursor:pointer;';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox'; cb.dataset.writes = '1';
+            const cur = research.accessories[i].only || [];
+            cb.checked = cur.length === 0 || cur.indexOf(k) >= 0;
+            cb.addEventListener('change', () => {
+              const now = (research.accessories[i].only || []).slice();
+              const all = cb.checked ? kidNames.slice() : [];
+              let next;
+              if(now.length === 0){
+                // いまは「全部」。外した色だけを落とす
+                next = kidNames.filter(x => x !== k);
+              }else{
+                next = cb.checked ? now.concat([k]).filter((x, j, arr) => arr.indexOf(x) === j)
+                                  : now.filter(x => x !== k);
+              }
+              // 全部にチェックが戻ったら「共通」に戻す（空配列）
+              research.accessories[i].only =
+                (next.length === kidNames.length) ? [] : next;
+              drawAcc(); scheduleSave();
+            });
+            lb.appendChild(cb);
+            lb.appendChild(document.createTextNode(k));
+            ow.appendChild(lb);
+          });
+          line.appendChild(ow);
+        }
         const del = el('button', 'mini acc-del', '✕');
         del.title = 'この付属品を削除';
         del.addEventListener('click', () => {
