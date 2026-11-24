@@ -242,7 +242,12 @@ def extract(research: dict, settings: dict) -> dict:
              "url": (a.get("url") or "").strip(),
              "qty": int(a.get("qty") or 1) or 1,
              # 単価が無いと原価に乗らず、そのぶん利益を多く見積もる
-             "price": _f(a.get("price")) or None}
+             "price": _f(a.get("price")) or None,
+             # 付け先の色。空ならどの色にも共通。
+             # 「本体+替えロール2個付き」と「替えロール10個のみ」のように、
+             # 片方にしか付かない付属品があるため
+             "only": [str(x).strip() for x in (a.get("only") or [])
+                      if str(x or "").strip()]}
             for a in (research.get("accessories") or [])
             if isinstance(a, dict) and (a.get("name") or a.get("url"))
         ],

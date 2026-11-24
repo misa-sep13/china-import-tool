@@ -3541,7 +3541,22 @@ def to_master(listing_id: int, body: ToMasterIn, db: Session = Depends(get_db)):
         from app.services import accessories
         comps, _auto = accessories.ensure_skus(
             db, comps, (body.rows[0].sku or "").strip())
-    comp_json = json.dumps(comps, ensure_ascii=False) if comps else None
+    def _comps_for(color: str):
+        """その色に付ける付属品だけを返す。
+
+        付属品は「どの色にも共通」で全SKUに入れていたので、
+        たとえば a030 の「替えロール10個のみ」にまで
+        「本体+替えロール2個付き」用の部材が付いてしまっていた。
+        付け先（only）が指定されていれば、その色にだけ入れる。
+        """
+        c0 = (color or "").strip()
+        out = []
+        for c in comps:
+            only = [str(x).strip() for x in (c.get("only") or []) if str(x).strip()]
+            if only and c0 not in only:
+                continue
+            out.append({k: v for k, v in c.items() if k != "only"})
+        return out
     # タオタロウの検品オプション。シートで選んだものを全SKUに入れる
     inspect_json = None
     if (row.taotaro_inspect or "").strip():
@@ -3563,6 +3578,9 @@ def to_master(listing_id: int, body: ToMasterIn, db: Session = Depends(get_db)):
         if new:
             p = Product(sku=sku, supplier="タオタロウ")
             db.add(p)
+
+        mine = _comps_for(r.color)
+        comp_json = json.dumps(mine, ensure_ascii=False) if mine else None
 
         def put(field, value):
             if value in (None, "", 0):
