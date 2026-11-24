@@ -85,6 +85,9 @@ export default function ListingEditor({ listingId, onBack }) {
         children: (d.children || []).map(c => ({
           id: c.id, sku: c.sku, jan: c.jan, title: c.title,
           axis1: c.axis1, axis2: c.axis2, price: c.price,
+          // 子ごとの入数と、子ごとに決めた項目。送っていなかったので
+          // 画面で入れても保存されなかった
+          set_size: c.set_size, attrs: c.attrs || {},
         })),
         // 画面だけで使う値（色を外した土台）はサーバーへ送らない
         ...extra,
