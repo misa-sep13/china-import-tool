@@ -14,7 +14,7 @@
 """
 import calendar
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -131,7 +131,7 @@ def fetch(db: Session, days: int = 45, folder: str = None) -> dict:
             "run_id": run.id,
             "permit_id": permit.id,
         })
-        sender.last_found_at = datetime.now(timezone.utc)
+        sender.last_found_at = svc.now_jst()
 
     db.commit()
     return {"added": len(added), "skipped": skipped, "items": added,

@@ -7,7 +7,7 @@
 渡さずここで持つ（Chatworkと同じ扱い）。
 """
 import logging
-from datetime import date, datetime
+from datetime import date
 
 import httpx
 
@@ -151,7 +151,7 @@ def send_now(db: Session, force: bool = False) -> dict:
         text = "おはようございます。今日やることはありません。"
 
     push(text)
-    now = datetime.now(svc.JST)
+    now = svc.now_jst()
     conf.last_sent_on = now.date().isoformat()
     conf.last_sent_at = now
     conf.last_error = None
@@ -175,7 +175,7 @@ def daily_tick(db: Session) -> dict:
     if not is_configured():
         return {"skipped": "LINEが未設定です"}
 
-    now = datetime.now(svc.JST)
+    now = svc.now_jst()
     if now.hour < (conf.hour or 7):
         return {"skipped": "まだ時刻前です"}
     if conf.last_sent_on == now.date().isoformat():

@@ -16,6 +16,15 @@ JST = timezone(timedelta(hours=9))
 def today_jst() -> date:
     return datetime.now(JST).date()
 
+
+def now_jst() -> datetime:
+    """記録用の「今」。日本時間の壁時計をそのまま入れる。
+
+    タイムゾーン付きで入れるとPostgresがUTCに直して返すので、画面に
+    9時間ずれた時刻が出る（楽天まわりと同じ扱いに揃えてある）。
+    """
+    return datetime.now(JST).replace(tzinfo=None)
+
 from app.models.secretary import SecretaryTask, SecretaryRun, month_last_day
 
 

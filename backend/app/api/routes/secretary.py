@@ -3,7 +3,7 @@
 「今日やること」を出すのが主な仕事。くり返しの決まりはここから足せる。
 決まりを更新するときは、送られてきた項目だけを書き換える（丸ごと置き換えない）。
 """
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -201,7 +201,7 @@ def update_run(run_id: int, payload: RunPatch, db: Session = Depends(get_db)):
     if "status" in data:
         if data["status"] not in STATUSES:
             raise HTTPException(400, "状態が違います: " + str(data["status"]))
-        row.done_at = None if data["status"] == "open" else datetime.now(timezone.utc)
+        row.done_at = None if data["status"] == "open" else svc.now_jst()
     for key, value in data.items():
         setattr(row, key, value)
     if "due_date" in data and row.due_date:
