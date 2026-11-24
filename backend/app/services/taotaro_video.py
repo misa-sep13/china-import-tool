@@ -106,6 +106,7 @@ def _via_link(db: Session, row, item: dict, f: dict, room,
         return
 
     row.status = "link"
+    row.error = None          # 作ったときに入れておいた「処理の途中です」を消す
     row.drive_url = url
     row.sent_at = svc.now_jst()
     video.forward_id = row.id
@@ -143,12 +144,11 @@ def peek(db: Session, days: int = 14, in_folder: str = None) -> dict:
     found = []
     for item in permit_mail.scan_new_from(
             [sender_address()], _known_ids(db), permit_mail.VIDEO_EXTS,
-            days=days, folder=in_folder or folder(), stats=stats):
-        for f in (item.get("files") or []):
-            found.append({"filename": f["filename"],
-                          "size_bytes": f["size_bytes"],
-                          "mail_date": item["mail_date"]})
-            f["content"] = None
+            days=days, folder=in_folder or folder(), stats=stats,
+            headers_only=True):
+        found.append({"mail_date": item["mail_date"],
+                      "mail_subject": item["mail_subject"],
+                      "mail_bytes": item.get("mail_bytes") or 0})
     return {"found": found, "scanned": stats}
 
 
@@ -180,6 +180,26 @@ def fetch_and_forward(db: Session, days: int = 14, in_folder: str = None,
             mail_date=item["mail_date"],
             room_id=str(room),
         )
+        if item.get("oversize"):
+            # 丸ごと読むとサーバーが落ちる大きさ。中身は取りに行っていない
+            mb = item["oversize"] / 1024 / 1024
+            db.add(SecretaryForward(
+                **base, status="too_large",
+                error=f"メールが{mb:.0f}MBあり、開けませんでした"))
+            db.commit()
+            try:
+                chatwork.send_message(str(room), "\n".join([
+                    f"タオタロウから動画が届きましたが、メールが大きすぎて"
+                    f"開けませんでした（{mb:.0f}MB）。",
+                    item.get("mail_subject") or "",
+                    "お手数ですが、こちらから直接お送りします。",
+                ]))
+            except chatwork.ChatworkError:
+                pass
+            failed.append({"filename": item.get("mail_subject") or "",
+                           "reason": f"メールが{mb:.0f}MB"})
+            continue
+
         videos = item.get("files") or []
         if not videos:
             # 動画の付いていないメール。見たことだけ残して次から飛ばす

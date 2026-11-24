@@ -657,8 +657,15 @@ def _search_from(im, days: int, senders, cap: int):
     return uniq[-cap:][::-1]
 
 
+# 1通で落としてよい上限。これを超えるメールは中身を取りに行かない。
+# Renderは512MBしかなく、大きいメールを丸ごと読むと落ちる
+MAX_MAIL_BYTES = 30 * 1024 * 1024
+
+
 def scan_new_from(addresses, known_ids, exts, days: int = 14,
-                  folder: str = None, cap: int = 60, stats: dict = None):
+                  folder: str = None, cap: int = 60, stats: dict = None,
+                  headers_only: bool = False,
+                  max_bytes: int = MAX_MAIL_BYTES):
     """差出人で絞り、まだ見ていないメールだけ中身を落として添付を返す。
 
     動画は1通で数MBある。取り込み済みかどうかを落としてから調べると、
@@ -692,13 +699,18 @@ def scan_new_from(addresses, known_ids, exts, days: int = 14,
                 # まず見出しだけ。ここで落とすのは数百バイト
                 try:
                     typ, d = im.fetch(
-                        num, "(BODY.PEEK[HEADER.FIELDS "
+                        num, "(RFC822.SIZE BODY.PEEK[HEADER.FIELDS "
                              "(FROM SUBJECT DATE MESSAGE-ID)])")
                 except Exception:
                     continue
                 head = next((x[1] for x in (d or []) if isinstance(x, tuple)), b"")
                 if not head:
                     continue
+                # 中身を取りに行く前に、そのメールの大きさを見ておく
+                meta = b" ".join(x[0] if isinstance(x, tuple) else x
+                                 for x in (d or []) if x)
+                m_size = re.search(rb"RFC822\.SIZE\s+(\d+)", meta or b"")
+                mail_bytes = int(m_size.group(1)) if m_size else 0
                 h = _headers(email.message_from_bytes(head))
                 sender = (h["from"] or "").lower()
                 hit = next((a for a in wanted if a in sender), None)
@@ -712,20 +724,25 @@ def scan_new_from(addresses, known_ids, exts, days: int = 14,
                     continue
                 known.add(key)
 
+                base = {"matched": hit, "mail_message_id": key,
+                        "mail_subject": h["subject"], "mail_from": h["from"],
+                        "mail_date": h["date"], "mail_bytes": mail_bytes}
+                if headers_only:
+                    # 大きさと件名だけ見たいとき。中身は落とさない
+                    yield {**base, "files": []}
+                    continue
+                if mail_bytes and mail_bytes > max_bytes:
+                    # 大きすぎるメール。丸ごと読むとサーバーが落ちる
+                    yield {**base, "files": [], "oversize": mail_bytes}
+                    continue
+
                 msg = _fetch_message(im, num, prefilter=False)
                 if msg is None:
                     continue
                 stats["fetched"] += 1
                 files = [{"filename": n, "size_bytes": len(b), "content": b}
                          for n, b in _attachments(msg, exts)]
-                yield {
-                    "matched": hit,
-                    "mail_message_id": key,
-                    "mail_subject": h["subject"],
-                    "mail_from": h["from"],
-                    "mail_date": h["date"],
-                    "files": files,
-                }
+                yield {**base, "files": files}
                 # 次の1通に進む前に手放す。持ったままだと、見た通数ぶん
                 # メモリに積み上がる
                 del msg, files
