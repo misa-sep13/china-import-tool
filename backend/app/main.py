@@ -464,6 +464,11 @@ def _migrate():
          "ALTER TABLE secretary_runs ADD COLUMN source_key VARCHAR"),
         ("secretary_runs","permit_id",
          "ALTER TABLE secretary_runs ADD COLUMN permit_id INTEGER"),
+        # 大きい動画はドライブに置いてリンクを送る。その控え
+        ("secretary_forwards","drive_url",
+         "ALTER TABLE secretary_forwards ADD COLUMN drive_url VARCHAR"),
+        ("secretary_forwards","drive_file_id",
+         "ALTER TABLE secretary_forwards ADD COLUMN drive_file_id VARCHAR"),
     ]
 
     inspector = inspect(engine)

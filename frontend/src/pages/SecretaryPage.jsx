@@ -482,16 +482,18 @@ function VideoPanel({ data, onChanged }) {
   }
 
   const mb = (n) => (n ? `${(n / 1024 / 1024).toFixed(1)}MB` : '')
-  const label = { sent: '送信済み', too_large: '大きすぎて送れず', error: '失敗' }
-  const color = { sent: C.good, too_large: C.warn, error: C.bad }
+  const label = { sent: '送信済み', drive: 'ドライブ経由',
+    too_large: '大きすぎて送れず', error: '失敗' }
+  const color = { sent: C.good, drive: C.blue, too_large: C.warn, error: C.bad }
 
   return (
     <div style={{ maxWidth: 820 }}>
       <div style={{ fontSize: 13, color: C.sub, marginBottom: 12 }}>
         <b style={{ color: C.text }}>{data.sender}</b> から動画が添付で届くと、
         チャットワークの北田しずくさんの部屋へ自動で流します（20分おきに見に行きます）。
-        同じ動画は二度送りません。チャットワークの上限は1ファイル5MBで、
-        超えるものは「送れませんでした」とだけ知らせます。
+        同じ動画は二度送りません。チャットワークの上限は1ファイル5MBなので、
+        <b>超えるものはGoogleドライブに置いてリンクを送ります</b>
+        （リンクを知っている人は見られる状態にします）。
       </div>
 
       {error && (
@@ -534,6 +536,10 @@ function VideoPanel({ data, onChanged }) {
                   <div style={{ fontWeight: 600 }}>{f.filename}</div>
                   {f.mail_subject && (
                     <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>{f.mail_subject}</div>
+                  )}
+                  {f.drive_url && (
+                    <a href={f.drive_url} target="_blank" rel="noreferrer"
+                      style={{ fontSize: 12, color: C.blue }}>ドライブで開く</a>
                   )}
                   {f.error && (
                     <div style={{ fontSize: 12, color: C.bad, marginTop: 2 }}>{f.error}</div>

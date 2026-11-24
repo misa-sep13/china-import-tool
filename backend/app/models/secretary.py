@@ -206,10 +206,16 @@ class SecretaryForward(Base):
     filename = Column(String)
     size_bytes = Column(Integer, default=0)
 
-    # sent=送った / too_large=大きすぎて送れない / none=添付なし / error=失敗
+    # sent=そのまま送った / drive=ドライブに置いてリンクを送った
+    # too_large=大きすぎて送れない / none=添付なし / error=失敗
     status = Column(String, nullable=False, default="sent", index=True)
     room_id = Column(String)
     error = Column(Text)
+
+    # 5MBを超えてチャットワークに載らないものは、ドライブに置いて
+    # リンクだけ送る。あとから見返せるようにURLを残す
+    drive_url = Column(String)
+    drive_file_id = Column(String)
 
     sent_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

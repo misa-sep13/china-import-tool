@@ -408,7 +408,7 @@ def list_forwards(limit: int = Query(30, ge=1, le=200),
     return {
         "forwards": [{
             "id": r.id, "filename": r.filename, "size_bytes": r.size_bytes,
-            "status": r.status, "error": r.error,
+            "status": r.status, "error": r.error, "drive_url": r.drive_url,
             "mail_subject": r.mail_subject, "mail_date": r.mail_date,
             "sent_at": r.sent_at.isoformat() if r.sent_at else None,
         } for r in rows],

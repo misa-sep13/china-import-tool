@@ -57,6 +57,40 @@ def upload_pdf(filename: str, content: bytes) -> dict:
 
     上書きにすると、取り違えたときに元が消えて戻せない。
     """
+    return upload_file(filename, content, "application/pdf")
+
+
+def share_anyone(file_id: str) -> None:
+    """リンクを知っている人なら見られるようにする。
+
+    共有ドライブに置いただけでは、そのドライブの人しか開けない。
+    外注さんはメンバーではないので、リンクを渡しても開けない。
+    """
+    import httpx
+    url = (f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions"
+           "?supportsAllDrives=true")
+    try:
+        r = httpx.post(url, timeout=60,
+                       headers={"Authorization": f"Bearer {_token()}"},
+                       json={"role": "reader", "type": "anyone"})
+    except Exception as e:
+        raise DriveError(f"Googleドライブに繋がりませんでした（{type(e).__name__}）")
+    if r.status_code >= 300:
+        detail = ""
+        try:
+            detail = (r.json().get("error") or {}).get("message") or ""
+        except Exception:
+            detail = r.text[:200]
+        raise DriveError(f"リンクを共有にできませんでした: {detail}")
+
+
+def upload_file(filename: str, content: bytes, content_type: str,
+                folder_id: str = None) -> dict:
+    """ファイルを1つ置く。種類を指定できる形。
+
+    同名があっても上書きせず、別ファイルとして増える。上書きにすると、
+    取り違えたときに元が消えて戻せない。
+    """
     if not is_configured():
         raise DriveError(
             "Googleドライブの設定がありません"
@@ -64,10 +98,10 @@ def upload_pdf(filename: str, content: bytes) -> dict:
     import httpx
 
     meta = {"name": filename,
-            "parents": [os.environ["GOOGLE_DRIVE_FOLDER_ID"]]}
+            "parents": [folder_id or os.environ["GOOGLE_DRIVE_FOLDER_ID"]]}
     files = {
         "metadata": ("metadata.json", json.dumps(meta), "application/json"),
-        "file": (filename, content, "application/pdf"),
+        "file": (filename, content, content_type),
     }
     try:
         r = httpx.post(UPLOAD_URL, files=files, timeout=120,

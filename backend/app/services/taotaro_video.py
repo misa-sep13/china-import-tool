@@ -11,7 +11,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app.services import chatwork, permit_mail
+from app.services import chatwork, google_drive, permit_mail
 from app.services import secretary as svc
 from app.models.secretary import SecretaryForward
 
@@ -39,6 +39,15 @@ def folder() -> str:
     return (os.environ.get("TAOTARO_VIDEO_FOLDER") or permit_mail.ALL).strip()
 
 
+def video_folder():
+    """ドライブの置き先。動画用のフォルダを分けたいときに使う。
+
+    指定が無ければ、輸入許可書と同じフォルダに置く。
+    """
+    import os
+    return (os.environ.get("GOOGLE_DRIVE_VIDEO_FOLDER_ID") or "").strip() or None
+
+
 def _known_ids(db: Session) -> set:
     return {x[0] for x in
             db.query(SecretaryForward.mail_message_id)
@@ -53,6 +62,70 @@ def _body(item: dict, filename: str) -> str:
         lines.append(subject)
     lines.append(filename)
     return "\n".join(lines)
+
+
+def _via_drive(row, item: dict, f: dict, room, sent: list, failed: list):
+    """大きい動画をGoogleドライブに置いて、リンクをチャットワークへ送る。
+
+    置いただけでは共有ドライブの人しか開けない。外注さんはメンバーでは
+    ないので、リンクを知っていれば見られる状態にしてから渡す。
+    ドライブが使えなければ、これまでどおり「送れませんでした」と知らせる。
+    """
+    mb = f["size_bytes"] / 1024 / 1024
+    subject = item.get("mail_subject") or ""
+
+    if not google_drive.is_configured():
+        _too_large(row, item, f, room, failed,
+                   "Googleドライブの設定がありません")
+        return
+    try:
+        up = google_drive.upload_file(
+            f["filename"], f["content"],
+            chatwork.content_type_of(f["filename"]), folder_id=video_folder())
+        google_drive.share_anyone(up["file_id"])
+    except google_drive.DriveError as e:
+        _too_large(row, item, f, room, failed, e.args[0] if e.args else str(e))
+        return
+
+    row.drive_url = up.get("url")
+    row.drive_file_id = up.get("file_id")
+    try:
+        chatwork.send_message(str(room), (
+            f"タオタロウから動画が届きました。\n"
+            f"{subject}\n{f['filename']}（{mb:.1f}MB）\n"
+            f"大きいのでGoogleドライブに置きました。\n{row.drive_url}"))
+    except chatwork.ChatworkError as e:
+        # 置いたことは残す。送り直せるように失敗として数える
+        row.status = "error"
+        row.error = e.message[:300]
+        row.mail_message_id = None
+        failed.append({"filename": f["filename"], "reason": e.message})
+        return
+
+    row.status = "drive"
+    row.sent_at = svc.now_jst()
+    sent.append({"filename": f["filename"], "size_bytes": f["size_bytes"],
+                 "drive_url": row.drive_url})
+
+
+def _too_large(row, item: dict, f: dict, room, failed: list, why: str):
+    """ドライブが使えないとき。届いたことだけでも知らせる。
+
+    黙って飛ばすと、動画が来たこと自体に気づけない。
+    """
+    mb = f["size_bytes"] / 1024 / 1024
+    row.status = "too_large"
+    row.error = f"{mb:.1f}MB（チャットワークの上限5MB）／{why}"[:300]
+    try:
+        chatwork.send_message(str(room), (
+            f"タオタロウから動画が届きましたが、"
+            f"大きすぎて送れませんでした（{mb:.1f}MB）。\n"
+            f"{item.get('mail_subject') or ''}\n"
+            f"{f['filename']}\n"
+            "お手数ですが、こちらから直接お送りします。"))
+    except chatwork.ChatworkError as e:
+        row.error = f"{row.error}／知らせも送れず: {e.message}"[:300]
+    failed.append({"filename": f["filename"], "reason": row.error})
 
 
 def fetch_and_forward(db: Session, days: int = 14, in_folder: str = None,
@@ -93,22 +166,10 @@ def fetch_and_forward(db: Session, days: int = 14, in_folder: str = None,
             row = SecretaryForward(**base, filename=f["filename"],
                                    size_bytes=f["size_bytes"])
             if f["size_bytes"] > chatwork.MAX_FILE_BYTES:
-                # 上限を超える動画。送れないことを本文だけで知らせる。
-                # 黙って飛ばすと、届いたこと自体に気づけない
-                mb = f["size_bytes"] / 1024 / 1024
-                row.status = "too_large"
-                row.error = f"{mb:.1f}MB（チャットワークの上限5MB）"
-                try:
-                    chatwork.send_message(str(room), (
-                        f"タオタロウから動画が届きましたが、"
-                        f"大きすぎて送れませんでした（{mb:.1f}MB）。\n"
-                        f"{item.get('mail_subject') or ''}\n"
-                        f"{f['filename']}\n"
-                        "お手数ですが、こちらから直接お送りします。"))
-                except chatwork.ChatworkError as e:
-                    row.error = f"{row.error}／知らせも送れず: {e.message}"[:300]
-                failed.append({"filename": f["filename"],
-                               "reason": row.error})
+                # チャットワークに載らない大きさ。ドライブに置いてリンクを送る。
+                # タオタロウの動画は5MB超のほうが多いので、ここが通らないと
+                # 半分以上が手作業のまま残る
+                _via_drive(row, item, f, room, sent, failed)
             else:
                 try:
                     chatwork.send_file(str(room), f["filename"], f["content"],
