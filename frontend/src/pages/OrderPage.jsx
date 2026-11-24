@@ -219,7 +219,17 @@ export default function OrderPage() {
   }
 
   const updateQty = (productId, val) => {
-    setQtyOverrides(prev => ({ ...prev, [productId]: Number(val) }))
+    const n = Number(val)
+    setQtyOverrides(prev => ({ ...prev, [productId]: n }))
+    // 数を入れたら、その行を発注の対象にする。
+    // チェック欄は表の一番右にあって、横に長い表では画面の外に出ている。
+    // 数だけ入れて「発注できない」（0件のまま）ということが起きていた
+    setSelected(prev => {
+      const next = new Set(prev ?? [])
+      if (n > 0) next.add(productId)
+      else next.delete(productId)
+      return next
+    })
   }
 
   const currentSelected = selected ?? new Set()
