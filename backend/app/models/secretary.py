@@ -155,6 +155,36 @@ class SecretarySender(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
+class SecretaryNotify(Base):
+    """毎朝の知らせの設定。1行しか持たない。
+
+    LINEのトークンはここに置かない（サーバーの環境変数で持つ）。
+    ここにあるのは「何時に」「何日先まで」といった、見られて困らないもの。
+    """
+
+    __tablename__ = "secretary_notify"
+
+    id = Column(Integer, primary_key=True, default=1)
+
+    enabled = Column(Boolean, nullable=False, default=True)
+    # 日本時間の何時に送るか
+    hour = Column(Integer, nullable=False, default=7)
+    # 知らせる前に請求メールを見に行くか
+    fetch_mail = Column(Boolean, nullable=False, default=True)
+    # 何日先の分まで入れるか。0 なら今日の分と遅れている分だけ
+    ahead_days = Column(Integer, nullable=False, default=0)
+    # やることが無い日も送るか。既定は送らない（鳴りすぎると見なくなる）
+    send_when_empty = Column(Boolean, nullable=False, default=False)
+
+    # 1日に何度も送らないための控え（日本時間の日付）
+    last_sent_on = Column(String)
+    last_sent_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(Text)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
 DUE_RULES = ("eom", "eom_next", "day", "days")
 
 

@@ -4,9 +4,17 @@
 見に行く月は先月・今月・来月の3つだけにしてある。月末が期限のものを
 数日前から出すと月をまたぐので、来月も見る必要がある。
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
+
+# RenderはUTCで動く。朝9時までは日付が前日のままになるので、
+# 「今日やること」は必ず日本時間で数える
+JST = timezone(timedelta(hours=9))
+
+
+def today_jst() -> date:
+    return datetime.now(JST).date()
 
 from app.models.secretary import SecretaryTask, SecretaryRun, month_last_day
 
@@ -39,7 +47,7 @@ def due_date_for(task: SecretaryTask, year: int, month: int):
 
 def ensure_runs(db: Session, today: date = None) -> int:
     """先月・今月・来月の実体を、無ければ作る。作った数を返す。"""
-    today = today or date.today()
+    today = today or today_jst()
     created = 0
 
     tasks = db.query(SecretaryTask).filter(SecretaryTask.active.is_(True)).all()

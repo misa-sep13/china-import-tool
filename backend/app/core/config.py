@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     # よく使う送り先。画面で選んだものが優先される
     CHATWORK_DEFAULT_ROOM_ID: Optional[str] = None
 
+    # LINE（Messaging API）。秘書の毎朝の知らせに使う。
+    # トークンはそのアカウントとして送れる権限そのものなので、
+    # ブラウザには渡さずサーバーで持つ（Chatworkと同じ扱い）
+    LINE_CHANNEL_TOKEN: Optional[str] = None
+    LINE_TO: Optional[str] = None            # 送り先のユーザーID（Uから始まる）
+
     # 楽天ウェブサービス（IchibaItem/Search、SEO順位チェック用）
     RAKUTEN_APP_ID: Optional[str] = None
     RAKUTEN_ACCESS_KEY: Optional[str] = None

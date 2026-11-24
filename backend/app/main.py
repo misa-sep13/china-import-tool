@@ -1676,6 +1676,30 @@ async def _sync_amazon_daily_sales():
         logger.warning(f"[scheduler] Amazonの日別実績でエラー: {e}")
 
 
+async def _secretary_notify():
+    """秘書の毎朝の知らせ。送る時刻になっていれば1通だけ送る。
+
+    中で日本時間と「今日もう送ったか」を見ているので、何分おきに呼んでも
+    1日1通に収まる。
+    """
+    def _run():
+        from app.core.database import SessionLocal
+        from app.services.secretary_line import daily_tick
+        db = SessionLocal()
+        try:
+            return daily_tick(db)
+        finally:
+            db.close()
+    try:
+        out = await asyncio.to_thread(_run)
+        if out and out.get("sent"):
+            logger.info(f"[scheduler] 秘書のLINE: {out}")
+        elif out and out.get("error"):
+            logger.warning(f"[scheduler] 秘書のLINEで失敗: {out['error']}")
+    except Exception as e:
+        logger.warning(f"[scheduler] 秘書のLINEでエラー: {e}")
+
+
 async def _scheduler_loop():
     """1分ごとに受注差分の在庫同期＋RMS在庫取得、30分ごとにキャンセル再チェックを実行。
 
@@ -1709,6 +1733,9 @@ async def _scheduler_loop():
         # 再起動で tick が戻っても、何度も走らないようにするため
         if tick % 60 == 0:
             await _sync_amazon_daily_sales()
+        # 5分ごと: 秘書の毎朝の知らせ。送る時刻かどうかは中で見る
+        if tick % 5 == 0:
+            await _secretary_notify()
 
 
 @asynccontextmanager

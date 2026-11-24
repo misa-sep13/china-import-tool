@@ -15,6 +15,7 @@ from app.models.secretary import (AREA_LABELS, CADENCES, DUE_RULES, STATUSES,
                                   SecretaryRun, SecretarySender, SecretaryTask)
 from app.services import secretary as svc
 from app.services import secretary_mail
+from app.services import secretary_line
 
 router = APIRouter(prefix="/secretary", tags=["secretary"])
 
@@ -123,7 +124,7 @@ def today_list(
     出すのは「期限 − 何日前から出すか」を過ぎた未完了のもの。
     期限を過ぎたものほど上に来る。
     """
-    today = date.today()
+    today = svc.today_jst()
     svc.seed_if_empty(db)
     svc.ensure_runs(db, today)
 
@@ -151,7 +152,7 @@ def list_runs(
     db: Session = Depends(get_db),
 ):
     """月ごとの一覧。履歴もここで見る。"""
-    today = date.today()
+    today = svc.today_jst()
     svc.seed_if_empty(db)
     svc.ensure_runs(db, today)
 
@@ -186,7 +187,7 @@ def add_run(payload: RunIn, db: Session = Depends(get_db)):
     db.add(row)
     db.commit()
     db.refresh(row)
-    return _run_out(row, date.today())
+    return _run_out(row, svc.today_jst())
 
 
 @router.patch("/runs/{run_id}")
@@ -208,7 +209,7 @@ def update_run(run_id: int, payload: RunPatch, db: Session = Depends(get_db)):
 
     db.commit()
     db.refresh(row)
-    return _run_out(row, date.today())
+    return _run_out(row, svc.today_jst())
 
 
 # ----------------------------------------------------------------- 決まり
@@ -387,6 +388,62 @@ def fetch_mail(payload: FetchMailIn, db: Session = Depends(get_db)):
 def permit_mail_error():
     from app.services.permit_mail import PermitMailError
     return PermitMailError
+
+
+# ----------------------------------------------------------------- 毎朝の知らせ
+class NotifyPatch(BaseModel):
+    enabled: Optional[bool] = None
+    hour: Optional[int] = None
+    fetch_mail: Optional[bool] = None
+    ahead_days: Optional[int] = None
+    send_when_empty: Optional[bool] = None
+
+
+def _notify_out(n) -> dict:
+    return {
+        "enabled": bool(n.enabled), "hour": n.hour,
+        "fetch_mail": bool(n.fetch_mail), "ahead_days": n.ahead_days,
+        "send_when_empty": bool(n.send_when_empty),
+        "last_sent_on": n.last_sent_on,
+        "last_sent_at": n.last_sent_at.isoformat() if n.last_sent_at else None,
+        "last_error": n.last_error,
+        # トークンそのものは返さない。入っているかどうかだけ
+        "configured": secretary_line.is_configured(),
+    }
+
+
+@router.get("/notify")
+def get_notify(db: Session = Depends(get_db)):
+    """毎朝の知らせの設定と、いま送るとどうなるかの下書き。"""
+    conf = secretary_line.get_or_create_settings(db)
+    svc.seed_if_empty(db)
+    preview = secretary_line.build_message(db, ahead_days=conf.ahead_days or 0)
+    return {**_notify_out(conf), "preview": preview}
+
+
+@router.patch("/notify")
+def update_notify(payload: NotifyPatch, db: Session = Depends(get_db)):
+    """送られてきた項目だけを書き換える。"""
+    conf = secretary_line.get_or_create_settings(db)
+    data = payload.model_dump(exclude_unset=True)
+    if "hour" in data and not (0 <= int(data["hour"]) <= 23):
+        raise HTTPException(400, "時刻は0〜23で入れてください")
+    if "ahead_days" in data and not (0 <= int(data["ahead_days"]) <= 60):
+        raise HTTPException(400, "先に見る日数は0〜60で入れてください")
+    for key, value in data.items():
+        setattr(conf, key, value)
+    db.commit()
+    db.refresh(conf)
+    return _notify_out(conf)
+
+
+@router.post("/notify/test")
+def test_notify(db: Session = Depends(get_db)):
+    """いまの内容で1通送ってみる。やることが無くても送る。"""
+    try:
+        return secretary_line.send_now(db, force=True)
+    except secretary_line.LineError as e:
+        raise HTTPException(502, e.message)
 
 
 @router.delete("/tasks/{task_id}")

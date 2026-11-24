@@ -174,6 +174,7 @@ export default function SecretaryPage() {
   const [tasks, setTasks] = useState([])
   const [senders, setSenders] = useState([])
   const [rules, setRules] = useState([])
+  const [notify, setNotify] = useState(null)
   const [period, setPeriod] = useState(thisPeriod())
   const [ahead, setAhead] = useState(0)
   const [busy, setBusy] = useState(false)
@@ -195,6 +196,10 @@ export default function SecretaryPage() {
     const r = await api.get('/secretary/tasks')
     setTasks(r.data.tasks || [])
   }
+  const loadNotify = async () => {
+    const r = await api.get('/secretary/notify')
+    setNotify(r.data)
+  }
   const loadSenders = async () => {
     const r = await api.get('/secretary/senders')
     setSenders(r.data.senders || [])
@@ -207,6 +212,7 @@ export default function SecretaryPage() {
       if (tab === 'today') await loadToday()
       else if (tab === 'month') await loadMonth(period)
       else if (tab === 'senders') await loadSenders()
+      else if (tab === 'notify') await loadNotify()
       else await loadTasks()
     } catch (e) {
       setError(e.response?.data?.detail || e.message)
@@ -288,6 +294,7 @@ export default function SecretaryPage() {
         <Tab id="month" label="今月の一覧" />
         <Tab id="tasks" label="くり返しの決まり" />
         <Tab id="senders" label="請求元のメール" />
+        <Tab id="notify" label="毎朝のLINE" />
       </div>
 
       {error && (
@@ -406,6 +413,7 @@ export default function SecretaryPage() {
 
       {tab === 'tasks' && <TaskList tasks={tasks} onChanged={reload} />}
       {tab === 'senders' && <SenderList senders={senders} rules={rules} onChanged={reload} />}
+      {tab === 'notify' && <NotifyPanel notify={notify} onChanged={reload} />}
     </div>
   )
 }
@@ -428,6 +436,145 @@ function RunTable({ runs, onDone, onSkip, onReopen, busy }) {
         ))}
       </tbody>
     </table>
+  )
+}
+
+/** 毎朝のLINE。何時に送るかと、いま送ると何が届くか */
+function NotifyPanel({ notify, onChanged }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [sent, setSent] = useState('')
+
+  if (!notify) return <div style={{ color: C.sub, fontSize: 13 }}>読み込み中...</div>
+
+  const patch = async (changes) => {
+    setBusy(true)
+    setError('')
+    setSent('')
+    try {
+      // 変える項目だけを送る
+      await api.patch('/secretary/notify', changes)
+      await onChanged()
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const test = async () => {
+    setBusy(true)
+    setError('')
+    setSent('')
+    try {
+      const r = await api.post('/secretary/notify/test')
+      setSent(r.data.sent ? '送りました。LINEを見てください。' : (r.data.reason || ''))
+      await onChanged()   // 「最後に送ったの」を出し直す
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const row = { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0',
+    borderTop: `1px solid ${C.line}`, fontSize: 13 }
+
+  return (
+    <div style={{ maxWidth: 680 }}>
+      {!notify.configured && (
+        <div style={{ background: '#fffbeb', border: `1px solid ${C.warn}33`, color: C.warn,
+          borderRadius: 8, padding: '10px 12px', fontSize: 13, marginBottom: 12 }}>
+          LINEのトークンがまだ入っていません。サーバーの環境変数に
+          <b> LINE_CHANNEL_TOKEN </b>（LINE公式アカウントのチャネルアクセストークン）と
+          <b> LINE_TO </b>（送り先のユーザーID）を入れてください。
+          トークンは「そのアカウントとして送れる権限」そのものなので、画面では預かりません。
+        </div>
+      )}
+      {error && (
+        <div style={{ background: '#fef2f2', color: C.bad, borderRadius: 6,
+          padding: '8px 12px', fontSize: 13, marginBottom: 10 }}>{error}</div>
+      )}
+      {sent && (
+        <div style={{ background: '#f0fdf4', color: C.good, borderRadius: 6,
+          padding: '8px 12px', fontSize: 13, marginBottom: 10 }}>{sent}</div>
+      )}
+
+      <div style={row}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          <input type="checkbox" checked={notify.enabled} disabled={busy}
+            onChange={e => patch({ enabled: e.target.checked })} />
+          毎朝LINEで知らせる
+        </label>
+      </div>
+
+      <div style={row}>
+        <div style={{ width: 160, color: C.sub }}>送る時刻（日本時間）</div>
+        <select value={notify.hour} disabled={busy}
+          onChange={e => patch({ hour: Number(e.target.value) })}
+          style={{ fontSize: 13, padding: '4px 6px' }}>
+          {Array.from({ length: 24 }, (_, i) => i).map(h => (
+            <option key={h} value={h}>{h}時台</option>
+          ))}
+        </select>
+        <span style={{ color: C.sub, fontSize: 12 }}>その時刻を過ぎたら、その日1通だけ届きます</span>
+      </div>
+
+      <div style={row}>
+        <div style={{ width: 160, color: C.sub }}>入れる範囲</div>
+        <select value={notify.ahead_days} disabled={busy}
+          onChange={e => patch({ ahead_days: Number(e.target.value) })}
+          style={{ fontSize: 13, padding: '4px 6px' }}>
+          <option value={0}>今日の分と遅れている分</option>
+          <option value={3}>3日先まで</option>
+          <option value={7}>1週間先まで</option>
+        </select>
+      </div>
+
+      <div style={row}>
+        <div style={{ width: 160, color: C.sub }}>送る前に</div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          <input type="checkbox" checked={notify.fetch_mail} disabled={busy}
+            onChange={e => patch({ fetch_mail: e.target.checked })} />
+          請求メールを見に行く
+        </label>
+        <span style={{ color: C.sub, fontSize: 12 }}>その朝に届いた請求も同じ1通に入ります</span>
+      </div>
+
+      <div style={row}>
+        <div style={{ width: 160, color: C.sub }}>やることが無い日</div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          <input type="checkbox" checked={notify.send_when_empty} disabled={busy}
+            onChange={e => patch({ send_when_empty: e.target.checked })} />
+          「ありません」も送る
+        </label>
+      </div>
+
+      <div style={{ ...row, borderBottom: `1px solid ${C.line}` }}>
+        <div style={{ width: 160, color: C.sub }}>最後に送ったの</div>
+        <div>
+          {notify.last_sent_at ? notify.last_sent_at.slice(0, 16).replace('T', ' ') : 'まだありません'}
+          {notify.last_error && (
+            <div style={{ color: C.bad, fontSize: 12, marginTop: 2 }}>
+              前回の失敗：{notify.last_error}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>いま送るとこう届きます</div>
+        <pre style={{
+          background: '#f8fafc', border: `1px solid ${C.line}`, borderRadius: 8,
+          padding: 12, fontSize: 13, whiteSpace: 'pre-wrap', margin: 0,
+          fontFamily: 'inherit', color: notify.preview ? C.text : C.sub,
+        }}>{notify.preview || '今日やることはありません。'}</pre>
+        <button onClick={test} disabled={busy || !notify.configured}
+          style={{ ...btnMain, marginTop: 10 }}>
+          {busy ? '送っています…' : '試しに1通送る'}
+        </button>
+      </div>
+    </div>
   )
 }
 

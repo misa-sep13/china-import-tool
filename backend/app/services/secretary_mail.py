@@ -70,7 +70,7 @@ def _mail_date(value: str) -> date:
     try:
         return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
     except Exception:
-        return date.today()
+        return svc.today_jst()
 
 
 def fetch(db: Session, days: int = 45, folder: str = None) -> dict:
