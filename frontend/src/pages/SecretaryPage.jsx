@@ -481,6 +481,24 @@ function VideoPanel({ data, onChanged }) {
     }
   }
 
+  // 送れなかったものは、控えを消してメールから拾い直す
+  const retry = async (f) => {
+    setBusy(true)
+    setError('')
+    setResult('')
+    try {
+      await api.delete(`/secretary/forwards/${f.id}`)
+      const r = await api.post('/secretary/forward-videos', { days: 60 })
+      setResult(r.data.sent ? `${r.data.sent}件 送りました。`
+        : (r.data.message || '見つかりませんでした。'))
+      await onChanged()
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const mb = (n) => (n ? `${(n / 1024 / 1024).toFixed(1)}MB` : '')
   const label = { sent: '送信済み', drive: 'ドライブ経由',
     too_large: '大きすぎて送れず', error: '失敗' }
@@ -495,6 +513,15 @@ function VideoPanel({ data, onChanged }) {
         <b>超えるものはGoogleドライブに置いてリンクを送ります</b>
         （リンクを知っている人は見られる状態にします）。
       </div>
+
+      {!data.drive_ready && (
+        <div style={{ background: '#fffbeb', border: `1px solid ${C.warn}33`, color: C.warn,
+          borderRadius: 8, padding: '10px 12px', fontSize: 13, marginBottom: 12 }}>
+          Googleドライブの設定がまだです（<b>GOOGLE_SERVICE_ACCOUNT_JSON</b> と
+          <b> GOOGLE_DRIVE_FOLDER_ID</b>）。このままだと5MBを超える動画は送れず、
+          「届きましたが大きすぎました」と知らせるだけになります。
+        </div>
+      )}
 
       {error && (
         <div style={{ background: '#fef2f2', color: C.bad, borderRadius: 6,
@@ -521,6 +548,7 @@ function VideoPanel({ data, onChanged }) {
               <th style={th}>動画</th>
               <th style={{ ...th, width: 80 }}>大きさ</th>
               <th style={{ ...th, width: 130 }}>送った日時</th>
+              <th style={{ ...th, width: 110 }} />
             </tr>
           </thead>
           <tbody>
@@ -548,6 +576,13 @@ function VideoPanel({ data, onChanged }) {
                 <td style={{ ...td, whiteSpace: 'nowrap' }}>{mb(f.size_bytes)}</td>
                 <td style={{ ...td, whiteSpace: 'nowrap', fontSize: 12, color: C.sub }}>
                   {f.sent_at ? f.sent_at.slice(0, 16).replace('T', ' ') : (f.mail_date || '')}
+                </td>
+                <td style={{ ...td, textAlign: 'right' }}>
+                  {(f.status === 'too_large' || f.status === 'error') && (
+                    <button onClick={() => retry(f)} disabled={busy} style={btnGhost}>
+                      もう一度試す
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

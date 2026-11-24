@@ -17,6 +17,7 @@ from app.models.secretary import (AREA_LABELS, CADENCES, DUE_RULES, STATUSES,
 from app.services import secretary as svc
 from app.services import secretary_mail
 from app.services import secretary_line
+from app.services import google_drive
 from app.services import taotaro_video
 
 router = APIRouter(prefix="/secretary", tags=["secretary"])
@@ -413,7 +414,26 @@ def list_forwards(limit: int = Query(30, ge=1, le=200),
             "sent_at": r.sent_at.isoformat() if r.sent_at else None,
         } for r in rows],
         "sender": taotaro_video.sender_address(),
+        # ドライブが使える状態か。使えないと5MB超の動画は送れない
+        "drive_ready": google_drive.is_configured(),
     }
+
+
+@router.delete("/forwards/{forward_id}")
+def retry_forward(forward_id: int, db: Session = Depends(get_db)):
+    """控えを消して、もう一度送れるようにする。
+
+    送れなかったものを送り直すための口。動画そのものは持っていないので、
+    控えを消してメールから拾い直す（次に走ったときに拾われる）。
+    """
+    row = (db.query(SecretaryForward)
+           .filter(SecretaryForward.id == forward_id).first())
+    if not row:
+        raise HTTPException(404, "見つかりません")
+    name = row.filename
+    db.delete(row)
+    db.commit()
+    return {"ok": True, "filename": name}
 
 
 class ForwardIn(BaseModel):
