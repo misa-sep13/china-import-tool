@@ -10546,7 +10546,7 @@ if(FIREBASE_CONFIG.databaseURL){
     const accWrap = el('div', 'brief-cell w-acc w-break');
     accWrap.appendChild(el('div', 'brief-cap',
       kidNames.length
-        ? '付属品（一緒に発注するもの。付ける色を選べます）'
+        ? '付属品（一緒に発注するもの。付ける先のSKUを選べます）'
         : '付属品（一緒に発注するもの）'));
     const accNote = el('div', 'acc-note');
     accNote.innerHTML =
@@ -10559,8 +10559,10 @@ if(FIREBASE_CONFIG.databaseURL){
       + ' → <b>必要数2・入数10</b>。本体100個なら10巻パックを10個頼みます。'
       + '<br>　1つのページで1個ずつ買えるもの（収納袋など）は<b>入数は空</b>でかまいません。'
       + (kidNames.length > 1
-         ? '<br><b>付ける色</b>：既定はどの色にも付きます。'
-           + '片方にしか付かないものはチェックを外してください。'
+         ? '<br><b>この付属品を付けるSKU</b>：既定はどのSKUにも付きます。'
+           + '片方にしか付かないものはチェックを外してください'
+           + '（例：替えロールは「本体+替えロール2個付き」だけに付け、'
+           + '「替えロール10個のみ」からは外す。外さないと二重に頼むことになります）。'
          : '');
     accWrap.appendChild(accNote);
     const accList = el('div', 'acc-list');
@@ -10658,7 +10660,9 @@ if(FIREBASE_CONFIG.databaseURL){
         if(kidNames.length > 1){
           if(!Array.isArray(a.only)) research.accessories[i].only = [];
           const ow = el('div', 'accx-only');
-          ow.appendChild(el('span', '', '付ける色：'));
+          // 子は色とはかぎらない（「本体+替えロール2個付き」のような
+          // セット内容のこともある）ので、SKUという言い方にしてある
+          ow.appendChild(el('span', '', 'この付属品を付けるSKU：'));
           kidNames.forEach(k => {
             const lb = document.createElement('label');
             const cb = document.createElement('input');
