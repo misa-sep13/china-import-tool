@@ -21,7 +21,7 @@ KIND = "taotaro_video"
 # ツールが預かる上限。これを超えるものはDBに入れずに、
 # 届いたことだけ知らせる（動画の実体はDBに入るので、際限なく
 # 太らせない）。タオタロウの動画は10MB前後なので十分に余裕がある
-MAX_STORE_BYTES = 100 * 1024 * 1024
+MAX_STORE_BYTES = 25 * 1024 * 1024
 # 預かった動画を残しておく日数。過ぎたら中身だけ消す（記録は残す）
 KEEP_DAYS = 180
 # 動画が届く差出人。変えたいときは環境変数 TAOTARO_VIDEO_FROM
@@ -152,6 +152,7 @@ def fetch_and_forward(db: Session, days: int = 14, in_folder: str = None,
 
     sent, failed, skipped = [], [], 0
     for item in mails:
+        # 1通ずつ確定させる。途中で落ちても、そこまでは残る
         base = dict(
             kind=KIND,
             mail_message_id=item["mail_message_id"],
@@ -164,6 +165,7 @@ def fetch_and_forward(db: Session, days: int = 14, in_folder: str = None,
         if not videos:
             # 動画の付いていないメール。見たことだけ残して次から飛ばす
             db.add(SecretaryForward(**base, status="none"))
+            db.commit()
             skipped += 1
             continue
 
@@ -173,7 +175,7 @@ def fetch_and_forward(db: Session, days: int = 14, in_folder: str = None,
             db.add(row)
             db.flush()
             if f["size_bytes"] > chatwork.MAX_FILE_BYTES:
-                # チャットワークに載らない大きさ。ドライブに置いてリンクを送る。
+                # チャットワークに載らない大きさ。預かってリンクを送る。
                 # タオタロウの動画は5MB超のほうが多いので、ここが通らないと
                 # 半分以上が手作業のまま残る
                 if f["size_bytes"] > MAX_STORE_BYTES:
@@ -199,7 +201,11 @@ def fetch_and_forward(db: Session, days: int = 14, in_folder: str = None,
                     failed.append({"filename": f["filename"],
                                    "reason": e.message})
 
-    db.commit()
+        # 動画の中身を抱えたまま次へ進まない。1通ごとに確定して手放す
+        db.commit()
+        for f in (item.get("files") or []):
+            f["content"] = None
+
     return {"sent": len(sent), "failed": len(failed), "skipped": skipped,
             "items": sent, "errors": failed[:5], "room_id": str(room),
             "scanned": stats}

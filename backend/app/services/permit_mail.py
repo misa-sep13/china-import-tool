@@ -665,16 +665,17 @@ def scan_new_from(addresses, known_ids, exts, days: int = 14,
     同じ動画を何度も落とすことになる。先に見出し（Message-ID）だけを見て、
     知らないメールの本文だけを取りに行く。
 
-    戻り値は1通につき1件。添付が無くても返すので、呼び出し側が
-    「見た」と記録しておけば次から落とさずに済む。
+    1通ずつ返す（まとめて返さない）。動画は1通で数MBあるので、
+    全部ためてから返すと、まとめたぶんだけメモリを使う。
+    添付が無くても返すので、呼び出し側が「見た」と記録しておけば
+    次から落とさずに済む。
     """
     wanted = [str(a).strip().lower() for a in (addresses or []) if str(a).strip()]
     if not wanted:
-        return []
+        return
     known = set(known_ids or ())
 
     im = _connect()
-    out = []
     stats = stats if stats is not None else {}
     stats.update({"folders": [], "messages": 0, "matched": 0,
                   "already": 0, "fetched": 0})
@@ -717,17 +718,19 @@ def scan_new_from(addresses, known_ids, exts, days: int = 14,
                 stats["fetched"] += 1
                 files = [{"filename": n, "size_bytes": len(b), "content": b}
                          for n, b in _attachments(msg, exts)]
-                out.append({
+                yield {
                     "matched": hit,
                     "mail_message_id": key,
                     "mail_subject": h["subject"],
                     "mail_from": h["from"],
                     "mail_date": h["date"],
                     "files": files,
-                })
+                }
+                # 次の1通に進む前に手放す。持ったままだと、見た通数ぶん
+                # メモリに積み上がる
+                del msg, files
     finally:
         try:
             im.logout()
         except Exception:
             pass
-    return out
