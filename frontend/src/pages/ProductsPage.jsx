@@ -756,7 +756,7 @@ function AccessoryEditor({ value, onChange, allProducts = [] }) {
             </div>
             {/* 欄が3つ並ぶので、半分の幅に押し込むと単価が読めなくなる */}
             <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: 100 }}>
                 <div style={lab}>単価（元）</div>
                 <input type="number" step="0.01" value={it.price ?? ''} placeholder="0.19"
                   onChange={e => setField(i, 'price', e.target.value === '' ? '' : Number(e.target.value))} />

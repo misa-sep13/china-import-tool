@@ -928,7 +928,7 @@ function SetComponentsEditor({ value, onChange, allProducts, withPack = false })
             </div>
             {/* 欄が3つ並ぶので、半分の幅に押し込むと単価が読めなくなる */}
             <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: 100 }}>
                 <div style={labelStyle}>単価（元）</div>
                 <input
                   type="text"
