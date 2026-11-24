@@ -215,6 +215,21 @@
   .acc-line input.acc-qty{flex:0 0 52px;text-align:right;}
   .acc-line input.acc-price{flex:0 0 78px;text-align:right;}
   .acc-total{font-size:11px;color:var(--ink-2);font-weight:600;}
+  /* 付属品の1件。欄が7つに増えて横1列では読めなくなったので、
+     見出し付きの枠にして2〜3行に折り返す */
+  .accx{border:1px solid var(--line-2);border-radius:8px;padding:8px 10px;
+    background:var(--surface-2);display:grid;
+    grid-template-columns:repeat(12,minmax(0,1fr));gap:6px 8px;}
+  .accx-head{grid-column:1/-1;display:flex;justify-content:space-between;
+    align-items:center;font-size:11px;font-weight:700;color:var(--ink-2);}
+  .accx-f{display:flex;flex-direction:column;min-width:0;}
+  .accx-f>span{font-size:10px;color:var(--ink-3);margin-bottom:2px;}
+  .accx-f input{width:100%;min-width:0;}
+  .accx-f input[type=number]{text-align:right;}
+  .accx-only{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px 12px;
+    align-items:center;font-size:11px;color:var(--ink-2);}
+  .accx-only label{display:inline-flex;align-items:center;gap:3px;cursor:pointer;}
+  .accx-only input{flex:0 0 auto;margin:0;}
   .acc-del{flex:0 0 auto;color:var(--danger);border-color:var(--danger-line);padding:2px 6px;}
   .acc-add{align-self:flex-start;padding:3px 8px;font-size:10px;}
   .brief-cap{font-size:10.5px;font-weight:700;color:var(--ink-2);}
@@ -10553,76 +10568,105 @@ if(FIREBASE_CONFIG.databaseURL){
     const drawAcc = () => {
       accList.innerHTML = '';
       research.accessories.forEach((a, i) => {
-        const line = el('div', 'acc-line');
-        const mk = (ph, val, on) => {
+        const line = el('div', 'accx');
+        // 見出し。何件目か分からないと、どの行を消すのか迷う
+        const head = el('div', 'accx-head');
+        head.appendChild(el('span', '',
+          '付属品 ' + (i + 1)
+          + (a.jp_name ? '：' + a.jp_name : (a.name ? '：' + a.name : ''))));
+        const del = el('button', 'mini acc-del', '✕ 削除');
+        del.title = 'この付属品を削除';
+        del.addEventListener('click', () => {
+          research.accessories.splice(i, 1); drawAcc(); scheduleSave();
+        });
+        head.appendChild(del);
+        line.appendChild(head);
+
+        // 欄は「見出し＋入力」を1つの枠にする。入れたあとに
+        // どれが何の欄か分からなくなるのを防ぐ（プレースホルダは消えるため）
+        const mk = (span, label, ph, val, on, opt) => {
+          const cell = el('div', 'accx-f');
+          cell.style.gridColumn = 'span ' + span;
+          cell.appendChild(el('span', '', label));
           const inp = document.createElement('input');
-          inp.type = 'text'; inp.placeholder = ph; inp.value = val || '';
+          inp.type = (opt && opt.num) ? 'number' : 'text';
+          if(opt && opt.num){ inp.min = opt.min || '0'; inp.step = opt.step || '1'; }
+          if(opt && opt.title) inp.title = opt.title;
+          inp.placeholder = ph; inp.value = (val == null ? '' : val);
           inp.addEventListener('input', () => { on(inp.value); scheduleSave(); });
-          line.appendChild(inp);
+          cell.appendChild(inp);
+          line.appendChild(cell);
+          return inp;
         };
+
         // SKUが無いと、タオタロウへの発注行に番号が入らず紐づけられない。
         // 本体のSKUに用途を足した形にする（例: a09_1_tape）
         // 空なら❷で自動で付ける（例: a021_acc1）。分かりやすくしたいときだけ入れる
-        mk('SKU（空なら自動。例: a021_squeezer）', a.sku, v => { research.accessories[i].sku = v.trim(); });
+        mk(4, 'SKU（空なら自動）', '例: a021_squeezer', a.sku,
+           v => { research.accessories[i].sku = v.trim(); });
         // 商品名は日本語。中国語名は仕入先の言い方で、人が読む名前ではない。
         // これが無いと、商品マスタに中国語のまま並ぶ
-        mk('商品名（例: 替えシール）', a.jp_name, v => { research.accessories[i].jp_name = v; });
-        mk('中国語名（例: 收纳袋）', a.name, v => { research.accessories[i].name = v; });
-        mk('URL（空なら本体と同じ）', a.url, v => { research.accessories[i].url = v; });
+        mk(4, '商品名（日本語）', '例: 替えシール', a.jp_name,
+           v => { research.accessories[i].jp_name = v; });
+        mk(4, '中国語名（仕入先の言い方）', '例: 收纳袋', a.name,
+           v => { research.accessories[i].name = v; });
+        mk(12, '発注先URL（空なら本体と同じ）', 'https://detail.1688.com/offer/...',
+           a.url, v => { research.accessories[i].url = v; });
         // 単価が無いと原価に乗らず、そのぶん利益を多く見積もる。
         // 実際、収納袋の分が0円で登録されていた
-        const pr = document.createElement('input');
-        pr.type = 'number'; pr.step = 'any'; pr.min = '0'; pr.className = 'acc-price';
-        pr.placeholder = '単価(元)';
-        pr.title = 'この付属品の1個あたりの値段（元）。空だと原価に乗りません';
-        pr.value = (a.price == null ? '' : a.price);
-        pr.addEventListener('input', () => {
-          const v = pr.value.trim();
-          research.accessories[i].price = v === '' ? null : (Number(v) || 0);
-          scheduleSave();
-        });
-        line.appendChild(pr);
-        const q = document.createElement('input');
-        q.type = 'number'; q.min = '1'; q.className = 'acc-qty';
-        q.placeholder = '必要数'; q.value = (a.qty == null ? 1 : a.qty);
-        q.title = '本体1つに付ける数（例: 替えロールを2本付けるなら 2）';
-        q.addEventListener('input', () => {
-          research.accessories[i].qty = Number(q.value) || 1; scheduleSave();
-        });
-        line.appendChild(q);
+        mk(3, '単価（元）', '0.19', a.price,
+           v => {
+             const t = String(v).trim();
+             research.accessories[i].price = t === '' ? null : (Number(t) || 0);
+           },
+           {num: true, step: 'any',
+            title: '仕入先の1つぶんの値段（元）。空だと原価に乗りません'});
+        mk(3, '必要数（本体1つに付ける数）', '2', (a.qty == null ? 1 : a.qty),
+           v => { research.accessories[i].qty = Number(v) || 1; },
+           {num: true, min: '1',
+            title: '本体1つに付ける数（例: 替えロールを2本付けるなら 2）'});
         // 入数。仕入先の1つに何個入っているか。
         // 10巻で1つのページから2巻だけ要るとき、必要数2をそのまま送ると
         // 10巻パックを2つ＝20巻頼むことになる。発注数はここで割って切り上げる
-        const ps = document.createElement('input');
-        ps.type = 'number'; ps.min = '1'; ps.className = 'acc-qty';
-        ps.placeholder = '入数'; ps.value = (a.pack_size == null ? '' : a.pack_size);
-        ps.title = '仕入先の1つに何個入っているか（例: 替えロール10巻で1つなら 10）。'
-                 + '空なら1。発注数は「必要数 ÷ 入数」を切り上げた数になります';
-        ps.addEventListener('input', () => {
-          const v = ps.value.trim();
-          research.accessories[i].pack_size = v === '' ? null : (Number(v) || 1);
-          scheduleSave();
-        });
-        line.appendChild(ps);
+        mk(3, '入数（仕入先の1つの中身）', '空なら1', a.pack_size,
+           v => {
+             const t = String(v).trim();
+             research.accessories[i].pack_size = t === '' ? null : (Number(t) || 1);
+           },
+           {num: true, min: '1',
+            title: '仕入先の1つに何個入っているか（例: 替えロール10巻で1つなら 10）。'
+                 + '空なら1。発注数は「必要数 ÷ 入数」を切り上げた数になります'});
+
+        // 計算の答えをその場に出す。入れ違えても気づけるようにする
+        const calc = el('div', 'accx-f');
+        calc.style.gridColumn = 'span 3';
+        calc.appendChild(el('span', '', '発注のされかた'));
+        const need = Number(a.qty) || 1;
+        const pack = Number(a.pack_size) || 1;
+        calc.appendChild(el('div', '',
+          pack > 1
+            ? ('本体100個 → ' + Math.ceil(100 * need / pack) + '個'
+               + '（' + pack + '個入り）')
+            : ('本体100個 → ' + (100 * need) + '個')));
+        calc.lastChild.style.cssText = 'font-size:11px;color:var(--ink-2);padding-top:4px;';
+        line.appendChild(calc);
+
         // どの色に付けるか。空＝どの色にも共通。
         // 「本体+替えロール2個付き」と「替えロール10個のみ」のように、
         // 片方にしか付かない付属品があるため（10個セットに2個セットが
         // 付いてしまっていた）
         if(kidNames.length > 1){
           if(!Array.isArray(a.only)) research.accessories[i].only = [];
-          const ow = el('span', 'acc-only');
-          ow.style.cssText = 'display:inline-flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:11px;';
+          const ow = el('div', 'accx-only');
           ow.appendChild(el('span', '', '付ける色：'));
           kidNames.forEach(k => {
             const lb = document.createElement('label');
-            lb.style.cssText = 'display:inline-flex;align-items:center;gap:3px;cursor:pointer;';
             const cb = document.createElement('input');
             cb.type = 'checkbox'; cb.dataset.writes = '1';
             const cur = research.accessories[i].only || [];
             cb.checked = cur.length === 0 || cur.indexOf(k) >= 0;
             cb.addEventListener('change', () => {
               const now = (research.accessories[i].only || []).slice();
-              const all = cb.checked ? kidNames.slice() : [];
               let next;
               if(now.length === 0){
                 // いまは「全部」。外した色だけを落とす
@@ -10642,12 +10686,6 @@ if(FIREBASE_CONFIG.databaseURL){
           });
           line.appendChild(ow);
         }
-        const del = el('button', 'mini acc-del', '✕');
-        del.title = 'この付属品を削除';
-        del.addEventListener('click', () => {
-          research.accessories.splice(i, 1); drawAcc(); scheduleSave();
-        });
-        line.appendChild(del);
         accList.appendChild(line);
       });
       const add = el('button', 'mini acc-add', '＋ 付属品を追加');
