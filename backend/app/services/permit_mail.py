@@ -626,6 +626,37 @@ def _attachments(msg, exts):
             yield name, data
 
 
+def _search_from(im, days: int, senders, cap: int):
+    """差出人と日付で、サーバー側に探してもらう。
+
+    全フォルダの見出しを順に読むと、通数が多いフォルダで時間が足りなくなる
+    （実際、受信トレイ以外も見るようにしたら画面が待ちきれなくなった）。
+    IMAPのSEARCHに差出人を渡せば、サーバーが該当するものだけ返す。
+    FROMを受け付けないサーバーもあるので、その場合は日付だけで絞る。
+    """
+    since = (datetime.now() - timedelta(days=max(1, days))).strftime("%d-%b-%Y")
+    nums = []
+    for a in senders:
+        try:
+            typ, data = im.search(None, "SINCE", since, "FROM", f'"{a}"')
+        except Exception:
+            typ, data = "NO", None
+        if typ != "OK":
+            typ, data = im.search(None, "SINCE", since)
+            if typ != "OK":
+                raise PermitMailError("メールの検索に失敗しました")
+            nums = (data[0] or b"").split()
+            break
+        nums.extend((data[0] or b"").split())
+    # 同じメールが複数の差出人で引っかかることはないが、念のため重複を外す
+    seen, uniq = set(), []
+    for n in nums:
+        if n not in seen:
+            seen.add(n)
+            uniq.append(n)
+    return uniq[-cap:][::-1]
+
+
 def scan_new_from(addresses, known_ids, exts, days: int = 14,
                   folder: str = None, cap: int = 60, stats: dict = None):
     """差出人で絞り、まだ見ていないメールだけ中身を落として添付を返す。
@@ -655,7 +686,7 @@ def scan_new_from(addresses, known_ids, exts, days: int = 14,
                 _open(im, box)
             except PermitMailError:
                 continue
-            for num in _recent_nums(im, days, cap):
+            for num in _search_from(im, days, wanted, cap):
                 stats["messages"] += 1
                 # まず見出しだけ。ここで落とすのは数百バイト
                 try:
