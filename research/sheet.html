@@ -9158,6 +9158,7 @@ if(FIREBASE_CONFIG.databaseURL){
     (p.components || []).forEach(c => {
       box.appendChild(el('div', 'reg-issue',
         '発注用付属品：' + (c.name || '（名前なし）') + ' ×' + c.qty
+          + ((c.pack_size > 1) ? '（' + c.pack_size + '個入りを発注）' : '')
         + '　' + (c.buy_url || 'URLなし（このままだと発注できません）')));
     });
 
@@ -10557,11 +10558,26 @@ if(FIREBASE_CONFIG.databaseURL){
         line.appendChild(pr);
         const q = document.createElement('input');
         q.type = 'number'; q.min = '1'; q.className = 'acc-qty';
-        q.placeholder = '数'; q.value = (a.qty == null ? 1 : a.qty);
+        q.placeholder = '必要数'; q.value = (a.qty == null ? 1 : a.qty);
+        q.title = '本体1つに付ける数（例: 替えロールを2本付けるなら 2）';
         q.addEventListener('input', () => {
           research.accessories[i].qty = Number(q.value) || 1; scheduleSave();
         });
         line.appendChild(q);
+        // 入数。仕入先の1つに何個入っているか。
+        // 10巻で1つのページから2巻だけ要るとき、必要数2をそのまま送ると
+        // 10巻パックを2つ＝20巻頼むことになる。発注数はここで割って切り上げる
+        const ps = document.createElement('input');
+        ps.type = 'number'; ps.min = '1'; ps.className = 'acc-qty';
+        ps.placeholder = '入数'; ps.value = (a.pack_size == null ? '' : a.pack_size);
+        ps.title = '仕入先の1つに何個入っているか（例: 替えロール10巻で1つなら 10）。'
+                 + '空なら1。発注数は「必要数 ÷ 入数」を切り上げた数になります';
+        ps.addEventListener('input', () => {
+          const v = ps.value.trim();
+          research.accessories[i].pack_size = v === '' ? null : (Number(v) || 1);
+          scheduleSave();
+        });
+        line.appendChild(ps);
         // どの色に付けるか。空＝どの色にも共通。
         // 「本体+替えロール2個付き」と「替えロール10個のみ」のように、
         // 片方にしか付かない付属品があるため（10個セットに2個セットが
@@ -10611,7 +10627,7 @@ if(FIREBASE_CONFIG.databaseURL){
       const add = el('button', 'mini acc-add', '＋ 付属品を追加');
       add.addEventListener('click', () => {
         research.accessories.push({sku: '', jp_name: '', name: '', url: '',
-                                   qty: 1, price: null});
+                                   qty: 1, pack_size: null, price: null});
         drawAcc(); scheduleSave();
       });
       accList.appendChild(add);
