@@ -27,6 +27,18 @@ def sender_address() -> str:
     return (os.environ.get("TAOTARO_VIDEO_FROM") or DEFAULT_FROM).strip().lower()
 
 
+def folder() -> str:
+    """見に行くフォルダ。既定は全フォルダ。
+
+    届いたメールは受信トレイに置きっぱなしにならない（ご自身で
+    「動画撮影」フォルダへ移している）。受信トレイだけ見ていると、
+    移したあとのものを見つけられない。
+    見出しだけ先に読む作りなので、全フォルダでも重くならない。
+    """
+    import os
+    return (os.environ.get("TAOTARO_VIDEO_FOLDER") or permit_mail.ALL).strip()
+
+
 def _known_ids(db: Session) -> set:
     return {x[0] for x in
             db.query(SecretaryForward.mail_message_id)
@@ -43,7 +55,7 @@ def _body(item: dict, filename: str) -> str:
     return "\n".join(lines)
 
 
-def fetch_and_forward(db: Session, days: int = 14, folder: str = None,
+def fetch_and_forward(db: Session, days: int = 14, in_folder: str = None,
                       room_id: str = None) -> dict:
     """届いた動画をチャットワークへ送る。何度呼んでも同じものは送らない。"""
     if not chatwork.is_configured():
@@ -58,7 +70,7 @@ def fetch_and_forward(db: Session, days: int = 14, folder: str = None,
     stats = {}
     mails = permit_mail.scan_new_from(
         [sender_address()], _known_ids(db), permit_mail.VIDEO_EXTS,
-        days=days, folder=folder, stats=stats)
+        days=days, folder=in_folder or folder(), stats=stats)
 
     sent, failed, skipped = [], [], 0
     for item in mails:

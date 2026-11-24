@@ -461,10 +461,18 @@ function VideoPanel({ data, onChanged }) {
     setResult('')
     try {
       const r = await api.post('/secretary/forward-videos', { days: 30 })
+      const s = r.data.scanned || {}
+      // どこを見て何通あったかを出す。0件のときに、フォルダが違うのか
+      // 届いていないのかが分からないと直しようがない
+      const where = s.folders?.length
+        ? `（${s.folders.length}個のフォルダ・${s.messages || 0}通を見て、`
+          + `タオタロウからは${s.matched || 0}通）`
+        : ''
       setResult(r.data.message
         || (r.data.sent ? `${r.data.sent}件 送りました。`
           : '新しい動画はありませんでした。')
-          + (r.data.failed ? `送れなかったもの ${r.data.failed}件。` : ''))
+          + (r.data.failed ? `送れなかったもの ${r.data.failed}件。` : '')
+          + where)
       await onChanged()
     } catch (e) {
       setError(e.response?.data?.detail || e.message)
