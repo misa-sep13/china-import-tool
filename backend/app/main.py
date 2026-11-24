@@ -1909,6 +1909,12 @@ async def auth_middleware(request: _StarletteRequest, call_next):
     if (request.method == "GET"
             and path.startswith("/api/repack/public/")):
         return await call_next(request)
+    # 動画を外注さんに見てもらう口。ログインを渡せない相手なので、
+    # URLに入れた合言葉だけで開けるようにする。GETだけで、その1本だけ。
+    # 合言葉は動画ごとに違う長いランダム文字列
+    if request.method == "GET" and re.fullmatch(
+            r"/api/secretary/video/[A-Za-z0-9_\-]{20,}", path):
+        return await call_next(request)
     # 月次管理表を税理士に見せる口。相手にログインは渡せないので、
     # 合言葉つきのURLでだけ通す。GETだけなので、見るしかできない
     # （取り込みや書き換えは一切できない）。合言葉はDBに持っていて、

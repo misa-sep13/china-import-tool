@@ -500,9 +500,9 @@ function VideoPanel({ data, onChanged }) {
   }
 
   const mb = (n) => (n ? `${(n / 1024 / 1024).toFixed(1)}MB` : '')
-  const label = { sent: '送信済み', drive: 'ドライブ経由',
+  const label = { sent: '送信済み', link: 'リンクで送信',
     too_large: '大きすぎて送れず', error: '失敗' }
-  const color = { sent: C.good, drive: C.blue, too_large: C.warn, error: C.bad }
+  const color = { sent: C.good, link: C.blue, too_large: C.warn, error: C.bad }
 
   return (
     <div style={{ maxWidth: 820 }}>
@@ -510,18 +510,10 @@ function VideoPanel({ data, onChanged }) {
         <b style={{ color: C.text }}>{data.sender}</b> から動画が添付で届くと、
         チャットワークの北田しずくさんの部屋へ自動で流します（20分おきに見に行きます）。
         同じ動画は二度送りません。チャットワークの上限は1ファイル5MBなので、
-        <b>超えるものはGoogleドライブに置いてリンクを送ります</b>
-        （リンクを知っている人は見られる状態にします）。
+        <b>超えるものはツールが預かって、リンクだけ送ります</b>。
+        リンクにはその動画だけの長い合言葉が入っていて、知っている人だけが
+        開けます（ログインは要りません）。預かった動画は180日で中身を消します。
       </div>
-
-      {!data.drive_ready && (
-        <div style={{ background: '#fffbeb', border: `1px solid ${C.warn}33`, color: C.warn,
-          borderRadius: 8, padding: '10px 12px', fontSize: 13, marginBottom: 12 }}>
-          Googleドライブの設定がまだです（<b>GOOGLE_SERVICE_ACCOUNT_JSON</b> と
-          <b> GOOGLE_DRIVE_FOLDER_ID</b>）。このままだと5MBを超える動画は送れず、
-          「届きましたが大きすぎました」と知らせるだけになります。
-        </div>
-      )}
 
       {error && (
         <div style={{ background: '#fef2f2', color: C.bad, borderRadius: 6,
@@ -567,7 +559,7 @@ function VideoPanel({ data, onChanged }) {
                   )}
                   {f.drive_url && (
                     <a href={f.drive_url} target="_blank" rel="noreferrer"
-                      style={{ fontSize: 12, color: C.blue }}>ドライブで開く</a>
+                      style={{ fontSize: 12, color: C.blue }}>動画を開く</a>
                   )}
                   {f.error && (
                     <div style={{ fontSize: 12, color: C.bad, marginTop: 2 }}>{f.error}</div>

@@ -13,7 +13,7 @@
 import calendar
 
 from sqlalchemy import (Column, Integer, String, Text, Date, DateTime,
-                        Boolean, Float, ForeignKey)
+                        Boolean, Float, ForeignKey, LargeBinary)
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -218,6 +218,30 @@ class SecretaryForward(Base):
     drive_file_id = Column(String)
 
     sent_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class SecretaryVideo(Base):
+    """チャットワークに載らない動画の置き場。
+
+    5MBを超える動画は、ツールが預かってURLで渡す。外注さんにログインは
+    渡せないので、URLに入れた合言葉（長いランダム文字列）だけで開ける。
+    本体を別の表にしてあるのは、一覧を引くたびに数MBを読まないため。
+    """
+
+    __tablename__ = "secretary_videos"
+
+    id = Column(Integer, primary_key=True)
+    forward_id = Column(Integer, index=True)
+
+    # URLに入る合言葉。これを知っている人だけが開ける
+    token = Column(String, nullable=False, unique=True, index=True)
+
+    filename = Column(String, nullable=False)
+    content_type = Column(String, nullable=False, default="video/mp4")
+    size_bytes = Column(Integer, default=0)
+    content = Column(LargeBinary)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

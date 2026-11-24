@@ -11,13 +11,19 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app.services import chatwork, google_drive, permit_mail
+from app.services import chatwork, permit_mail
 from app.services import secretary as svc
-from app.models.secretary import SecretaryForward
+from app.models.secretary import SecretaryForward, SecretaryVideo
 
 logger = logging.getLogger("taotaro_video")
 
 KIND = "taotaro_video"
+# ツールが預かる上限。これを超えるものはDBに入れずに、
+# 届いたことだけ知らせる（動画の実体はDBに入るので、際限なく
+# 太らせない）。タオタロウの動画は10MB前後なので十分に余裕がある
+MAX_STORE_BYTES = 100 * 1024 * 1024
+# 預かった動画を残しておく日数。過ぎたら中身だけ消す（記録は残す）
+KEEP_DAYS = 180
 # 動画が届く差出人。変えたいときは環境変数 TAOTARO_VIDEO_FROM
 DEFAULT_FROM = "service@yiwutaro.com"
 
@@ -39,15 +45,6 @@ def folder() -> str:
     return (os.environ.get("TAOTARO_VIDEO_FOLDER") or permit_mail.ALL).strip()
 
 
-def video_folder():
-    """ドライブの置き先。動画用のフォルダを分けたいときに使う。
-
-    指定が無ければ、輸入許可書と同じフォルダに置く。
-    """
-    import os
-    return (os.environ.get("GOOGLE_DRIVE_VIDEO_FOLDER_ID") or "").strip() or None
-
-
 def _known_ids(db: Session) -> set:
     return {x[0] for x in
             db.query(SecretaryForward.mail_message_id)
@@ -64,48 +61,56 @@ def _body(item: dict, filename: str) -> str:
     return "\n".join(lines)
 
 
-def _via_drive(row, item: dict, f: dict, room, sent: list, failed: list):
-    """大きい動画をGoogleドライブに置いて、リンクをチャットワークへ送る。
+def public_base() -> str:
+    """動画のURLを組み立てる先。"""
+    import os
+    return (os.environ.get("PUBLIC_API_URL")
+            or "https://china-import-tool.onrender.com").rstrip("/")
 
-    置いただけでは共有ドライブの人しか開けない。外注さんはメンバーでは
-    ないので、リンクを知っていれば見られる状態にしてから渡す。
-    ドライブが使えなければ、これまでどおり「送れませんでした」と知らせる。
+
+def _via_link(db: Session, row, item: dict, f: dict, room,
+              sent: list, failed: list):
+    """大きい動画をツールが預かって、URLで渡す。
+
+    チャットワークは1ファイル5MBまでで、タオタロウの動画はたいてい
+    超える。外注さんにログインは渡せないので、URLに入れた合言葉だけで
+    開けるようにする（合言葉は動画ごとに違う長いランダム文字列）。
     """
+    import secrets
+
     mb = f["size_bytes"] / 1024 / 1024
-    subject = item.get("mail_subject") or ""
+    video = SecretaryVideo(
+        token=secrets.token_urlsafe(24),
+        filename=f["filename"],
+        content_type=chatwork.content_type_of(f["filename"]),
+        size_bytes=f["size_bytes"],
+        content=f["content"],
+    )
+    db.add(video)
+    db.flush()
 
-    if not google_drive.is_configured():
-        _too_large(row, item, f, room, failed,
-                   "Googleドライブの設定がありません")
-        return
-    try:
-        up = google_drive.upload_file(
-            f["filename"], f["content"],
-            chatwork.content_type_of(f["filename"]), folder_id=video_folder())
-        google_drive.share_anyone(up["file_id"])
-    except google_drive.DriveError as e:
-        _too_large(row, item, f, room, failed, e.args[0] if e.args else str(e))
-        return
-
-    row.drive_url = up.get("url")
-    row.drive_file_id = up.get("file_id")
+    url = f"{public_base()}/api/secretary/video/{video.token}"
     try:
         chatwork.send_message(str(room), (
             f"タオタロウから動画が届きました。\n"
-            f"{subject}\n{f['filename']}（{mb:.1f}MB）\n"
-            f"大きいのでGoogleドライブに置きました。\n{row.drive_url}"))
+            f"{item.get('mail_subject') or ''}\n"
+            f"{f['filename']}（{mb:.1f}MB）\n"
+            f"大きいのでリンクでお送りします。\n{url}"))
     except chatwork.ChatworkError as e:
-        # 置いたことは残す。送り直せるように失敗として数える
+        # 預かったことは残す。送り直せるように失敗として数える
+        db.delete(video)
         row.status = "error"
         row.error = e.message[:300]
         row.mail_message_id = None
         failed.append({"filename": f["filename"], "reason": e.message})
         return
 
-    row.status = "drive"
+    row.status = "link"
+    row.drive_url = url
     row.sent_at = svc.now_jst()
+    video.forward_id = row.id
     sent.append({"filename": f["filename"], "size_bytes": f["size_bytes"],
-                 "drive_url": row.drive_url})
+                 "url": url})
 
 
 def _too_large(row, item: dict, f: dict, room, failed: list, why: str):
@@ -165,11 +170,17 @@ def fetch_and_forward(db: Session, days: int = 14, in_folder: str = None,
         for f in videos:
             row = SecretaryForward(**base, filename=f["filename"],
                                    size_bytes=f["size_bytes"])
+            db.add(row)
+            db.flush()
             if f["size_bytes"] > chatwork.MAX_FILE_BYTES:
                 # チャットワークに載らない大きさ。ドライブに置いてリンクを送る。
                 # タオタロウの動画は5MB超のほうが多いので、ここが通らないと
                 # 半分以上が手作業のまま残る
-                _via_drive(row, item, f, room, sent, failed)
+                if f["size_bytes"] > MAX_STORE_BYTES:
+                    _too_large(row, item, f, room, failed,
+                               f"{MAX_STORE_BYTES // 1024 // 1024}MBを超えています")
+                else:
+                    _via_link(db, row, item, f, room, sent, failed)
             else:
                 try:
                     chatwork.send_file(str(room), f["filename"], f["content"],
@@ -187,7 +198,6 @@ def fetch_and_forward(db: Session, days: int = 14, in_folder: str = None,
                     row.mail_message_id = None
                     failed.append({"filename": f["filename"],
                                    "reason": e.message})
-            db.add(row)
 
     db.commit()
     return {"sent": len(sent), "failed": len(failed), "skipped": skipped,
@@ -195,9 +205,28 @@ def fetch_and_forward(db: Session, days: int = 14, in_folder: str = None,
             "scanned": stats}
 
 
+def drop_old_videos(db: Session, days: int = KEEP_DAYS) -> int:
+    """古い動画の中身を消す。記録とURLは残すが、開くと空になる。
+
+    動画の実体をDBに持つので、置きっぱなしだと際限なく太る。
+    半年も経てば確認は済んでいる。
+    """
+    from datetime import timedelta
+    limit = svc.now_jst() - timedelta(days=max(1, days))
+    rows = (db.query(SecretaryVideo)
+            .filter(SecretaryVideo.created_at < limit)
+            .filter(SecretaryVideo.content.isnot(None)).all())
+    for r in rows:
+        r.content = None
+    if rows:
+        db.commit()
+    return len(rows)
+
+
 def tick(db: Session) -> dict:
     """スケジューラから呼ばれる。短い窓で見に行く。"""
     try:
+        drop_old_videos(db)
         return fetch_and_forward(db, days=7)
     except permit_mail.PermitMailError as e:
         logger.warning(f"[taotaro_video] メールを見に行けませんでした: {e}")

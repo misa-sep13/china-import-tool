@@ -6,18 +6,20 @@
 from datetime import date, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.secretary import (AREA_LABELS, CADENCES, DUE_RULES, STATUSES,
                                   SecretaryForward, SecretaryRun,
-                                  SecretarySender, SecretaryTask)
+                                  SecretarySender, SecretaryTask,
+                                  SecretaryVideo)
 from app.services import secretary as svc
 from app.services import secretary_mail
 from app.services import secretary_line
-from app.services import google_drive
 from app.services import taotaro_video
 
 router = APIRouter(prefix="/secretary", tags=["secretary"])
@@ -414,9 +416,32 @@ def list_forwards(limit: int = Query(30, ge=1, le=200),
             "sent_at": r.sent_at.isoformat() if r.sent_at else None,
         } for r in rows],
         "sender": taotaro_video.sender_address(),
-        # ドライブが使える状態か。使えないと5MB超の動画は送れない
-        "drive_ready": google_drive.is_configured(),
     }
+
+
+@router.get("/video/{token}")
+def public_video(token: str, db: Session = Depends(get_db)):
+    """動画を見てもらう口。ログイン不要。
+
+    URLに入れた合言葉だけで開ける（動画ごとに違う長いランダム文字列）。
+    相手にログインを渡せないため。渡すのはその動画1本だけで、
+    ほかには何も見えない。
+    """
+    row = (db.query(SecretaryVideo)
+           .filter(SecretaryVideo.token == token).first())
+    if not row or not row.content:
+        # 古くなって中身を消したものも、ここに来る
+        raise HTTPException(404, "この動画は見られません（期限切れかURL違い）")
+    return Response(
+        content=row.content,
+        media_type=row.content_type or "video/mp4",
+        headers={
+            # 名前を保ったまま、その場で再生もできるようにする
+            "Content-Disposition":
+                f'inline; filename="{quote(row.filename or "video.mp4")}"',
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
 
 
 @router.delete("/forwards/{forward_id}")
