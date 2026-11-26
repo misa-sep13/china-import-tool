@@ -47,6 +47,12 @@ WINDOW_DAYS = 60
 # 一覧に追跡が付かない便は詳細を取り直す。全部に行くと便の数だけ
 # APIを叩くので、1回の巡回で見る数を区切る
 DETAIL_MAX = 15
+# 受取人で楽天とAmazonを分ける。FBA宛はそのままAmazonの倉庫へ行く荷物で、
+# 楽天の在庫に入れてはいけない。実際、いま配達済で未取込の1件はFBA宛だった。
+# 楽天の荷物は就労支援の作業所（あざみ共同作業所）か美園工芸社あてに届く。
+# 表記ゆれが多い（「社会福祉法人 鴻沼福祉会 あざみ共同作業所（美園工芸社分）」
+# など4通りあった）ので、含まれる語で見る
+WELFARE_WORDS = ("あざみ", "美園工芸社", "美国工芸社")
 
 
 def _parse_jst(text: str):
@@ -75,6 +81,16 @@ def _imported_keys(db: Session) -> set:
             if s:
                 keys.add(s)
     return keys
+
+
+def _destination(x: dict) -> str:
+    """この便の行き先。"rakuten" / "fba" / "unknown"。"""
+    c = str(x.get("consignee") or "")
+    if "FBA" in c.upper():
+        return "fba"
+    if any(w in c for w in WELFARE_WORDS):
+        return "rakuten"
+    return "unknown"
 
 
 def _notify(text: str) -> None:
@@ -212,6 +228,11 @@ async def tick(db: Session) -> dict:
         if sn in keys or sid in keys:
             state.pop(sid, None)
             continue
+        # FBA宛はAmazonの荷物。楽天の在庫に入れてはいけないので触らない
+        dest = _destination(x)
+        if dest == "fba":
+            state.pop(sid, None)
+            continue
         when = _parse_jst(_delivered_at(x, budget))
         if not when or when < now - timedelta(days=WINDOW_DAYS):
             continue
@@ -224,9 +245,15 @@ async def tick(db: Session) -> dict:
 
         if first:
             found += 1
-            reason = "" if auto_on else "自動入荷を切ってあります"
+            reason = ""
+            if dest == "unknown":
+                # 知らない受取人。楽天の荷物とはかぎらないので入れない
+                reason = (f"受取人が見慣れません（{(x.get('consignee') or '空欄')[:30]}）。"
+                          "楽天の荷物か確かめてから取り込んでください")
+            elif not auto_on:
+                reason = "自動入荷を切ってあります"
             body = ""
-            if auto_on:
+            if not reason and auto_on:
                 try:
                     body, reason = await _import_and_receive(db, int(sid))
                 except Exception as e:
@@ -236,7 +263,8 @@ async def tick(db: Session) -> dict:
             if reason:
                 failed += 1
                 state[sid] = {"sn": sn, "at": when.isoformat(),
-                              "n": x.get("order_count") or 0, "why": reason}
+                              "n": x.get("order_count") or 0, "why": reason,
+                              "to": (x.get("consignee") or "")[:40]}
                 _notify(head + f"\n\n⚠ 自動で入荷できませんでした\n{reason}\n"
                                "配送依頼タブから取り込んでください")
             else:
@@ -277,6 +305,7 @@ def waiting_list(db: Session) -> list:
     for sid, v in state.items():
         out.append({"sid": sid, "sn": v.get("sn") or sid,
                     "delivered_at": v.get("at"), "order_count": v.get("n"),
+                    "consignee": v.get("to") or "",
                     "reason": v.get("why") or "", "reminded": v.get("remind")})
     out.sort(key=lambda r: r.get("delivered_at") or "", reverse=True)
     return out

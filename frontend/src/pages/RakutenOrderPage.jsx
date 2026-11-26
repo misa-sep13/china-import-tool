@@ -485,6 +485,9 @@ function ShipmentTab() {
                         display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                         <b style={{ fontFamily: 'monospace', fontSize: 13 }}>{o.sn}</b>
                         <span style={{ fontSize: 12, color: '#64748b' }}>{o.order_count}注文</span>
+                        {o.consignee && (
+                          <span style={{ fontSize: 11, color: '#64748b' }}>宛先：{o.consignee}</span>
+                        )}
                         <span style={{ fontSize: 12, color: '#dc2626', fontWeight: 700 }}>
                           {new Date(o.delivered_at).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} 配達完了
                           {days != null && days > 0 && `（${days}日経過）`}
