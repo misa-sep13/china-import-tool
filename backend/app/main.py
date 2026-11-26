@@ -1675,7 +1675,9 @@ async def _watch_send_orders():
         if out and out.get("notified"):
             _log_auto("send_order_watch", "rakuten",
                       f"配送依頼{out['notified']}件の状態が変わったので"
-                      "チャットワークへ送りました")
+                      "チャットワークへ送りました"
+                      + (f"（うちFBA{out['lined']}件はLINEにも）"
+                         if out.get("lined") else ""))
     except Exception as e:
         logger.warning(f"[scheduler] 配送依頼の見回りでエラー: {e}")
 

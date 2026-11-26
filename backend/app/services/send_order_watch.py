@@ -12,7 +12,7 @@ import logging
 from typing import Optional
 
 from app.models.settings import OrderSettings
-from app.services import chatwork, taotaro
+from app.services import chatwork, secretary_line, taotaro
 
 logger = logging.getLogger(__name__)
 
@@ -95,15 +95,21 @@ def check_once(db) -> dict:
             # 出荷済みになると sn がそのまま追跡番号になる
             "carrier": x.get("delivery_name") or "",
             "tracking_url": x.get("tracking_url") or "",
+            # 納品プランの作業が要るのはFBA宛だけ。楽天の便にタスクを
+            # 立てても「④（箱の中身）」は存在せず、消すだけの手間になる
+            "dest": taotaro.destination(x),
+            "consignee": x.get("consignee") or "",
         })
 
+    lined = 0
     for n in notices:
         _send(n)
+        lined += 1 if _line(n) else 0
 
     row.send_order_states = json.dumps(now, ensure_ascii=False)
     db.commit()
     return {"watched": len(now), "notified": len(notices),
-            "first_time": first_time}
+            "lined": lined, "first_time": first_time}
 
 
 def _send(n: dict) -> None:
@@ -143,8 +149,10 @@ def _send(n: dict) -> None:
         chatwork.send_message(room, body)
 
         # メッセージは自分の発言なので自分には通知が出ない。
-        # 動く必要がある知らせはタスクにする（自分あてでも通知される）
-        if n.get("boxes_ready"):
+        # 動く必要がある知らせはタスクにする（自分あてでも通知される）。
+        # 立てるのはFBA宛だけ。楽天の便には納品プランが無いので、
+        # 立てても毎回「完了」を押して消すだけになっていた
+        if n.get("boxes_ready") and n.get("dest") == "fba":
             try:
                 chatwork.create_task(
                     room,
@@ -155,3 +163,32 @@ def _send(n: dict) -> None:
     except Exception as e:
         # 知らせはおまけ。落ちても巡回そのものは止めない
         logger.warning(f"[send-order-watch] 送れませんでした: {e}")
+
+
+def _line(n: dict) -> bool:
+    """FBA宛のインボイスができたらLINEへ。送ったら True。
+
+    チャットワークのタスクは自分あてでも通知が出るが、チャットワークを
+    開いていないと気づかない。納品プランは自分しか進められないので、
+    手元に届くようにする。
+
+    送るのはFBA宛だけ。楽天の便は作業所へ届いて自動で入荷するので、
+    こちらが動く必要がない。鳴りすぎると見なくなる。
+    """
+    if n.get("dest") != "fba" or not n.get("boxes_ready"):
+        return False
+    if not secretary_line.is_configured():
+        logger.info(f"[send-order-watch] LINE未設定のため送れません: {n['sn']}")
+        return False
+    lines = ["🧾 インボイスができました（FBA）", f"配送依頼 {n['sn']}"]
+    if n.get("total"):
+        lines.append(f"金額: {n['total']} 元")
+    if n.get("weight"):
+        lines.append(f"重量: {n['weight']} kg")
+    lines.append("")
+    lines.append("納品プランの④（箱の中身）まで進めてください。")
+    lines.append(SITE_URL)
+    try:
+        secretary_line.push("\n".join(lines))
+    except Exception as e:
+        logger.warning(f"[send-order-watch] LINEに送れませんでした: {e}")

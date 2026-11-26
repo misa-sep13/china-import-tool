@@ -47,12 +47,6 @@ WINDOW_DAYS = 60
 # 一覧に追跡が付かない便は詳細を取り直す。全部に行くと便の数だけ
 # APIを叩くので、1回の巡回で見る数を区切る
 DETAIL_MAX = 15
-# 受取人で楽天とAmazonを分ける。FBA宛はそのままAmazonの倉庫へ行く荷物で、
-# 楽天の在庫に入れてはいけない。実際、いま配達済で未取込の1件はFBA宛だった。
-# 楽天の荷物は就労支援の作業所（あざみ共同作業所）か美園工芸社あてに届く。
-# 表記ゆれが多い（「社会福祉法人 鴻沼福祉会 あざみ共同作業所（美園工芸社分）」
-# など4通りあった）ので、含まれる語で見る
-WELFARE_WORDS = ("あざみ", "美園工芸社", "美国工芸社")
 
 
 def _parse_jst(text: str):
@@ -81,16 +75,6 @@ def _imported_keys(db: Session) -> set:
             if s:
                 keys.add(s)
     return keys
-
-
-def _destination(x: dict) -> str:
-    """この便の行き先。"rakuten" / "fba" / "unknown"。"""
-    c = str(x.get("consignee") or "")
-    if "FBA" in c.upper():
-        return "fba"
-    if any(w in c for w in WELFARE_WORDS):
-        return "rakuten"
-    return "unknown"
 
 
 def _notify(text: str) -> None:
@@ -229,7 +213,7 @@ async def tick(db: Session) -> dict:
             state.pop(sid, None)
             continue
         # FBA宛はAmazonの荷物。楽天の在庫に入れてはいけないので触らない
-        dest = _destination(x)
+        dest = taotaro.destination(x)
         if dest == "fba":
             state.pop(sid, None)
             continue

@@ -166,6 +166,28 @@ DELIVERED_WORDS = ("配達完了", "配達済", "配達は終了", "配達を終
                    "お届け完了", "お届け済", "配送完了", "签收", "簽收")
 
 
+# 受取人で荷物の行き先を見分ける。FBA宛はそのままAmazonの倉庫へ行くので、
+# 楽天の在庫に入れてはいけないし、納品プランの作業が要るのもこちらだけ。
+# 楽天の荷物は就労支援の作業所（あざみ共同作業所）か美園工芸社あてに届く。
+# 表記ゆれが多い（「社会福祉法人 鴻沼福祉会 あざみ共同作業所（美園工芸社分）」
+# など5通りあった）ので、含まれる語で見る
+WELFARE_WORDS = ("あざみ", "美園工芸社", "美国工芸社")
+
+
+def destination(x: dict) -> str:
+    """この便の行き先。"fba" / "rakuten" / "unknown"。
+
+    配達の自動入荷と、納品プランの知らせの両方で使う。
+    別々に書くと、片方だけ直して食い違う。
+    """
+    c = str(x.get("consignee") or "")
+    if "FBA" in c.upper():
+        return "fba"
+    if any(w in c for w in WELFARE_WORDS):
+        return "rakuten"
+    return "unknown"
+
+
 def delivered_at(x: dict) -> str:
     """配達が終わった日時。追跡の文言から拾う。無ければ空。
 
