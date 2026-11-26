@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
+import { confirmLinkMismatch } from '../lib/linkCheck'
 import { normalizeSearch } from '../searchUtil'
 import TaotaroOrderModal from './TaotaroOrderModal'
 import SeasonAlertBanner from '../components/SeasonAlertBanner'
@@ -75,6 +76,10 @@ function ShipmentTab() {
   }
 
   async function relinkPastItem(orderId, itemId, productId) {
+    // URLが違う行を手で紐づけると取り違えが起きる。選んだ瞬間に見せて止める
+    const item = pastItems.find(x => x.id === itemId)
+    const product = allProducts.find(p => p.id === parseInt(productId))
+    if (!confirmLinkMismatch(item, product)) return
     try {
       const r = await api.patch(`/shipment-orders/${orderId}/items/${itemId}/match`, { product_id: parseInt(productId) })
       const rev = r.data?.reverted
@@ -247,10 +252,16 @@ function ShipmentTab() {
     }
   }
 
-  function handleUnmatchedSelect(index, productId) {
+  function handleUnmatchedSelect(index, productId, el) {
+    const product = allProducts.find(p => p.id === parseInt(productId))
+    // ここは保存前なので在庫はまだ動かないが、保存すると動く。選んだ時点で見せる
+    if (!confirmLinkMismatch(unmatched[index], product)) {
+      // やめたのに選んだSKUが残ると、紐づいたように見えてしまう
+      if (el) el.value = ''
+      return
+    }
     setUnmatched(prev => prev.map((item, i) => {
       if (i !== index) return item
-      const product = allProducts.find(p => p.id === parseInt(productId))
       return { ...item, product_id: product?.id || null, sku: product?.sku || '', name_jp: product?.name || '' }
     }))
   }
@@ -836,7 +847,7 @@ function ShipmentTab() {
                                       )
                                     })()
                                   : <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                                      <select style={{ fontSize: 12 }} defaultValue="" onChange={e => handleUnmatchedSelect(i, e.target.value)}>
+                                      <select style={{ fontSize: 12 }} defaultValue="" onChange={e => handleUnmatchedSelect(i, e.target.value, e.target)}>
                                         <option value="">-- 選択 --</option>
                                         {allProducts.map(p => <option key={p.id} value={p.id}>{p.sku} {p.name}</option>)}
                                       </select>
