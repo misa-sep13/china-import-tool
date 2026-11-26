@@ -496,6 +496,10 @@ def list_shipment_orders(db: Session = Depends(get_db)):
             "total_weight_kg": o.total_weight_kg,
             "status": o.status,
             "received_at": o.received_at,
+            # 配達が終わった日時（タオタロウの追跡から自動で入る）と、
+            # 自動入荷できなかったときの理由
+            "delivered_at": o.delivered_at,
+            "auto_receive_note": o.auto_receive_note,
             "note": o.note,
             "item_count": len(items),
             "unmatched_count": unmatched_count,
@@ -595,6 +599,38 @@ def match_item(order_id: int, item_id: int, data: ShipmentOrderItemPatch, db: Se
     item.is_matched = True
     db.commit()
     return {"ok": True, "reverted": reverted}
+
+
+@router.get("/auto-receive")
+def get_auto_receive(db: Session = Depends(get_db)):
+    """配達が終わった便を自動で入荷するか。"""
+    from app.models.settings import OrderSettings
+    st = db.query(OrderSettings).first()
+    return {
+        "enabled": True if st is None else bool(
+            getattr(st, "auto_receive_on_delivery", True)),
+        "remind_days": (getattr(st, "receive_remind_days", 2) or 2) if st else 2,
+    }
+
+
+class AutoReceiveIn(BaseModel):
+    enabled: bool
+    remind_days: Optional[int] = None
+
+
+@router.put("/auto-receive")
+def set_auto_receive(data: AutoReceiveIn, db: Session = Depends(get_db)):
+    from app.models.settings import OrderSettings
+    st = db.query(OrderSettings).first()
+    if st is None:
+        st = OrderSettings()
+        db.add(st)
+    st.auto_receive_on_delivery = bool(data.enabled)
+    if data.remind_days is not None and data.remind_days > 0:
+        st.receive_remind_days = int(data.remind_days)
+    db.commit()
+    return {"ok": True, "enabled": st.auto_receive_on_delivery,
+            "remind_days": st.receive_remind_days}
 
 
 @router.post("/{order_id}/receive")

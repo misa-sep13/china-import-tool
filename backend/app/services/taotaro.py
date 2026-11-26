@@ -155,6 +155,35 @@ def _latest_trace(x: dict) -> dict:
     return {"time": best.get("time"), "location": best.get("location")}
 
 
+# 追跡に出る「配達が終わった」の言い方。
+# 「本日、配達にお伺いする予定です。」は配達の前なので拾わない
+# （「配達」だけで見ると当たってしまう）
+DELIVERED_WORDS = ("配達完了", "配達済", "お届け完了", "配送完了", "签收", "簽收")
+
+
+def delivered_at(x: dict) -> str:
+    """配達が終わった日時。追跡の文言から拾う。無ければ空。
+
+    状態（state）は配達されても「出荷済み」のままで、こちらが受領を
+    押すまで「受け取り済み」にならない。実際の追跡は
+    「さいたま営業所（配達完了） 2026-11-17 11:31:00」と出るので、
+    そちらを見る。
+    """
+    best = ""
+    for a in x.get("airbills") or []:
+        for t in (a.get("trace_info") or a.get("trace_info_array") or []):
+            if not isinstance(t, dict):
+                continue
+            text = " ".join(str(t.get(k) or "") for k in
+                            ("location", "content", "desc", "status", "remark"))
+            if not any(w in text for w in DELIVERED_WORDS):
+                continue
+            when = str(t.get("time") or "")
+            if when > best:
+                best = when
+    return best
+
+
 def _summary(x: dict) -> dict:
     """便の中身のあらまし。番号だけではどの便か分からないので添える。
 
@@ -228,6 +257,8 @@ def _send_order_brief(x: dict) -> dict:
         "bundle_with": bundle_target(x),
         # どの便か見分けるための情報。番号と金額だけでは判断できない
         "latest_trace": _latest_trace(x),
+        # 配達が終わった日時（追跡の「配達完了」から）。見回りで使う
+        "delivered_at": delivered_at(x),
         "tracking_url": x.get("shipping_website_url"),
         "order_count": sm["order_count"],
         "lines": sm["lines"],
@@ -266,6 +297,7 @@ def get_send_order(sid: int, raw: bool = False) -> dict:
         # 追跡番号は sn そのもの。業者に毎回聞かなくてもここから取れる
         "tracking_url": x.get("tracking_url"),
         "latest_trace": x.get("latest_trace"),
+        "delivered_at": delivered_at(x),
         "count_weight": x.get("count_weight"),
         # 費用は荷物がたどる順。単位はすべて人民元
         "send_price": x.get("send_price"),        # 中国国内運賃

@@ -32,6 +32,12 @@ function ShipmentTab() {
   const [fileQueue, setFileQueue] = useState([])
   const [queueTotal, setQueueTotal] = useState(0)
 
+  // 配達は終わっているのに入荷が立っていない便。
+  // 就労支援の作業所に届いたことは追跡で分かるので、先方の連絡を待たずに出す
+  const [deliveredOrders, setDeliveredOrders] = useState([])
+  const [receivingId, setReceivingId] = useState(null)
+  // 自動入荷の入り切り。配達＝箱が着いただけなので、検品を先にしたい時期は切る
+  const [autoReceive, setAutoReceive] = useState(null)
   // 入荷済みなのに在庫へ入っていない行（未照合・紐づけ間違いで弾かれた行）の復旧用
   const [pastOrders, setPastOrders] = useState([])
   const [openPastId, setOpenPastId] = useState(null)
@@ -42,8 +48,14 @@ function ShipmentTab() {
   async function loadPastOrders() {
     try {
       const res = await api.get('/shipment-orders/')
-      setPastOrders((res.data || []).filter(o => o.status === 'received' && (o.unreflected_count || 0) > 0))
+      const all = res.data || []
+      setPastOrders(all.filter(o => o.status === 'received' && (o.unreflected_count || 0) > 0))
+      setDeliveredOrders(all.filter(o => o.status !== 'received' && o.delivered_at))
     } catch { /* 一覧が取れなくても取込自体は継続できる */ }
+    try {
+      const r = await api.get('/shipment-orders/auto-receive')
+      setAutoReceive(r.data)
+    } catch { /* 設定が取れなくても一覧は出す */ }
   }
 
   async function openPast(order) {
@@ -87,6 +99,42 @@ function ShipmentTab() {
     } catch (e) {
       alert('対象外の切り替えに失敗しました: ' + (e.response?.data?.detail || e.message))
     }
+  }
+
+  // 配達済の便をその場で入荷する。自動入荷が止まったとき（未照合など）の受け皿
+  async function receiveNow(order) {
+    if (!confirm(`${order.tracking_no || order.order_no} を入荷済みにして在庫を加算します。
+
+よろしいですか？`)) return
+    setReceivingId(order.id)
+    try {
+      const res = await api.post(`/shipment-orders/${order.id}/receive`)
+      setReceiveResult(res.data)
+      await loadPastOrders()
+      qc.invalidateQueries(['rakuten-stock'])
+      qc.invalidateQueries(['rakuten-all-products-order'])
+    } catch (e) {
+      alert('入荷できませんでした: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setReceivingId(null)
+    }
+  }
+
+  async function toggleAutoReceive(on) {
+    setAutoReceive(p => ({ ...(p || {}), enabled: on }))
+    try {
+      const r = await api.put('/shipment-orders/auto-receive', { enabled: on })
+      setAutoReceive(r.data)
+    } catch (e) {
+      alert('切り替えできませんでした: ' + (e.response?.data?.detail || e.message))
+      await loadPastOrders()
+    }
+  }
+
+  function deliveredDays(iso) {
+    const t = new Date(iso)
+    if (isNaN(t)) return null
+    return Math.floor((Date.now() - t.getTime()) / 86400000)
   }
 
   async function receiveRemaining(orderId) {
@@ -421,6 +469,57 @@ function ShipmentTab() {
               </button>
             </div>
           : <>
+              {autoReceive && (
+                <div className="card" style={{ marginBottom: 16, display: 'flex',
+                  alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
+                    fontWeight: 700, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={!!autoReceive.enabled}
+                      onChange={e => toggleAutoReceive(e.target.checked)} />
+                    配達完了で自動入荷する
+                  </label>
+                  <span style={{ fontSize: 12, color: '#64748b' }}>
+                    タオタロウの追跡が「配達完了」になったら、10分以内に在庫へ入れてLINEで知らせます。
+                    入らなかったときも理由をLINEで送ります。
+                    {autoReceive.remind_days ? `配達から${autoReceive.remind_days}日たっても入荷が立たない便は催促します。` : ''}
+                  </span>
+                </div>
+              )}
+              {deliveredOrders.length > 0 && (
+                <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #dc2626' }}>
+                  <h3 style={{ marginBottom: 6, color: '#991b1b' }}>🚚 配達済なのに入荷が立っていない便</h3>
+                  <div style={{ fontSize: 12, color: '#991b1b', marginBottom: 10 }}>
+                    タオタロウの追跡で「配達完了」になった便です。自動で入荷しますが、
+                    未照合の行があるなどで止まったものがここに残ります。直してから「入荷する」を押してください。
+                  </div>
+                  {deliveredOrders.map(o => {
+                    const days = deliveredDays(o.delivered_at)
+                    return (
+                      <div key={o.id} style={{ borderTop: '1px solid #fecaca', paddingTop: 8, marginTop: 8,
+                        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                        <b style={{ fontFamily: 'monospace', fontSize: 13 }}>{o.tracking_no || o.order_no}</b>
+                        <span style={{ fontSize: 12, color: '#dc2626', fontWeight: 700 }}>
+                          {new Date(o.delivered_at).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} 配達完了
+                          {days != null && days > 0 && `（${days}日経過）`}
+                        </span>
+                        {o.unmatched_count > 0 && (
+                          <span style={{ fontSize: 12, color: '#b45309', fontWeight: 700 }}>未照合 {o.unmatched_count}件</span>
+                        )}
+                        <button className="btn btn-primary" style={{ fontSize: 12, padding: '4px 12px' }}
+                          disabled={receivingId === o.id}
+                          onClick={() => receiveNow(o)}>
+                          {receivingId === o.id ? '入荷中…' : '入荷する'}
+                        </button>
+                        {o.auto_receive_note && (
+                          <div style={{ flexBasis: '100%', fontSize: 12, color: '#b45309' }}>
+                            自動入荷が止まった理由：{o.auto_receive_note}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
               {pastOrders.length > 0 && (
                 <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #f59e0b' }}>
                   <h3 style={{ marginBottom: 6, color: '#92400e' }}>⚠ 在庫に入っていない行が残っている配送依頼</h3>

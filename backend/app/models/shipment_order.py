@@ -14,6 +14,13 @@ class ShipmentOrder(Base):
     total_weight_kg = Column(Float, default=0)       # 実際重量(KG)
     status = Column(String, default="pending")       # pending / received
     received_at = Column(DateTime(timezone=True), nullable=True)  # 入荷日時
+    # 配達が終わった日時。タオタロウの追跡（「さいたま営業所（配達完了）」）
+    # から拾う。状態（state）は配達されても「出荷済み」のままなので使えない
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+    # 催促を送った日時。配達済のまま入荷されない便に、1便につき1回だけ送る
+    reminded_at = Column(DateTime(timezone=True), nullable=True)
+    # 自動で入荷できなかった理由。LINEで知らせたうえ、画面にも出す
+    auto_receive_note = Column(Text, nullable=True)
     note = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

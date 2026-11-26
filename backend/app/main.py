@@ -110,6 +110,12 @@ def _migrate():
         ("order_settings","taotaro_web_cookie",  "ALTER TABLE order_settings ADD COLUMN taotaro_web_cookie TEXT"),
         ("order_settings","accounting_share_token", "ALTER TABLE order_settings ADD COLUMN accounting_share_token VARCHAR"),
         ("billing_lines","taxable", "ALTER TABLE billing_lines ADD COLUMN taxable BOOLEAN DEFAULT TRUE"),
+        # 配達の見回り。配達完了の日時と、催促・自動入荷の結果を持つ
+        ("shipment_orders","delivered_at", "ALTER TABLE shipment_orders ADD COLUMN delivered_at TIMESTAMP WITH TIME ZONE"),
+        ("shipment_orders","reminded_at", "ALTER TABLE shipment_orders ADD COLUMN reminded_at TIMESTAMP WITH TIME ZONE"),
+        ("shipment_orders","auto_receive_note", "ALTER TABLE shipment_orders ADD COLUMN auto_receive_note TEXT"),
+        ("order_settings","auto_receive_on_delivery", "ALTER TABLE order_settings ADD COLUMN auto_receive_on_delivery BOOLEAN DEFAULT TRUE"),
+        ("order_settings","receive_remind_days", "ALTER TABLE order_settings ADD COLUMN receive_remind_days INTEGER DEFAULT 2"),
         ("amazon_listing_children","attrs", "ALTER TABLE amazon_listing_children ADD COLUMN attrs TEXT"),
         ("order_settings","cny_closed_before",   "ALTER TABLE order_settings ADD COLUMN cny_closed_before INTEGER DEFAULT 7"),
         ("order_settings","cny_closed_after",    "ALTER TABLE order_settings ADD COLUMN cny_closed_after INTEGER DEFAULT 15"),
@@ -1659,6 +1665,25 @@ async def _watch_send_orders():
         logger.warning(f"[scheduler] 配送依頼の見回りでエラー: {e}")
 
 
+async def _watch_deliveries():
+    """配達が終わった便を見つけて、入荷まで進める。
+
+    _apply_receive が async（楽天への在庫反映を待つ）なので、
+    ほかの見回りと違って to_thread には出さずそのまま呼ぶ。
+    """
+    from app.core.database import SessionLocal
+    from app.services import delivery_watch
+    db = SessionLocal()
+    try:
+        out = await delivery_watch.tick(db)
+        if out and (out.get("found") or out.get("reminded")):
+            logger.info(f"[scheduler] 配達の見回り: {out}")
+    except Exception as e:
+        logger.warning(f"[scheduler] 配達の見回りでエラー: {e}")
+    finally:
+        db.close()
+
+
 async def _sync_amazon_daily_sales():
     """Amazonの日別販売数をためる。1日に1回だけ走る。
 
@@ -1758,6 +1783,11 @@ async def _scheduler_loop():
         # 支払いのお願いはメールで来るので、気づくのが遅れて出荷が遅れていた
         if tick % 10 == 0:
             await _watch_send_orders()
+        # 10分ごと: 配達が終わった便を見つけて入荷まで進める。
+        # 就労支援から「届いた」と言われるまで入荷が立たず、遅れていた。
+        # 配送依頼の見回りと重ならないよう、5分ずらして呼ぶ
+        if tick % 10 == 5:
+            await _watch_deliveries()
         # 1時間ごとに見に行き、前回から20時間経っていたら走る。
         # 再起動で tick が戻っても、何度も走らないようにするため
         if tick % 60 == 0:
