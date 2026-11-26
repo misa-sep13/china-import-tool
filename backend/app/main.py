@@ -114,6 +114,7 @@ def _migrate():
         ("shipment_orders","delivered_at", "ALTER TABLE shipment_orders ADD COLUMN delivered_at TIMESTAMP WITH TIME ZONE"),
         ("shipment_orders","reminded_at", "ALTER TABLE shipment_orders ADD COLUMN reminded_at TIMESTAMP WITH TIME ZONE"),
         ("shipment_orders","auto_receive_note", "ALTER TABLE shipment_orders ADD COLUMN auto_receive_note TEXT"),
+        ("order_settings","delivery_watch", "ALTER TABLE order_settings ADD COLUMN delivery_watch TEXT"),
         ("order_settings","auto_receive_on_delivery", "ALTER TABLE order_settings ADD COLUMN auto_receive_on_delivery BOOLEAN DEFAULT TRUE"),
         ("order_settings","receive_remind_days", "ALTER TABLE order_settings ADD COLUMN receive_remind_days INTEGER DEFAULT 2"),
         ("amazon_listing_children","attrs", "ALTER TABLE amazon_listing_children ADD COLUMN attrs TEXT"),

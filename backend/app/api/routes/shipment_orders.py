@@ -601,6 +601,18 @@ def match_item(order_id: int, item_id: int, data: ShipmentOrderItemPatch, db: Se
     return {"ok": True, "reverted": reverted}
 
 
+@router.get("/delivered-waiting")
+def delivered_waiting(db: Session = Depends(get_db)):
+    """配達は終わったのに取り込まれていない便。
+
+    こちらの配送依頼（shipment_orders）は「取り込み＝入荷」で同時に
+    作られるため、入荷待ちの行は残らない。待っているのはタオタロウ側に
+    あって、まだ取り込んでいない便なので、巡回が覚えたものを返す。
+    """
+    from app.services import delivery_watch
+    return delivery_watch.waiting_list(db)
+
+
 @router.get("/auto-receive")
 def get_auto_receive(db: Session = Depends(get_db)):
     """配達が終わった便を自動で入荷するか。"""

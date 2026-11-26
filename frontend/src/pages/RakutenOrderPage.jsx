@@ -35,7 +35,6 @@ function ShipmentTab() {
   // 配達は終わっているのに入荷が立っていない便。
   // 就労支援の作業所に届いたことは追跡で分かるので、先方の連絡を待たずに出す
   const [deliveredOrders, setDeliveredOrders] = useState([])
-  const [receivingId, setReceivingId] = useState(null)
   // 自動入荷の入り切り。配達＝箱が着いただけなので、検品を先にしたい時期は切る
   const [autoReceive, setAutoReceive] = useState(null)
   // 入荷済みなのに在庫へ入っていない行（未照合・紐づけ間違いで弾かれた行）の復旧用
@@ -50,8 +49,13 @@ function ShipmentTab() {
       const res = await api.get('/shipment-orders/')
       const all = res.data || []
       setPastOrders(all.filter(o => o.status === 'received' && (o.unreflected_count || 0) > 0))
-      setDeliveredOrders(all.filter(o => o.status !== 'received' && o.delivered_at))
     } catch { /* 一覧が取れなくても取込自体は継続できる */ }
+    try {
+      // 配達は終わったのに取り込んでいない便。こちらの配送依頼は
+      // 「取り込み＝入荷」なので、待っているのはタオタロウ側にある
+      const d = await api.get('/shipment-orders/delivered-waiting')
+      setDeliveredOrders(d.data || [])
+    } catch { /* 取れなくても一覧は出す */ }
     try {
       const r = await api.get('/shipment-orders/auto-receive')
       setAutoReceive(r.data)
@@ -98,25 +102,6 @@ function ShipmentTab() {
       await loadPastOrders()
     } catch (e) {
       alert('対象外の切り替えに失敗しました: ' + (e.response?.data?.detail || e.message))
-    }
-  }
-
-  // 配達済の便をその場で入荷する。自動入荷が止まったとき（未照合など）の受け皿
-  async function receiveNow(order) {
-    if (!confirm(`${order.tracking_no || order.order_no} を入荷済みにして在庫を加算します。
-
-よろしいですか？`)) return
-    setReceivingId(order.id)
-    try {
-      const res = await api.post(`/shipment-orders/${order.id}/receive`)
-      setReceiveResult(res.data)
-      await loadPastOrders()
-      qc.invalidateQueries(['rakuten-stock'])
-      qc.invalidateQueries(['rakuten-all-products-order'])
-    } catch (e) {
-      alert('入荷できませんでした: ' + (e.response?.data?.detail || e.message))
-    } finally {
-      setReceivingId(null)
     }
   }
 
@@ -487,32 +472,30 @@ function ShipmentTab() {
               )}
               {deliveredOrders.length > 0 && (
                 <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #dc2626' }}>
-                  <h3 style={{ marginBottom: 6, color: '#991b1b' }}>🚚 配達済なのに入荷が立っていない便</h3>
+                  <h3 style={{ marginBottom: 6, color: '#991b1b' }}>🚚 配達済なのに取り込んでいない便</h3>
                   <div style={{ fontSize: 12, color: '#991b1b', marginBottom: 10 }}>
-                    タオタロウの追跡で「配達完了」になった便です。自動で入荷しますが、
-                    未照合の行があるなどで止まったものがここに残ります。直してから「入荷する」を押してください。
+                    タオタロウの追跡で「配達完了」になった便です。明細がすべて商品マスタと
+                    照合できれば自動で入荷しますが、照合できない行があるなどで止まったものが
+                    ここに残ります。「取り込む」で照合の画面に進めます。
                   </div>
                   {deliveredOrders.map(o => {
                     const days = deliveredDays(o.delivered_at)
                     return (
-                      <div key={o.id} style={{ borderTop: '1px solid #fecaca', paddingTop: 8, marginTop: 8,
+                      <div key={o.sid} style={{ borderTop: '1px solid #fecaca', paddingTop: 8, marginTop: 8,
                         display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                        <b style={{ fontFamily: 'monospace', fontSize: 13 }}>{o.tracking_no || o.order_no}</b>
+                        <b style={{ fontFamily: 'monospace', fontSize: 13 }}>{o.sn}</b>
+                        <span style={{ fontSize: 12, color: '#64748b' }}>{o.order_count}注文</span>
                         <span style={{ fontSize: 12, color: '#dc2626', fontWeight: 700 }}>
                           {new Date(o.delivered_at).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })} 配達完了
                           {days != null && days > 0 && `（${days}日経過）`}
                         </span>
-                        {o.unmatched_count > 0 && (
-                          <span style={{ fontSize: 12, color: '#b45309', fontWeight: 700 }}>未照合 {o.unmatched_count}件</span>
-                        )}
                         <button className="btn btn-primary" style={{ fontSize: 12, padding: '4px 12px' }}
-                          disabled={receivingId === o.id}
-                          onClick={() => receiveNow(o)}>
-                          {receivingId === o.id ? '入荷中…' : '入荷する'}
+                          onClick={() => processTaotaro(Number(o.sid))}>
+                          取り込む
                         </button>
-                        {o.auto_receive_note && (
+                        {o.reason && (
                           <div style={{ flexBasis: '100%', fontSize: 12, color: '#b45309' }}>
-                            自動入荷が止まった理由：{o.auto_receive_note}
+                            自動入荷が止まった理由：{o.reason}
                           </div>
                         )}
                       </div>
