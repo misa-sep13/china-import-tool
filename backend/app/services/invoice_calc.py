@@ -259,14 +259,15 @@ def calc_freight_by_weight(
     n = len(goods_ids)
     total_cny = sum(item_totals) or 0.0
     # 1個あたりの重さ（kg・容積重量と大きいほう）。SP-APIのカタログから取った値。
-    # 分かる明細だけ入っている（Amazonの商品）。無い明細は None
+    # 分かる明細だけ入っている（Amazonの商品）。無い明細は None。
+    # 0.0 は「重さ0として扱う」（付属品。送料は本体が持つ）で、分からないのとは別
     uw = list(unit_weights or [None] * n)
     qs = list(qtys or [0] * n)
 
     def by_money(reason: str, unmatched=None):
         # 全明細の重さが分かれば、金額ではなく「重さ×個数」で配る。
         # 金額比だと、安くて重い・かさばる商品が送料をほとんど負担しない
-        if n and all(uw[i] and qs[i] for i in range(n)):
+        if n and all(uw[i] is not None and qs[i] for i in range(n)):
             tw = sum(uw[i] * qs[i] for i in range(n))
             if tw > 0:
                 alloc = {i: total_freight_cny * uw[i] * qs[i] / tw for i in range(n)}
@@ -322,7 +323,7 @@ def calc_freight_by_weight(
     # 個数比だと、重い商品と軽い商品が同じ箱に入ったときに軽いほうへ寄りすぎる
     w_by_gid: dict[str, float] = {}
     for g, idxs in idx_by_gid.items():
-        ws = [uw[i] for i in idxs if uw[i]]
+        ws = [uw[i] for i in idxs if uw[i] is not None]
         if ws:
             w_by_gid[g] = ws[0]
     qty_in_box: dict = {}
@@ -332,7 +333,7 @@ def calc_freight_by_weight(
         b = c["box"]
         qty_in_box[b] = qty_in_box.get(b, 0.0) + c["qty"]
         w = w_by_gid.get(c["goods_id"])
-        box_weighable[b] = box_weighable.get(b, True) and bool(w)
+        box_weighable[b] = box_weighable.get(b, True) and (w is not None)
         wq_in_box[b] = wq_in_box.get(b, 0.0) + (w or 0) * c["qty"]
     by_weight_boxes = sum(1 for b, ok in box_weighable.items() if ok and wq_in_box.get(b, 0) > 0)
 

@@ -589,6 +589,14 @@ function InvoiceTab() {
                   箱シート（箱规・箱单）付きのインボイスなら実測重量で配れます。
                 </div>
               )}
+              {calculated.dims_refresh && !calculated.dims_refresh.error && (
+                <div style={{ marginTop: 4, fontSize: 12, color: '#475569' }}>
+                  商品の重さ・サイズをAmazonから取り直しました：{calculated.dims_refresh.updated}/{calculated.dims_refresh.checked}件
+                  {calculated.dims_refresh.missing?.length > 0 && (
+                    <>（まだ寸法の無いもの：{calculated.dims_refresh.missing.join('・')}。FBAに入荷すると入ります）</>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

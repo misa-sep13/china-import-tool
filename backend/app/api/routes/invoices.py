@@ -318,6 +318,10 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
             vol = (l * wd * h / 6000) if (l and wd and h) else 0
             per = max(float(w), vol) / max(1, int(getattr(p, "set_size", 1) or 1))
             unit_weights.append(per if per > 0 else None)
+        elif p is not None and getattr(p, "is_component", False):
+            # 付属品は軽く、ASINも無いので重さが取れない。重さ0として扱い
+            # （送料は本体が持つ）、付属品の入った箱も重さで配れるようにする
+            unit_weights.append(0.0)
         else:
             unit_weights.append(None)
     freight_res = invoice_calc.calc_freight_by_weight(
@@ -437,8 +441,47 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
     }
 
 
+def _refresh_dims_for_invoice(data: InvoiceIn, db: Session) -> dict:
+    """この便の商品の重さ・サイズを、SP-APIから取り直してマスタを更新する。
+
+    入荷後に寸法が変わる（FBAの倉庫で測り直される）ことがあるので、
+    原価を計算するたびに最新の値にする。まだ寸法の無い商品も、FBAに
+    入荷すればAmazonが測って入るので、ここで自然に埋まる。
+    """
+    import time
+    from datetime import datetime, timezone
+    from app.services import amazon_api
+    classified = invoice_calc.classify_invoice_lines(db, data.items)
+    seen, got, missing = set(), 0, []
+    for c in classified:
+        p = c.get("product")
+        asin = (getattr(p, "asin", "") or "").strip() if p is not None else ""
+        if not asin or asin in seen or not hasattr(p, "unit_weight_kg"):
+            continue
+        seen.add(asin)
+        try:
+            d = amazon_api.fetch_package_dims(asin)
+        except Exception:
+            d = {"ok": False}
+        if d.get("ok"):
+            p.unit_weight_kg = d.get("weight_kg")
+            p.pkg_l_cm, p.pkg_w_cm, p.pkg_h_cm = d.get("l"), d.get("w"), d.get("h")
+            p.dims_updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            got += 1
+        else:
+            missing.append(getattr(p, "sku", asin))
+        time.sleep(0.5)   # カタログAPIは毎秒2回まで
+    db.commit()
+    return {"checked": len(seen), "updated": got, "missing": missing}
+
+
 @router.post("/calculate")
 def calculate_cost(data: InvoiceIn, db: Session = Depends(get_db)):
+    # 計算の前に、この便の商品の重さ・サイズを最新にする（送料の配分に使う）
+    try:
+        dims = _refresh_dims_for_invoice(data, db)
+    except Exception as e:
+        dims = {"error": f"{type(e).__name__}"}
     calc = _build_cost_rows(data, db)
 
     items = []
@@ -486,6 +529,8 @@ def calculate_cost(data: InvoiceIn, db: Session = Depends(get_db)):
             "reason": calc["freight_method"]["reason"],
             "fallback": calc["freight_method"]["fallback"],
         },
+        # 計算の前に取り直した重さ・サイズ（SP-API）
+        "dims_refresh": dims,
         "skipped": calc["skipped"],
         "use_tariff": calc["use_tariff"],
         "total_qty": sum(r["item"].qty for r in calc["rows"]),
