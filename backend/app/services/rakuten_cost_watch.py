@@ -85,6 +85,17 @@ def _process(db: Session, permit: ImportPermit) -> tuple:
         return "", ("どの便の許可書か決められませんでした。"
                     "画面で便を選んでください。" + (f"近いもの：{near}" if near else ""))
 
+    # FBA宛の便はAmazonの商品。楽天のマスタにはほぼ無いので、検算（カバー率）で
+    # 必ず止まる（2026-11-25 の 721710）。楽天の原価計算は飛ばし、Amazonの
+    # 仕入管理で計算するよう1回だけ知らせる
+    from app.services import taotaro
+    try:
+        if taotaro.destination(taotaro.get_send_order(int(sid))) == "fba":
+            return (f"ℹ️ {_permit_label(permit)} はFBA宛の便（No.{sid}）でした。\n"
+                    "Amazonの商品なので、楽天ではなく Amazon → 仕入管理 で原価を計算してください"), ""
+    except Exception:
+        pass
+
     parsed = rakuten_invoice_from_taotaro(
         RakutenTaotaroInvoiceIn(sid=int(sid)), db=db)
     invoice_no = parsed.get("invoice_no") or ""
@@ -198,6 +209,10 @@ def tick(db: Session) -> dict:
         if prev.get("why", "").startswith("どの便の許可書か決められません") and not prev.get("retried"):
             prev = {}
             state[key] = {"retried": True}
+        # 検算（カバー率）で止まったものは、FBA宛かどうかを見直すために1回だけやり直す
+        if "カバー率" in prev.get("why", "") and not prev.get("fba_checked"):
+            prev = {}
+            state[key] = {"retried": True, "fba_checked": True}
         # 一度止まったものは、次の巡回で毎回やり直さない。
         # 人が直したら画面のボタンでもう一度動かせる
         if prev.get("why"):
@@ -217,7 +232,8 @@ def tick(db: Session) -> dict:
             waiting[key] = {"label": _permit_label(p), "why": why,
                             "at": datetime.now(JST).isoformat(),
                             # やり直したあとにまた止まったものは、毎回は通知しない
-                            "retried": bool((state.get(key) or {}).get("retried"))}
+                            "retried": bool((state.get(key) or {}).get("retried")),
+                            "fba_checked": bool((state.get(key) or {}).get("fba_checked"))}
             _notify(f"🧾 原価を計算できませんでした\n{_permit_label(p)}\n\n{why}\n"
                     "楽天 → 仕入管理 から進めてください")
         else:
