@@ -35,6 +35,7 @@ from app.api.routes import import_permits as import_permit_routes
 from app.api.routes import automations as automation_routes
 from app.api.routes import chatwork as chatwork_routes
 from app.api.routes import secretary as secretary_routes
+from app.models import automation_run as automation_run_models
 from app.models import invoice as invoice_models
 from app.models import order_history as order_history_models
 from app.models import daily_sales as daily_sales_models
@@ -1554,6 +1555,10 @@ def _capture_month_end_inventory():
                 logger.info(
                     f"[scheduler] 期末在庫を自動確定: {period} {platform} "
                     f"{out['items']}件 {out['total_amount']}円")
+                _log_auto("month_end_inventory",
+                          "rakuten" if platform == "rakuten" else "amazon",
+                          f"{period} の期末在庫を確定しました"
+                          f"（{out['items']}件 {out['total_amount']:,}円）")
             except Exception as e:
                 logger.warning(f"[scheduler] 期末在庫の自動確定に失敗: {platform} {e}")
         _last_captured_period = period
@@ -1647,6 +1652,8 @@ async def _fill_amazon_ids(limit: int = 40):
         if done:
             db.commit()
             logger.info(f"[scheduler] ASIN・FNSKUを調べた: {done}件")
+            _log_auto("fill_amazon_ids", "amazon",
+                      f"ASIN・FNSKUが空だった{done}件をAmazonから読んで入れました")
     except Exception as e:
         logger.warning(f"[scheduler] ASIN・FNSKUの取り込みでエラー: {e}")
     finally:
@@ -1664,9 +1671,22 @@ async def _watch_send_orders():
         finally:
             db.close()
     try:
-        await asyncio.to_thread(_run)
+        out = await asyncio.to_thread(_run)
+        if out and out.get("notified"):
+            _log_auto("send_order_watch", "rakuten",
+                      f"配送依頼{out['notified']}件の状態が変わったので"
+                      "チャットワークへ送りました")
     except Exception as e:
         logger.warning(f"[scheduler] 配送依頼の見回りでエラー: {e}")
+
+
+def _log_auto(job: str, area: str, summary: str, status: str = "ok") -> None:
+    """自動で動いたものを1行残す。画面の「自動でやったこと」に出る。"""
+    try:
+        from app.services.automation_log import record_new_session
+        record_new_session(job, area, summary, status)
+    except Exception as e:
+        logger.warning(f"[scheduler] 記録に失敗 {job}: {e}")
 
 
 async def _watch_deliveries():
@@ -1682,6 +1702,16 @@ async def _watch_deliveries():
         out = await delivery_watch.tick(db)
         if out and (out.get("found") or out.get("reminded")):
             logger.info(f"[scheduler] 配達の見回り: {out}")
+            if out.get("received"):
+                _log_auto("delivery_watch", "rakuten",
+                          f"配達が終わった便を{out['received']}件、入荷して在庫に入れました")
+            if out.get("failed"):
+                _log_auto("delivery_watch", "rakuten",
+                          f"配達済だが自動で入荷できなかった便が{out['failed']}件あります"
+                          "（配送依頼タブで続きができます）", "stopped")
+            if out.get("reminded"):
+                _log_auto("delivery_watch", "rakuten",
+                          f"入荷がまだの便{out['reminded']}件に催促を送りました", "stopped")
     except Exception as e:
         logger.warning(f"[scheduler] 配達の見回りでエラー: {e}")
     finally:
@@ -1716,12 +1746,24 @@ async def _watch_permits():
         got = await asyncio.to_thread(_fetch)
         if got and got.get("added"):
             logger.info(f"[scheduler] 輸入許可書を取り込み: {got.get('added')}件")
+            names = "／".join((i.get("permit_no") or i.get("filename") or "")
+                              for i in (got.get("items") or [])[:3])
+            _log_auto("permit_cost", "rakuten",
+                      f"輸入許可書を{got['added']}件取り込みました"
+                      + (f"（{names}）" if names else ""))
     except Exception as e:
         logger.warning(f"[scheduler] 輸入許可書の取り込みでエラー: {e}")
     try:
         out = await asyncio.to_thread(_cost)
         if out and (out.get("done") or out.get("failed")):
             logger.info(f"[scheduler] 原価の自動計算: {out}")
+            if out.get("done"):
+                _log_auto("permit_cost", "rakuten",
+                          f"許可書{out['done']}枚ぶんの原価を計算して保存しました")
+            if out.get("failed"):
+                _log_auto("permit_cost", "rakuten",
+                          f"原価を出せなかった許可書が{out['failed']}枚あります"
+                          "（仕入管理の画面で続きができます）", "stopped")
     except Exception as e:
         logger.warning(f"[scheduler] 原価の自動計算でエラー: {e}")
 
@@ -1766,6 +1808,8 @@ async def _taotaro_videos():
         out = await asyncio.to_thread(_run)
         if out and out.get("sent"):
             logger.info(f"[scheduler] タオタロウの動画を転送: {out.get('sent')}件")
+            _log_auto("taotaro_video", "both",
+                      f"タオタロウの動画を{out['sent']}件チャットワークへ送りました")
         if out and out.get("failed"):
             logger.warning(f"[scheduler] 動画の転送に失敗: {out.get('errors')}")
     except Exception as e:
@@ -1790,6 +1834,7 @@ async def _secretary_notify():
         out = await asyncio.to_thread(_run)
         if out and out.get("sent"):
             logger.info(f"[scheduler] 秘書のLINE: {out}")
+            _log_auto("secretary_line", "both", "秘書の毎朝の知らせをLINEで送りました")
         elif out and out.get("error"):
             logger.warning(f"[scheduler] 秘書のLINEで失敗: {out['error']}")
     except Exception as e:
@@ -1908,7 +1953,7 @@ _AUTH_PUBLIC_GET_PATHS = {
 _AUTH_OWNER_ONLY_PREFIXES = ("/api/settings", "/api/rakuten/settings")
 # 外注さんには読ませない。秘書には支払い・給与・税理士とのやり取りまで
 # 並ぶので、画面を隠すだけでなくAPIごと止める
-_AUTH_OWNER_ONLY_READ = ("/api/secretary",)
+_AUTH_OWNER_ONLY_READ = ("/api/secretary", "/api/automations")
 
 
 def _cors_headers_for(request: _StarletteRequest) -> dict:

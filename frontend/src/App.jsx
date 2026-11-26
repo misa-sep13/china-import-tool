@@ -35,6 +35,7 @@ import WelfareInventoryPage from './pages/WelfareInventoryPage'
 import WelfareWorkPublicPage from './pages/WelfareWorkPublicPage'
 import KeepClaimsPublicPage from './pages/KeepClaimsPublicPage'
 import SecretaryPage from './pages/SecretaryPage'
+import AutomationsPage from './pages/AutomationsPage'
 import ImageRequestsPublicPage from './pages/ImageRequestsPublicPage'
 import WorkStatusPublicPage from './pages/WorkStatusPublicPage'
 import MonthlyAccountingDesignPage from './pages/MonthlyAccountingDesignPage'
@@ -50,7 +51,7 @@ import './App.css'
 // バックエンド側でもAPI自体を403で弾いているので、ここはUI上の導線を隠す・
 // URL直打ちでの表示だけを防ぐための二重の壁。
 // 秘書は自分の仕事の段取りなので、外注さんには出さない
-const OWNER_ONLY_PATHS = ['/settings', '/rakuten/settings', '/secretary']
+const OWNER_ONLY_PATHS = ['/settings', '/rakuten/settings', '/secretary', '/automations']
 
 function App() {
   const location = useLocation()
@@ -181,6 +182,9 @@ function App() {
         {/* 毎日ここから始める。建設も物販も混ざるので一番上に置く */}
         {!isContractor && (
           <>
+            <NavLink to="/automations" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+              🤖 自動でやったこと
+            </NavLink>
             <NavLink to="/secretary" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
               🗒️ 秘書
             </NavLink>
@@ -322,6 +326,7 @@ function App() {
         <Routes>
           <Route path="/" element={<OrderPage />} />
           <Route path="/secretary" element={<SecretaryPage />} />
+          <Route path="/automations" element={<AutomationsPage />} />
           <Route path="/stock" element={<StockPage />} />
           <Route path="/amazon-sales" element={<AmazonSalesPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />

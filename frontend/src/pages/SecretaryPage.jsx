@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import api from '../api/client'
-import AutomationList from '../components/AutomationList'
 
 /**
  * 秘書。毎月くり返す仕事と、都度の仕事を1か所で見る。
@@ -291,9 +290,6 @@ export default function SecretaryPage() {
 
   return (
     <div style={{ padding: 20, maxWidth: 1000 }}>
-      {/* 何が勝手に動いているかを、やることより先に出す。
-          止まっているものがあれば、ここで気づける */}
-      <AutomationList />
       <h2 style={{ margin: '0 0 4px', fontSize: 20 }}>🗒️ 秘書</h2>
       <div style={{ color: C.sub, fontSize: 13, marginBottom: 12 }}>
         毎月くり返す仕事と、都度の仕事。期限が近づいたものだけが出ます。

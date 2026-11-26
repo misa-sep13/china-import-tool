@@ -135,6 +135,23 @@ def list_automations(db: Session = Depends(get_db)):
     return rows
 
 
+@router.get("/runs")
+def list_runs(limit: int = 120, area: str = "", db: Session = Depends(get_db)):
+    """自動でやったこと。新しい順。"""
+    from app.models.automation_run import AutomationRun
+    names = {j["id"]: j["name"] for j in _JOBS}
+    q = db.query(AutomationRun)
+    if area in ("amazon", "rakuten", "both"):
+        q = q.filter(AutomationRun.area == area)
+    rows = (q.order_by(AutomationRun.created_at.desc())
+            .limit(max(1, min(int(limit), 400))).all())
+    return [{
+        "id": r.id, "job": r.job, "area": r.area, "status": r.status,
+        "name": names.get(r.job, r.job), "summary": r.summary,
+        "at": r.created_at,
+    } for r in rows]
+
+
 @router.put("/switch")
 def set_switch(data: SwitchIn, db: Session = Depends(get_db)):
     """切れるものだけ切る。知らない名前は受け付けない。"""
