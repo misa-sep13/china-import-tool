@@ -3332,6 +3332,20 @@ def _send_order_box_summary(sid: int) -> dict:
     return out
 
 
+@router.get("/invoices/auto-waiting")
+def rakuten_cost_auto_waiting(db: Session = Depends(get_db)):
+    """自動で原価を出せなかった許可書。理由つきで返す。"""
+    from app.services import rakuten_cost_watch
+    return rakuten_cost_watch.waiting_list(db)
+
+
+@router.post("/invoices/auto-retry/{permit_id}")
+def rakuten_cost_auto_retry(permit_id: int, db: Session = Depends(get_db)):
+    """止まっていた許可書を、もう一度自動で進めてみる。"""
+    from app.services import rakuten_cost_watch
+    return rakuten_cost_watch.retry(db, permit_id)
+
+
 @router.get("/invoices/match-permit")
 def rakuten_match_permit(permit_id: int, limit: int = 6,
                          db: Session = Depends(get_db)):

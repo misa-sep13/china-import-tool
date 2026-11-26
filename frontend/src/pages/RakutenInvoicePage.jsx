@@ -57,6 +57,27 @@ export default function RakutenInvoicePage() {
   const [apiInfo, setApiInfo] = useState(null)
   // 重量の突き合わせ。請求の根拠（計費重量）と、許可書に申告した重量を照らす
   const [weightCheck, setWeightCheck] = useState(null)
+  // 自動で原価を出せなかった許可書。理由つきで出し、直したら押し直せる
+  const [autoWaiting, setAutoWaiting] = useState([])
+  const [retrying, setRetrying] = useState(null)
+  useEffect(() => {
+    api.get('/rakuten/invoices/auto-waiting')
+      .then(r => setAutoWaiting(r.data || []))
+      .catch(() => { /* 出ないだけ。手の取り込みはできる */ })
+  }, [])
+  async function retryAuto(permitId) {
+    setRetrying(permitId)
+    try {
+      await api.post(`/rakuten/invoices/auto-retry/${permitId}`)
+      const r = await api.get('/rakuten/invoices/auto-waiting')
+      setAutoWaiting(r.data || [])
+    } catch (e) {
+      alert('やり直せませんでした: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setRetrying(null)
+    }
+  }
+
   // 許可書から便を探した結果。実重量の合計と箱数で突き合わせる
   const [matching, setMatching] = useState(false)
   const [matchResult, setMatchResult] = useState(null)
@@ -285,6 +306,29 @@ export default function RakutenInvoicePage() {
   return (
     <div>
       <h2 style={{ marginBottom: 24 }}>楽天 仕入管理（原価計算）</h2>
+
+      {/* 許可書が届いたら自動で原価まで出す。止まったものだけここに残る */}
+      {autoWaiting.length > 0 && (
+        <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #dc2626' }}>
+          <h3 style={{ marginBottom: 6, color: '#991b1b' }}>🧾 自動で原価を出せなかった許可書</h3>
+          <div style={{ fontSize: 12, color: '#991b1b', marginBottom: 10 }}>
+            輸入許可書は2時間おきにメールから拾い、便を当てて原価まで計算しています。
+            止まったものだけここに出ます。下の手順で直したあと「もう一度」を押してください。
+          </div>
+          {autoWaiting.map(w => (
+            <div key={w.permit_id} style={{ borderTop: '1px solid #fecaca', paddingTop: 8, marginTop: 8,
+              display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <b style={{ fontSize: 13 }}>{w.label}</b>
+              <button className="btn btn-secondary" style={{ fontSize: 12, padding: '4px 12px' }}
+                disabled={retrying === w.permit_id}
+                onClick={() => retryAuto(w.permit_id)}>
+                {retrying === w.permit_id ? '試しています…' : 'もう一度'}
+              </button>
+              <div style={{ flexBasis: '100%', fontSize: 12, color: '#b45309' }}>{w.reason}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ファイルを使わない取り込み。
           インボイスはタオタロウのAPIから、許可書は保管してあるものから選ぶ。

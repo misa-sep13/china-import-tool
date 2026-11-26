@@ -115,6 +115,8 @@ def _migrate():
         ("shipment_orders","reminded_at", "ALTER TABLE shipment_orders ADD COLUMN reminded_at TIMESTAMP WITH TIME ZONE"),
         ("shipment_orders","auto_receive_note", "ALTER TABLE shipment_orders ADD COLUMN auto_receive_note TEXT"),
         ("order_settings","delivery_watch", "ALTER TABLE order_settings ADD COLUMN delivery_watch TEXT"),
+        ("order_settings","cost_watch", "ALTER TABLE order_settings ADD COLUMN cost_watch TEXT"),
+        ("order_settings","auto_cost_from_permit", "ALTER TABLE order_settings ADD COLUMN auto_cost_from_permit BOOLEAN DEFAULT TRUE"),
         ("order_settings","auto_receive_on_delivery", "ALTER TABLE order_settings ADD COLUMN auto_receive_on_delivery BOOLEAN DEFAULT TRUE"),
         ("order_settings","receive_remind_days", "ALTER TABLE order_settings ADD COLUMN receive_remind_days INTEGER DEFAULT 2"),
         ("amazon_listing_children","attrs", "ALTER TABLE amazon_listing_children ADD COLUMN attrs TEXT"),
@@ -1685,6 +1687,44 @@ async def _watch_deliveries():
         db.close()
 
 
+async def _watch_permits():
+    """輸入許可書を拾い、原価の計算まで進める。
+
+    許可書は通関業者のメールで届く。拾うのは手動のボタンしか無かったので、
+    1日1回こちらから見に行く。拾えたら、その許可書の便を当てて原価を出す。
+    """
+    def _fetch():
+        from app.core.database import SessionLocal
+        from app.api.routes.import_permits import fetch_mail, FetchIn
+        db = SessionLocal()
+        try:
+            return fetch_mail(FetchIn(), db)
+        finally:
+            db.close()
+
+    def _cost():
+        from app.core.database import SessionLocal
+        from app.services import rakuten_cost_watch
+        db = SessionLocal()
+        try:
+            return rakuten_cost_watch.tick(db)
+        finally:
+            db.close()
+
+    try:
+        got = await asyncio.to_thread(_fetch)
+        if got and got.get("added"):
+            logger.info(f"[scheduler] 輸入許可書を取り込み: {got.get('added')}件")
+    except Exception as e:
+        logger.warning(f"[scheduler] 輸入許可書の取り込みでエラー: {e}")
+    try:
+        out = await asyncio.to_thread(_cost)
+        if out and (out.get("done") or out.get("failed")):
+            logger.info(f"[scheduler] 原価の自動計算: {out}")
+    except Exception as e:
+        logger.warning(f"[scheduler] 原価の自動計算でエラー: {e}")
+
+
 async def _sync_amazon_daily_sales():
     """Amazonの日別販売数をためる。1日に1回だけ走る。
 
@@ -1789,6 +1829,10 @@ async def _scheduler_loop():
         # 配送依頼の見回りと重ならないよう、5分ずらして呼ぶ
         if tick % 10 == 5:
             await _watch_deliveries()
+        # 2時間ごと: 輸入許可書をメールから拾い、原価の計算まで進める。
+        # メールは1日に何度も来るものではないので、これくらいで足りる
+        if tick % 120 == 20:
+            await _watch_permits()
         # 1時間ごとに見に行き、前回から20時間経っていたら走る。
         # 再起動で tick が戻っても、何度も走らないようにするため
         if tick % 60 == 0:

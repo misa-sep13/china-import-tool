@@ -48,6 +48,9 @@ class OrderSettings(Base):
     # 配送依頼ごとに前回見た状態（JSON）。支払い待ちになった瞬間を
     # 知らせるために持つ。消えても次の巡回で入り直る
     send_order_states = Column(Text, nullable=True)
+    # 輸入許可書から原価を自動で計算するか／途中で止まったもの（JSON）
+    auto_cost_from_permit = Column(Boolean, default=True)
+    cost_watch = Column(Text, nullable=True)
     # 配達は終わったのに取り込まれていない便（JSON）。
     # 二度知らせないため、巡回のあいだ覚えておく
     delivery_watch = Column(Text, nullable=True)
