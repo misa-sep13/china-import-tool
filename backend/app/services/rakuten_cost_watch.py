@@ -91,8 +91,15 @@ def _process(db: Session, permit: ImportPermit) -> tuple:
     if _already_saved(db, invoice_no):
         return f"{invoice_no} はすでに保存済みでした", ""
 
+    # 航空便はイレギュラー（急ぎの分だけ別便にする、通関料が無いなど）なので
+    # 自動では進めない。数が少なく、まとめて1つの型に当てはまらない
+    if (parsed.get("shipping_method") or "") == "air":
+        return "", ("航空便なので自動では進めません。"
+                    "画面から進めてください（通関料は無しです）")
+
     pm = rakuten_stored_permit(permit_id=permit.id, db=db)
-    sea = (parsed.get("shipping_method") or "sea") == "sea"
+    # ここまで来たものは船便。読めなかったときも船便として扱う（通関料あり）
+    sea = True
     data = RakutenInvoiceIn(
         invoice_no=invoice_no,
         invoice_date=(permit.permit_date or ""),
