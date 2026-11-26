@@ -333,6 +333,26 @@ def calc_freight_by_weight(
         ws = [uw[i] for i in idxs if uw[i] is not None]
         if ws:
             w_by_gid[g] = ws[0]
+
+    # 1行に商品IDが2つある明細は、箱の中身の表で同じ数が両方のIDに書かれることがある
+    # （a019_230235：明細9個なのに箱には 9＋9）。そのまま足すと二重に数えて、
+    # 同じ箱の他の商品より送料を多くかぶる。明細の数を正として、箱の中身の
+    # 合計が明細の数を超える明細は、その明細の分を明細の数まで縮める
+    if any(qs):
+        sum_by_line: dict = {}
+        for c in contents:
+            for i in set(idx_by_gid.get(c["goods_id"], [])):
+                sum_by_line[i] = sum_by_line.get(i, 0.0) + c["qty"]
+        scale_by_line = {i: (qs[i] / s) for i, s in sum_by_line.items()
+                         if qs[i] and s > qs[i]}
+        if scale_by_line:
+            fixed = []
+            for c in contents:
+                lines = set(idx_by_gid.get(c["goods_id"], []))
+                k = min((scale_by_line.get(i, 1.0) for i in lines), default=1.0)
+                fixed.append({**c, "qty": c["qty"] * k})
+            contents = fixed
+
     qty_in_box: dict = {}
     wq_in_box: dict = {}
     box_weighable: dict = {}
