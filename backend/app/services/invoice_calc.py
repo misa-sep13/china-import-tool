@@ -295,17 +295,24 @@ def calc_freight_by_weight(
     if total_bw <= 0:
         return by_money("計費重量が取れないため金額比で按分")
 
-    # 明細index ↔ 商品ID
+    # 明細index ↔ 商品ID。
+    # 同じ商品を2回に分けて発注すると、インボイスは1行にまとめて商品IDを
+    # 「5860613 5922182」のように並べる。1つの文字列のまま突き合わせると
+    # 箱の中身と紐づかず、便ごと金額比に落ちていた（721710で6行）。分けて見る
+    import re as _re
+
+    def _gids(g) -> list:
+        return [x for x in _re.split(r"[\s,、／/]+", str(g or "").strip()) if x]
+
     idx_by_gid: dict[str, list[int]] = {}
     for i, g in enumerate(goods_ids):
-        if g:
-            idx_by_gid.setdefault(str(g).strip(), []).append(i)
+        for one in _gids(g):
+            idx_by_gid.setdefault(one, []).append(i)
 
     # 箱单にあるのに明細に無い／その逆があると配り切れない
-    content_gids = {c["goods_id"] for c in contents}
-    line_gids = set(idx_by_gid.keys())
+    content_gids = {str(c["goods_id"]).strip() for c in contents}
     unmatched = [i for i, g in enumerate(goods_ids)
-                 if not g or str(g).strip() not in content_gids]
+                 if not _gids(g) or not all(x in content_gids for x in _gids(g))]
     if unmatched:
         return by_money(
             f"箱の中身と紐づかない明細が{len(unmatched)}件あるため金額比で按分",
