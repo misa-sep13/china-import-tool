@@ -125,6 +125,12 @@ class ProductOut(ProductCreate):
     cost_jpy: Optional[float] = None  # 仕入管理で算出した1個あたり原価（円）
     discontinued: Optional[bool] = False
     order_lot: Optional[int] = None
+    # 梱包後の重さ・サイズ（SP-API。仕入管理の送料の配分に使う）
+    unit_weight_kg: Optional[float] = None
+    pkg_l_cm: Optional[float] = None
+    pkg_w_cm: Optional[float] = None
+    pkg_h_cm: Optional[float] = None
+    dims_updated_at: Optional[str] = None
 
     class Config:
         from_attributes = True
