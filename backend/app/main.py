@@ -32,6 +32,7 @@ from app.api.routes import activity_log as activity_log_routes
 from app.api.routes import research as research_routes
 from app.api.routes import product_drafts as product_draft_routes
 from app.api.routes import import_permits as import_permit_routes
+from app.api.routes import automations as automation_routes
 from app.api.routes import chatwork as chatwork_routes
 from app.api.routes import secretary as secretary_routes
 from app.models import invoice as invoice_models
@@ -1903,8 +1904,11 @@ _AUTH_PUBLIC_GET_PATHS = {
     # 変わっていなければ一覧を取り直さない（通信量が桁で変わる）
     "/api/welfare/version",
 }
-# 外注さんには見せない（APIキー等が見える設定画面）
+# 外注さんには見せない（APIキー等が見える設定画面）。変更だけ止める
 _AUTH_OWNER_ONLY_PREFIXES = ("/api/settings", "/api/rakuten/settings")
+# 外注さんには読ませない。秘書には支払い・給与・税理士とのやり取りまで
+# 並ぶので、画面を隠すだけでなくAPIごと止める
+_AUTH_OWNER_ONLY_READ = ("/api/secretary",)
 
 
 def _cors_headers_for(request: _StarletteRequest) -> dict:
@@ -2069,6 +2073,8 @@ async def auth_middleware(request: _StarletteRequest, call_next):
     # ルート側（get_rakuten_settings）でマスクする。
     if role == "contractor" and request.method != "GET" and path.startswith(_AUTH_OWNER_ONLY_PREFIXES):
         return _JSONResponse(status_code=403, content={"detail": "この機能は利用できません"}, headers=_cors_headers_for(request))
+    if role == "contractor" and path.startswith(_AUTH_OWNER_ONLY_READ):
+        return _JSONResponse(status_code=403, content={"detail": "この機能は利用できません"}, headers=_cors_headers_for(request))
 
     request.state.actor_role = role
     return await call_next(request)
@@ -2076,6 +2082,7 @@ async def auth_middleware(request: _StarletteRequest, call_next):
 
 app.include_router(auth_routes.router, prefix="/api")
 app.include_router(activity_log_routes.router, prefix="/api")
+app.include_router(automation_routes.router, prefix="/api")
 app.include_router(products.router, prefix="/api")
 app.include_router(orders.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
