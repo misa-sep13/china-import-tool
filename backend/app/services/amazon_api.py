@@ -1715,6 +1715,37 @@ def _kg(value, unit) -> Optional[float]:
     return round(v, 3)
 
 
+def fetch_package_dims(asin: str) -> dict:
+    """ASINの梱包後の重さ・サイズ（1販売単位）をカタログから取る。
+
+    仕入管理で送料を重さで配るのに使う。package（梱包後）を優先し、
+    無ければ item（商品そのもの）。取れなかった項目は None。
+    """
+    asin = (asin or "").strip().upper()
+    if not asin:
+        return {"ok": False, "error": "ASINがありません"}
+    params = urllib.parse.urlencode({"marketplaceIds": _RESEARCH_MP,
+                                     "includedData": "dimensions"})
+    data = _call_sp_api(f"/catalog/2022-04-01/items/{asin}?{params}")
+    for dim in data.get("dimensions", []):
+        if dim.get("marketplaceId") != _RESEARCH_MP:
+            continue
+        for which in ("package", "item"):
+            box = dim.get(which) or {}
+            if not box:
+                continue
+            sides = [_cm((box.get(k) or {}).get("value"), (box.get(k) or {}).get("unit"))
+                     for k in ("length", "width", "height")]
+            w = _kg((box.get("weight") or {}).get("value"), (box.get("weight") or {}).get("unit"))
+            if w or all(sides):
+                s = sorted([x for x in sides if x], reverse=True)
+                return {"ok": True, "source": which, "weight_kg": w,
+                        "l": s[0] if len(s) > 0 else None,
+                        "w": s[1] if len(s) > 1 else None,
+                        "h": s[2] if len(s) > 2 else None}
+    return {"ok": False, "error": "重さ・サイズがAmazonに登録されていません"}
+
+
 def _image_data_url(url: str) -> Optional[str]:
     """画像を取ってきてdata URLにする。
 

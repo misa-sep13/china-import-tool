@@ -28,6 +28,13 @@ class Product(Base):
     # 残っていると現場が混乱する。セット組・同梱などをここに書く
     delivery_note = Column(Text, nullable=True)
     set_size = Column(Integer, default=1)   # 1セットあたりのピース数
+    # 梱包後の重さ・サイズ（1販売単位あたり）。SP-APIのカタログから取る。
+    # 仕入管理で、同じ箱の中の送料を「個数」ではなく「重さ」で配るのに使う
+    unit_weight_kg = Column(Float, nullable=True)
+    pkg_l_cm = Column(Float, nullable=True)
+    pkg_w_cm = Column(Float, nullable=True)
+    pkg_h_cm = Column(Float, nullable=True)
+    dims_updated_at = Column(String, nullable=True)
     extra_stock = Column(Integer, default=0)  # 別個数在庫
     order_qty = Column(Integer, default=0)  # 手動発注数
     # 発注用付属品（在庫連動しない）: JSON文字列 "[{\"sku\":\"y48_bag\",\"qty\":1}]"

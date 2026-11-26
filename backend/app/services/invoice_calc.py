@@ -241,6 +241,8 @@ def calc_freight_by_weight(
     item_totals: list[float],
     box_data: dict,
     total_freight_cny: float,
+    unit_weights: list = None,
+    qtys: list = None,
 ) -> dict:
     """送料を重量ベースで配る（2段階）。
 
@@ -256,8 +258,21 @@ def calc_freight_by_weight(
     """
     n = len(goods_ids)
     total_cny = sum(item_totals) or 0.0
+    # 1個あたりの重さ（kg・容積重量と大きいほう）。SP-APIのカタログから取った値。
+    # 分かる明細だけ入っている（Amazonの商品）。無い明細は None
+    uw = list(unit_weights or [None] * n)
+    qs = list(qtys or [0] * n)
 
     def by_money(reason: str, unmatched=None):
+        # 全明細の重さが分かれば、金額ではなく「重さ×個数」で配る。
+        # 金額比だと、安くて重い・かさばる商品が送料をほとんど負担しない
+        if n and all(uw[i] and qs[i] for i in range(n)):
+            tw = sum(uw[i] * qs[i] for i in range(n))
+            if tw > 0:
+                alloc = {i: total_freight_cny * uw[i] * qs[i] / tw for i in range(n)}
+                return {"alloc": alloc, "fallback": False,
+                        "reason": reason.replace("金額比で按分", "").rstrip("、 ") + "、商品の重さ（SP-API）×個数で按分",
+                        "unmatched_indexes": []}
         alloc = {
             i: (total_freight_cny * item_totals[i] / total_cny) if total_cny > 0 else 0.0
             for i in range(n)
@@ -302,18 +317,36 @@ def calc_freight_by_weight(
         for b, info in boxes.items()
     }
 
-    # STEP2: 箱の運賃 → 中身へ（個数比）
-    qty_in_box: dict[int, float] = {}
+    # STEP2: 箱の運賃 → 中身へ。
+    # 箱の中の全商品の重さ（SP-API）が分かれば「重さ×個数」、分からなければ個数比。
+    # 個数比だと、重い商品と軽い商品が同じ箱に入ったときに軽いほうへ寄りすぎる
+    w_by_gid: dict[str, float] = {}
+    for g, idxs in idx_by_gid.items():
+        ws = [uw[i] for i in idxs if uw[i]]
+        if ws:
+            w_by_gid[g] = ws[0]
+    qty_in_box: dict = {}
+    wq_in_box: dict = {}
+    box_weighable: dict = {}
     for c in contents:
-        qty_in_box[c["box"]] = qty_in_box.get(c["box"], 0.0) + c["qty"]
+        b = c["box"]
+        qty_in_box[b] = qty_in_box.get(b, 0.0) + c["qty"]
+        w = w_by_gid.get(c["goods_id"])
+        box_weighable[b] = box_weighable.get(b, True) and bool(w)
+        wq_in_box[b] = wq_in_box.get(b, 0.0) + (w or 0) * c["qty"]
+    by_weight_boxes = sum(1 for b, ok in box_weighable.items() if ok and wq_in_box.get(b, 0) > 0)
 
     alloc: dict[int, float] = {i: 0.0 for i in range(n)}
     for c in contents:
-        bq = qty_in_box.get(c["box"], 0.0)
-        if bq <= 0:
-            continue
-        share = c["qty"] / bq
-        amount = box_freight.get(c["box"], 0.0) * share
+        b = c["box"]
+        if box_weighable.get(b) and wq_in_box.get(b, 0) > 0:
+            share = w_by_gid[c["goods_id"]] * c["qty"] / wq_in_box[b]
+        else:
+            bq = qty_in_box.get(b, 0.0)
+            if bq <= 0:
+                continue
+            share = c["qty"] / bq
+        amount = box_freight.get(b, 0.0) * share
         targets = idx_by_gid.get(c["goods_id"], [])
         if not targets:
             continue
@@ -323,8 +356,16 @@ def calc_freight_by_weight(
             w = (item_totals[i] / tot) if tot > 0 else (1.0 / len(targets))
             alloc[i] += amount * w
 
+    total_boxes = len(qty_in_box)
+    if by_weight_boxes and by_weight_boxes == total_boxes:
+        inner = "箱内は商品の重さ（SP-API）×個数"
+    elif by_weight_boxes:
+        inner = f"箱内は重さが分かる{by_weight_boxes}箱が重さ×個数、残り{total_boxes - by_weight_boxes}箱は個数比"
+    else:
+        inner = "箱内は個数比"
     return {"alloc": alloc, "fallback": False,
-            "reason": "箱の計費重量で按分（箱内は個数比）", "unmatched_indexes": []}
+            "reason": f"箱の計費重量で按分（{inner}）", "unmatched_indexes": [],
+            "weight_boxes": by_weight_boxes, "total_boxes": total_boxes}
 
 
 CUSTOMS_FEE_SEA_JPY = 2000   # 船便の通関料（一律）。航空便は無し

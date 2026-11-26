@@ -306,8 +306,23 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
 
     # 送料は箱の実測重量で配る。金額比だと安くて嵩張るものが送料をほとんど
     # 負担しない（実測で17倍の差が出た）。箱データが無い便は金額比に落ちる
+    # 商品の重さ（SP-APIのカタログ、1販売単位）を1個あたりに直して渡す。
+    # かさばる商品は容積重量（縦×横×高さ÷6000）のほうを使う。分からない明細は None
+    unit_weights = []
+    for idx, it in enumerate(data.items):
+        p = product_by_index.get(idx)
+        w = getattr(p, "unit_weight_kg", None) if p is not None else None
+        if w:
+            l, wd, h = (getattr(p, "pkg_l_cm", None), getattr(p, "pkg_w_cm", None),
+                        getattr(p, "pkg_h_cm", None))
+            vol = (l * wd * h / 6000) if (l and wd and h) else 0
+            per = max(float(w), vol) / max(1, int(getattr(p, "set_size", 1) or 1))
+            unit_weights.append(per if per > 0 else None)
+        else:
+            unit_weights.append(None)
     freight_res = invoice_calc.calc_freight_by_weight(
         [i.goods_id for i in data.items], item_totals, data.box_data, total_freight,
+        unit_weights=unit_weights, qtys=[i.qty for i in data.items],
     )
     freight_by_index = freight_res["alloc"]
 

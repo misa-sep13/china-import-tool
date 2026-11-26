@@ -3,13 +3,46 @@ import api from '../api/client'
 
 const COL_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899']
 
+/**
+ * 商品の重さ・サイズをSP-APIから取る。
+ * 送料を、同じ箱の中でも「個数」ではなく「重さ×個数」で配るのに使う
+ * （箱データが無い便も、全商品の重さが分かれば金額比ではなく重さで配る）。
+ */
+function DimsRefresh() {
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const run = async (force = false) => {
+    setBusy(true); setMsg('')
+    try {
+      const r = await api.post('/products/refresh-dims', null, { params: { force, limit: 80 }, timeout: 300000 })
+      const d = r.data
+      setMsg(`対象 ${d.target}件のうち ${d.got}件の重さ・サイズを取りました`
+        + (d.missing?.length ? `／Amazonに登録が無い ${d.missing.length}件（${d.missing.slice(0, 5).join('・')}）` : '')
+        + (d.left ? `／残り ${d.left}件はもう一度押してください` : ''))
+    } catch (e) {
+      setMsg('取れませんでした：' + (e.response?.data?.detail || e.message))
+    } finally { setBusy(false) }
+  }
+  return (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14,
+      fontSize: 12, color: '#475569' }}>
+      <button className="btn btn-secondary" style={{ fontSize: 12 }} disabled={busy} onClick={() => run(false)}>
+        {busy ? '取っています…（1〜2分）' : '📦 商品の重さ・サイズをAmazonから取る'}
+      </button>
+      <span>送料は、同じ箱の中も商品の重さ×個数で配ります（重さが分からない箱だけ個数比）。新しい商品を登録したら押してください。</span>
+      {msg && <span style={{ color: msg.startsWith('取れません') ? '#dc2626' : '#16a34a', width: '100%' }}>{msg}</span>}
+    </div>
+  )
+}
+
 export default function InvoicePage() {
   // 登録が主な作業なので先頭に置く
   const [tab, setTab] = useState('invoice')
 
   return (
     <div>
-      <h2 style={{ marginBottom: 16 }}>Amazon 仕入管理（原価計算）</h2>
+      <h2 style={{ marginBottom: 8 }}>Amazon 仕入管理（原価計算）</h2>
+      <DimsRefresh />
       <div style={{ display: 'flex', borderBottom: '1px solid #ddd', marginBottom: 24 }}>
         {[
           ['invoice', 'インボイス＋輸入許可書を登録'],

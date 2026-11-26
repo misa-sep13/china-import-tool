@@ -375,6 +375,42 @@ def update_product(product_id: int, data: ProductUpdate, request: Request, db: S
     db.refresh(p)
     return p
 
+@router.post("/refresh-dims")
+def refresh_dims(force: bool = False, limit: int = 80, db: Session = Depends(get_db)):
+    """ASINのある商品の、梱包後の重さ・サイズをSP-APIから取る。
+
+    仕入管理で、同じ箱の中の送料を「個数」ではなく「重さ」で配るのに使う。
+    取得済みのものは飛ばす（force=true で取り直す）。
+    """
+    import time
+    from app.core.config import settings as app_settings
+    from app.services import amazon_api
+    if not app_settings.SP_API_REFRESH_TOKEN:
+        raise HTTPException(status_code=400, detail="SP-API未設定")
+    q = db.query(Product).filter(Product.asin.isnot(None), Product.asin != "")
+    rows = [p for p in q.all() if force or not p.unit_weight_kg]
+    got, missing, errors = 0, [], []
+    for p in rows[:max(1, min(limit, 200))]:
+        try:
+            d = amazon_api.fetch_package_dims(p.asin)
+        except Exception as e:
+            errors.append(f"{p.sku}: {type(e).__name__}")
+            time.sleep(0.6)
+            continue
+        if d.get("ok"):
+            p.unit_weight_kg = d.get("weight_kg")
+            p.pkg_l_cm, p.pkg_w_cm, p.pkg_h_cm = d.get("l"), d.get("w"), d.get("h")
+            p.dims_updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            got += 1
+        else:
+            missing.append(p.sku)
+        time.sleep(0.6)   # カタログAPIは毎秒2回まで
+    db.commit()
+    return {"ok": True, "target": len(rows), "got": got,
+            "missing": missing[:30], "errors": errors[:20],
+            "left": max(0, len(rows) - limit)}
+
+
 @router.post("/refresh-fees")
 def refresh_fees(db: Session = Depends(get_db)):
     """全商品の販売価格・FBA手数料をSP-APIから取得してDBに保存"""
