@@ -186,9 +186,18 @@ def tick(db: Session) -> dict:
         key = str(p.id)
         if (p.permit_date or "") and p.permit_date < cutoff:
             continue
+        # EMS（国際郵便）の課税通知書は、便の原価計算の対象ではない
+        # （郵便で届いた分の関税・消費税。インボイスの便が無い）
+        if (p.transport or "") == "ems":
+            continue
         prev = state.get(key) or {}
         if prev.get("done"):
             continue
+        # 便を重さで当てられずに止まった許可書は、許可書の名前から便を決められる
+        # ようになったので、もう一度やり直す（2026-11-27）
+        if prev.get("why", "").startswith("どの便の許可書か決められません") and not prev.get("retried"):
+            prev = {}
+            state[key] = {"retried": True}
         # 一度止まったものは、次の巡回で毎回やり直さない。
         # 人が直したら画面のボタンでもう一度動かせる
         if prev.get("why"):
@@ -206,7 +215,9 @@ def tick(db: Session) -> dict:
         if why:
             failed += 1
             waiting[key] = {"label": _permit_label(p), "why": why,
-                            "at": datetime.now(JST).isoformat()}
+                            "at": datetime.now(JST).isoformat(),
+                            # やり直したあとにまた止まったものは、毎回は通知しない
+                            "retried": bool((state.get(key) or {}).get("retried"))}
             _notify(f"🧾 原価を計算できませんでした\n{_permit_label(p)}\n\n{why}\n"
                     "楽天 → 仕入管理 から進めてください")
         else:

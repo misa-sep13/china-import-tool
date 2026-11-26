@@ -3364,6 +3364,29 @@ def rakuten_match_permit(permit_id: int, limit: int = 6,
     row = db.query(ImportPermit).filter(ImportPermit.id == permit_id).first()
     if not row or not row.pdf:
         raise HTTPException(404, "保管された許可書が見つかりません")
+
+    # TWの許可書は、ファイル名（メールの件名）に便の追跡番号が入っている
+    # （VIP6003075704_JBX1TW61986_許可書.pdf）。重さで探すより確実なので先に見る。
+    # 重さは、許可書の貨物重量と便の実重量が数十kgずれることがあり外していた
+    import re as _re
+    m_sn = _re.search(r"(VIP\d{8,}|EA\d{9}CN)", f"{row.filename or ''} {row.mail_subject or ''}")
+    if m_sn:
+        want_sn = m_sn.group(1)
+        try:
+            for page in range(1, 4):
+                d = taotaro.list_send_orders(page=page, limit=100)
+                hit = next((o for o in d.get("items") or [] if (o.get("sn") or "") == want_sn), None)
+                if hit:
+                    return {"ok": True, "best_sid": hit.get("sid"), "by": "filename",
+                            "candidates": [{"sid": hit.get("sid"), "sn": want_sn,
+                                            "state_label": hit.get("state_label"),
+                                            "weight_diff": 0}],
+                            "message": f"許可書の名前にある便（{want_sn}）に決めました"}
+                if not d.get("has_more_pages"):
+                    break
+        except taotaro.TaotaroError:
+            pass
+
     cargo = parse_permit_cargo(_permit_text(row.pdf))
     if not cargo.get("cargo_weight"):
         return {"ok": False, "permit": cargo, "candidates": [],
