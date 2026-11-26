@@ -388,7 +388,9 @@ def refresh_dims(force: bool = False, limit: int = 80, db: Session = Depends(get
     if not app_settings.SP_API_REFRESH_TOKEN:
         raise HTTPException(status_code=400, detail="SP-API未設定")
     q = db.query(Product).filter(Product.asin.isnot(None), Product.asin != "")
-    rows = [p for p in q.all() if force or not p.unit_weight_kg]
+    # 削除済み（__deleted__…）は旧アカウントのASINなどで取れないので飛ばす
+    rows = [p for p in q.all()
+            if not (p.sku or "").startswith("__deleted__") and (force or not p.unit_weight_kg)]
     got, missing, errors = 0, [], []
     for p in rows[:max(1, min(limit, 200))]:
         try:
