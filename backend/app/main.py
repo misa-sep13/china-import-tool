@@ -1950,7 +1950,9 @@ _AUTH_PUBLIC_GET_PATHS = {
     "/api/welfare/version",
 }
 # 外注さんには見せない（APIキー等が見える設定画面）。変更だけ止める
-_AUTH_OWNER_ONLY_PREFIXES = ("/api/settings", "/api/rakuten/settings")
+_AUTH_OWNER_ONLY_PREFIXES = ("/api/settings", "/api/rakuten/settings",
+                            # 原価履歴の削除は取り返しがつかない
+                            "/api/cost-histories")
 # 外注さんには読ませない。秘書には支払い・給与・税理士とのやり取りまで
 # 並ぶので、画面を隠すだけでなくAPIごと止める
 _AUTH_OWNER_ONLY_READ = ("/api/secretary", "/api/automations")

@@ -4,7 +4,7 @@
 同じ商品でも便によって送料が変わる（箱の詰め方しだい）ことが見えない。
 ここでは便ごとの実績を並べ、後から加重平均へ切り替えられるようにしている。
 """
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.core.database import get_db
@@ -91,3 +91,22 @@ def summary_by_sku(
         })
     out.sort(key=lambda x: (-(x["spread_ratio"] or 0), x["sku"]))
     return out
+
+
+@router.delete("/{history_id}")
+def delete_history(history_id: int, db: Session = Depends(get_db)):
+    """原価履歴を1行消す。
+
+    紐づけ間違いの行を正しい商品へ付け替えても、間違っていた側に残った
+    履歴は消えない。保存は (source, sku, invoice_no) で上書きする作りなので、
+    別SKUへ移った行は上書きの対象にならないため。
+    残したままだと、後で加重平均へ切り替えたときに嘘の原価が混ざる。
+    """
+    row = db.query(CostHistory).filter(CostHistory.id == history_id).first()
+    if not row:
+        raise HTTPException(404, "原価履歴が見つかりません")
+    gone = {"id": row.id, "sku": row.sku, "invoice_no": row.invoice_no,
+            "cost_jpy": row.cost_jpy}
+    db.delete(row)
+    db.commit()
+    return {"ok": True, "deleted": gone}
