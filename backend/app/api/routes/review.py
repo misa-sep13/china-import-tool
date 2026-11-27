@@ -461,9 +461,11 @@ async def fetch_inquiries(
     from_date: str = Query(None),
     to_date: str = Query(None),
     review_only: bool = Query(False),
-    # 完了にしたあと登録を忘れたものを拾う。既定で拾う（拾わないと
-    # 応募が消える）。要らないときだけ false にする
-    include_done: bool = Query(True),
+    # 完了にしたあと登録を忘れたものも拾うか。既定では拾わない。
+    # 拾うようにしたら、返信も登録も済んでいる古い応募まで毎回並んで
+    # 画面が埋まってしまった（103件のうち大半がそれ）。
+    # 取りこぼしを探したいときだけ true にする
+    include_done: bool = Query(False),
     db: Session = Depends(get_db),
 ):
     settings = db.query(RakutenSettings).first()
@@ -556,11 +558,10 @@ async def fetch_inquiries(
     results = []
     completed_count = 0
     for inq in all_inquiries:
-        # R-Messeで完了にしたものは普通は出さない。
-        # ただし、返信して完了にしたあとエントリー登録を忘れていると、
-        # その応募は二度と画面に出てこず、プレゼントが送られないまま
-        # 消える（お絵描きタブレットの応募がこれで拾えていなかった）。
-        # まだ登録していないものだけは、完了済みでも出す
+        # R-Messeで完了にしたものは出さない。
+        # include_done=true のときだけ、まだ登録していないものを出す。
+        # 完了にしたあと登録を忘れると応募が消えるので、取りこぼしを
+        # 探す用に残してある（既定は false。既定で出すと画面が埋まる）
         if inq.get("isCompleted", False):
             completed_count += 1
             if (inq.get("orderNumber") or "") in existing_orders:
