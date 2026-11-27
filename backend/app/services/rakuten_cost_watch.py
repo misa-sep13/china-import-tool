@@ -128,16 +128,28 @@ def _process(db: Session, permit: ImportPermit) -> tuple:
     if not data.items:
         return "", "インボイスに明細がありません"
 
-    # SKUに当たらない行があるまま保存すると、その行の原価が落ちる。
-    # 梱包材など、もともと対象外の行（sku空）は数えない
+    # 商品マスタに当たらない行があるまま保存すると、その行に乗るはずの
+    # 送料・関税が他の商品へ回り、全体の原価が水増しされる。
+    #
+    # 当たらなかった行は rows に入らず手前で落ちるので、rows を見ても
+    # 見つからない。カバー率の unknown_indexes から引く。
+    # これを見ていなかったせいで、知らせが「検算に失敗：カバー率」としか
+    # 出ず、何を登録すればいいのか分からなかった（月子鞋142足の8行）
     calc = _rakuten_build_cost_rows(data, db)
-    lost = [r["item"] for r in calc["rows"]
-            if not r["product"] and (r["item"].sku or r["item"].buy_url)]
+    lost = [data.items[i] for i in (calc["coverage"].get("unknown_indexes") or [])
+            if 0 <= i < len(data.items)]
     if lost:
-        names = "／".join((x.name_jp or x.name_cn or x.sku or "名前なし")[:18]
-                          for x in lost[:3])
-        more = f" ほか{len(lost) - 3}行" if len(lost) > 3 else ""
-        return "", f"SKUに当たらない行が{len(lost)}件あります（{names}{more}）"
+        # 同じ商品が色・サイズで何行にも分かれる。名前でまとめて数える
+        by_name: dict = {}
+        for x in lost:
+            key = (x.name_jp or x.name_cn or x.sku or "名前なし")[:24]
+            by_name[key] = by_name.get(key, 0) + 1
+        names = "\n".join(f"・{k}（{v}行）" for k, v in list(by_name.items())[:4])
+        more = f"\nほか{len(by_name) - 4}種" if len(by_name) > 4 else ""
+        rate = calc["coverage"].get("coverage_rate")
+        return "", (f"商品マスタに無い明細が{len(lost)}行あります"
+                    f"（カバー率{rate}%）\n{names}{more}\n"
+                    "この商品を登録してから、もう一度進めてください")
 
     # 保存の前に、いまの原価を控えて動きを見る
     before = {}
