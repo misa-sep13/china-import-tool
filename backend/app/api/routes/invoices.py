@@ -312,9 +312,13 @@ def _build_cost_rows(data: InvoiceIn, db: Session):
     for idx, it in enumerate(data.items):
         p = product_by_index.get(idx)
         w = getattr(p, "unit_weight_kg", None) if p is not None else None
+        l, wd, h = ((getattr(p, "pkg_l_cm", None), getattr(p, "pkg_w_cm", None),
+                     getattr(p, "pkg_h_cm", None)) if p is not None else (None, None, None))
+        # 出品時の仮の値（a09_1 付け髭：0.01kg・厚さ0.1cm）は、FBAで測った値ではない。
+        # そのまま使うと送料をほとんど負担しない。明らかに小さすぎる値は分からない扱いにする
+        if w and (float(w) < 0.02 or any(x is not None and float(x) < 0.5 for x in (l, wd, h))):
+            w = None
         if w:
-            l, wd, h = (getattr(p, "pkg_l_cm", None), getattr(p, "pkg_w_cm", None),
-                        getattr(p, "pkg_h_cm", None))
             vol = (l * wd * h / 6000) if (l and wd and h) else 0
             per = max(float(w), vol) / max(1, int(getattr(p, "set_size", 1) or 1))
             unit_weights.append(per if per > 0 else None)
