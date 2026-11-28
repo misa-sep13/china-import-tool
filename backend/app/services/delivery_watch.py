@@ -19,6 +19,7 @@
   1. 配達完了を見つけたらLINEで知らせる
   2. 明細がすべて商品マスタと照合できたら、取り込んで入荷まで進める。
      できなかったときは理由もLINEで知らせ、画面にも残す
+  2b. 船便なら就労支援の荷受けも取り込み、「在庫反映」を秘書のやることに立てる
   3. 配達済のまま取り込まれない便は、既定2日で催促を1回だけ送る
 
 自動入荷は order_settings.auto_receive_on_delivery で止められる。
@@ -168,6 +169,54 @@ async def _import_and_receive(db: Session, sid: int) -> tuple:
     return "\n".join(lines), ""
 
 
+def _is_sea(x: dict) -> bool:
+    """船便か。配送方法の表示名（TW快速船便）で見る。"""
+    return "船" in str(x.get("delivery_name") or "")
+
+
+def _import_welfare(db: Session, sid: int, sn: str) -> str:
+    """就労支援の荷受けを取り込み、在庫反映をやることに立てる。
+
+    失敗しても楽天の入荷は済んでいるので止めず、知らせの文に理由を書く。
+    在庫反映そのものは、作業所で指示と残を確定してから人が押す。
+    """
+    from app.api.routes.welfare import WelfareTaotaroImportIn, import_taotaro
+    from app.models.secretary import SecretaryRun
+    from app.services import secretary as svc
+
+    try:
+        r = import_taotaro(WelfareTaotaroImportIn(sid=sid), db)
+    except Exception as e:
+        db.rollback()
+        msg = getattr(e, "detail", None) or str(e)
+        logger.warning(f"[delivery-watch] 荷受けの取り込みに失敗 {sid}: {msg}")
+        return f"⚠ 就労支援の荷受けを取り込めませんでした：{str(msg)[:120]}"
+    main_sn = str((r.get("send_order") or {}).get("sn") or sn)
+    key = f"welfare_reflect:{main_sn}"
+    try:
+        if not db.query(SecretaryRun).filter(SecretaryRun.source_key == key).first():
+            today = svc.today_jst()
+            db.add(SecretaryRun(
+                title=f"就労支援の在庫反映（{main_sn}）",
+                area="resale",
+                period=svc.period_str(today.year, today.month),
+                due_date=today + timedelta(days=3),
+                lead_days=3,
+                status="open",
+                source="auto",
+                source_key=key,
+                checklist=("作業所で指示（保管／戻し）と残を確定する\n"
+                           "就労支援在庫の荷受けタブで「在庫反映」を押す"),
+                ref_url="#/welfare/inventory",
+            ))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"[delivery-watch] やることを立てられません {sid}: {e}")
+        return "就労支援の荷受けを取り込みました（⚠ やることは立てられませんでした）"
+    return "就労支援の荷受けを取り込みました。在庫反映をやることに入れました"
+
+
 async def tick(db: Session) -> dict:
     """1回ぶんの巡回。"""
     if not taotaro.is_configured():
@@ -254,6 +303,10 @@ async def tick(db: Session) -> dict:
             else:
                 received += 1
                 state.pop(sid, None)
+                # 船便の楽天荷物は作業所で保管／戻しを決めるので、荷受けも取り込み、
+                # 「在庫反映」を秘書のやることに立てる（反映そのものは人が確定してから）
+                if _is_sea(x):
+                    body += "\n" + _import_welfare(db, int(sid), sn or sid)
                 _notify(head + "\n\n" + body)
                 continue
         # --- 配達済のまま取り込まれていない便の催促。1便に1回だけ ---
