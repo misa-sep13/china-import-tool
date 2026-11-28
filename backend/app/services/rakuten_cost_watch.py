@@ -68,6 +68,90 @@ def _already_saved(db: Session, invoice_no: str) -> bool:
         CostHistory.invoice_no == invoice_no).first() is not None
 
 
+def _process_fba(db: Session, permit: ImportPermit, sid: int) -> tuple:
+    """FBA宛の便を、Amazonの仕入管理と同じ計算で保存する。戻り値は (知らせる文章, 止まった理由)。"""
+    import re
+    from app.api.routes.invoices import (
+        InvoiceIn, _build_cost_rows, _refresh_dims_for_invoice, save_invoice)
+    from app.api.routes.rakuten import (
+        RakutenTaotaroInvoiceIn, rakuten_invoice_from_taotaro, rakuten_stored_permit)
+    from app.models.invoice import Invoice
+    from app.models.product import Product
+
+    parsed = rakuten_invoice_from_taotaro(RakutenTaotaroInvoiceIn(sid=int(sid)), db=db)
+    invoice_no = parsed.get("invoice_no") or ""
+    if invoice_no and db.query(Invoice).filter(Invoice.invoice_no == invoice_no).first():
+        return f"{invoice_no}（FBA宛）はすでに保存済みでした", ""
+    if (parsed.get("shipping_method") or "") == "air":
+        return "", ("FBA宛の航空便なので自動では進めません。"
+                    "Amazon → 仕入管理 から進めてください（通関料は無しです）")
+
+    pm = rakuten_stored_permit(permit_id=permit.id, db=db)
+    items = []
+    for i in parsed.get("items") or []:
+        m = re.search(r"B0[A-Z0-9]{8}", str(i.get("asin_memo") or ""))
+        items.append({"sku": i.get("sku") or "", "asin": m.group(0) if m else "",
+                      "name_jp": i.get("name_jp") or "", "qty": i.get("qty") or 0,
+                      "unit_price_cny": i.get("unit_price_cny") or 0,
+                      "buy_url": i.get("buy_url") or "", "goods_id": i.get("goods_id") or "",
+                      "permit_col": i.get("permit_col")})
+    data = InvoiceIn(
+        invoice_no=invoice_no, invoice_date=(permit.permit_date or ""),
+        exchange_rate=float(pm.get("exchange_rate") or 0),
+        domestic_freight=float(parsed.get("domestic_freight") or 0),
+        international_freight=float(parsed.get("international_freight") or 0),
+        import_tax_jpy=float(pm.get("import_tax_jpy") or 0),
+        permit_columns=pm.get("permit_columns") or [],
+        box_data=parsed.get("box_data") or None,
+        customs_fee_jpy=parsed.get("customs_fee_sea_jpy") or 2000,
+        declaration_no=permit.permit_no or "",
+        items=items,
+    )
+    if not data.exchange_rate:
+        return "", "許可書から為替レートを読めませんでした"
+    if not data.items:
+        return "", "インボイスに明細がありません"
+
+    try:
+        _refresh_dims_for_invoice(data, db)
+    except Exception:
+        pass
+    calc = _build_cost_rows(data, db)
+    unk = calc["coverage"].get("unknown_count") or 0
+    if unk:
+        names = "／".join((data.items[i].name_jp or data.items[i].sku or "名前なし")[:18]
+                         for i in (calc["coverage"].get("unknown_indexes") or [])[:3])
+        return "", f"商品マスタに無い明細が{unk}件あります（{names}）。Amazon → 仕入管理 から進めてください"
+
+    before = {}
+    for r in calc["rows"]:
+        p = r["product"]
+        if p is not None and r["kind"] == "amazon":
+            before[p.sku] = p.cost_jpy or 0
+
+    try:
+        res = save_invoice(data, db=db)
+    except HTTPException as e:
+        d = e.detail if isinstance(e.detail, dict) else {"message": str(e.detail)}
+        ng = "／".join(str(c.get("name") or c.get("label") or c)
+                       for c in (d.get("failed") or [])[:3])
+        return "", f"{d.get('message') or '保存できませんでした'}{('：' + ng) if ng else ''}"
+
+    moved = []
+    for sku, old in before.items():
+        p = db.query(Product).filter(Product.sku == sku).first()
+        new = (p.cost_jpy or 0) if p else 0
+        if old and new and abs(new - old) / old >= BIG_MOVE:
+            moved.append(f"{sku} ¥{round(old)}→¥{round(new)}")
+    lines = [f"🧾 原価を計算しました（FBA宛）\n{invoice_no}（{_permit_label(permit)}）",
+             f"更新：Amazon {res.get('updated_products', 0)}件"
+             + (f" / 楽天 {res.get('updated_rakuten')}件" if res.get("updated_rakuten") else ""),
+             f"送料の配分：{calc['freight_method']['reason']}"]
+    if moved:
+        lines.append("⚠ 大きく動いた原価\n" + "\n".join("・" + x for x in moved[:8]))
+    return "\n".join(lines), ""
+
+
 def _process(db: Session, permit: ImportPermit) -> tuple:
     """許可書1枚を処理する。戻り値は (知らせる文章, 止まった理由)。"""
     from app.api.routes.rakuten import (
@@ -85,16 +169,16 @@ def _process(db: Session, permit: ImportPermit) -> tuple:
         return "", ("どの便の許可書か決められませんでした。"
                     "画面で便を選んでください。" + (f"近いもの：{near}" if near else ""))
 
-    # FBA宛の便はAmazonの商品。楽天のマスタにはほぼ無いので、検算（カバー率）で
-    # 必ず止まる（2026-11-25 の 721710）。楽天の原価計算は飛ばし、Amazonの
-    # 仕入管理で計算するよう1回だけ知らせる
+    # FBA宛の便はAmazonの商品。楽天のマスタにはほぼ無いので、楽天の検算（カバー率）で
+    # 必ず止まる（2026-11-25 の 721710）。Amazonの仕入管理の計算で進める
+    # （送料は商品の重さ（SP-API）で配る。重さ・サイズは計算のたびに取り直す）
     from app.services import taotaro
     try:
-        if taotaro.destination(taotaro.get_send_order(int(sid))) == "fba":
-            return (f"ℹ️ {_permit_label(permit)} はFBA宛の便（No.{sid}）でした。\n"
-                    "Amazonの商品なので、楽天ではなく Amazon → 仕入管理 で原価を計算してください"), ""
+        is_fba = taotaro.destination(taotaro.get_send_order(int(sid))) == "fba"
     except Exception:
-        pass
+        is_fba = False
+    if is_fba:
+        return _process_fba(db, permit, int(sid))
 
     parsed = rakuten_invoice_from_taotaro(
         RakutenTaotaroInvoiceIn(sid=int(sid)), db=db)
