@@ -664,7 +664,7 @@ export default function WelfareInventoryPage() {
               borderCollapse: 'collapse', tableLayout: 'fixed' }}>
               <thead><tr style={{ background: '#f8fafc' }}>
                 {[['配送依頼No', 180], ['状態', 110], ['中身', 'auto'],
-                  ['重量', 70], ['費用(元)', 80], ['更新', 90], ['', 86]]
+                  ['重量', 70], ['費用(元)', 80], ['更新', 90]]
                   .map(([h, w]) => (
                     <th key={h} style={{ padding: '6px 10px', textAlign: 'left',
                       whiteSpace: 'nowrap',
@@ -675,7 +675,13 @@ export default function WelfareInventoryPage() {
                 {sendOrders.map(x => (
                   <tr key={x.sid} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '6px 10px', wordBreak: 'break-all' }}>
-                      <div>{x.sn || x.sid}</div>
+                      {/* 取り込むボタンは右端だと画面の外へ出て押せなかったので、番号の横に置く */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <button className="btn btn-sm btn-primary" style={{ fontSize: 12 }}
+                          disabled={taotaroImport.isPending}
+                          onClick={() => taotaroImport.mutate(x.sid)}>取り込む</button>
+                        <span>{x.sn || x.sid}</span>
+                      </div>
                       {/* 「◯◯に同梱してください」の便。荷物は1つで届くので、
                           どちらを取り込んでも同梱分がまとめて入る */}
                       {x.bundle_with && (
@@ -720,11 +726,6 @@ export default function WelfareInventoryPage() {
                     <td style={{ padding: '6px 10px', textAlign: 'right' }}>{x.total_send_fee}</td>
                     <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
                       {String(x.updated_at || '').slice(0, 10)}
-                    </td>
-                    <td style={{ padding: '6px 10px' }}>
-                      <button className="btn btn-sm btn-primary" style={{ fontSize: 12 }}
-                        disabled={taotaroImport.isPending}
-                        onClick={() => taotaroImport.mutate(x.sid)}>取り込む</button>
                     </td>
                   </tr>
                 ))}
