@@ -3818,12 +3818,25 @@ def rakuten_save_invoice(data: RakutenInvoiceIn, db: Session = Depends(get_db)):
     skipped = calc["skipped"]
     updated_skus: dict[str, float] = {}  # sku -> cost_jpy（セット商品の再計算に使う）
 
+    # 同じ商品が1つの便に2行以上あるときは、後ろの行で上書きせず個数で平均する
+    avg_cost: dict = {}
+    for r in calc["rows"]:
+        p = r["product"]
+        if p is None or not r.get("cost_jpy"):
+            continue
+        k = (r["kind"], p.id)
+        q = max(1, int(r["item"].qty or 0))
+        a = avg_cost.setdefault(k, [0.0, 0])
+        a[0] += r["cost_jpy"] * q
+        a[1] += q
+
     for r in calc["rows"]:
         item, product = r["item"], r["product"]
         if not product:
             skipped += 1
             continue
-        cost_jpy = r["cost_jpy"]
+        a = avg_cost.get((r["kind"], product.id))
+        cost_jpy = round(a[0] / a[1], 1) if a and a[1] else r["cost_jpy"]
         product.cost_jpy = cost_jpy
         product.price = item.unit_price_cny if item.unit_price_cny else product.price
         if r["kind"] == invoice_calc.KIND_RAKUTEN:

@@ -583,6 +583,20 @@ def save_invoice(data: InvoiceIn, db: Session = Depends(get_db)):
 
     updated_products = 0
     updated_rakuten = 0
+    # 同じ商品が1つの便に2行以上あるとき（色違いをまとめて頼んだ・分けて頼んだ）、
+    # 後ろの行で原価を上書きしていた（721710 の a012_black：30個¥569.2・19個¥558.3
+    # → ¥558.3）。個数で平均した値を入れる
+    avg_cost: dict = {}
+    for r in calc["rows"]:
+        p = r["product"]
+        if p is None or not r["cost_per_unit_jpy"]:
+            continue
+        k = (r["kind"], p.id)
+        q = max(1, int(r["item"].qty or 0))
+        a = avg_cost.setdefault(k, [0.0, 0])
+        a[0] += r["cost_per_unit_jpy"] * q
+        a[1] += q
+    counted: set = set()
     for r in calc["rows"]:
         item = r["item"]
         product = r["product"]
@@ -612,13 +626,16 @@ def save_invoice(data: InvoiceIn, db: Session = Depends(get_db)):
         # （price を上書きすると発注管理の「単価(元)」が円に化けるため）
         # 同じ便に混載された楽天商品も、楽天マスタ側の原価を更新する
         if product:
-            product.cost_jpy = r["cost_per_unit_jpy"]
+            a = avg_cost.get((r["kind"], product.id))
+            product.cost_jpy = round(a[0] / a[1], 1) if a and a[1] else r["cost_per_unit_jpy"]
             if item.unit_price_cny:
                 product.price = item.unit_price_cny
-            if is_amazon:
-                updated_products += 1
-            else:
-                updated_rakuten += 1
+            if (r["kind"], product.id) not in counted:
+                counted.add((r["kind"], product.id))
+                if is_amazon:
+                    updated_products += 1
+                else:
+                    updated_rakuten += 1
 
     # 便ごとの原価実績を残す。商品マスタのcost_jpyは最後の便で上書きされるため、
     # ここに積んでおかないと後から加重平均に切り替えられない。
